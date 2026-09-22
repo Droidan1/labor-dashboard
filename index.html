@@ -1056,25 +1056,52 @@
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
           <span class="nav-label">eBay Cases</span>
         </div>
-        <div id="nav-inventory" class="hidden nav-item" data-page="inventory" onclick="navigateToPage('inventory')">
-          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span>
-          <span class="nav-label">Inventory</span>
-        </div>
-        <div id="nav-bin-dump" class="hidden nav-item" data-page="bin-dump" onclick="navigateToPage('bin-dump')">
-          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L8 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-4l-1.5-2Z"/><circle cx="12" cy="13" r="3.5"/></svg></span>
-          <span class="nav-label">Bin Dump</span>
-        </div>
-        <div id="nav-inventory-receiver" class="hidden nav-item" data-page="inventory-receiver" onclick="navigateToPage('inventory-receiver')">
-          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 7h12v9H1z"/><path d="M13 10h4.5l3.5 3.5V16H13z"/><circle cx="5.5" cy="18.5" r="1.9"/><circle cx="17" cy="18.5" r="1.9"/></svg></span>
-          <span class="nav-label">Inventory Receiver</span>
-        </div>
-        <div id="nav-opportunity-buys" class="hidden nav-item" data-page="opportunity-buys" onclick="navigateToPage('opportunity-buys')">
-          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2A2 2 0 0 1 3 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.6z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg></span>
-          <span class="nav-label">Opportunity Buys</span>
-        </div>
-        <div id="nav-mos" class="hidden nav-item" data-page="mos" onclick="navigateToPage('mos')">
-          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 7.3 12 3 3.5 7.3v9.4L12 21l8.5-4.3z"/><line x1="4" y1="4" x2="20" y2="20"/></svg></span>
-          <span class="nav-label">Mark Out of Stock</span>
+        <!-- Inventory. A group rather than an item, the same shape as Marketing and
+             Merchandising above: Add Item / Inventory Viewer / Schedule Sale were three
+             collapsed cards and a modal inside one #page-inventory, and the four floor
+             tools below them were already separate top-level items. The GROUP is visible
+             to every manager so they can reach Bin Dump and MOS; the three catalog pages
+             are gated to admins in applyRoleUI, the same shape as Marketing.
+
+             The header deliberately does NOT keep the old nav-inventory meaning for
+             syncBottomNav: it is now visible to managers, so `isAdminBar` reads
+             nav-inventory-add instead, which stays admin-only. -->
+        <div id="nav-inventory-group" class="hidden">
+          <div id="nav-inventory" class="nav-item" onclick="toggleInventoryMenu()">
+            <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span>
+            <span class="nav-label">Inventory</span>
+            <span id="nav-inventory-chev" class="nav-chev nav-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
+          </div>
+          <div id="nav-inventory-sub" class="nav-sub hidden">
+            <div id="nav-inventory-add" class="nav-item nav-subitem" data-page="inventory-add" onclick="navigateToPage('inventory-add')">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg></span>
+              <span class="nav-label">Add Item</span>
+            </div>
+            <div id="nav-inventory-viewer" class="nav-item nav-subitem" data-page="inventory-viewer" onclick="navigateToPage('inventory-viewer')">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></span>
+              <span class="nav-label">Inventory Viewer</span>
+            </div>
+            <div id="nav-inventory-sale" class="nav-item nav-subitem" data-page="inventory-sale" onclick="navigateToPage('inventory-sale')">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg></span>
+              <span class="nav-label">Schedule Sale</span>
+            </div>
+            <div id="nav-bin-dump" class="nav-item nav-subitem" data-page="bin-dump" onclick="navigateToPage('bin-dump')">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L8 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-4l-1.5-2Z"/><circle cx="12" cy="13" r="3.5"/></svg></span>
+              <span class="nav-label">Bin Dump</span>
+            </div>
+            <div id="nav-inventory-receiver" class="nav-item nav-subitem" data-page="inventory-receiver" onclick="navigateToPage('inventory-receiver')">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 7h12v9H1z"/><path d="M13 10h4.5l3.5 3.5V16H13z"/><circle cx="5.5" cy="18.5" r="1.9"/><circle cx="17" cy="18.5" r="1.9"/></svg></span>
+              <span class="nav-label">Inventory Receiver</span>
+            </div>
+            <div id="nav-mos" class="nav-item nav-subitem" data-page="mos" onclick="navigateToPage('mos')">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 7.3 12 3 3.5 7.3v9.4L12 21l8.5-4.3z"/><line x1="4" y1="4" x2="20" y2="20"/></svg></span>
+              <span class="nav-label">Mark Out of Stock</span>
+            </div>
+            <div id="nav-opportunity-buys" class="nav-item nav-subitem" data-page="opportunity-buys" onclick="navigateToPage('opportunity-buys')">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2A2 2 0 0 1 3 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.6z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg></span>
+              <span class="nav-label">Opportunity Buys</span>
+            </div>
+          </div>
         </div>
         <div id="nav-labor" class="hidden nav-item" data-page="labor" onclick="navigateToPage('labor')">
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg></span>
@@ -1205,8 +1232,14 @@
         <button id="more-merch-scan" onclick="navigateToPage('merch-scan');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
           <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="8" x2="7" y2="16"/><line x1="10.5" y1="8" x2="10.5" y2="16"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="17" y1="8" x2="17" y2="16"/></svg>Price Scan
         </button>
-        <button id="more-inventory" onclick="navigateToPage('inventory');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
-          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>Inventory
+        <button id="more-inventory" onclick="navigateToPage('inventory-add');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
+          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>Add Item
+        </button>
+        <button id="more-inventory-viewer" onclick="navigateToPage('inventory-viewer');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
+          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>Inventory Viewer
+        </button>
+        <button id="more-inventory-sale" onclick="navigateToPage('inventory-sale');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
+          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg>Schedule Sale
         </button>
         <button id="more-bin-dump" onclick="navigateToPage('bin-dump');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
           <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L8 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-4l-1.5-2Z"/><circle cx="12" cy="13" r="3.5"/></svg>Bin Dump
@@ -1906,315 +1939,727 @@
       </div>
     </div><!-- end #page-weekly-summary -->
 
-    <div id="page-inventory" class="hidden">
+    <!-- ══ Inventory (Add Item · Inventory Viewer · Schedule Sale) ═══════════
+         One stylesheet for all three pages. It follows Buy Criteria's pattern
+         (DESIGN.md §4.8): light values are stated as literals, dark overrides go
+         through `.dark` and `rgb(var(--op-*))` so the pure-black theme retints for
+         free. A <style> block cannot use the Tailwind token classes, so the opl-*
+         literals are duplicated here on purpose.
+
+         Nothing inherits a colour. Two values are NOT the obvious token, and both
+         were measured rather than eyeballed:
+           · accent-green #22c55e is 2.28:1 on opl-panel — unusable as TEXT in
+             light, so light green text is #166534 (green-800, 7.13:1). #22c55e
+             stays for dark text and for solid button fills in both themes.
+           · op-bad #ef4444 is 4.73:1 on op-panel but only 4.25:1 once it sits on
+             its own wash, which is where every red badge here sits. Dark red TEXT
+             is #f87171 (5.78:1 on that wash); #ef4444 keeps the fills and borders.
+             Light needs no split — #c0392b clears 4.69:1 on its own wash.
+         ════════════════════════════════════════════════════════════════════ -->
+    <style>
+      /* The GP% cell picks its band colour in an inline style, and an inline style
+         cannot carry a `.dark` override — so the bands are variables the theme
+         re-points. html.dark is (0,1,1) and beats :root at (0,1,0). */
+      :root{--inv-good:#166534;--inv-warn:#92400e;--inv-bad:#c0392b}
+      html.dark{--inv-good:#22c55e;--inv-warn:#f59e0b;--inv-bad:#f87171}
+
+      /* Anything here that sets `display` ties Tailwind's .hidden at (0,1,0) and wins
+         on source order, because this block is parsed after tailwind.css. Same trap the
+         sidebar hit (see the note by `.sidebar .nav-item.hidden` above): the selection
+         bar and the table legend both rendered while the JS had correctly hidden them.
+         (0,2,0) settles it. */
+      .invstatus.hidden,.invp-legend.hidden,.invp-bar.hidden,.invmodal.hidden{display:none}
+
+      /* A modal is centred with flex, so it cannot just be `.hidden` + nothing: removing
+         .hidden has to leave it displaying as flex, not block. */
+      .invmodal{position:fixed;inset:0;z-index:50;display:flex;align-items:center;
+        justify-content:center;padding:16px;background:rgba(0,0,0,.5)}
+
+      /* ── Panel (§4.8 anatomy: one panel owns bar + content + legend) ── */
+      .invp{background:#ffffff;border:1px solid rgba(20,16,8,.10);border-radius:14px;
+        overflow:hidden;color:#14110a;margin-bottom:14px}
+      .dark .invp{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.09);color:rgb(var(--op-ink))}
+      .invp-bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:13px 18px;
+        background:#fafaf6;border-bottom:1px solid rgba(20,16,8,.10)}
+      .dark .invp-bar{background:rgb(var(--op-panelHi));border-bottom-color:rgba(255,255,255,.09)}
+      .invp-lbl{font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+        color:#6b6453;white-space:nowrap}
+      .dark .invp-lbl{color:rgb(var(--op-inkDim))}
+      .invp-right{margin-left:auto;display:flex;gap:8px;align-items:center;min-width:0}
+      .invp-status{padding:10px 18px 0;font-size:12.5px;line-height:1.55;color:#6b6453}
+      .dark .invp-status{color:rgb(var(--op-inkDim))}
+      .invp-status b{color:#14110a;font-weight:600}
+      .dark .invp-status b{color:rgb(var(--op-ink))}
+      .invp-status .hi{color:#92400e;font-weight:600}
+      .dark .invp-status .hi{color:#f59e0b}
+      .invp-body{padding:16px 18px 18px}
+      .invp-foot{border-top:1px solid rgba(20,16,8,.10);padding:13px 18px;display:flex;gap:10px;
+        align-items:center;flex-wrap:wrap;font-size:12px;color:#6b6453}
+      .dark .invp-foot{border-top-color:rgba(255,255,255,.09);color:rgb(var(--op-inkDim))}
+      .invp-foot b{color:#14110a}
+      .dark .invp-foot b{color:rgb(var(--op-ink))}
+      .invp-foot .invp-right{margin-left:auto}
+      .invp-legend{border-top:1px solid rgba(20,16,8,.10);padding:11px 18px;display:flex;gap:18px;
+        flex-wrap:wrap;font-size:11px;color:#6b6453}
+      .dark .invp-legend{border-top-color:rgba(255,255,255,.09);color:rgb(var(--op-inkDim))}
+      .invlg{display:inline-flex;align-items:center;gap:6px}
+      .invlg-sw{width:22px;height:13px;border-radius:4px;border:1px solid rgba(20,16,8,.18);flex-shrink:0}
+      .dark .invlg-sw{border-color:rgba(255,255,255,.16)}
+
+      /* ── Controls. §4.8 trap 1: type="text" must be explicit, CSS matches the
+           ATTRIBUTE and not the type an input defaults to. ── */
+      .invi,input[type="text"].invi,input[type="number"].invi,input[type="search"].invi,
+      input[type="datetime-local"].invi,select.invi{
+        width:100%;font:inherit;font-size:13.5px;font-weight:600;padding:9px 11px;border-radius:9px;
+        background:#fafaf6;border:1px solid rgba(20,16,8,.18);color:#14110a;
+        font-variant-numeric:tabular-nums;transition:.15s}
+      .dark .invi,.dark input[type="text"].invi,.dark input[type="number"].invi,
+      .dark input[type="search"].invi,.dark input[type="datetime-local"].invi,.dark select.invi{
+        background:rgb(var(--op-panelHi));border-color:rgba(255,255,255,.16);color:rgb(var(--op-ink))}
+      .invi:focus{outline:none;border-color:#166534;box-shadow:0 0 0 3px rgba(34,197,94,.14)}
+      .dark .invi:focus{border-color:#22c55e}
+      .invi::placeholder{color:#6b6453;font-weight:400}
+      .dark .invi::placeholder{color:rgb(var(--op-inkDim))}
+      select.invi{cursor:pointer}
+      /* An attribute selector is (0,2,1); a bare .invi-sm at (0,1,0) would lose the
+         width fight and every bar control would stack onto its own row. */
+      input.invi.invi-sm,select.invi.invi-sm{width:auto;font-size:12.5px;padding:7px 10px;border-radius:8px}
+      input.invi.invi-sm.invi-grow{flex:1 1 220px;min-width:0}
+
+      .invf{display:flex;flex-direction:column}
+      .invf-l{display:flex;align-items:center;gap:7px;font-size:9.5px;font-weight:700;
+        letter-spacing:.08em;text-transform:uppercase;color:#6b6453;margin-bottom:5px}
+      .dark .invf-l{color:rgb(var(--op-inkDim))}
+      .invf-req{color:#c0392b;font-weight:700}
+      .dark .invf-req{color:#f87171}
+      .invf-opt{color:#6b6453;font-weight:600;letter-spacing:.04em}
+      .dark .invf-opt{color:rgb(var(--op-inkDim))}
+      .invf-note{font-size:11px;margin-top:5px;line-height:1.5;color:#6b6453}
+      .dark .invf-note{color:rgb(var(--op-inkDim))}
+      .invf-note.warn{color:#92400e}
+      .dark .invf-note.warn{color:#f59e0b}
+      .invf.locked .invi{background:transparent;border-style:dashed;color:#6b6453}
+      .dark .invf.locked .invi{color:rgb(var(--op-inkDim))}
+      .invgrid{display:grid;grid-template-columns:1fr 1fr;gap:14px 16px}
+      @media (max-width:720px){.invgrid{grid-template-columns:1fr}}
+      .invspan2{grid-column:1/-1}
+      .invchk{display:flex;align-items:center;gap:9px;font-size:13px;font-weight:600;cursor:pointer;
+        padding:9px 11px;border-radius:9px;border:1px solid rgba(20,16,8,.18);background:#fafaf6;color:#14110a}
+      .dark .invchk{border-color:rgba(255,255,255,.16);background:rgb(var(--op-panelHi));color:rgb(var(--op-ink))}
+      .invchk input{width:15px;height:15px;accent-color:#22c55e;cursor:pointer;flex-shrink:0}
+      .invchk .sub{font-size:11px;font-weight:400;margin-left:auto;color:#6b6453}
+      .dark .invchk .sub{color:rgb(var(--op-inkDim))}
+
+      .invbtn{font:inherit;font-weight:700;border-radius:10px;cursor:pointer;border:1px solid transparent;
+        transition:.15s;letter-spacing:.02em}
+      .invbtn-primary{background:#166534;color:#ffffff;padding:10px 22px;font-size:14px}
+      .dark .invbtn-primary{background:#22c55e;color:#06210f}
+      .invbtn-primary:hover{filter:brightness(1.08)}
+      .invbtn-ghost{background:transparent;color:#14110a;border-color:rgba(20,16,8,.18);padding:8px 14px;font-size:12.5px}
+      .dark .invbtn-ghost{color:rgb(var(--op-ink));border-color:rgba(255,255,255,.16)}
+      .invbtn-ghost:hover{background:#fafaf6}
+      .dark .invbtn-ghost:hover{background:rgb(var(--op-panelHi))}
+      .invbtn-sm{padding:6px 11px;font-size:11.5px;border-radius:8px}
+      .invbtn-danger{background:transparent;color:#c0392b;border-color:rgba(192,57,43,.40);
+        padding:6px 11px;font-size:11.5px;border-radius:8px;font-weight:700}
+      .dark .invbtn-danger{color:#f87171;border-color:rgba(239,68,68,.42)}
+      .invbtn-danger:hover{background:rgba(192,57,43,.10)}
+      .dark .invbtn-danger:hover{background:rgba(239,68,68,.12)}
+      .invbtn:disabled{opacity:.45;cursor:not-allowed}
+      .invbtn-on{border-color:#166534}
+      .dark .invbtn-on{border-color:#22c55e}
+
+      /* ── Status strip. index.html has no toast helper; transient feedback is an
+           inline strip per panel (the invSetStatus idiom). ── */
+      .invstatus{border-radius:10px;padding:10px 13px;font-size:12.5px;display:flex;align-items:flex-start;
+        gap:9px;line-height:1.55;margin-bottom:13px;border:1px solid rgba(22,101,52,.28);
+        background:rgba(34,197,94,.10);color:#14110a}
+      .dark .invstatus{border-color:rgba(34,197,94,.28);color:rgb(var(--op-ink))}
+      .invstatus .ico{width:18px;height:18px;border-radius:50%;display:grid;place-content:center;font-size:11px;
+        font-weight:700;flex-shrink:0;margin-top:1px;background:#166534;color:#ffffff}
+      .dark .invstatus .ico{background:#22c55e;color:#06210f}
+      .invstatus.warn{border-color:rgba(180,83,9,.45);background:rgba(245,158,11,.16)}
+      .invstatus.warn .ico{background:#92400e}
+      .dark .invstatus.warn .ico{background:#f59e0b;color:#1a1205}
+      .invstatus.err{border-color:rgba(192,57,43,.40);background:rgba(192,57,43,.10)}
+      .invstatus.err .ico{background:#c0392b}
+      .dark .invstatus.err{border-color:rgba(239,68,68,.42);background:rgba(239,68,68,.12)}
+      .dark .invstatus.err .ico{background:#ef4444;color:#2a0606}
+      .invstatus.info{border-color:rgba(29,78,216,.34);background:rgba(29,78,216,.09)}
+      .invstatus.info .ico{background:#1d4ed8}
+      .dark .invstatus.info{border-color:rgba(96,165,250,.38);background:rgba(96,165,250,.12)}
+      .dark .invstatus.info .ico{background:#60a5fa;color:#04122e}
+
+      /* ── Derived read-out (margin / multiple) ── */
+      .invderive{display:flex;border:1px solid rgba(20,16,8,.10);border-radius:11px;overflow:hidden;background:#fafaf6}
+      .dark .invderive{border-color:rgba(255,255,255,.09);background:rgb(var(--op-panelHi))}
+      .invderive .d{flex:1;padding:10px 13px;border-right:1px solid rgba(20,16,8,.10)}
+      .dark .invderive .d{border-right-color:rgba(255,255,255,.09)}
+      .invderive .d:last-child{border-right:0}
+      .invderive .dc{font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6b6453}
+      .dark .invderive .dc{color:rgb(var(--op-inkDim))}
+      .invderive .dv{font-size:19px;font-weight:700;line-height:1.2;margin-top:2px;
+        font-variant-numeric:tabular-nums;letter-spacing:-.02em;color:#14110a}
+      .dark .invderive .dv{color:rgb(var(--op-ink))}
+      .invderive .dv.good{color:#166534}
+      .dark .invderive .dv.good{color:#22c55e}
+      .invderive .dv.warnv{color:#92400e}
+      .dark .invderive .dv.warnv{color:#f59e0b}
+      .invderive .dv.badv{color:#c0392b}
+      .dark .invderive .dv.badv{color:#f87171}
+      .invderive .dv.dim{color:#6b6453}
+      .dark .invderive .dv.dim{color:rgb(var(--op-inkDim))}
+      .invderive .dn{font-size:10.5px;margin-top:1px;color:#6b6453}
+      .dark .invderive .dn{color:rgb(var(--op-inkDim))}
+
+      /* ── Dense table (§4.8) ── */
+      .invscroll{overflow-x:auto;overflow-y:auto;max-height:min(58vh,520px);background:#ffffff}
+      .dark .invscroll{background:rgb(var(--op-panel))}
+      .invtbl{border-collapse:separate;border-spacing:0;width:100%;min-width:940px;font-size:12.5px;
+        color:#14110a;font-variant-numeric:tabular-nums}
+      .dark .invtbl{color:rgb(var(--op-ink))}
+      .invtbl th,.invtbl td{text-align:left;padding:0 9px;height:42px;white-space:nowrap;
+        border-bottom:1px solid rgba(20,16,8,.10)}
+      .dark .invtbl th,.dark .invtbl td{border-bottom-color:rgba(255,255,255,.09)}
+      .invtbl th{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;height:34px;
+        color:#6b6453;background:#fafaf6;position:sticky;top:0;z-index:3}
+      .dark .invtbl th{color:rgb(var(--op-inkDim));background:rgb(var(--op-panelHi))}
+      .invtbl .num{text-align:right}
+      .invtbl .ck{width:34px;padding-left:12px}
+      .invtbl input[type="checkbox"]{width:14px;height:14px;accent-color:#22c55e;cursor:pointer}
+      /* §4.8 trap 2 — a sticky column needs its OWN opaque background or cells slide under it. */
+      .invtbl .stick{position:sticky;left:0;z-index:2;background:#ffffff}
+      .dark .invtbl .stick{background:rgb(var(--op-panel))}
+      .invtbl th.stick{z-index:4;background:#fafaf6}
+      .dark .invtbl th.stick{background:rgb(var(--op-panelHi))}
+      .invtbl tbody tr:hover td,.invtbl tbody tr:hover .stick{background:#fafaf6}
+      .dark .invtbl tbody tr:hover td,.dark .invtbl tbody tr:hover .stick{background:rgb(var(--op-panelHi))}
+      .invtbl tr.sel td,.invtbl tr.sel .stick,.invtbl tr.sel:hover td,.invtbl tr.sel:hover .stick{background:rgba(34,197,94,.10)}
+      .invtbl tr.dup td,.invtbl tr.dup .stick,.invtbl tr.dup:hover td,.invtbl tr.dup:hover .stick{background:rgba(245,158,11,.16)}
+      .dark .invtbl tr.dup td,.dark .invtbl tr.dup .stick,
+      .dark .invtbl tr.dup:hover td,.dark .invtbl tr.dup:hover .stick{background:rgba(245,158,11,.14)}
+      .invtbl tr.off .invname,.invtbl tr.off .num{opacity:.55}
+      .invname{font-weight:600;overflow:hidden;text-overflow:ellipsis;max-width:215px;
+        display:inline-block;vertical-align:middle}
+      .invdim{color:#6b6453}
+      .dark .invdim{color:rgb(var(--op-inkDim))}
+      .invsort{cursor:pointer;user-select:none}
+      .invsort .ar{margin-left:4px;color:#166534}
+      .dark .invsort .ar{color:#22c55e}
+
+      /* ── Badges / chips ── */
+      .invbdg{display:inline-flex;align-items:center;gap:4px;font-size:9.5px;font-weight:700;
+        letter-spacing:.055em;text-transform:uppercase;padding:2px 6px;border-radius:5px;
+        border:1px solid rgba(20,16,8,.18);color:#6b6453;background:transparent;white-space:nowrap;
+        vertical-align:middle}
+      .dark .invbdg{border-color:rgba(255,255,255,.16);color:rgb(var(--op-inkDim))}
+      .invbdg.g{border-color:rgba(22,101,52,.28);background:rgba(34,197,94,.10);color:#166534}
+      .dark .invbdg.g{border-color:rgba(34,197,94,.28);color:#22c55e}
+      .invbdg.a{border-color:rgba(180,83,9,.45);background:rgba(245,158,11,.16);color:#92400e}
+      .dark .invbdg.a{border-color:rgba(245,158,11,.45);background:rgba(245,158,11,.14);color:#f59e0b}
+      /* #c0392b is 4.49:1 on this wash over opl-panelHi, where the results tally sits.
+         #a93226 clears it on both panel (5.71) and panelHi (5.47). */
+      .invbdg.r{border-color:rgba(192,57,43,.40);background:rgba(192,57,43,.10);color:#a93226}
+      .dark .invbdg.r{border-color:rgba(239,68,68,.42);background:rgba(239,68,68,.12);color:#f87171}
+      .invbdg.b{border-color:rgba(29,78,216,.34);background:rgba(29,78,216,.09);color:#1d4ed8}
+      .dark .invbdg.b{border-color:rgba(96,165,250,.38);background:rgba(96,165,250,.12);color:#60a5fa}
+      .invchip{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:600;padding:6px 10px;
+        border-radius:9px;border:1px solid rgba(20,16,8,.18);background:#fafaf6;color:#14110a}
+      .dark .invchip{border-color:rgba(255,255,255,.16);background:rgb(var(--op-panelHi));color:rgb(var(--op-ink))}
+      .invchip .pr{font-weight:500;font-variant-numeric:tabular-nums;color:#6b6453}
+      .dark .invchip .pr{color:rgb(var(--op-inkDim))}
+      .invchip .x{background:transparent;border:0;cursor:pointer;font-size:15px;line-height:1;padding:0 1px;
+        font-family:inherit;color:#6b6453}
+      .dark .invchip .x{color:rgb(var(--op-inkDim))}
+      .invchip .x:hover{color:#c0392b}
+      .dark .invchip .x:hover{color:#f87171}
+
+      /* ── Store multiselect ── */
+      .invstores{display:flex;gap:7px;flex-wrap:wrap}
+      .invst{display:inline-flex;align-items:center;gap:7px;padding:7px 11px;border-radius:9px;cursor:pointer;
+        font-size:12.5px;font-weight:600;transition:.15s;border:1px solid rgba(20,16,8,.18);
+        background:#fafaf6;color:#14110a}
+      .dark .invst{border-color:rgba(255,255,255,.16);background:rgb(var(--op-panelHi));color:rgb(var(--op-ink))}
+      .invst input{width:14px;height:14px;accent-color:#22c55e;cursor:pointer}
+      .invst .nm{font-weight:500;font-size:11px;color:#6b6453}
+      .dark .invst .nm{color:rgb(var(--op-inkDim))}
+      .invst.on{border-color:rgba(22,101,52,.28);background:rgba(34,197,94,.10)}
+      .dark .invst.on{border-color:rgba(34,197,94,.28)}
+
+      /* ── Per-store result rows ── */
+      .invres{display:flex;align-items:center;gap:11px;padding:11px 13px;font-size:12.5px;
+        border-bottom:1px solid rgba(20,16,8,.10)}
+      .dark .invres{border-bottom-color:rgba(255,255,255,.09)}
+      .invres:last-child{border-bottom:0}
+      .invres .s{font-weight:700;width:52px;flex-shrink:0;font-variant-numeric:tabular-nums}
+      .invres .nm{width:96px;flex-shrink:0;color:#6b6453}
+      .dark .invres .nm{color:rgb(var(--op-inkDim))}
+      .invres .msg{line-height:1.5;color:#6b6453}
+      .dark .invres .msg{color:rgb(var(--op-inkDim))}
+      .invres .msg b{font-weight:600;color:#14110a}
+      .dark .invres .msg b{color:rgb(var(--op-ink))}
+      .invres .r{margin-left:auto;display:flex;gap:8px;align-items:center;flex-shrink:0}
+      .invres.ok{background:rgba(34,197,94,.10)}
+      .invres.dupe{background:rgba(245,158,11,.16)}
+      .dark .invres.dupe{background:rgba(245,158,11,.14)}
+      .invres.bad{background:rgba(192,57,43,.10)}
+      .dark .invres.bad{background:rgba(239,68,68,.12)}
+
+      /* ── Schedule log ── */
+      .invsched{padding:14px 18px;border-bottom:1px solid rgba(20,16,8,.10)}
+      .dark .invsched{border-bottom-color:rgba(255,255,255,.09)}
+      .invsched:last-child{border-bottom:0}
+      .invsched-h{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+      .invsched-t{font-size:13.5px;font-weight:700;color:#14110a}
+      .dark .invsched-t{color:rgb(var(--op-ink))}
+      .invsched-m{font-size:11.5px;font-variant-numeric:tabular-nums;color:#6b6453}
+      .dark .invsched-m{color:rgb(var(--op-inkDim))}
+      .invsched-h .r{margin-left:auto;display:flex;gap:7px}
+      .invitems{margin-top:9px;display:flex;flex-direction:column;gap:1px}
+      .invit{display:flex;align-items:center;gap:10px;font-size:12px;padding:6px 10px;border-radius:7px;
+        background:#fafaf6}
+      .dark .invit{background:rgb(var(--op-panelHi))}
+      .invit .n{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#14110a}
+      .dark .invit .n{color:rgb(var(--op-ink))}
+      .invit .p{margin-left:auto;flex-shrink:0;font-variant-numeric:tabular-nums;color:#6b6453}
+      .dark .invit .p{color:rgb(var(--op-inkDim))}
+      .invit .p b{font-weight:700;color:#166534}
+      .dark .invit .p b{color:#22c55e}
+      .invit.errrow{background:rgba(192,57,43,.10)}
+      .dark .invit.errrow{background:rgba(239,68,68,.12)}
+      .invit.errrow .p{color:#c0392b}
+      .dark .invit.errrow .p{color:#f87171}
+
+      /* ── Step header ── */
+      .invstep{display:flex;align-items:center;gap:9px}
+      .invstep-n{width:21px;height:21px;border-radius:6px;font-size:11px;font-weight:700;display:grid;
+        place-content:center;flex-shrink:0;background:#166534;color:#ffffff}
+      .dark .invstep-n{background:#22c55e;color:#06210f}
+      .invstep-n.idle{background:transparent;border:1px solid rgba(20,16,8,.18);color:#6b6453}
+      .dark .invstep-n.idle{border-color:rgba(255,255,255,.16);color:rgb(var(--op-inkDim))}
+
+      /* ── Empty state ── */
+      .invempty{padding:38px 20px;text-align:center}
+      .invempty .t{font-size:14.5px;font-weight:700;color:#14110a}
+      .dark .invempty .t{color:rgb(var(--op-ink))}
+      .invempty .d{font-size:12.5px;margin:5px auto 0;max-width:340px;line-height:1.55;color:#6b6453}
+      .dark .invempty .d{color:rgb(var(--op-inkDim))}
+    </style>
+
+    <!-- ══ Add Item ══════════════════════════════════════════════════════ -->
+    <div id="page-inventory-add" class="hidden">
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
-        <div class="max-w-7xl mx-auto">
+        <div class="max-w-7xl mx-auto flex items-start gap-4 flex-wrap">
           <div>
-            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Inventory</h1>
-            <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Add items to Clover POS</p>
+            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Add Item</h1>
+            <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Create a Clover item in one store or all six.</p>
+          </div>
+          <div class="ml-auto flex gap-2 items-center flex-wrap">
+            <button type="button" class="invbtn invbtn-ghost invbtn-sm" onclick="navigateToPage('inventory-viewer')">Open Viewer</button>
           </div>
         </div>
       </div>
-      <div class="max-w-7xl mx-auto px-6 py-6 space-y-6">
-        <!-- Add Item card (collapsible) -->
-        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700">
-          <button onclick="toggleAddItem()" class="w-full flex items-center justify-between px-6 py-4 text-left">
-            <span class="text-base font-semibold text-gray-800 dark:text-gray-100">Add Item</span>
-            <svg id="inv-add-chevron" class="w-5 h-5 text-gray-500 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-            </svg>
-          </button>
-          <div id="inv-add-body" class="hidden px-6 pb-6">
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <!-- Location -->
-            <div>
-              <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Location</label>
-              <select id="inv-store" onchange="loadCategoriesForStore(this.value)" class="w-full text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
-                <option value="all">All Locations</option>
-                <option value="BL1">BL1</option>
-                <option value="BL2">BL2</option>
-                <option value="BL4">BL4</option>
-                <option value="BL8">BL8</option>
-                <option value="BL16">BL16</option>
-                <option value="BL14">BL14</option>
+
+      <div class="max-w-7xl mx-auto px-6 py-6">
+        <div class="invp">
+          <div class="invp-bar">
+            <span class="invp-lbl">New item</span>
+            <span class="invp-right">
+              <span class="invp-lbl">Create in</span>
+              <select id="inv-store" class="invi invi-sm" onchange="loadCategoriesForStore(this.value); invAddRecalc()">
+                <option value="all">All 6 locations</option>
+                <option value="BL1">BL1 · Coliseum</option>
+                <option value="BL2">BL2 · South Bend</option>
+                <option value="BL4">BL4 · Dupont</option>
+                <option value="BL8">BL8 · Holland</option>
+                <option value="BL14">BL14 · Battle Creek</option>
+                <option value="BL16">BL16 · Indy East</option>
               </select>
-            </div>
-            <!-- Name -->
-            <div>
-              <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Name <span class="text-red-400">*</span></label>
-              <input id="inv-name" type="text" placeholder="Item name" class="w-full text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
-            </div>
-            <!-- Code/SKU -->
-            <div>
-              <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Code / SKU <span class="text-red-400">*</span></label>
-              <input id="inv-code" type="text" placeholder="e.g. 12345" class="w-full text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
-            </div>
-            <!-- Price -->
-            <div>
-              <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Price ($) <span class="text-red-400">*</span></label>
-              <input id="inv-price" type="number" min="0.01" step="0.01" placeholder="9.99" class="w-full text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
-            </div>
-            <!-- Unit Cost -->
-            <div>
-              <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Unit Cost ($) <span class="text-gray-400 font-normal normal-case tracking-normal text-[10px]">optional</span></label>
-              <input id="inv-cost" type="number" min="0" step="0.01" placeholder="3.00" class="w-full text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
-            </div>
-            <!-- Category (L2) -->
-            <div>
-              <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Category (L2) <span class="text-red-400">*</span></label>
-              <select id="inv-l2" class="w-full text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
-                <option value="">— select —</option>
-              </select>
-            </div>
-            <!-- Sub-category (L3) -->
-            <div>
-              <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Sub-category (L3) <span class="text-red-400">*</span></label>
-              <input id="inv-l3" type="text" list="inv-cat-datalist" placeholder="Type or pick existing Clover category" class="w-full text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
-              <datalist id="inv-cat-datalist"></datalist>
-            </div>
-            <!-- Flags -->
-            <div class="flex items-center gap-6 pt-5">
-              <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200 cursor-pointer">
-                <input id="inv-taxable" type="checkbox" checked class="w-5 h-5 rounded border-2 border-gray-400 dark:border-gray-500 accent-[#3BB54A] focus:ring-2 focus:ring-[#3BB54A] focus:ring-offset-1 dark:focus:ring-offset-gray-800 cursor-pointer">
-                Taxable
-              </label>
-              <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200 cursor-pointer">
-                <input id="inv-hidden" type="checkbox" class="w-5 h-5 rounded border-2 border-gray-400 dark:border-gray-500 accent-[#3BB54A] focus:ring-2 focus:ring-[#3BB54A] focus:ring-offset-1 dark:focus:ring-offset-gray-800 cursor-pointer">
-                Hidden
-              </label>
-            </div>
+            </span>
           </div>
-          <div id="inv-status" class="hidden mt-4 text-sm rounded-lg px-4 py-3 border"></div>
-          <div class="mt-5">
-            <button id="inv-submit" onclick="createCloverItem()" class="px-5 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Add Item</button>
-          </div>
-          </div><!-- /inv-add-body -->
-        </div>
-        <!-- Results panel -->
-        <div id="inv-results" class="hidden bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
-          <h2 class="text-base font-semibold text-gray-800 dark:text-gray-100 mb-4">Results</h2>
-          <div id="inv-results-body"></div>
-        </div>
 
-        <!-- ── Inventory Viewer card ─────────────────────────────── -->
-        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700">
-          <!-- Collapsible header -->
-          <button onclick="toggleInvViewer()" class="w-full flex items-center justify-between px-6 py-4 text-left">
-            <span class="text-base font-semibold text-gray-800 dark:text-gray-100">Inventory Viewer</span>
-            <svg id="inv-viewer-chevron" class="w-5 h-5 text-gray-500 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-            </svg>
-          </button>
-          <!-- Collapsible body -->
-          <div id="inv-viewer-body" class="hidden border-t border-gray-100 dark:border-gray-700 px-6 pb-6 pt-4">
-            <!-- Controls row -->
-            <div class="flex flex-wrap gap-3 mb-4">
-              <select id="inv-view-store" onchange="invViewStore=this.value" class="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
-                <option value="BL1">BL1</option>
-                <option value="BL2">BL2</option>
-                <option value="BL4">BL4</option>
-                <option value="BL8">BL8</option>
-                <option value="BL16">BL16</option>
-                <option value="BL14">BL14</option>
-              </select>
-              <input id="inv-view-search" type="text" placeholder="Search by name or code…" oninput="renderInvTable()" class="flex-1 min-w-[180px] px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 placeholder-gray-400">
-              <button onclick="loadInventory(true)" class="px-4 py-2 text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">Load Inventory</button>
-              <button onclick="findDuplicates()" class="px-4 py-2 text-sm font-semibold bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg transition-colors">Find Duplicates</button>
-              <button onclick="clearInvViewer()" class="px-4 py-2 text-sm font-semibold bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-100 rounded-lg transition-colors">Clear</button>
-            </div>
-            <!-- Status -->
-            <div id="inv-view-status" class="hidden mb-3 text-sm px-4 py-2 rounded-lg"></div>
-            <!-- Selection toolbar (shown when rows are checked) -->
-            <div id="inv-sel-toolbar" style="display:none" class="mb-3 items-center gap-3 px-4 py-2 rounded-lg bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 text-sm text-blue-800 dark:text-blue-200">
-              <span id="inv-sel-count" class="font-semibold"></span>
-              <button onclick="openSaleModal()" class="px-3 py-1 text-xs font-semibold bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors">Schedule Sale</button>
-              <button onclick="clearInvSelection()" class="px-3 py-1 text-xs font-semibold bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-100 rounded-lg transition-colors">Clear Selection</button>
-            </div>
-            <!-- Table -->
-            <div id="inv-view-table-wrap" class="hidden overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
-              <table class="min-w-full text-sm">
-                <thead class="sticky top-0 bg-gray-50 dark:bg-gray-900 text-left">
-                  <tr id="inv-thead-row">
-                    <th class="px-3 py-2"><input type="checkbox" id="inv-sel-all" onchange="toggleSelectAll(this.checked)" class="w-4 h-4 rounded border-2 border-gray-400 dark:border-gray-500 accent-[#3BB54A] cursor-pointer"></th>
-                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300 cursor-pointer select-none whitespace-nowrap" onclick="sortInvTable('name')"><span>Name</span><span id="inv-sort-name" class="ml-1 text-blue-500"></span></th>
-                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300 cursor-pointer select-none whitespace-nowrap" onclick="sortInvTable('code')"><span>Code</span><span id="inv-sort-code" class="ml-1 text-blue-500"></span></th>
-                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300 cursor-pointer select-none whitespace-nowrap" onclick="sortInvTable('price')"><span>Price</span><span id="inv-sort-price" class="ml-1 text-blue-500"></span></th>
-                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300 cursor-pointer select-none whitespace-nowrap" onclick="sortInvTable('cost')"><span>Cost</span><span id="inv-sort-cost" class="ml-1 text-blue-500"></span></th>
-                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300 cursor-pointer select-none whitespace-nowrap" onclick="sortInvTable('category')"><span>Category</span><span id="inv-sort-category" class="ml-1 text-blue-500"></span></th>
-                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300 cursor-pointer select-none whitespace-nowrap" onclick="sortInvTable('tax')"><span>Tax</span><span id="inv-sort-tax" class="ml-1 text-blue-500"></span></th>
-                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300 cursor-pointer select-none whitespace-nowrap" onclick="sortInvTable('hidden')"><span>Hidden</span><span id="inv-sort-hidden" class="ml-1 text-blue-500"></span></th>
-                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300"></th>
-                  </tr>
-                </thead>
-                <tbody id="inv-view-tbody" class="divide-y divide-gray-100 dark:divide-gray-700 bg-white dark:bg-gray-800"></tbody>
-              </table>
-            </div>
-            <!-- Pagination -->
-            <div id="inv-view-pagination" class="hidden flex items-center justify-between mt-3 text-sm text-gray-600 dark:text-gray-400">
-              <span id="inv-view-page-label"></span>
-              <div class="flex gap-2">
-                <button onclick="invPagePrev()" id="inv-btn-prev" class="px-3 py-1 rounded border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed">← Prev</button>
-                <button onclick="invPageNext()" id="inv-btn-next" class="px-3 py-1 rounded border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed">Next →</button>
+          <div class="invp-status">
+            Creating in <b id="ia-scope-line">all 6 locations</b>. Each store gets its own Clover item; the
+            duplicate check runs per store, and a store that already holds this code is skipped, never
+            overwritten.
+          </div>
+
+          <div class="invp-body">
+            <div class="invgrid">
+              <div class="invf invspan2">
+                <label class="invf-l" for="inv-name">Name <span class="invf-req">*</span></label>
+                <input id="inv-name" type="text" class="invi" placeholder="Item name">
               </div>
+
+              <div class="invf">
+                <label class="invf-l" for="inv-code">Code / SKU <span class="invf-req">*</span></label>
+                <input id="inv-code" type="text" class="invi" placeholder="e.g. 12345" oninput="invAddRecalc()">
+                <div class="invf-note" id="ia-code-note">Links to Item Master cost data.</div>
+              </div>
+
+              <div class="invf">
+                <label class="invf-l" for="inv-price">Retail price <span class="invf-req">*</span></label>
+                <input id="inv-price" type="number" min="0.01" step="0.01" class="invi" placeholder="9.99" oninput="invAddRecalc()">
+                <div class="invf-note">Cents are rounded at submit.</div>
+              </div>
+
+              <div class="invf">
+                <label class="invf-l" for="inv-cost">Unit cost <span class="invf-opt">optional</span></label>
+                <input id="inv-cost" type="number" min="0" step="0.01" class="invi" placeholder="3.00" oninput="invAddRecalc()">
+                <div class="invf-note">Also written to the shared item-cost table.</div>
+              </div>
+
+              <div class="invf" style="justify-content:flex-end">
+                <div class="invderive">
+                  <div class="d">
+                    <div class="dc">Margin</div>
+                    <div class="dv dim" id="ia-gp">—</div>
+                    <div class="dn" id="ia-gp-note">enter a unit cost</div>
+                  </div>
+                  <div class="d">
+                    <div class="dc">Multiple</div>
+                    <div class="dv dim" id="ia-mult">—</div>
+                    <div class="dn">retail ÷ cost</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- The category comes FIRST because it decides the reporting group. The old
+                   form asked for L2 first; when the L3 turned out to be a built-in the worker
+                   created the item anyway and reported l3MapSkipped afterwards, so a wrong
+                   pick was only discoverable after the fact. -->
+              <div class="invf invspan2">
+                <label class="invf-l" for="inv-l3">Clover category <span class="invf-req">*</span> <span class="invf-opt">L3</span></label>
+                <input id="inv-l3" type="text" list="inv-cat-datalist" class="invi" placeholder="Type a new category or pick an existing one" oninput="invAddRecalc()">
+                <datalist id="inv-cat-datalist"></datalist>
+                <div class="invf-note" id="ia-l3-note">Categories already in this store are suggested as you type.</div>
+              </div>
+
+              <div class="invf invspan2" id="ia-l2-fld">
+                <label class="invf-l" for="inv-l2">Reporting group <span class="invf-req">*</span> <span class="invf-opt">L2</span> <span class="invbdg" id="ia-l2-badge">required</span></label>
+                <select id="inv-l2" class="invi"><option value="">— select —</option></select>
+                <div class="invf-note" id="ia-l2-note">Pick a Clover category above first.</div>
+              </div>
+
+              <label class="invchk" for="inv-taxable"><input id="inv-taxable" type="checkbox" checked> Taxable <span class="sub">default tax rate</span></label>
+              <label class="invchk" for="inv-hidden"><input id="inv-hidden" type="checkbox"> Hidden <span class="sub">not on the register</span></label>
             </div>
+
+            <div id="inv-status" class="hidden invstatus" style="margin:14px 0 0"></div>
+          </div>
+
+          <div class="invp-foot">
+            <span id="ia-foot">Will create <b>6 items</b> · category resolved per store</span>
+            <span class="invp-right">
+              <button type="button" class="invbtn invbtn-ghost" onclick="invResetAddForm()">Reset</button>
+              <button id="inv-submit" type="button" class="invbtn invbtn-primary" onclick="createCloverItem()">Create item</button>
+            </span>
           </div>
         </div>
 
-        <!-- ── Edit Item Modal ───────────────────────────────────── -->
-        <div id="inv-edit-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/50 p-4">
-          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-lg p-6">
-            <h3 id="inv-edit-title" class="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-4">Edit Item</h3>
-            <div class="grid grid-cols-2 gap-4">
-              <div class="col-span-2">
-                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Name</label>
-                <input id="inv-edit-name" type="text" class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Code / SKU</label>
-                <input id="inv-edit-code" type="text" class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Price ($)</label>
-                <input id="inv-edit-price" type="number" step="0.01" min="0" class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Unit Cost ($)</label>
-                <input id="inv-edit-cost" type="number" step="0.01" min="0" class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Sub-category (L3)</label>
-                <input id="inv-edit-l3" type="text" list="inv-edit-l3-list" class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
-                <datalist id="inv-edit-l3-list"></datalist>
-              </div>
-              <div class="flex items-end gap-4 pb-1">
-                <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200 cursor-pointer">
-                  <input id="inv-edit-taxable" type="checkbox" class="w-5 h-5 rounded border-2 border-gray-400 dark:border-gray-500 accent-[#3BB54A] focus:ring-2 focus:ring-[#3BB54A] focus:ring-offset-1 dark:focus:ring-offset-gray-800 cursor-pointer">Taxable
-                </label>
-                <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200 cursor-pointer">
-                  <input id="inv-edit-hidden" type="checkbox" class="w-5 h-5 rounded border-2 border-gray-400 dark:border-gray-500 accent-[#3BB54A] focus:ring-2 focus:ring-[#3BB54A] focus:ring-offset-1 dark:focus:ring-offset-gray-800 cursor-pointer">Hidden
-                </label>
-              </div>
-            </div>
-            <div id="inv-edit-status" class="hidden mt-3 text-sm px-4 py-2 rounded-lg"></div>
-            <div class="flex justify-end gap-3 mt-5">
-              <button onclick="closeInvModal('inv-edit-modal')" class="px-4 py-2 text-sm font-semibold bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-100 rounded-lg">Cancel</button>
-              <button onclick="saveEditItem()" class="px-4 py-2 text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg">Save Changes</button>
-            </div>
+        <!-- Per-store outcome. The endpoint already returns a results[] with a stage and a
+             duplicate flag; this gives each outcome a row, the reason in plain English, and
+             the one action that resolves it. -->
+        <div id="inv-results" class="hidden invp">
+          <div class="invp-bar">
+            <span class="invp-lbl">Result</span>
+            <span class="invp-right" id="inv-results-tally"></span>
+          </div>
+          <div id="inv-results-note" class="invp-status hidden"></div>
+          <div id="inv-results-body" style="padding-top:8px"></div>
+          <div class="invp-legend">
+            <span class="invlg"><span class="invlg-sw" style="background:rgba(34,197,94,.10);border-color:rgba(22,101,52,.28)"></span>Created — a new Clover item exists</span>
+            <span class="invlg"><span class="invlg-sw" style="background:rgba(245,158,11,.16);border-color:rgba(180,83,9,.45)"></span>Skipped — that code was already in use, nothing changed</span>
+            <span class="invlg"><span class="invlg-sw" style="background:rgba(192,57,43,.10);border-color:rgba(192,57,43,.40)"></span>Failed — nothing was created in that store</span>
           </div>
         </div>
-
-        <!-- ── Delete Confirm Modal ──────────────────────────────── -->
-        <div id="inv-delete-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/50 p-4">
-          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md p-6">
-            <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-3">Delete Item?</h3>
-            <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
-              Delete <strong id="inv-del-name" class="text-gray-800 dark:text-gray-100"></strong>
-              <span class="text-gray-500">(code: <span id="inv-del-code"></span>)</span>?
-            </p>
-            <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer mb-5">
-              <input id="inv-del-all-stores" type="checkbox" class="rounded">
-              Also delete from all other stores
-            </label>
-            <div id="inv-del-status" class="hidden mb-3 text-sm px-4 py-2 rounded-lg"></div>
-            <div class="flex justify-end gap-3">
-              <button onclick="closeInvModal('inv-delete-modal')" class="px-4 py-2 text-sm font-semibold bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-100 rounded-lg">Cancel</button>
-              <button onclick="confirmDelete()" class="px-4 py-2 text-sm font-semibold bg-red-600 hover:bg-red-700 text-white rounded-lg">Delete</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- ── Schedule Sale Modal ───────────────────────────────── -->
-        <div id="inv-sale-modal" style="display:none" class="fixed inset-0 z-50 items-center justify-center bg-black/50 p-4">
-          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-xl p-6 max-h-[90vh] overflow-y-auto">
-            <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-4">Schedule Sale</h3>
-            <!-- Store selector -->
-            <div class="mb-4">
-              <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Stores</span>
-              <div id="inv-sale-stores" class="flex flex-wrap gap-2 mt-1.5">
-                <label class="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer"><input type="checkbox" value="BL1" class="accent-[#3BB54A] inv-sale-store-cb"> BL1</label>
-                <label class="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer"><input type="checkbox" value="BL2" class="accent-[#3BB54A] inv-sale-store-cb"> BL2</label>
-                <label class="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer"><input type="checkbox" value="BL4" class="accent-[#3BB54A] inv-sale-store-cb"> BL4</label>
-                <label class="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer"><input type="checkbox" value="BL8" class="accent-[#3BB54A] inv-sale-store-cb"> BL8</label>
-                <label class="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer"><input type="checkbox" value="BL16" class="accent-[#3BB54A] inv-sale-store-cb"> BL16</label>
-                <label class="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer"><input type="checkbox" value="BL14" class="accent-[#3BB54A] inv-sale-store-cb"> BL14</label>
-              </div>
-            </div>
-            <!-- Items list -->
-            <div class="mb-4">
-              <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Items selected</p>
-              <div id="inv-sale-items-list" class="space-y-1 max-h-40 overflow-y-auto pr-1"></div>
-            </div>
-            <!-- Discount -->
-            <div class="mb-4">
-              <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Discount</p>
-              <div class="flex items-center gap-3 flex-wrap">
-                <label class="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
-                  <input type="radio" name="inv-sale-kind" value="percent" checked onchange="updateSalePreview()" class="accent-[#3BB54A]"> % off
-                </label>
-                <label class="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
-                  <input type="radio" name="inv-sale-kind" value="amount" onchange="updateSalePreview()" class="accent-[#3BB54A]"> $ off
-                </label>
-                <input id="inv-sale-discount-val" type="number" min="0.01" step="0.01" placeholder="20" oninput="updateSalePreview()" class="w-24 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
-              </div>
-            </div>
-            <!-- Sale Label -->
-            <div class="mb-4">
-              <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Sale Label <span class="font-normal normal-case">(optional)</span></label>
-              <input id="inv-sale-label" type="text" maxlength="30" placeholder="e.g. Flash Sale, Manager Sale" oninput="updateSalePreview()" class="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
-            </div>
-            <!-- Date range -->
-            <div class="mb-4 grid grid-cols-2 gap-4">
-              <div>
-                <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Start (ET)</label>
-                <input id="inv-sale-start" type="datetime-local" oninput="updateSalePreview()" class="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
-              </div>
-              <div>
-                <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">End (ET)</label>
-                <input id="inv-sale-end" type="datetime-local" oninput="updateSalePreview()" class="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
-              </div>
-            </div>
-            <p class="text-[11px] text-gray-400 dark:text-gray-500 -mt-2 mb-4">All times are Eastern Time. Sale activates within ~60 seconds of start.</p>
-            <!-- Preview -->
-            <div id="inv-sale-preview" class="hidden mb-4 p-3 rounded-lg bg-gray-50 dark:bg-gray-700/50 text-xs text-gray-700 dark:text-gray-300 space-y-1"></div>
-            <!-- Status -->
-            <div id="inv-sale-status" class="hidden mb-3 text-sm px-4 py-2 rounded-lg"></div>
-            <div class="flex justify-end gap-3">
-              <button onclick="closeInvModal('inv-sale-modal')" class="px-4 py-2 text-sm font-semibold bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-100 rounded-lg">Cancel</button>
-              <button id="inv-sale-submit" onclick="submitSaleSchedule()" class="px-4 py-2 text-sm font-semibold bg-green-600 hover:bg-green-700 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed">Schedule Sale</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- ── Scheduled Sales card ──────────────────────────────── -->
-        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 mt-4">
-          <button onclick="toggleSaleSchedules()" class="w-full flex items-center justify-between px-6 py-4 text-left">
-            <span class="text-base font-semibold text-gray-800 dark:text-gray-100">Scheduled Sales</span>
-            <svg id="inv-sched-chevron" class="w-5 h-5 text-gray-500 transition-transform duration-200 rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-            </svg>
-          </button>
-          <div id="inv-sched-body" class="border-t border-gray-100 dark:border-gray-700 px-6 pb-6 pt-4">
-            <!-- Controls -->
-            <div class="flex flex-wrap gap-3 mb-4">
-              <select id="inv-sched-store" class="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
-                <option value="BL1">BL1</option><option value="BL2">BL2</option><option value="BL4">BL4</option>
-                <option value="BL8">BL8</option><option value="BL16">BL16</option><option value="BL14">BL14</option>
-              </select>
-              <select id="inv-sched-filter" onchange="loadSaleSchedules()" class="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
-                <option value="all">All</option>
-                <option value="upcoming">Upcoming</option>
-                <option value="active">Active</option>
-                <option value="past">Past</option>
-              </select>
-              <button onclick="loadSaleSchedules()" class="px-4 py-2 text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">Load</button>
-            </div>
-            <div id="inv-sched-status" class="hidden mb-3 text-sm px-4 py-2 rounded-lg"></div>
-            <div id="inv-sched-list" class="space-y-3"></div>
-          </div>
-        </div>
-
       </div>
-    </div><!-- end #page-inventory -->
+    </div><!-- end #page-inventory-add -->
+
+    <!-- ══ Inventory Viewer ══════════════════════════════════════════════ -->
+    <div id="page-inventory-viewer" class="hidden">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-7xl mx-auto flex items-start gap-4 flex-wrap">
+          <div>
+            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Inventory Viewer</h1>
+            <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">The Clover catalog for one store — search, fix, and select for a sale.</p>
+          </div>
+          <div class="ml-auto flex gap-2 items-center flex-wrap">
+            <button type="button" class="invbtn invbtn-ghost invbtn-sm" onclick="navigateToPage('inventory-add')">Add item</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="max-w-7xl mx-auto px-6 py-6">
+        <!-- Selection bar. Only present when rows are ticked. -->
+        <div id="inv-sel-toolbar" class="hidden invstatus info">
+          <span class="ico">✓</span>
+          <span>
+            <b id="inv-sel-count"></b> selected · <span id="inv-sel-value"></span> combined retail.
+            <span class="invdim">Scheduling from here opens Schedule Sale with these items already loaded.</span>
+          </span>
+          <span style="margin-left:auto;display:flex;gap:8px;flex-shrink:0">
+            <button type="button" class="invbtn invbtn-ghost invbtn-sm" onclick="clearInvSelection()">Clear</button>
+            <button type="button" class="invbtn invbtn-primary invbtn-sm" style="padding:6px 13px" onclick="openSaleModal()">Schedule sale →</button>
+          </span>
+        </div>
+
+        <div class="invp">
+          <div class="invp-bar">
+            <span class="invp-lbl">Catalog</span>
+            <select id="inv-view-store" class="invi invi-sm" onchange="invViewStore=this.value">
+              <option value="BL1">BL1 · Coliseum</option>
+              <option value="BL2">BL2 · South Bend</option>
+              <option value="BL4">BL4 · Dupont</option>
+              <option value="BL8">BL8 · Holland</option>
+              <option value="BL14">BL14 · Battle Creek</option>
+              <option value="BL16">BL16 · Indy East</option>
+            </select>
+            <input id="inv-view-search" type="search" class="invi invi-sm invi-grow" placeholder="Search name, code or category…" oninput="renderInvTable()">
+            <span class="invp-right">
+              <button id="inv-btn-dup" type="button" class="invbtn invbtn-ghost invbtn-sm" onclick="findDuplicates()">Find duplicates</button>
+              <button id="inv-btn-nocost" type="button" class="invbtn invbtn-ghost invbtn-sm" onclick="invToggleNoCost()">No cost</button>
+              <button type="button" class="invbtn invbtn-ghost invbtn-sm" onclick="loadInventory(true)">Load</button>
+              <button type="button" class="invbtn invbtn-ghost invbtn-sm" onclick="clearInvViewer()">Clear</button>
+            </span>
+          </div>
+
+          <div id="inv-view-status" class="hidden invp-status"></div>
+
+          <div id="inv-view-table-wrap" class="hidden invscroll">
+            <table class="invtbl">
+              <thead>
+                <tr id="inv-thead-row">
+                  <th class="ck stick" style="width:34px"><input type="checkbox" id="inv-sel-all" aria-label="Select all" onchange="toggleSelectAll(this.checked)"></th>
+                  <th class="stick invsort" style="left:34px" onclick="sortInvTable('name')">Item <span class="ar" id="inv-sort-name"></span></th>
+                  <th class="invsort" onclick="sortInvTable('code')">Code <span class="ar" id="inv-sort-code"></span></th>
+                  <th>Category</th>
+                  <th class="num invsort" onclick="sortInvTable('price')">Price <span class="ar" id="inv-sort-price"></span></th>
+                  <th class="num invsort" onclick="sortInvTable('cost')">Cost <span class="ar" id="inv-sort-cost"></span></th>
+                  <th class="num invsort" onclick="sortInvTable('gp')">GP% <span class="ar" id="inv-sort-gp"></span></th>
+                  <th class="invsort" onclick="sortInvTable('tax')">Flags <span class="ar" id="inv-sort-tax"></span></th>
+                  <th class="num invsort" onclick="sortInvTable('modified')">Modified <span class="ar" id="inv-sort-modified"></span></th>
+                  <th style="width:92px"></th>
+                </tr>
+              </thead>
+              <tbody id="inv-view-tbody"></tbody>
+            </table>
+          </div>
+
+          <div id="inv-view-legend" class="hidden invp-legend">
+            <span class="invlg"><span class="invlg-sw" style="background:rgba(245,158,11,.16);border-color:rgba(180,83,9,.45)"></span>Duplicate code — two items share this SKU</span>
+            <span class="invlg"><span class="invlg-sw" style="background:rgba(34,197,94,.10);border-color:rgba(22,101,52,.28)"></span>Selected for a sale</span>
+            <span class="invlg"><span class="invbdg">hidden</span>Off the register — still in the catalog</span>
+            <span class="invlg"><span class="invbdg b">2 cats</span>In more than one Clover category</span>
+            <span class="invlg"><span class="invdim">—</span>No cost recorded, so GP% is unknowable (never shown as 0%)</span>
+          </div>
+        </div>
+      </div>
+    </div><!-- end #page-inventory-viewer -->
+
+    <!-- ══ Schedule Sale ═════════════════════════════════════════════════
+         Was a modal reachable only by ticking rows in the Viewer, and the one modal
+         in this file driven by inline style.display rather than .hidden (with a
+         matching special case in closeInvModal). As a page it is reachable directly
+         and the schedule log sits on the same screen as the composer. -->
+    <div id="page-inventory-sale" class="hidden">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-7xl mx-auto flex items-start gap-4 flex-wrap">
+          <div>
+            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Schedule Sale</h1>
+            <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Temporary price changes that apply and revert themselves.</p>
+          </div>
+          <div class="ml-auto flex gap-2 items-center flex-wrap">
+            <button type="button" class="invbtn invbtn-ghost invbtn-sm" onclick="navigateToPage('inventory-viewer')">Pick items →</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="max-w-7xl mx-auto px-6 py-6">
+        <!-- Step 1 · items -->
+        <div class="invp">
+          <div class="invp-bar">
+            <span class="invstep"><span class="invstep-n">1</span><span class="invp-lbl">Items</span></span>
+          </div>
+          <div class="invp-status" id="inv-sale-items-note">
+            Nothing selected yet. Items come from the Inventory Viewer — tick rows there, then come back.
+          </div>
+          <div class="invp-body">
+            <div id="inv-sale-items-list" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+          </div>
+        </div>
+
+        <!-- Step 2 · discount and window -->
+        <div class="invp">
+          <div class="invp-bar">
+            <span class="invstep"><span class="invstep-n">2</span><span class="invp-lbl">Discount &amp; window</span></span>
+          </div>
+          <div class="invp-body">
+            <div class="invgrid">
+              <div class="invf invspan2">
+                <span class="invf-l">Locations <span class="invf-req">*</span></span>
+                <div class="invstores" id="inv-sale-stores">
+                  <label class="invst"><input type="checkbox" value="BL1" class="inv-sale-store-cb" onchange="invSyncStoreChip(this)"> BL1 <span class="nm">Coliseum</span></label>
+                  <label class="invst"><input type="checkbox" value="BL2" class="inv-sale-store-cb" onchange="invSyncStoreChip(this)"> BL2 <span class="nm">South Bend</span></label>
+                  <label class="invst"><input type="checkbox" value="BL4" class="inv-sale-store-cb" onchange="invSyncStoreChip(this)"> BL4 <span class="nm">Dupont</span></label>
+                  <label class="invst"><input type="checkbox" value="BL8" class="inv-sale-store-cb" onchange="invSyncStoreChip(this)"> BL8 <span class="nm">Holland</span></label>
+                  <label class="invst"><input type="checkbox" value="BL14" class="inv-sale-store-cb" onchange="invSyncStoreChip(this)"> BL14 <span class="nm">Battle Creek</span></label>
+                  <label class="invst"><input type="checkbox" value="BL16" class="inv-sale-store-cb" onchange="invSyncStoreChip(this)"> BL16 <span class="nm">Indy East</span></label>
+                </div>
+                <div class="invf-note">One schedule is created per location.</div>
+              </div>
+
+              <div class="invf">
+                <span class="invf-l">Discount <span class="invf-req">*</span></span>
+                <div style="display:flex;gap:9px;align-items:center">
+                  <label class="invchk" style="flex:0 0 auto"><input type="radio" name="inv-sale-kind" value="percent" checked onchange="updateSalePreview()"> % off</label>
+                  <label class="invchk" style="flex:0 0 auto"><input type="radio" name="inv-sale-kind" value="amount" onchange="updateSalePreview()"> $ off</label>
+                  <input id="inv-sale-discount-val" type="number" min="0.01" step="0.01" class="invi" placeholder="20" oninput="updateSalePreview()">
+                </div>
+                <div class="invf-note" id="inv-sale-dnote">Must be under 100%. Never prices an item below $0.01.</div>
+              </div>
+
+              <div class="invf">
+                <label class="invf-l" for="inv-sale-label">Sale label <span class="invf-opt">optional · 30 max</span></label>
+                <input id="inv-sale-label" type="text" maxlength="30" class="invi" placeholder="e.g. Flash Sale, Manager Sale" oninput="updateSalePreview()">
+                <div class="invf-note">Appears in the item name on the register while the sale runs.</div>
+              </div>
+
+              <div class="invf">
+                <label class="invf-l" for="inv-sale-start">Starts <span class="invf-req">*</span> <span class="invf-opt">Eastern</span></label>
+                <input id="inv-sale-start" type="datetime-local" class="invi" oninput="updateSalePreview()">
+                <div class="invf-note">Must be in the future. Applies within ~60s.</div>
+              </div>
+
+              <div class="invf">
+                <label class="invf-l" for="inv-sale-end">Ends <span class="invf-req">*</span> <span class="invf-opt">Eastern</span></label>
+                <input id="inv-sale-end" type="datetime-local" class="invi" oninput="updateSalePreview()">
+                <div class="invf-note" id="inv-sale-dur">All times are Eastern.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="invp-bar" style="border-top:1px solid rgba(20,16,8,.10);border-bottom:0">
+            <span class="invp-lbl">Preview</span>
+            <span class="invp-right invdim" style="font-size:11.5px">Exactly what the register will show</span>
+          </div>
+          <div class="invp-body" style="padding-top:12px">
+            <div id="inv-sale-preview" class="invitems" style="margin-top:0"></div>
+            <div id="inv-sale-status" class="hidden invstatus" style="margin:13px 0 0"></div>
+          </div>
+
+          <div class="invp-foot">
+            <span id="inv-sale-foot">Pick items, a discount and a window.</span>
+            <span class="invp-right">
+              <button id="inv-sale-submit" type="button" class="invbtn invbtn-primary" onclick="submitSaleSchedule()">Schedule sale</button>
+            </span>
+          </div>
+        </div>
+
+        <!-- Step 3 · the log -->
+        <div class="invp">
+          <div class="invp-bar">
+            <span class="invstep"><span class="invstep-n idle">3</span><span class="invp-lbl">Scheduled sales</span></span>
+            <select id="inv-sched-store" class="invi invi-sm" onchange="loadSaleSchedules()">
+              <option value="BL1">BL1 · Coliseum</option>
+              <option value="BL2">BL2 · South Bend</option>
+              <option value="BL4">BL4 · Dupont</option>
+              <option value="BL8">BL8 · Holland</option>
+              <option value="BL14">BL14 · Battle Creek</option>
+              <option value="BL16">BL16 · Indy East</option>
+            </select>
+            <select id="inv-sched-filter" class="invi invi-sm" onchange="loadSaleSchedules()">
+              <option value="all">All</option>
+              <option value="upcoming">Upcoming</option>
+              <option value="active">Active</option>
+              <option value="past">Past</option>
+            </select>
+            <span class="invp-right">
+              <button type="button" class="invbtn invbtn-ghost invbtn-sm" onclick="loadSaleSchedules()">Reload</button>
+            </span>
+          </div>
+          <div id="inv-sched-status" class="hidden invp-status"></div>
+          <div id="inv-sched-list" style="padding-top:4px"></div>
+          <div class="invp-legend">
+            <span class="invlg"><span class="invbdg g">Active</span>Running now — prices are discounted on the register</span>
+            <span class="invlg"><span class="invbdg b">Upcoming</span>Not applied yet; cancelling costs nothing</span>
+            <span class="invlg"><span class="invbdg">Completed</span>Ran and reverted cleanly</span>
+            <span class="invlg"><span class="invbdg r">Error</span>At least one item did not revert — check the price by hand</span>
+          </div>
+        </div>
+      </div>
+    </div><!-- end #page-inventory-sale -->
+
+    <!-- ══ Inventory modals (owned by the Viewer) ════════════════════════
+         Both use .hidden, like every other modal in this file. The sale modal that
+         used inline style.display is gone — Schedule Sale is a page now — and so is
+         closeInvModal's special case for it. -->
+    <div id="inv-edit-modal" class="invmodal hidden">
+      <div class="invp" style="width:100%;max-width:560px;max-height:90vh;overflow:auto;margin:0">
+        <div class="invp-bar">
+          <span class="invp-lbl" id="inv-edit-title">Edit item</span>
+          <span class="invp-right">
+            <button type="button" class="invbtn invbtn-ghost invbtn-sm" onclick="closeInvModal('inv-edit-modal')">Close</button>
+          </span>
+        </div>
+        <div class="invp-body">
+          <div class="invgrid">
+            <div class="invf invspan2">
+              <label class="invf-l" for="inv-edit-name">Name <span class="invf-req">*</span></label>
+              <input id="inv-edit-name" type="text" class="invi">
+            </div>
+            <div class="invf">
+              <label class="invf-l" for="inv-edit-code">Code / SKU</label>
+              <input id="inv-edit-code" type="text" class="invi">
+            </div>
+            <div class="invf">
+              <label class="invf-l" for="inv-edit-price">Retail price</label>
+              <input id="inv-edit-price" type="number" min="0" step="0.01" class="invi">
+            </div>
+            <div class="invf">
+              <label class="invf-l" for="inv-edit-cost">Unit cost <span class="invf-opt">optional</span></label>
+              <input id="inv-edit-cost" type="number" min="0" step="0.01" class="invi">
+            </div>
+            <div class="invf">
+              <label class="invf-l" for="inv-edit-l3">Clover category <span class="invf-opt">L3</span></label>
+              <input id="inv-edit-l3" type="text" list="inv-edit-l3-list" class="invi">
+              <datalist id="inv-edit-l3-list"></datalist>
+            </div>
+            <label class="invchk" for="inv-edit-taxable"><input id="inv-edit-taxable" type="checkbox"> Taxable</label>
+            <label class="invchk" for="inv-edit-hidden"><input id="inv-edit-hidden" type="checkbox"> Hidden</label>
+          </div>
+          <div id="inv-edit-status" class="hidden invstatus" style="margin:14px 0 0"></div>
+        </div>
+        <div class="invp-foot">
+          <span class="invp-right">
+            <button type="button" class="invbtn invbtn-ghost" onclick="closeInvModal('inv-edit-modal')">Cancel</button>
+            <button type="button" class="invbtn invbtn-primary" onclick="saveEditItem()">Save changes</button>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <div id="inv-delete-modal" class="invmodal hidden">
+      <div class="invp" style="width:100%;max-width:460px;margin:0">
+        <div class="invp-bar">
+          <span class="invp-lbl">Delete item</span>
+        </div>
+        <div class="invp-body">
+          <div style="font-size:13.5px;font-weight:600" id="inv-del-name"></div>
+          <div class="invdim" style="font-size:12px;margin-top:3px">Code <span id="inv-del-code"></span></div>
+          <label class="invchk" for="inv-del-all-stores" style="margin-top:14px">
+            <input id="inv-del-all-stores" type="checkbox"> Also delete from every other location
+          </label>
+          <div id="inv-del-status" class="hidden invstatus" style="margin:14px 0 0"></div>
+        </div>
+        <div class="invp-foot">
+          <span class="invp-right">
+            <button type="button" class="invbtn invbtn-ghost" onclick="closeInvModal('inv-delete-modal')">Cancel</button>
+            <button type="button" class="invbtn invbtn-danger" style="padding:10px 18px;font-size:13px" onclick="confirmDelete()">Delete</button>
+          </span>
+        </div>
+      </div>
+    </div>
 
     <!-- ══ Bin Dump ══════════════════════════════════════════════════════ -->
     <div id="page-bin-dump" class="hidden">
@@ -11081,14 +11526,12 @@
     // Weekly table
     el('sd-content-weekly').innerHTML = buildWeeklyTable(storeName);
 
-    // Show page — hide every other top-level page (previously only some were
-    // listed, so drilling into a store from All Stores left both pages
-    // visible stacked in the DOM).
-    const _pages = ['dashboard','store-detail','all-stores-detail','weekly-summary','marketing','flow-calendar','inventory','supply-request','submit-photos','content','settings','accessibility','users','admin-settings'];
-    for (const _p of _pages) {
-      const _pe = el('page-' + _p);
-      if (_pe) _pe.classList.toggle('hidden', _p !== 'store-detail');
-    }
+    // Show page — hide every other top-level page. This was a hardcoded list, which
+    // had already gone stale twice: it never gained comments, any merch-* page,
+    // bin-dump or mos, so drilling into a store from one of those left both sections
+    // stacked in the DOM. showOnlyPage derives the list from the DOM and is what
+    // showAllStoresDetail already uses; there is no reason for this one to differ.
+    showOnlyPage('store-detail');
     document.querySelectorAll('.nav-item[data-page]').forEach(item => item.classList.remove('active'));
     if (typeof window.__syncBottomNav === 'function') try { window.__syncBottomNav('store-detail'); } catch (_) {}
     switchStoreTab(rerender ? currentStoreTab : 'weekly');
@@ -11380,11 +11823,12 @@
     // Only fires for a role outside FINANCIAL_ROLES — today `staff` and anything
     // unrecognised. Every role in production is unaffected.
     const FINANCIAL_PAGES = ['dashboard', 'weekly-summary', 'store-detail',
-                             'all-stores-detail', 'inventory', 'supply-request', 'labor'];
+                             'all-stores-detail', 'inventory-add', 'inventory-viewer',
+                             'inventory-sale', 'supply-request', 'labor'];
     if (FINANCIAL_PAGES.includes(page) && !canSeeFinancials(currentUser)) return;
 
     // Guard admin-only pages
-    const adminOnly = ['inventory', 'users', 'marketing', 'flow-calendar', 'content', 'comments', 'merch-criteria', 'merch-coverage', 'merch-manifests', 'merch-velocity', 'merch-products'];
+    const adminOnly = ['inventory-add', 'inventory-viewer', 'inventory-sale', 'users', 'marketing', 'flow-calendar', 'content', 'comments', 'merch-criteria', 'merch-coverage', 'merch-manifests', 'merch-velocity', 'merch-products'];
     // Price Scan is the one Merchandising page a MANAGER uses — they price items on the
     // floor. Everything else there is a buying surface and stays admin-only.
     const managerPages = ['merch-scan'];
@@ -11515,9 +11959,19 @@
     if (page === 'comments') {
       if (typeof fbcLoad === 'function') fbcLoad();
     }
-    // Keep the Marketing dropdown expanded while on any of its pages.
-    if ((page === 'marketing' || page === 'flow-calendar' || page === 'submit-photos' || page === 'content' || page === 'comments') && typeof toggleMarketingMenu === 'function') {
-      toggleMarketingMenu(true);
+    // Keep the owning sidebar dropdown expanded while on any of its pages.
+    //
+    // This was one hardcoded page-id list per group — the single spot a new child
+    // page could be forgotten, and landing on Inventory would have made a third.
+    // Derive it from the markup instead: find the sub-item carrying this data-page,
+    // open the .nav-sub it lives in, and rotate that group's chevron. Structural, so
+    // it needs no id convention and no edit when a child is added anywhere.
+    const _openSub = [...document.querySelectorAll('#sidebar .nav-sub .nav-subitem[data-page]')]
+      .find(n => n.dataset.page === page)?.closest('.nav-sub');
+    if (_openSub) {
+      _openSub.classList.remove('hidden');
+      const _chev = _openSub.previousElementSibling?.querySelector('.nav-chev');
+      if (_chev) _chev.style.transform = 'rotate(90deg)';
     }
     if (page === 'ebay-cases') {
       if (typeof initEbayCases === 'function') initEbayCases();
@@ -11571,13 +12025,21 @@
     if (page === 'opportunity-buys') {
       if (typeof initOppBuys === 'function') initOppBuys();
     }
+    // The single Inventory page had NO init hook — categories were fetched once at
+    // boot for BL1 and the L2 list filled by an IIFE. Three pages need their own.
+    if (page === 'inventory-add') {
+      if (typeof initInventoryAdd === 'function') initInventoryAdd();
+    }
+    if (page === 'inventory-viewer') {
+      if (typeof updateSelectionUI === 'function') updateSelectionUI();
+    }
+    if (page === 'inventory-sale') {
+      if (typeof invLoadSaleComposer === 'function') invLoadSaleComposer(null);
+      if (typeof loadSaleSchedules === 'function') loadSaleSchedules();
+    }
     // Leaving the page must kill the camera — a torch left on in a pocket is the
     // failure people notice, and the stream holds the lens against Price Scan.
     if (page !== 'mos' && typeof mosStopScan === 'function') mosStopScan();
-    // Keep the Merchandising dropdown expanded while on any of its pages.
-    if ((page === 'merch-scan' || page === 'merch-coverage' || page === 'merch-velocity' || page === 'merch-manifests' || page === 'merch-criteria' || page === 'merch-shelf-count' || page === 'merch-products') && typeof toggleMerchMenu === 'function') {
-      toggleMerchMenu(true);
-    }
 
     // Close mobile sidebar
     const sidebar = el('sidebar');
@@ -16335,6 +16797,10 @@
   // ═══════════════════════════════════════════════════════════════
   //  SETTINGS – CUSTOM SALES CATEGORIZATION
   // ═══════════════════════════════════════════════════════════════
+  const INV_STORES = ['BL1', 'BL2', 'BL4', 'BL8', 'BL14', 'BL16'];
+  const INV_STORE_LABEL = { BL1: 'Coliseum', BL2: 'South Bend', BL4: 'Dupont',
+                            BL8: 'Holland', BL14: 'Battle Creek', BL16: 'Indy East' };
+
   const OVERRIDE_L2_OPTIONS = [
     'Softline - Apparel', 'Softline - Shoes', 'Softline - Accessories',
     'Home', 'Furniture', 'Hardlines',
@@ -22461,6 +22927,21 @@
     if (chev) chev.style.transform = open ? 'rotate(90deg)' : '';
   }
   window.toggleMerchMenu = toggleMerchMenu;
+
+  // Inventory sidebar dropdown. Same shape as toggleMarketingMenu / toggleMerchMenu:
+  // the only state is the `hidden` class on the sub-list, and the chevron is rotated
+  // by inline style. Pass true/false to force open/closed; omit to toggle.
+  function toggleInventoryMenu(force) {
+    const sub = el('nav-inventory-sub');
+    const chev = el('nav-inventory-chev');
+    if (!sub) return;
+    const open = force === true ? true
+      : force === false ? false
+      : sub.classList.contains('hidden');
+    sub.classList.toggle('hidden', !open);
+    if (chev) chev.style.transform = open ? 'rotate(90deg)' : '';
+  }
+  window.toggleInventoryMenu = toggleInventoryMenu;
 
   // ── Manifest Scorer ───────────────────────────────────────────────────────
   // The CSV is held in memory only: a remap re-reads the same text rather than the
@@ -30064,17 +30545,39 @@
   }
 
   // ── Inventory page ──────────────────────────────────────────────
-  function invSetStatus(msg, tone) {
-    const s = el('inv-status');
-    const tones = {
-      ok:    'border-green-200 dark:border-green-700 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400',
-      error: 'border-red-200 dark:border-red-700 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400',
-      info:  'border-yellow-200 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400',
-    };
-    s.className = `text-sm rounded-lg px-4 py-3 border ${tones[tone] || tones.info}`;
-    s.classList.remove('hidden');
+  // One status strip for every Inventory surface. index.html has no toast helper —
+  // transient feedback is an inline strip per panel — and this was five near-copies
+  // writing five different sets of Tailwind colour classes, none of which matched
+  // the panel they sat in. Tone names are kept as the callers already spell them
+  // ('error' and 'err', 'ok', 'info', 'warn').
+  function invStrip(id, msg, tone) {
+    const s = el(id);
+    if (!s) return;
+    if (!msg) { s.classList.add('hidden'); return; }
+    const t = (tone === 'error' || tone === 'err') ? 'err'
+            : tone === 'info' ? 'info'
+            : tone === 'warn' ? 'warn' : 'ok';
+    s.className = 'invstatus' + (t === 'ok' ? '' : ' ' + t);
+    // The message may carry markup (createCloverItem builds links into it), so the
+    // caller's HTML goes in its own span and never into the icon.
+    s.innerHTML = '<span class="ico"></span><span class="invstrip-msg"></span>';
+    s.firstElementChild.textContent = t === 'err' ? '!' : t === 'warn' ? '!' : t === 'info' ? 'i' : '\u2713';
+    s.lastElementChild.innerHTML = msg;
+  }
+
+  function invSetStatus(msg, tone)       { invStrip('inv-status', msg, tone); }
+  // The Viewer's status is the panel's summary SENTENCE (§4.8), not a coloured strip
+  // — except when it is reporting a failure, where the strip is the right shape.
+  function invViewSetStatus(msg, tone) {
+    const s = el('inv-view-status');
+    if (!s) return;
+    if (!msg) { s.classList.add('hidden'); return; }
+    if (tone === 'error') { invStrip('inv-view-status', msg, 'error'); return; }
+    s.className = 'invp-status';
     s.innerHTML = msg;
   }
+  function invEditSetStatus(msg, tone)   { invStrip('inv-edit-status', msg, tone); }
+  function invDelSetStatus(msg, tone)    { invStrip('inv-del-status', msg, tone || 'error'); }
 
   async function loadCategoriesForStore(storeVal) {
     const fetchStore = (storeVal === 'all') ? 'BL1' : storeVal;
@@ -30153,44 +30656,58 @@
       const anyDuplicate = results.some(r => r.duplicate);
       const anyRealError = results.some(r => !r.ok && !r.duplicate);
 
+      // One coloured row per store, with the reason in plain English and the one
+      // action that resolves it. This was a four-column table (Store / Status /
+      // Item ID / Category) that only rendered when more than one store was
+      // targeted, and a single-store result got a one-line div instead.
       const rb = el('inv-results-body');
-      if (results.length === 1) {
-        const r = results[0];
-        rb.innerHTML = r.ok
-          ? `<div class="text-sm text-green-700 dark:text-green-400"><span class="font-semibold">Created</span> — Item ID: <code class="font-mono">${escapeHtml(r.itemId)}</code>${r.categoryCreated ? ' · Category created' : ' · Category matched'}</div>`
-          : r.duplicate
-            ? `<div class="text-sm text-yellow-700 dark:text-yellow-400"><span class="font-semibold">Already exists</span> — Item ID: <code class="font-mono">${escapeHtml(r.existingId)}</code></div>`
-            : `<div class="text-sm text-red-600 dark:text-red-400"><span class="font-semibold">Failed</span> [${escapeHtml(r.stage)}]: ${escapeHtml(r.error)}</div>`;
-      } else {
-        rb.innerHTML = `<table class="w-full text-sm"><thead><tr class="text-left text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-b border-gray-100 dark:border-gray-700"><th class="pb-2 pr-4">Store</th><th class="pb-2 pr-4">Status</th><th class="pb-2 pr-4">Item ID</th><th class="pb-2">Category</th></tr></thead><tbody>
-          ${results.map(r => {
-            const statusCls = r.ok ? 'text-green-600 dark:text-green-400' : r.duplicate ? 'text-yellow-600 dark:text-yellow-400' : 'text-red-600 dark:text-red-400';
-            const statusTxt = r.ok ? '✓ Created' : r.duplicate ? '⚠ Exists' : '✗ Error';
-            const idTxt     = r.ok ? escapeHtml(r.itemId) : r.duplicate ? escapeHtml(r.existingId) : '—';
-            const detailTxt = r.ok
-              ? escapeHtml(l3) + (r.categoryCreated ? ' <span class="text-[10px] text-gray-400">(new)</span>' : '')
-              : r.duplicate
-                ? '<span class="text-[10px] text-gray-400">already in Clover</span>'
-                : escapeHtml(r.error || '') + (r.stage ? ` <span class="text-[10px]">[${escapeHtml(r.stage)}]</span>` : '');
-            return `<tr class="border-b border-gray-50 dark:border-gray-700/50">
-              <td class="py-2 pr-4 font-medium text-gray-700 dark:text-gray-300">${escapeHtml(r.store)}</td>
-              <td class="py-2 pr-4 ${statusCls}">${statusTxt}</td>
-              <td class="py-2 pr-4 font-mono text-gray-600 dark:text-gray-400">${idTxt}</td>
-              <td class="py-2 text-gray-600 dark:text-gray-400">${detailTxt}</td>
-            </tr>`;
-          }).join('')}
-        </tbody></table>`;
-      }
-      // The L2 dropdown on this form used to double as a GLOBAL, all-store
-      // category re-mapping — pick the wrong one once and an entire category
-      // moved bucket at every store, silently. The worker now refuses to shadow
-      // a built-in mapping; say so, rather than letting the admin believe the
-      // L2 they chose is the one that will be used.
-      if (data.l3MapSkipped) {
-        rb.innerHTML = `<div class="mb-3 text-sm text-yellow-700 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded px-3 py-2">
-          <span class="font-semibold">Category mapping unchanged</span> — ${escapeHtml(data.l3MapSkipped)}
-        </div>` + rb.innerHTML;
-      }
+      rb.innerHTML = results.map(r => {
+        const tone = r.ok ? 'ok' : r.duplicate ? 'dupe' : 'bad';
+        const label = INV_STORE_LABEL[r.store] || '';
+        let msg, action = '';
+        if (r.ok) {
+          msg = `Created · <b>${escapeHtml(r.itemId)}</b> · category `
+              + (r.categoryCreated ? '<b>created</b>' : 'matched');
+        } else if (r.duplicate) {
+          msg = `Code <b>${escapeHtml(code)}</b> is already in use — nothing was created.`;
+          action = `<button type="button" class="invbtn invbtn-ghost invbtn-sm"
+                      onclick="invOpenInViewer('${escapeHtml(r.store)}','${escapeHtml(code)}')">Open in Viewer</button>`;
+        } else {
+          msg = escapeHtml(r.error || 'Unknown error')
+              + (r.stage ? ` <span class="invbdg">${escapeHtml(r.stage)}</span>` : '');
+        }
+        const badge = r.ok ? '<span class="invbdg g">created</span>'
+                    : r.duplicate ? '<span class="invbdg a">skipped</span>'
+                    : '<span class="invbdg r">failed</span>';
+        return `<div class="invres ${tone}">
+          <span class="s">${escapeHtml(r.store)}</span>
+          <span class="nm">${escapeHtml(label)}</span>
+          <span class="msg">${msg}</span>
+          <span class="r">${action}${badge}</span>
+        </div>`;
+      }).join('');
+
+      const nOk = results.filter(r => r.ok).length;
+      const nDup = results.filter(r => r.duplicate).length;
+      const nBad = results.length - nOk - nDup;
+      el('inv-results-tally').innerHTML =
+          (nOk  ? `<span class="invbdg g">${nOk} created</span>` : '')
+        + (nDup ? `<span class="invbdg a">${nDup} skipped</span>` : '')
+        + (nBad ? `<span class="invbdg r">${nBad} failed</span>` : '');
+      el('inv-results').querySelector('.invp-lbl').textContent =
+        `Result · ${results.length} location${results.length === 1 ? '' : 's'}`;
+
+      // The L2 dropdown on this form used to double as a GLOBAL, all-store category
+      // re-mapping — pick the wrong one once and an entire category moved bucket at
+      // every store, silently. The worker now refuses to shadow a built-in mapping;
+      // say so, rather than letting the admin believe their L2 is the one in use.
+      const note = el('inv-results-note');
+      const notes = [];
+      if (data.costUpdated) notes.push('Item-cost table updated.');
+      if (data.l3Mapped) notes.push(`New category mapped to <b>${escapeHtml(l2)}</b> for every store.`);
+      if (data.l3MapSkipped) notes.push(`<b>Category mapping unchanged</b> — ${escapeHtml(data.l3MapSkipped)}`);
+      note.innerHTML = notes.join(' ');
+      note.classList.toggle('hidden', notes.length === 0);
 
       el('inv-results').classList.remove('hidden');
 
@@ -30228,13 +30745,6 @@
     }
   }
 
-  function toggleAddItem() {
-    const body = el('inv-add-body');
-    const chevron = el('inv-add-chevron');
-    const hidden = body.classList.toggle('hidden');
-    chevron.classList.toggle('rotate-180', !hidden);
-  }
-
   // ── Inventory Viewer ─────────────────────────────────────────
   let invViewStore = 'BL1';
   let invViewItems = [];       // current page
@@ -30242,45 +30752,14 @@
   let invViewOffset = 0;
   let invViewTotal = null;
   let invViewDupMode = false;
-  let invSortField = null;   // 'name'|'code'|'price'|'cost'|'category'|'tax'|'hidden'
+  let invSortField = null;   // 'name'|'code'|'price'|'cost'|'gp'|'category'|'tax'|'modifiedTime'
+  let invNoCostMode = false; // filter: only items Clover holds no cost for
   let invSortAsc = true;
   let invDupCodes = new Set();
   let invPendingDelete = null; // { item }
 
-  function invViewSetStatus(msg, tone) {
-    const s = el('inv-view-status');
-    if (!msg) { s.classList.add('hidden'); return; }
-    const tones = { ok: 'bg-green-50 dark:bg-green-900/30 text-green-800 dark:text-green-200', error: 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300', info: 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300', warn: 'bg-yellow-50 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200' };
-    s.className = `text-sm px-4 py-2 rounded-lg ${tones[tone] || tones.info}`;
-    s.textContent = msg;
-    s.classList.remove('hidden');
-  }
 
-  function invEditSetStatus(msg, tone) {
-    const s = el('inv-edit-status');
-    if (!msg) { s.classList.add('hidden'); return; }
-    const tones = { ok: 'bg-green-50 dark:bg-green-900/30 text-green-800 dark:text-green-200', error: 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300', info: 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' };
-    s.className = `text-sm px-4 py-2 rounded-lg ${tones[tone] || tones.info}`;
-    s.textContent = msg;
-    s.classList.remove('hidden');
-  }
 
-  function invDelSetStatus(msg, tone) {
-    const s = el('inv-del-status');
-    if (!msg) { s.classList.add('hidden'); return; }
-    const tones = { ok: 'bg-green-50 dark:bg-green-900/30 text-green-800 dark:text-green-200', error: 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300' };
-    s.className = `text-sm px-4 py-2 rounded-lg ${tones[tone] || tones.error}`;
-    s.textContent = msg;
-    s.classList.remove('hidden');
-  }
-
-  function toggleInvViewer() {
-    const body = el('inv-viewer-body');
-    const chevron = el('inv-viewer-chevron');
-    const open = body.classList.toggle('hidden') === false;
-    chevron.style.transform = open ? 'rotate(180deg)' : '';
-    try { localStorage.setItem('inv-viewer-open', open ? '1' : '0'); } catch(e) {}
-  }
 
   async function loadInventory(reset = true) {
     invViewStore = el('inv-view-store').value;
@@ -30292,7 +30771,6 @@
     }
     invViewSetStatus('Loading…', 'info');
     el('inv-view-table-wrap').classList.add('hidden');
-    el('inv-view-pagination').classList.add('hidden');
     try {
       let offset = 0;
       while (true) {
@@ -30309,7 +30787,17 @@
         invViewSetStatus(`Loading… ${invViewAllItems.length} items so far`, 'info');
       }
       invViewItems = invViewAllItems;
-      invViewSetStatus(`Loaded ${invViewAllItems.length} items`, 'ok');
+      // Count the duplicates up front so the summary can name them; findDuplicates()
+      // still exists to FILTER to them, but the count should not need a click.
+      invDupCodes = invFindDupCodes(invViewAllItems);
+      const dupCount = invDupCodes.size;
+      const noCost = invViewAllItems.filter(i => !i.cost).length;
+      const label = INV_STORE_LABEL[invViewStore] || invViewStore;
+      invViewSetStatus(
+        `<b>${invViewAllItems.length.toLocaleString()} items</b> in ${invViewStore} · ${label}`
+        + (noCost ? ` · <span class="hi">${noCost} carry no cost</span>, so no margin can be shown for them` : '')
+        + (dupCount ? ` · <span class="hi">${dupCount} code${dupCount === 1 ? ' is' : 's are'} used twice</span>` : '')
+        + `. Straight from Clover.`, 'ok');
       renderInvTable();
     } catch(err) {
       invViewSetStatus('Error: ' + escapeHtml(err.message), 'error');
@@ -30321,11 +30809,32 @@
     return ((item.code || item.sku || '') + '').trim().toLowerCase();
   }
 
+  // Codes held by more than one item. Computed on every load so the table can MARK
+  // them straight away; Find duplicates then only has to FILTER to them.
+  function invFindDupCodes(items) {
+    const counts = new Map();
+    for (const item of items) {
+      const k = dupKey(item);
+      if (!k) continue;
+      counts.set(k, (counts.get(k) || 0) + 1);
+    }
+    return new Set([...counts].filter(([, n]) => n > 1).map(([k]) => k));
+  }
+
+  // Margin is only knowable when BOTH numbers are there. A missing cost returns null
+  // and renders as an em dash — never 0%, which would read as "cut this item" for an
+  // item nobody has costed. Same rule DESIGN.md §4.8 sets for the Coverage heatmap.
+  function invGp(item) {
+    if (!item.price || !item.cost) return null;
+    return (item.price - item.cost) / item.price * 100;
+  }
+
   function renderInvTable() {
     const query = (el('inv-view-search')?.value || '').toLowerCase();
     let rows = invViewDupMode
       ? invViewAllItems.filter(i => invDupCodes.has(dupKey(i)))
       : invViewItems;
+    if (invNoCostMode) rows = rows.filter(i => !i.cost);
     if (query) {
       rows = rows.filter(i => i.name.toLowerCase().includes(query) || i.code.toLowerCase().includes(query) || (i.category || '').toLowerCase().includes(query));
     }
@@ -30339,17 +30848,17 @@
     } else if (invSortField) {
       rows = rows.slice().sort((a, b) => {
         let va, vb;
-        if (invSortField === 'price' || invSortField === 'cost') {
+        if (invSortField === 'price' || invSortField === 'cost' || invSortField === 'modifiedTime') {
           va = a[invSortField] ?? -1;
           vb = b[invSortField] ?? -1;
           return invSortAsc ? va - vb : vb - va;
-        } else if (invSortField === 'tax') {
-          va = a.defaultTaxRates ? 1 : 0;
-          vb = b.defaultTaxRates ? 1 : 0;
+        } else if (invSortField === 'gp') {
+          // Unknown margin sorts as lowest rather than as zero.
+          va = invGp(a) ?? -1; vb = invGp(b) ?? -1;
           return invSortAsc ? va - vb : vb - va;
-        } else if (invSortField === 'hidden') {
-          va = a.hidden ? 1 : 0;
-          vb = b.hidden ? 1 : 0;
+        } else if (invSortField === 'tax') {
+          va = (a.defaultTaxRates ? 1 : 0) + (a.hidden ? 2 : 0);
+          vb = (b.defaultTaxRates ? 1 : 0) + (b.hidden ? 2 : 0);
           return invSortAsc ? va - vb : vb - va;
         } else {
           va = (a[invSortField] || '').toLowerCase();
@@ -30358,45 +30867,188 @@
         }
       });
     }
-    // Update sort indicators
-    ['name','code','price','cost','category','tax','hidden'].forEach(f => {
+    ['name','code','price','cost','gp','category','tax','modified'].forEach(f => {
       const el2 = el(`inv-sort-${f}`);
-      if (el2) el2.textContent = invSortField === f ? (invSortAsc ? '▲' : '▼') : '';
+      const field = f === 'modified' ? 'modifiedTime' : f;
+      if (el2) el2.textContent = invSortField === field ? (invSortAsc ? '\u25b2' : '\u25bc') : '';
     });
+
     const tbody = el('inv-view-tbody');
     if (rows.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="9" class="px-3 py-6 text-center text-gray-400 text-sm">No items found.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10"><div class="invempty"><div class="t">Nothing matches</div>'
+        + '<div class="d">No item in this store matches that search or filter.</div></div></td></tr>';
     } else {
       tbody.innerHTML = rows.map(item => {
         const isDup = invDupCodes.has(dupKey(item));
-        const rowClass = isDup ? 'bg-yellow-50 dark:bg-yellow-900/20' : '';
-        const nameClass = item.hidden ? 'line-through text-gray-400' : 'text-gray-800 dark:text-gray-100';
         const isChecked = invSelectedItems.has(item.id);
-        const escapedName = escapeHtml(item.name);
-        return `<tr class="${rowClass} hover:bg-gray-50 dark:hover:bg-gray-700/50" data-item-name="${escapedName}" data-price-cents="${item.price}">
-          <td class="px-3 py-2">
-            <input type="checkbox" data-item-id="${escapeHtml(item.id)}" data-item-name="${escapedName}" data-price-cents="${item.price}" ${isChecked ? 'checked' : ''}
-              onchange="toggleRowSelect(this)"
-              class="w-4 h-4 rounded border-2 border-gray-400 dark:border-gray-500 accent-[#3BB54A] cursor-pointer">
-          </td>
-          <td class="px-3 py-2 ${nameClass} max-w-[200px] truncate" title="${escapedName}">${escapedName}</td>
-          <td class="px-3 py-2 font-mono text-gray-700 dark:text-gray-300">${escapeHtml(item.code)}</td>
-          <td class="px-3 py-2 text-gray-700 dark:text-gray-300">${fmtDollar(item.price / 100)}</td>
-          <td class="px-3 py-2 text-gray-700 dark:text-gray-300">${item.cost ? fmtDollar(item.cost / 100) : '—'}</td>
-          <td class="px-3 py-2 text-gray-600 dark:text-gray-400 max-w-[160px] truncate" title="${escapeHtml(item.category)}">${escapeHtml(item.category) || '—'}</td>
-          <td class="px-3 py-2 text-center">${item.defaultTaxRates ? '✓' : ''}</td>
-          <td class="px-3 py-2 text-center">${item.hidden ? '✓' : ''}</td>
-          <td class="px-3 py-2 whitespace-nowrap">
-            <button onclick='openEditModal(${JSON.stringify(item)})' class="text-xs px-2 py-1 bg-blue-100 hover:bg-blue-200 dark:bg-blue-900/40 dark:hover:bg-blue-800/60 text-blue-700 dark:text-blue-300 rounded mr-1">Edit</button>
-            <button onclick='openDeleteModal(${JSON.stringify(item)})' class="text-xs px-2 py-1 bg-red-100 hover:bg-red-200 dark:bg-red-900/40 dark:hover:bg-red-800/60 text-red-700 dark:text-red-300 rounded">Del</button>
-          </td>
+        const cls = [isChecked ? 'sel' : '', isDup ? 'dup' : '', item.hidden ? 'off' : ''].filter(Boolean).join(' ');
+        const nm = escapeHtml(item.name);
+        const m = invGp(item);
+        // Clover's item<->category link is many-to-many. `category` is the flattened
+        // primary; `categories` is the whole list, and an item sitting in the sku book
+        // alongside a real category was invisible while only the first was shown.
+        const extraCats = (item.categories || []).length > 1
+          ? ` <span class="invbdg b">${item.categories.length} cats</span>` : '';
+        const gpCell = m === null
+          ? '<span class="invdim">\u2014</span>'
+          : `<b style="color:${m >= 50 ? 'var(--inv-good)' : m >= 30 ? 'var(--inv-warn)' : 'var(--inv-bad)'}">${m.toFixed(0)}%</b>`;
+        return `<tr class="${cls}" data-item-name="${nm}" data-price-cents="${item.price}">
+          <td class="ck stick"><input type="checkbox" data-item-id="${escapeHtml(item.id)}" data-item-name="${nm}" data-price-cents="${item.price}" ${isChecked ? 'checked' : ''} onchange="toggleRowSelect(this)" aria-label="Select ${nm}"></td>
+          <td class="stick" style="left:34px"><span class="invname" title="${nm}">${nm}</span></td>
+          <td>${escapeHtml(item.code) || '<span class="invdim">\u2014</span>'}${isDup ? ' <span class="invbdg a">dup</span>' : ''}</td>
+          <td class="invdim" style="max-width:210px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(item.category)}">${escapeHtml(item.category) || '\u2014'}${extraCats}</td>
+          <td class="num">${item.price ? fmtDollar(item.price / 100) : '<span class="invdim">\u2014</span>'}</td>
+          <td class="num">${item.cost ? fmtDollar(item.cost / 100) : '<span class="invdim">\u2014</span>'}</td>
+          <td class="num">${gpCell}</td>
+          <td>${item.hidden ? '<span class="invbdg">hidden</span> ' : ''}${item.defaultTaxRates ? '' : '<span class="invbdg">no tax</span>'}</td>
+          <td class="num invdim">${item.modifiedTime ? invAgo(item.modifiedTime) : '\u2014'}</td>
+          <td><button type="button" class="invbtn invbtn-ghost invbtn-sm" onclick='openEditModal(${JSON.stringify(item)})'>Edit</button></td>
         </tr>`;
       }).join('');
     }
     el('inv-view-table-wrap').classList.remove('hidden');
+    el('inv-view-legend').classList.remove('hidden');
+  }
+
+  // Compact age for the Modified column. Clover returns epoch millis.
+  function invAgo(ms) {
+    const d = Math.floor((Date.now() - ms) / 864e5);
+    if (d <= 0) return 'today';
+    if (d < 31) return d + 'd';
+    if (d < 365) return Math.round(d / 30) + 'mo';
+    return Math.round(d / 365) + 'y';
+  }
+
+  // Items with no cost are the ones a margin cannot be computed for, and the status
+  // line already counts them — this makes that count clickable.
+  function invToggleNoCost() {
+    invNoCostMode = !invNoCostMode;
+    if (invNoCostMode && invViewDupMode) {
+      invViewDupMode = false;
+      el('inv-btn-dup')?.classList.remove('invbtn-on');
+      invViewItems = invViewAllItems;
+    }
+    el('inv-btn-nocost')?.classList.toggle('invbtn-on', invNoCostMode);
+    renderInvTable();
+  }
+
+  // Price and cost are both already collected and were never multiplied together, so a
+  // buyer got no margin signal until it showed up in a report weeks later.
+  function invAddRecalc() {
+    const price = parseFloat(el('inv-price')?.value);
+    const cost  = parseFloat(el('inv-cost')?.value);
+    const gp = el('ia-gp'), gpNote = el('ia-gp-note'), mult = el('ia-mult');
+    if (!gp) return;
+    if (!price || price <= 0 || isNaN(cost) || cost <= 0) {
+      // No cost is an unknown, not a zero margin. Never print 0%.
+      gp.textContent = '\u2014'; gp.className = 'dv dim';
+      gpNote.textContent = (!price || price <= 0) ? 'enter a retail price' : 'enter a unit cost';
+      mult.textContent = '\u2014'; mult.className = 'dv dim';
+    } else {
+      const m = (price - cost) / price * 100;
+      gp.textContent = m.toFixed(1) + '%';
+      gp.className = 'dv ' + (m >= 50 ? 'good' : m >= 30 ? 'warnv' : 'badv');
+      gpNote.textContent = fmtDollar(price - cost) + ' per unit';
+      mult.textContent = (price / cost).toFixed(1) + '\u00d7';
+      mult.className = 'dv';
+    }
+
+    // The SKU-shape warning used to arrive only AFTER a successful create.
+    const code = (el('inv-code')?.value || '').trim();
+    const note = el('ia-code-note');
+    if (note) {
+      const bad = code && !/^\d{4,5}$/.test(code);
+      note.textContent = bad
+        ? 'Not a 4\u20135 digit number \u2014 this will not auto-link to Item Master cost data.'
+        : 'Links to Item Master cost data.';
+      note.className = 'invf-note' + (bad ? ' warn' : '');
+    }
+
+    // L3 drives L2. A built-in category is one the worker already maps, and it refuses
+    // to re-map it — so offering the choice would be offering something that cannot
+    // happen. A new category is free, and the pick becomes its mapping everywhere.
+    const l3 = (el('inv-l3')?.value || '').trim();
+    // ISR_L3_TO_L2 is this file's existing mirror of the worker's L3_TO_L2, which is
+    // what decides whether a category can be re-mapped. Reuse it; a second copy here
+    // would be one more thing to keep in step with the worker.
+    const builtin = ISR_L3_TO_L2[l3] || null;
+    const l2 = el('inv-l2'), fld = el('ia-l2-fld'), badge = el('ia-l2-badge');
+    const l2note = el('ia-l2-note'), l3note = el('ia-l3-note');
+    if (l2 && fld && badge) {
+      if (builtin) {
+        l2.value = builtin; l2.disabled = true; fld.classList.add('locked');
+        badge.textContent = 'auto'; badge.className = 'invbdg g';
+        l2note.innerHTML = 'Set by the category above \u2014 this is a built-in that always books to <b>'
+          + escapeHtml(builtin) + '</b>.';
+        l3note.textContent = 'Existing category.'; l3note.className = 'invf-note';
+      } else if (l3) {
+        l2.disabled = false; fld.classList.remove('locked');
+        badge.textContent = 'new mapping'; badge.className = 'invbdg a';
+        l2note.innerHTML = 'This category is new, so your choice becomes its mapping <b>for every store</b>.';
+        l3note.textContent = 'New category \u2014 it will be created in each location.';
+        l3note.className = 'invf-note warn';
+      } else {
+        l2.disabled = false; fld.classList.remove('locked');
+        badge.textContent = 'required'; badge.className = 'invbdg';
+        l2note.textContent = 'Pick a Clover category above first.';
+        l3note.textContent = 'Categories already in this store are suggested as you type.';
+        l3note.className = 'invf-note';
+      }
+    }
+
+    const scope = el('inv-store')?.value || 'all';
+    const n = scope === 'all' ? INV_STORES.length : 1;
+    const scopeEl = el('ia-scope-line');
+    if (scopeEl) scopeEl.textContent = scope === 'all'
+      ? `all ${INV_STORES.length} locations`
+      : `${scope} \u00b7 ${INV_STORE_LABEL[scope] || scope}`;
+    const foot = el('ia-foot');
+    if (foot) foot.innerHTML = `Will create <b>${n} item${n === 1 ? '' : 's'}</b> \u00b7 category resolved per store`
+      + (isNaN(cost) || !cost ? '' : ' \u00b7 cost table updated');
+  }
+
+  // A duplicate result names a store and a code; this is the one action that resolves
+  // it — go look at what is already there.
+  function invOpenInViewer(store, code) {
+    navigateToPage('inventory-viewer');
+    const sel = el('inv-view-store');
+    if (sel) { sel.value = store; invViewStore = store; }
+    const q = el('inv-view-search');
+    if (q) q.value = code;
+    loadInventory(true);
+  }
+
+  let invAddReady = false;
+  function initInventoryAdd() {
+    if (!invAddReady) {
+      const l2 = el('inv-l2');
+      if (l2 && l2.options.length <= 1) {
+        for (const opt of OVERRIDE_L2_OPTIONS) {
+          const o = document.createElement('option');
+          o.value = o.textContent = opt;
+          l2.appendChild(o);
+        }
+      }
+      invAddReady = true;
+    }
+    // The datalist is per store, and the store select may have moved since boot.
+    loadCategoriesForStore(el('inv-store')?.value || 'all');
+    invAddRecalc();
+  }
+
+  function invResetAddForm() {
+    ['inv-name','inv-code','inv-price','inv-cost','inv-l3'].forEach(id => { const e = el(id); if (e) e.value = ''; });
+    const l2 = el('inv-l2'); if (l2) l2.value = '';
+    el('inv-taxable').checked = true;
+    el('inv-hidden').checked = false;
+    el('inv-status')?.classList.add('hidden');
+    el('inv-results')?.classList.add('hidden');
+    invAddRecalc();
   }
 
   function sortInvTable(field) {
+    // The Modified header is labelled for people; the item field is modifiedTime.
+    if (field === 'modified') field = 'modifiedTime';
     if (invSortField === field) {
       invSortAsc = !invSortAsc;
     } else {
@@ -30406,32 +31058,18 @@
     renderInvTable();
   }
 
-  function updateInvPagination(hasMore) {
-    const pag = el('inv-view-pagination');
-    pag.classList.remove('hidden');
-    const showing = invViewOffset + 1;
-    const end = invViewOffset + invViewItems.length;
-    const totalStr = invViewTotal != null ? ` of ${invViewTotal}` : '';
-    el('inv-view-page-label').textContent = `Showing ${showing}–${end}${totalStr}`;
-    el('inv-btn-prev').disabled = invViewOffset === 0;
-    el('inv-btn-next').disabled = !hasMore;
-  }
-
-  function invPagePrev() {
-    if (invViewOffset === 0) return;
-    invViewOffset = Math.max(0, invViewOffset - 100);
-    loadInventory(false);
-  }
-
-  function invPageNext() {
-    invViewOffset += 100;
-    loadInventory(false);
-  }
-
   async function findDuplicates() {
+    // Second click returns to the whole catalog rather than stranding the viewer in
+    // a filtered state with no obvious way back.
+    if (invViewDupMode) {
+      invViewDupMode = false;
+      el('inv-btn-dup')?.classList.remove('invbtn-on');
+      invViewItems = invViewAllItems;
+      renderInvTable();
+      return;
+    }
     invViewStore = el('inv-view-store').value;
     el('inv-view-table-wrap').classList.add('hidden');
-    el('inv-view-pagination').classList.add('hidden');
     try {
       // Reuse already-loaded full catalog; reload if empty or store changed
       if (invViewAllItems.length === 0) {
@@ -30441,26 +31079,25 @@
       // Find items whose code/sku exactly matches another item's code/sku.
       // Key by normalized code (falling back to sku), trim + lowercase so
       // accidental whitespace/case variants still collapse. Empty keys skipped.
-      const codeCounts = {};
-      for (const item of invViewAllItems) {
-        const key = dupKey(item);
-        if (!key) continue;
-        codeCounts[key] = (codeCounts[key] || 0) + 1;
-      }
-      invDupCodes = new Set(Object.keys(codeCounts).filter(c => codeCounts[c] > 1));
+      invDupCodes = invFindDupCodes(invViewAllItems);
       const dupItems = invViewAllItems.filter(i => invDupCodes.has(dupKey(i)));
       invViewDupMode = true;
+      invNoCostMode = false;
+      el('inv-btn-nocost')?.classList.remove('invbtn-on');
+      el('inv-btn-dup')?.classList.add('invbtn-on');
       if (invDupCodes.size === 0) {
-        invViewSetStatus(`No duplicates found across ${invViewAllItems.length} items.`, 'ok');
+        invViewSetStatus(`No duplicate codes across ${invViewAllItems.length} items.`, 'ok');
+        invViewDupMode = false;
+        el('inv-btn-dup')?.classList.remove('invbtn-on');
         invViewItems = invViewAllItems;
         renderInvTable();
       } else {
-        invViewSetStatus(`Found ${invDupCodes.size} duplicate code/SKU(s) across ${dupItems.length} items (${invViewAllItems.length} total).`, 'warn');
+        invViewSetStatus(`<b>${invDupCodes.size} code${invDupCodes.size === 1 ? '' : 's'}</b> held by more than `
+          + `one item, across ${dupItems.length} items. Showing only those.`, 'warn');
         invViewItems = [];
         renderInvTable();
       }
-      el('inv-view-pagination').classList.add('hidden');
-    } catch(err) {
+      } catch(err) {
       invViewSetStatus('Error: ' + escapeHtml(err.message), 'error');
     }
   }
@@ -30474,7 +31111,6 @@
     invDupCodes = new Set();
     el('inv-view-tbody').innerHTML = '';
     el('inv-view-table-wrap').classList.add('hidden');
-    el('inv-view-pagination').classList.add('hidden');
     el('inv-view-search').value = '';
     invViewSetStatus('', '');
     clearInvSelection();
@@ -30567,7 +31203,10 @@
     invDelSetStatus('Deleting…', 'info');
     try {
       const payload = allStores
-        ? { stores: ['BL1','BL2','BL4','BL8','BL12','BL14'], itemId: item.id }
+        // Was ['BL1','BL2','BL4','BL8','BL12','BL14'] — BL12 is Wyoming, which is
+        // closed, and BL16 (Indy East) was missing, so this silently left the item
+        // alive in Indy East. INV_STORES is the one roster now.
+        ? { stores: INV_STORES.filter(st => st !== invViewStore), itemId: item.id }
         : { store: invViewStore, itemId: item.id };
       const resp = await fetch(`${WORKER_BASE}?action=delete-clover-item`, {
         method: 'POST',
@@ -30598,10 +31237,10 @@
   }
 
   function closeInvModal(modalId) {
-    const m = el(modalId);
-    // inv-sale-modal uses inline style.display (avoids hidden+flex Tailwind class conflict)
-    if (modalId === 'inv-sale-modal') m.style.display = 'none';
-    else m.classList.add('hidden');
+    // Every remaining modal uses .hidden. inv-sale-modal was the one exception — it
+    // drove inline style.display and needed a special case here — and Schedule Sale
+    // is a page now, so the exception went with it.
+    el(modalId)?.classList.add('hidden');
   }
 
   // ── Inventory row selection ────────────────────────────────────────────
@@ -30613,12 +31252,12 @@
     const toolbar = el('inv-sel-toolbar');
     const countEl = el('inv-sel-count');
     if (!toolbar) { console.warn('[sale-scheduler] inv-sel-toolbar not found in DOM'); return; }
-    if (n === 0) {
-      toolbar.style.display = 'none';
-    } else {
-      toolbar.style.display = 'flex';
-      if (countEl) countEl.textContent = `${n} item${n === 1 ? '' : 's'} selected`;
-    }
+    toolbar.classList.toggle('hidden', n === 0);
+    if (n === 0) return;
+    if (countEl) countEl.textContent = `${n} item${n === 1 ? '' : 's'}`;
+    const total = [...invSelectedItems.values()].reduce((sum, it) => sum + (it.priceCents || 0), 0);
+    const valEl = el('inv-sel-value');
+    if (valEl) valEl.textContent = fmtDollar(total / 100);
   }
 
   function toggleRowSelect(cb) {
@@ -30664,34 +31303,75 @@
   }
 
   // ── Schedule Sale modal ────────────────────────────────────────────────
+  // Schedule Sale is a page now, so this routes there and loads the selection into it.
+  // Kept under the old name because the Viewer's selection bar and several call sites
+  // already say "open the sale composer"; what changed is where that composer lives.
   function openSaleModal() {
-    console.log('[sale-scheduler] openSaleModal called, selected=', invSelectedItems.size);
     if (invSelectedItems.size === 0) return;
-    // Pre-check current store, uncheck others
-    const curStore = el('inv-view-store').value;
-    document.querySelectorAll('.inv-sale-store-cb').forEach(cb => { cb.checked = cb.value === curStore; });
-    // Populate items list
+    navigateToPage('inventory-sale');
+    invLoadSaleComposer(el('inv-view-store').value);
+  }
+
+  // Fill the composer from the current selection. Split out from openSaleModal so the
+  // page can also rebuild itself when it is opened directly from the sidebar.
+  function invLoadSaleComposer(preferStore) {
+    const items = [...invSelectedItems.values()];
+    const note = el('inv-sale-items-note');
     const list = el('inv-sale-items-list');
-    list.innerHTML = [...invSelectedItems.values()].map(item => `
-      <div class="flex items-center justify-between text-sm text-gray-700 dark:text-gray-300 py-1 border-b border-gray-100 dark:border-gray-700 last:border-0" data-item-id="${escapeHtml(item.id)}">
-        <span class="truncate max-w-[280px]" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
-        <span class="font-mono text-gray-500 dark:text-gray-400 ml-3 shrink-0">${fmtDollar(item.priceCents / 100)}</span>
-      </div>`).join('');
-    // Default start = tomorrow midnight ET, end = +2 days
-    const now = new Date();
-    const tmrw = new Date(now);
-    tmrw.setDate(tmrw.getDate() + 1);
-    tmrw.setHours(0, 0, 0, 0);
-    const end = new Date(tmrw);
-    end.setDate(end.getDate() + 2);
-    el('inv-sale-start').value = toDatetimeLocal(tmrw);
-    el('inv-sale-end').value = toDatetimeLocal(end);
-    el('inv-sale-preview').classList.add('hidden');
-    el('inv-sale-status').classList.add('hidden');
-    el('inv-sale-discount-val').value = '';
-    el('inv-sale-label').value = '';
-    document.querySelector('input[name="inv-sale-kind"][value="percent"]').checked = true;
-    el('inv-sale-modal').style.display = 'flex';
+    if (!list) return;
+
+    if (!items.length) {
+      note.innerHTML = 'Nothing selected yet. Items come from the Inventory Viewer — '
+        + '<a href="#" onclick="navigateToPage(\'inventory-viewer\');return false" '
+        + 'style="color:inherit;text-decoration:underline">tick rows there</a>, then come back.';
+      list.innerHTML = '';
+    } else {
+      const total = items.reduce((sum, it) => sum + (it.priceCents || 0), 0);
+      note.innerHTML = `<b>${items.length} item${items.length === 1 ? '' : 's'}</b> carried over from the `
+        + `Inventory Viewer · combined retail <b>${fmtDollar(total / 100)}</b>. Prices are re-read from `
+        + `Clover when the sale activates, so an item repriced between now and then still discounts off `
+        + `its real price.`;
+      list.innerHTML = items.map(item => `
+        <span class="invchip" data-item-id="${escapeHtml(item.id)}">
+          <span class="invname" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+          <span class="pr">${fmtDollar(item.priceCents / 100)}</span>
+          <button type="button" class="x" aria-label="Remove ${escapeHtml(item.name)}"
+                  onclick="invDropSaleItem('${escapeHtml(item.id)}')">&times;</button>
+        </span>`).join('');
+    }
+
+    if (preferStore) {
+      document.querySelectorAll('.inv-sale-store-cb').forEach(cb => {
+        cb.checked = cb.value === preferStore;
+        invSyncStoreChip(cb);
+      });
+    }
+    // Default window: tomorrow 00:00 through +2 days, as before.
+    if (!el('inv-sale-start').value) {
+      const tmrw = new Date();
+      tmrw.setDate(tmrw.getDate() + 1);
+      tmrw.setHours(0, 0, 0, 0);
+      const end = new Date(tmrw);
+      end.setDate(end.getDate() + 2);
+      el('inv-sale-start').value = toDatetimeLocal(tmrw);
+      el('inv-sale-end').value = toDatetimeLocal(end);
+    }
+    setSaleModalStatus('', null);
+    updateSalePreview();
+  }
+
+  // Dropping the last item leaves the composer in its empty state rather than a stale list.
+  function invDropSaleItem(id) {
+    invSelectedItems.delete(id);
+    updateSelectionUI();
+    renderInvTable();
+    invLoadSaleComposer(null);
+  }
+
+  // The store chips are labels wrapping a checkbox; .on is what tints them.
+  function invSyncStoreChip(cb) {
+    cb.closest('.invst')?.classList.toggle('on', cb.checked);
+    if (typeof updateSalePreview === 'function') updateSalePreview();
   }
 
   // Convert a Date to datetime-local string (YYYY-MM-DDTHH:MM) in local tz
@@ -30735,26 +31415,65 @@
   }
 
   function updateSalePreview() {
+    const preview = el('inv-sale-preview');
+    if (!preview) return;
     const val = parseFloat(el('inv-sale-discount-val').value);
     const kind = getSaleKind();
     const startStr = el('inv-sale-start').value;
     const endStr = el('inv-sale-end').value;
-    const preview = el('inv-sale-preview');
-    if (!val || val <= 0 || !startStr || !endStr) { preview.classList.add('hidden'); return; }
+    const items = [...invSelectedItems.values()];
+    const nStores = document.querySelectorAll('.inv-sale-store-cb:checked').length;
+
+    el('inv-sale-dnote').textContent = kind === 'percent'
+      ? 'Must be under 100%. Never prices an item below $0.01.'
+      : 'Taken off every item, whatever its price. Never below $0.01.';
+
+    // How long it runs, and whether the window is even valid, said in the field
+    // rather than only on submit.
+    const dur = el('inv-sale-dur');
+    const a = startStr && etLocalToDate(startStr), b = endStr && etLocalToDate(endStr);
+    if (a && b && b > a) {
+      const hrs = Math.round((b - a) / 36e5);
+      dur.textContent = `Runs ${Math.floor(hrs / 24)} days ${hrs % 24} hours, then reverts itself.`;
+      dur.className = 'invf-note';
+    } else if (startStr && endStr) {
+      dur.textContent = 'End must be after start.';
+      dur.className = 'invf-note warn';
+    } else {
+      dur.textContent = 'All times are Eastern.';
+      dur.className = 'invf-note';
+    }
+
+    const total = items.length * nStores;
+    el('inv-sale-foot').innerHTML = items.length && nStores
+      ? `<b>${items.length} item${items.length === 1 ? '' : 's'}</b> \u00d7 `
+        + `<b>${nStores} location${nStores === 1 ? '' : 's'}</b> = ${total} scheduled price `
+        + `change${total === 1 ? '' : 's'}`
+      : 'Pick items, a discount and a window.';
+    el('inv-sale-submit').disabled = !(items.length && nStores && val > 0 && a && b && b > a);
+
+    if (!items.length || !val || val <= 0) { preview.innerHTML = ''; return; }
     const saleLabel = (el('inv-sale-label').value || '').trim();
-    const lines = [...invSelectedItems.values()].map(item => {
-      const orig = item.priceCents;
-      let sale;
-      if (kind === 'percent') sale = Math.max(1, Math.round(orig * (1 - val / 100)));
-      else sale = Math.max(1, orig - Math.round(val * 100));
-      const diff = orig - sale;
-      const suffix = saleLabel ? `(was ${fmtDollar(orig/100)} ${saleLabel})` : `(was ${fmtDollar(orig/100)})`;
-      const posName = `SALE ${item.name} ${suffix}`;
-      return `<div class="mb-1"><span class="font-semibold text-green-600 dark:text-green-400">${fmtDollar(sale/100)}</span> <span class="text-gray-400">(saving ${fmtDollar(diff/100)})</span><div class="text-xs text-gray-500 dark:text-gray-400 ml-2">POS name: <span class="font-mono">${escapeHtml(posName.slice(0, 127))}</span></div></div>`;
-    });
-    lines.push(`<div class="mt-1 text-gray-500">${startStr} &rarr; ${endStr} ET</div>`);
-    preview.innerHTML = lines.join('');
-    preview.classList.remove('hidden');
+    // The worker floors a sale price at one cent; mirror that here so the preview
+    // cannot promise a price the scheduler will not set.
+    const priceOf = orig => kind === 'percent'
+      ? Math.max(1, Math.round(orig * (1 - val / 100)))
+      : Math.max(1, orig - Math.round(val * 100));
+    preview.innerHTML = items.map(item => {
+      const sale = priceOf(item.priceCents);
+      const off = Math.round((1 - sale / item.priceCents) * 100);
+      return `<div class="invit"><span class="n" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>`
+        + `<span class="p"><s>${fmtDollar(item.priceCents / 100)}</s> \u2192 <b>${fmtDollar(sale / 100)}</b>`
+        + ` <span class="invdim">(\u2212${off}%)</span></span></div>`;
+    }).join('') + (() => {
+      // The register renames the item while the sale runs; show the exact string,
+      // truncated the way the worker truncates it.
+      const it = items[0];
+      const suffix = saleLabel ? `(was ${fmtDollar(it.priceCents / 100)} ${saleLabel})`
+                               : `(was ${fmtDollar(it.priceCents / 100)})`;
+      return `<div class="invf-note" style="margin-top:10px">On the register it is renamed while the `
+        + `sale runs, then renamed back: <b>${escapeHtml(`SALE ${it.name} ${suffix}`.slice(0, 127))}</b></div>`;
+    })();
   }
 
   async function submitSaleSchedule() {
@@ -30799,31 +31518,20 @@
         : `Scheduled ${totalItems} items across ${ok.length} stores.` + (errors.length ? ` ${errors.length} store(s) failed.` : '');
       setSaleModalStatus(msg, errors.length ? 'info' : 'ok');
       clearInvSelection();
-      setTimeout(() => closeInvModal('inv-sale-modal'), 2200);
+      // No modal to close any more — reset the composer and pull the log it just wrote to.
+      setTimeout(() => { invLoadSaleComposer(null); loadSaleSchedules(); }, 1200);
     } catch (err) {
       setSaleModalStatus('Error: ' + escapeHtml(err.message), 'error');
       submitBtn.disabled = false;
     }
   }
 
-  function setSaleModalStatus(msg, type) {
-    const el2 = el('inv-sale-status');
-    el2.classList.remove('hidden', 'bg-green-50', 'text-green-700', 'border-green-200', 'bg-red-50', 'text-red-700', 'border-red-200', 'bg-blue-50', 'text-blue-700', 'border-blue-200', 'dark:bg-green-900/20', 'dark:text-green-300', 'dark:bg-red-900/20', 'dark:text-red-300', 'dark:bg-blue-900/20', 'dark:text-blue-300');
-    const map = { ok: ['bg-green-50','text-green-700','border-green-200','dark:bg-green-900/20','dark:text-green-300'], error: ['bg-red-50','text-red-700','border-red-200','dark:bg-red-900/20','dark:text-red-300'], info: ['bg-blue-50','text-blue-700','border-blue-200','dark:bg-blue-900/20','dark:text-blue-300'] };
-    el2.classList.add(...(map[type] || map.info));
-    el2.textContent = msg;
-  }
+  function setSaleModalStatus(msg, type) { invStrip('inv-sale-status', msg, type); }
 
   // ── Scheduled Sales card ───────────────────────────────────────────────
-  function toggleSaleSchedules() {
-    const body = el('inv-sched-body');
-    const chevron = el('inv-sched-chevron');
-    const hidden = body.classList.toggle('hidden');
-    chevron.classList.toggle('rotate-180', !hidden);
-  }
-
   const SCHED_STATUS_LABEL = { pending: 'Upcoming', active: 'Active', completed: 'Completed', cancelled: 'Cancelled', error: 'Error' };
-  const SCHED_STATUS_CLASS  = { pending: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300', active: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300', completed: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300', cancelled: 'bg-gray-100 text-gray-400 dark:bg-gray-700 dark:text-gray-500', error: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300' };
+  // Badge tone per status, on the panel's own scale rather than Tailwind greys.
+  const SCHED_STATUS_CLASS  = { pending: 'invbdg b', active: 'invbdg g', completed: 'invbdg', cancelled: 'invbdg', error: 'invbdg r' };
 
   function fmtSchedTime(isoStr) {
     if (!isoStr) return '—';
@@ -30833,63 +31541,70 @@
   async function loadSaleSchedules() {
     const store = el('inv-sched-store').value;
     const filter = el('inv-sched-filter').value;
-    const statusEl = el('inv-sched-status');
     const list = el('inv-sched-list');
-    statusEl.className = 'mb-3 text-sm px-4 py-2 rounded-lg bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-900/20 dark:text-blue-300';
-    statusEl.textContent = 'Loading…';
-    statusEl.classList.remove('hidden');
+    invStrip('inv-sched-status', 'Loading\u2026', 'info');
     list.innerHTML = '';
     try {
       const resp = await fetch(`${WORKER_BASE}?action=list-sale-schedules&store=${store}&filter=${filter}`, {
-        
         credentials: 'include',
       });
       const data = await resp.json();
-      if (!data.ok) { statusEl.textContent = 'Error: ' + (data.error || 'unknown'); statusEl.className = 'mb-3 text-sm px-4 py-2 rounded-lg bg-red-50 text-red-700 border border-red-200'; return; }
-      statusEl.classList.add('hidden');
+      if (!data.ok) { invStrip('inv-sched-status', 'Error: ' + escapeHtml(data.error || 'unknown'), 'error'); return; }
       if (!data.groups.length) {
-        list.innerHTML = '<p class="text-sm text-gray-400 dark:text-gray-500">No schedules found.</p>';
+        invStrip('inv-sched-status', '', null);
+        list.innerHTML = '<div class="invempty"><div class="t">No schedules</div>'
+          + '<div class="d">Nothing matches that filter in ' + escapeHtml(store) + '.</div></div>';
         return;
       }
+      // Summarise before the detail, so what needs attention reads at a glance.
+      const by = st => data.groups.filter(g => g.status === st).length;
+      const parts = [];
+      if (by('active')) parts.push(`<b>${by('active')} running</b>`);
+      if (by('pending')) parts.push(`${by('pending')} upcoming`);
+      if (by('completed')) parts.push(`${by('completed')} finished`);
+      if (by('cancelled')) parts.push(`${by('cancelled')} cancelled`);
+      if (by('error')) parts.push(`<span class="hi">${by('error')} errored</span>`);
+      const st = el('inv-sched-status');
+      st.className = 'invp-status';
+      st.innerHTML = parts.join(', ') + ' in ' + escapeHtml(store) + '.';
+      st.classList.remove('hidden');
+
       list.innerHTML = data.groups.map(g => {
-        const discLabel = g.discountKind === 'percent' ? `${g.discountValue}% off` : `$${(g.discountValue / 100).toFixed(2)} off`;
-        const statusBadge = `<span class="px-2 py-0.5 text-xs font-semibold rounded ${SCHED_STATUS_CLASS[g.status] || ''}">${SCHED_STATUS_LABEL[g.status] || g.status}</span>`;
-        const isFinished = ['completed', 'cancelled', 'error'].includes(g.status);
-        const actionBtn = (g.status === 'pending' || g.status === 'active')
-          ? `<button onclick="cancelSaleSchedule('${escapeHtml(g.scheduleGroup)}')" class="text-xs px-2 py-1 bg-red-100 hover:bg-red-200 dark:bg-red-900/40 dark:hover:bg-red-800/60 text-red-700 dark:text-red-300 rounded">Cancel</button>`
-          : isFinished
-          ? `<button onclick="removeSaleSchedule('${escapeHtml(g.scheduleGroup)}')" class="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 rounded">Remove</button>`
-          : '';
-        const itemRows = g.items.map(item => {
-          const priceStr = item.originalPrice && item.salePrice
-            ? `${fmtDollar(item.originalPrice/100)} → <span class="text-green-600 dark:text-green-400 font-semibold">${fmtDollar(item.salePrice/100)}</span>`
-            : '—';
-          const errStr = item.errorMsg ? `<span class="text-red-500 text-xs ml-2" title="${escapeHtml(item.errorMsg)}">⚠ error</span>` : '';
-          return `<div class="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400 py-0.5">
-            <span class="truncate max-w-[260px]" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
-            <span class="font-mono ml-2 shrink-0">${priceStr}${errStr}</span>
-          </div>`;
+        const disc = g.discountKind === 'percent'
+          ? `${g.discountValue}% off` : `${fmtDollar(g.discountValue / 100)} off`;
+        const badge = `<span class="${SCHED_STATUS_CLASS[g.status] || 'invbdg'}">${SCHED_STATUS_LABEL[g.status] || g.status}</span>`;
+        const finished = ['completed', 'cancelled', 'error'].includes(g.status);
+        const action = (g.status === 'pending' || g.status === 'active')
+          ? `<button type="button" class="invbtn invbtn-danger" onclick="cancelSaleSchedule('${escapeHtml(g.scheduleGroup)}')">${g.status === 'active' ? 'Cancel &amp; restore' : 'Cancel'}</button>`
+          : finished
+            ? `<button type="button" class="invbtn invbtn-ghost invbtn-sm" onclick="removeSaleSchedule('${escapeHtml(g.scheduleGroup)}')">Remove</button>`
+            : '';
+        const items = g.items.map(item => {
+          // An item that failed to revert is the one row worth finding on this page:
+          // its price on the register is wrong right now.
+          if (item.errorMsg) {
+            return `<div class="invit errrow"><span class="n" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>`
+                 + `<span class="p">${escapeHtml(item.errorMsg)}</span></div>`;
+          }
+          const price = (item.originalPrice && item.salePrice)
+            ? `<s>${fmtDollar(item.originalPrice / 100)}</s> \u2192 <b>${fmtDollar(item.salePrice / 100)}</b>`
+            : '<span class="invdim">not applied yet</span>';
+          return `<div class="invit"><span class="n" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>`
+               + `<span class="p">${price}</span></div>`;
         }).join('');
-        return `<div class="rounded-lg border border-gray-200 dark:border-gray-700 p-4">
-          <div class="flex items-start justify-between gap-2 mb-2">
-            <div>
-              <div class="flex items-center gap-2 flex-wrap">
-                ${statusBadge}
-                <span class="text-sm font-semibold text-gray-800 dark:text-gray-100">${discLabel}</span>
-              </div>
-              <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                ${fmtSchedTime(g.startsAt)} &rarr; ${fmtSchedTime(g.endsAt)} ET &bull; ${g.items.length} item${g.items.length === 1 ? '' : 's'}
-              </div>
-            </div>
-            <div>${actionBtn}</div>
+        const n = g.items.length;
+        return `<div class="invsched">
+          <div class="invsched-h">
+            ${badge}
+            <span class="invsched-t">${escapeHtml(disc)}${g.items[0] && g.items[0].name ? '' : ''}</span>
+            <span class="invsched-m">${escapeHtml(fmtSchedTime(g.startsAt))} \u2192 ${escapeHtml(fmtSchedTime(g.endsAt))} ET \u00b7 ${n} item${n === 1 ? '' : 's'}</span>
+            <span class="r">${action}</span>
           </div>
-          <div class="mt-2 pl-1 border-l-2 border-gray-100 dark:border-gray-700 space-y-0.5">${itemRows}</div>
+          <div class="invitems">${items}</div>
         </div>`;
       }).join('');
     } catch (err) {
-      statusEl.textContent = 'Error: ' + escapeHtml(err.message);
-      statusEl.className = 'mb-3 text-sm px-4 py-2 rounded-lg bg-red-50 text-red-700 border border-red-200';
-      statusEl.classList.remove('hidden');
+      invStrip('inv-sched-status', 'Error: ' + escapeHtml(err.message), 'error');
     }
   }
 
@@ -32177,7 +32892,13 @@
     // applyBusinessNav had nothing to keep out of anyone's way in the other
     // direction — inside E-Commerce the whole sidebar simply emptied.
     'nav-ebay-cases': 'ecom',
+    'nav-inventory-group': 'bl',
     'nav-inventory': 'bl',
+    'nav-inventory-chev': 'bl',
+    'nav-inventory-sub': 'bl',
+    'nav-inventory-add': 'bl',
+    'nav-inventory-viewer': 'bl',
+    'nav-inventory-sale': 'bl',
     'nav-bin-dump': 'bl',
     'nav-inventory-receiver': 'bl',
     'nav-opportunity-buys': 'bl',
@@ -32652,7 +33373,12 @@
     // rule invented here would have to be unpicked once that lands.
     const ebNav = el('nav-ebay-cases');
     if (ebNav) ebNav.classList.toggle('hidden', !userBusinesses(user).some(b => b.id === 'ecom'));
-    el('nav-inventory').classList.toggle('hidden', !isAdmin);
+    // The three catalog pages carry the old single Inventory page's audience: admins
+    // only. The GROUP wrapper they sit in is gated further down, once binDumpRoles is
+    // in scope, because its audience is the union of all seven children's.
+    el('nav-inventory-add').classList.toggle('hidden', !isAdmin);
+    el('nav-inventory-viewer').classList.toggle('hidden', !isAdmin);
+    el('nav-inventory-sale').classList.toggle('hidden', !isAdmin);
     // Bin Dump is the one Inventory-adjacent surface a store manager needs — they
     // are the ones receiving pallets. Mirrors the worker, which admits exactly
     // FINANCIAL_ROLES here. ('district_manager' was retired by migration-029; it is
@@ -32675,6 +33401,15 @@
     // plus any associate granted the page.
     el('nav-mos').classList.toggle('hidden',
       !binDumpRoles.includes(user.role) && pageLevel('mos', user) < 1);
+    // The group wrapper is a plain <div class="hidden">, not a .nav-item, so Tailwind's
+    // .hidden applies to it unaided (see the specificity note by .sidebar .nav-item).
+    // Gate it on the union: an admin gets the catalog pages, a manager or a granted
+    // associate gets the floor tools, and anyone with neither must not see the header
+    // sitting there opening an empty menu.
+    const seesInvFloor = binDumpRoles.includes(user.role)
+      || pageLevel('bin-dump', user) >= 1 || pageLevel('inventory-receiver', user) >= 1
+      || pageLevel('mos', user) >= 1 || pageLevel('opportunity-buys', user) >= 1;
+    el('nav-inventory-group').classList.toggle('hidden', !isAdmin && !seesInvFloor);
     el('nav-supply-request').classList.toggle('hidden', !isAdmin && user.role !== 'district_manager' && user.role !== 'manager');
     el('nav-users').classList.toggle('hidden', !isAdmin);
     el('nav-admin-settings').classList.toggle('hidden', !isSuperuser);
@@ -32742,7 +33477,7 @@
   // have to be edited every time a page is added anywhere in the app, and the day
   // someone forgot, an associate would find a page nobody meant to give them.
   function applyAssociateNav(user) {
-    document.querySelectorAll('#sidebar .nav-item, #nav-marketing-group, #nav-merch-group')
+    document.querySelectorAll('#sidebar .nav-item, #nav-marketing-group, #nav-merch-group, #nav-inventory-group')
       .forEach(n => n.classList.add('hidden'));
     // Settings is deliberately among them: it offers passkey enrolment (which the
     // worker refuses for an associate anyway) and notification toggles that can
@@ -32750,6 +33485,18 @@
     // it has its own row below the nav, and another in the More sheet.
     for (const p of GRANTABLE_PAGES) {
       if (pageLevel(p.id, user) > 0) el(p.nav)?.classList.remove('hidden');
+    }
+    // Every grantable page now lives INSIDE the Inventory group, so un-hiding the
+    // child is not enough on its own: the subtraction above hid the group wrapper and
+    // the header (the header carries .nav-item), and #nav-inventory-sub ships closed.
+    // Without this an associate granted Bin Dump gets an empty sidebar. Derived from
+    // what is actually visible rather than from a second copy of the page list, so a
+    // future child added to the group is covered without editing this.
+    const invSub = el('nav-inventory-sub');
+    if (invSub && invSub.querySelector('.nav-subitem:not(.hidden)')) {
+      el('nav-inventory-group')?.classList.remove('hidden');
+      el('nav-inventory')?.classList.remove('hidden');
+      if (typeof toggleInventoryMenu === 'function') toggleInventoryMenu(true);
     }
     // The badge is the name a pallet gets logged under. On a shared phone that is
     // the one thing worth showing — it is how the next person knows to sign out.
@@ -34061,29 +34808,10 @@
       }
     });
 
-    // ── Inventory page ──────────────────────────────────────────────────────────
-
-    // Populate L2 select and load Clover categories when page opens
-    (function initInventoryL2() {
-      const sel = el('inv-l2');
-      OVERRIDE_L2_OPTIONS.forEach(opt => {
-        const o = document.createElement('option');
-        o.value = opt;
-        o.textContent = opt;
-        sel.appendChild(o);
-      });
-    })();
-
-    // Pre-load categories for default selection (All Locations → BL1)
-    loadCategoriesForStore('all');
-
-    // Restore inventory viewer open/closed state
-    try {
-      if (localStorage.getItem('inv-viewer-open') === '1') {
-        el('inv-viewer-body').classList.remove('hidden');
-        el('inv-viewer-chevron').style.transform = 'rotate(180deg)';
-      }
-    } catch(e) {}
+    // ── Inventory ───────────────────────────────────────────────────────────────
+    // The L2 list and the category datalist used to be filled here, at boot, for every
+    // account whether or not they could open the page. initInventoryAdd() does it when
+    // Add Item is actually opened, and re-reads the datalist for the chosen store.
 
     initPasskeyLoginButton();
     checkAuth().then(authed => {
@@ -34600,7 +35328,12 @@
       // non-admin — deciding then would flash the Submit button at admins.
       // Before the role is known, show only the always-on tabs.
       var roleReady = !!window.__bnRoleReady;
-      var isAdminBar = vis('nav-inventory');
+      // nav-inventory used to be the admin-only Inventory page and stood in for
+      // "is an admin" here. It is now the group HEADER, which a manager sees too
+      // (they get Bin Dump and MOS inside it), so it would report every manager as
+      // an admin and cost them the centred Submit button. nav-inventory-add carries
+      // the old audience: admins only.
+      var isAdminBar = vis('nav-inventory-add');
       var mgrBar = roleReady && !isAdminBar; // manager-style bar w/ center Submit
       if (nav) nav.classList.toggle('bn-mgr', mgrBar);
       // Bar tabs. Admin bar: Content + Flow Calendar (admin-only sidebar
@@ -34633,7 +35366,9 @@
       gate('more-submit-photos', !mgrBar && vis('nav-submit-photos')); // admins reach it via More
       gate('more-ebay-cases', vis('nav-ebay-cases'));                  // mirrors the sidebar item
       gate('more-merch-scan', !mgrBar && vis('nav-merch-scan'));       // managers have the bar tab
-      gate('more-inventory', vis('nav-inventory'));                    // admin-only
+      gate('more-inventory', vis('nav-inventory-add'));                // admin-only
+      gate('more-inventory-viewer', vis('nav-inventory-viewer'));
+      gate('more-inventory-sale', vis('nav-inventory-sale'));
       gate('more-bin-dump', vis('nav-bin-dump') && !binDumpInBar);      // managers too; an associate has the bar tab
       gate('more-inventory-receiver', vis('nav-inventory-receiver'));   // the dock lives under More
       gate('more-opportunity-buys', vis('nav-opportunity-buys'));
@@ -34656,7 +35391,10 @@
       // up while you are standing on the page.
       if (binDumpInBar) delete morePages['bin-dump'];
       if (!mgrBar) morePages['submit-photos'] = 1; // no center button → page lives under More
-      if (isAdminBar) { morePages['inventory'] = 1; morePages['supply-request'] = 1; } // admin: both under More
+      if (isAdminBar) {                                        // admin: all of these under More
+        morePages['inventory-add'] = 1; morePages['inventory-viewer'] = 1;
+        morePages['inventory-sale'] = 1; morePages['supply-request'] = 1;
+      }
       else { morePages['flow-calendar'] = 1; morePages['content'] = 1; }               // no bar tab for these
       // Detail pages are sub-pages of Dashboard — keep that tab highlighted.
       var detailPages = { 'store-detail': 1, 'all-stores-detail': 1 };

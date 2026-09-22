@@ -103,16 +103,75 @@ rule. The preview keeps `--bad` for fills and edges and adds `--badText` (#f8717
 5.78:1 on the wash; light needs no split at 4.69:1). **If the redesign ships, this belongs in
 DESIGN.md §4.8's token table**, because the next red badge will hit it too.
 
-## Next — on Brian's answer
+## Built — all seven in the dropdown (Brian, 2026-09-22)
 
-- [ ] Confirm the grouping (all seven in the group, or three top-level + four in the group)
-- [ ] Repair `scripts/test-nav-registry.mjs` (move the block above `process.exit`, fix `REPO`)
-- [ ] Nav: `#nav-inventory-group` + header + chev + sub, `NAV_BUSINESS` rows for every new id
-- [ ] Re-point `isAdminBar`; add the new page ids to `morePages`; keep every `gate()` on a child id
-- [ ] `applyRoleUI` / `applyAssociateNav` including the wrapper + sub-list un-hide
-- [ ] Three `#page-*` sections + init hooks + `navigateToPage` guards
-- [ ] Fix the BL12/BL16 delete list; drop the dead pagination; single store list
-- [ ] `npm test`, then a browser pass switching business and role without re-running `applyRoleUI`
+- [x] Repair `scripts/test-nav-registry.mjs` — move the block above `process.exit`, fix
+      `REPO` → `repo`. **17 → 23 assertions.** Proved the recovered guard is not merely
+      passing: injecting `data-page="bin-dump-typo"` makes it fail by name and exit 1.
+      It then caught the three missing page sections before I had written them.
+- [x] Nav: `#nav-inventory-group` + header + chev + sub, seven children, `NAV_BUSINESS`
+      rows for all of them. `toggleInventoryMenu` copies its two siblings verbatim.
+- [x] `isAdminBar` re-pointed from `nav-inventory` (now the group header, which a manager
+      sees) to `nav-inventory-add`, which keeps the old admin-only audience.
+- [x] `applyRoleUI`: group gated on the union of its children's audiences; the three
+      catalog pages stay admin-only. `applyAssociateNav`: wrapper added to the hide
+      selector, and the group chain re-opened when a granted child is inside it —
+      derived from what is visible, not from a second copy of the page list.
+- [x] Three `#page-*` sections, init hooks, guards, `morePages`, three More-sheet rows.
+- [x] BL12/BL16 delete list fixed; `INV_STORES` replaces four hardcoded copies.
+- [x] Dead pagination removed; five status helpers collapsed onto one `invStrip`.
+- [x] `npm test` — 5586 assertions across 80 suites.
+- [x] `scripts/browser-inventory-nav.mjs` — **72 checks in a real browser**, both themes.
+
+### Two things fixed that were NOT in the plan
+
+1. **Both group auto-opens were hardcoded page-id lists** — one per group, "the one spot
+   a new child page can be forgotten", and Inventory would have made a third. Replaced
+   with one DOM-derived block: find the sub-item carrying this `data-page`, open the
+   `.nav-sub` it sits in, rotate that group's chevron. Two lists deleted, none added.
+2. **`showStoreDetail` still held a hardcoded `_pages` array** that had already gone
+   stale twice — it never gained `comments`, any `merch-*`, `bin-dump` or `mos`, so
+   drilling into a store from one of those left both sections stacked. It now calls
+   `showOnlyPage('store-detail')`, which is what `showAllStoresDetail` already used.
+
+### Three bugs I introduced and the browser caught
+
+- **The selection bar rendered with an empty count.** `.invstatus{display:flex}` is
+  (0,1,0), exactly tying Tailwind's `.hidden`, and this `<style>` parses after
+  tailwind.css — so it won. The same trap this file already documents for
+  `.sidebar .nav-item`. Fixed with a (0,2,0) guard.
+- **Both modals would have opened as `display:block`**, losing their centring, because I
+  dropped `flex` from the class list to avoid that same conflict. They have their own
+  `.invmodal` class now.
+- **A regex replacement silently deleted `loadCategoriesForStore`.** `\) \{` matched a
+  one-liner I had just inserted and `.*?\n  \}\n` ate to the next top-level close. Caught
+  by diffing the function inventory against HEAD, which is now how every edit to this
+  file gets checked.
+
+### Contrast
+
+Measured from the colours the browser actually paints, against composited backgrounds,
+in both themes — every visible text node in the three pages clears its AA minimum. Two
+values had to move:
+
+- **The app-bar subtitle.** `text-gray-400` is **2.54:1** on `opl-panel`. It is the
+  pattern every page in this file uses, so it is not this change's to fix app-wide — but
+  these three headers are new, and they use `inkDim` (5.88 light / 5.74 dark). 🛑 **Every
+  other page still carries the 2.54:1 subtitle.**
+- **`.invbdg.r`.** `#c0392b` is 4.69:1 on its wash over `opl-panel` but **4.49:1** over
+  `opl-panelHi`, which is where the results tally sits. `#a93226` clears both.
+- **`op-bad` #ef4444 fails AA as text on its own wash** (4.25:1; it is 4.73:1 on bare
+  panel, which is why nobody has hit it). Dark red TEXT is `#f87171`; `#ef4444` keeps the
+  fills and borders. **This belongs in DESIGN.md §4.8's token table** — the next red badge
+  will hit it too.
+
+### Left alone, deliberately
+
+`index.html:15188` carries the **same BL12/BL16 store-list drift** in the Repair
+console's re-snapshot path. Changing which dates and stores get re-snapshotted is a
+destructive operation under CLAUDE.md's rules and has nothing to do with this redesign.
+Flagged, not touched.
+
 
 # The identity lookup on an OB scan (2026-09-22)
 
