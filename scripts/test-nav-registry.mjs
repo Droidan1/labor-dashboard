@@ -115,9 +115,6 @@ for (const p of frontDoors) {
   ok(new RegExp(`id="page-${p}"`).test(html), `front door '${p}' has a #page-${p} element`);
 }
 
-console.log(`\n${pass} passed, ${fail} failed`);
-process.exit(fail ? 1 : 0);
-
 // ── Page switcher reachability ────────────────────────────────────────
 // Added after Marketing > Comments shipped as a BLANK SCREEN: navigateToPage
 // held a hardcoded list of page ids, 'comments' was not in it, so the new
@@ -127,27 +124,28 @@ process.exit(fail ? 1 : 0);
 // The fix was to derive the list from the DOM. This pins that it stays derived —
 // a future hardcoded list would reintroduce exactly the same failure.
 {
-  const src = fs.readFileSync(path.join(REPO, 'index.html'), 'utf8');
-
-  const domPages = [...new Set([...src.matchAll(/id="page-([a-z-]+)"/g)].map(m => m[1]))].sort();
+  const domPages = [...new Set([...html.matchAll(/id="page-([a-z-]+)"/g)].map(m => m[1]))].sort();
   ok(domPages.length > 10, `found ${domPages.length} page sections in the DOM`);
 
   // Every page section must be reachable through the shared switcher.
-  ok(/function showOnlyPage\(name\)/.test(src), 'showOnlyPage() exists as the single page switcher');
-  ok(/document\.querySelectorAll\('\[id\^="page-"\]'\)/.test(src),
+  ok(/function showOnlyPage\(name\)/.test(html), 'showOnlyPage() exists as the single page switcher');
+  ok(/document\.querySelectorAll\('\[id\^="page-"\]'\)/.test(html),
      'showOnlyPage derives its list from the DOM, not a hardcoded array');
 
   // No caller may go back to hand-rolling the list.
-  const hardcoded = [...src.matchAll(/const pages = \[[^\]]*'dashboard'[^\]]*\]/g)];
+  const hardcoded = [...html.matchAll(/const pages = \[[^\]]*'dashboard'[^\]]*\]/g)];
   ok(hardcoded.length === 0,
      `no hardcoded page-id array remains (found ${hardcoded.length}) — that is what blanked the screen`);
 
   // Both switch points must call it.
-  const calls = (src.match(/showOnlyPage\(/g) || []).length;
+  const calls = (html.match(/showOnlyPage\(/g) || []).length;
   ok(calls >= 3, `showOnlyPage is defined and called at every switch point (${calls} references)`);
 
   // And the page the nav points at must actually exist as a section.
-  const navPages = [...new Set([...src.matchAll(/data-page="([a-z-]+)"/g)].map(m => m[1]))];
+  const navPages = [...new Set([...html.matchAll(/data-page="([a-z-]+)"/g)].map(m => m[1]))];
   const missing = navPages.filter(p => !domPages.includes(p));
   ok(missing.length === 0, `every nav data-page has a matching page- section (missing: ${missing.join(', ') || 'none'})`);
 }
+
+console.log(`\n${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);
