@@ -4254,9 +4254,9 @@
 
       <div class="max-w-7xl mx-auto px-4 sm:px-6 pt-4 pb-6">
         <nav class="flex gap-1 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border mb-5">
-          <button data-cttab="compose" onclick="ctSetTab('compose')" class="ct-tab px-4 py-2 text-sm font-semibold">Compose</button>
-          <button data-cttab="thumbs" onclick="ctSetTab('thumbs')" class="ct-tab px-4 py-2 text-sm font-semibold">Thumbnails <span id="ct-tab-thumbs-n" class="font-normal text-opl-inkDim dark:text-op-inkDim"></span></button>
-          <button data-cttab="posts" onclick="ctSetTab('posts')" class="ct-tab px-4 py-2 text-sm font-semibold">Posts <span id="ct-tab-posts-n" class="font-normal text-opl-inkDim dark:text-op-inkDim"></span></button>
+          <button data-cttab="compose" onclick="ctSetTab('compose')" class="ct-tab px-4 py-2 text-sm font-semibold text-opl-inkDim dark:text-op-inkDim">Compose</button>
+          <button data-cttab="thumbs" onclick="ctSetTab('thumbs')" class="ct-tab px-4 py-2 text-sm font-semibold text-opl-inkDim dark:text-op-inkDim">Thumbnails <span id="ct-tab-thumbs-n" class="font-normal text-opl-inkDim dark:text-op-inkDim"></span></button>
+          <button data-cttab="posts" onclick="ctSetTab('posts')" class="ct-tab px-4 py-2 text-sm font-semibold text-opl-inkDim dark:text-op-inkDim">Posts <span id="ct-tab-posts-n" class="font-normal text-opl-inkDim dark:text-op-inkDim"></span></button>
         </nav>
 
         <!-- Shared hidden file input for cover uploads (both the compose "Upload new" and Thumbnails "+ Add" labels point here) -->
@@ -18052,6 +18052,10 @@
   // Tab switching. Compose = composer + pipeline; Posts = pipeline only; Thumbnails = gallery.
   function ctSetTab(tab) {
     ctTab = tab;
+    // This rewrites className wholesale, so the resting colour in the markup is
+    // replaced rather than merged. The markup carries the inactive value anyway: it is
+    // what these tabs look like before this ever runs, and without it they inherit
+    // black at 1.10:1 on the dark ground.
     document.querySelectorAll('.ct-tab').forEach(b => {
       const on = b.dataset.cttab === tab;
       b.className = 'ct-tab px-4 py-2 text-sm font-semibold ' + (on ? 'text-accent-green border-b-2 border-accent-green -mb-px' : 'text-opl-inkDim dark:text-op-inkDim');

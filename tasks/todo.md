@@ -1,3 +1,56 @@
+# The .ct-tab contrast finding was mine, and it was wrong (2026-09-22)
+
+**Brian:** *"fix the ct-tab one too"* — the 1.10:1 black-on-dark I reported on #276.
+
+## It does not reproduce, and the reason is my measurement
+
+`.ct-tab` has **no CSS rule at all**; it is a JS hook. `ctSetTab()` sets the whole
+className, including the colour, and its inactive branch was already
+`text-opl-inkDim dark:text-op-inkDim`. So the black is the state *before* `ctSetTab`
+has ever run — and `navigateToPage('content')` always calls it.
+
+Measured through real navigation instead of my survey's shortcut:
+
+| | Compose (active) | Thumbnails / Posts |
+|---|---|---|
+| dark | **8.41:1** | 6.18:1 |
+| light | **6.42:1** | 5.29:1 |
+
+All pass. The 1.10:1 was an artifact of **how my survey navigated**: it toggled `hidden`
+on each `#page-*` directly, so no page init ever ran and I measured a pre-init DOM no
+user sees. I reported it to Brian as "near invisible text" on two pages. It was not.
+
+🔑 **The survey was wrong about more than this one.** Re-run through `navigateToPage`,
+the "still failing" list I gave him changes in both directions:
+
+- **gone**: `.ct-tab` (5×, the artifact), and `ebay-cases` drops out of the accent-green
+  group — that group is 6× on dashboard + landing, not 9× on three pages.
+- **appeared**, because the pre-init pages had rendered nothing to measure:
+  `text-white` 2.28:1 on Marketing's "7d"; 3.03:1 on merch-manifests' "Nothing uploaded
+  yet."; 2.71 / 2.87:1 on merch-criteria's "Default"; `text-red-500` 3.39:1 on
+  flow-calendar; 2.54:1 on ebay-cases' "Mode unknown".
+
+<rules>
+A DOM survey that reaches a page by un-hiding it is measuring a page that never
+initialised. Drive the app's own router, or every finding is suspect in both directions —
+false alarms on what init would have fixed, and blind spots where init renders the
+content at all.
+</rules>
+
+## Fixed anyway, and it is worth the line
+
+The tabs still ship with no colour in the markup, so they are correct only *once JS has
+run*. Nobody sees it today; one refactor that renders the page without `ctSetTab` and
+they are black again. They now carry the same value `ctSetTab` gives an inactive tab, so
+the resting state is right before and after it fires — **1.10 → 6.18:1 dark, 5.29:1
+light** — and a comment at the override says why the duplication is deliberate.
+
+## Verified
+
+- [x] Resting state measured **before** any `ctSetTab` call and after navigation, both
+      themes — all four states pass.
+- [x] `npm test` 5586 assertions / 80 suites; `browser-inventory-nav.mjs` 72 checks.
+
 # Muted text across every page, and both findings into DESIGN.md (2026-09-22)
 
 **Brian:** *"yes add both to DESIGN.md and fix all the pages"* — answering the two things
