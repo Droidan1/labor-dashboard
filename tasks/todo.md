@@ -1,3 +1,107 @@
+# The Repair console's BL12 roster (2026-09-22)
+
+**Brian:** *"fix the BL12 one in the repair console too"*
+
+## 🛑 First, a correction I owe
+
+I told Brian twice that `index.html:15242` was "a destructive operation under CLAUDE.md's
+rules" and used that as the reason for not fixing it alongside the Inventory one. **That
+was wrong.** The list is the same drift, but here it is a *cache-key* list, not a write
+payload. `affectedStores` has exactly one consumer:
+
+```js
+for (const s of affectedStores) delete itemSalesCache[`${s}:${date}`];
+```
+
+`itemSalesCache` is `let itemSalesCache = {}` — an in-memory render cache, keyed
+`"STORE:YYYY-MM-DD"`. Nothing is written anywhere. The re-snapshot itself is driven by the
+fetch's `store` param, and the worker resolves `store=ALL` through its own `ALL_STORES`, so
+**the right stores were always being snapshotted.** Rule 7 never applied.
+
+The lesson is the general one: *which* roster a list is does not tell you what the list
+DOES. I read the six codes, recognised the shape of a bug I had just fixed in a delete
+payload, and carried the severity across with it.
+
+## The actual bug
+
+| | listed | consequence |
+|---|---|---|
+| `BL12` | present | a key that never exists — `delete` on it is a no-op |
+| `BL16` | **absent** | **Indy East keeps its pre-re-snapshot figures until a reload** |
+
+Wrong in both directions, which is what made it invisible: the list was still six long, so
+nothing ever looked short.
+
+## What changed
+
+Two rosters, named and pinned, at the top of the SETTINGS – ADMIN RE-SNAPSHOT module:
+
+```js
+const RC_STORES     = ['BL1','BL2','BL4','BL8','BL14','BL16'];  // === worker ALL_STORES
+const RC_STORES_WRS = [...RC_STORES, 'BL12'];                   // === worker WRS_STORES
+```
+
+- `runReSnapshot` evicts over `RC_STORES`.
+- `runBackfillCategoryOrders` (line 15599, seven stores incl. BL12) **was already correct**
+  and keeps its set — BL12 is the LIVE store for every week before the 2026-06-14 cutover
+  and T13 charts it, so a basket-count backfill that skips it leaves BL12's L2 rows with no
+  L3 beneath them. It now reads `RC_STORES_WRS`, which is *derived* exactly as the worker
+  derives `WRS_STORES`, so the "+ BL12" cannot outlive `ALL_STORES`. Only the iteration
+  order moved (BL12 last); the set is unchanged.
+
+🛑 **Not `WRS_STORE_KEYS`.** It is the same seven codes in the same order and it is the
+wrong answer: `applyRoleUI` **splices it in place** down to the signed-in user's grants, so
+a store-scoped admin would get a silently short backfill that still reported success.
+
+## Verified
+
+**A/B in a real browser**, seeding `itemSalesCache` with all seven codes for one date and
+running the real `runReSnapshot()` with `store=all` against a stubbed worker:
+
+| | evicted | survived |
+|---|---|---|
+| `HEAD` | BL1, BL2, BL4, BL8, BL12, BL14 | **BL16** ← the bug |
+| fixed | BL1, BL2, BL4, BL8, BL14, BL16 | BL12 (never exists) |
+
+Both runs reported `Done — 1/1 date(s) re-snapshotted`, which is the point: the status line
+cannot tell you about this. No `pageerror` either — the constants sit ~2,000 lines above
+their first use and resolve fine, since both consumers run from a click.
+
+**Pinned by test** in `scripts/test-closed-stores.mjs`, beside the existing PS_STORES and
+SR_ALL guardrails — 37 → 46 assertions. Each new one was proven to catch its own failure:
+
+| reverted | caught by |
+|---|---|
+| the original literal at `affectedStores` | the shape check — *any* roster naming BL12 without BL16 |
+| BL16 dropped from `RC_STORES` | `RC_STORES` === worker `ALL_STORES`, order included |
+| backfill switched to `WRS_STORE_KEYS` | "the backfill does not borrow it" |
+
+The shape check skips comment lines on purpose: the note above `confirmDelete` quotes the
+old literal deliberately, and that record is worth more than the strictness.
+
+Full suite **5595 assertions across 80 suites, all green**. `sw.js` v229 → v230 with the
+fixture re-pinned.
+
+Frontend only — Pages carries it on merge. No worker deploy, no migration, no D1 write, no
+KV write.
+
+<rules>
+29. **A store roster's NAME tells you nothing about its blast radius — find the consumer
+   first.** Six codes in a `delete` loop and six codes in a POST body look identical and
+   are not remotely the same risk. Grep every use of the variable before you classify it.
+30. **A list that is wrong in both directions stays the right LENGTH.** "Six stores, looks
+   right" is not a check. Compare against the roster the other side resolves, element by
+   element.
+31. **Don't borrow an array that something splices in place.** `WRS_STORE_KEYS` is narrowed
+   to the user's grants at sign-in. Deriving (`[...X, 'BL12']`) says what you mean and
+   cannot be narrowed out from under you.
+32. **Invoking a safety rule is an action, not a neutral hedge.** Citing "destructive
+   operation" to defer a fix has a cost: the bug stays in production and Brian gets a
+   decision he did not need to make. Earn the citation with the grep.
+</rules>
+
+---
+
 # The rest of the contrast failures (2026-09-22)
 
 **Brian:** *"fix the rest of the contrast ones too"*

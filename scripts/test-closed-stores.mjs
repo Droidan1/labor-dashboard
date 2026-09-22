@@ -73,6 +73,64 @@ ok(psList === 'BL1,BL2,BL4,BL8,BL14,BL16',
 ok(/BL8/.test((html.match(/const SR_ALL\s*=\s*\[([^\]]+)\]/) || [])[1] || ''),
   'SR_ALL keeps BL8 — it drives the supply-request table columns, and dropping it would hide historical requests');
 
+// ── The Repair console's two rosters. ──────────────────────────────────────
+//
+// This page drifted the same way twice, and the second one shipped: a literal
+// ['BL1','BL2','BL4','BL8','BL12','BL14'] that named RETIRED Wyoming and left out
+// Indy East. Being wrong in both directions is what made it invisible — the list
+// was still six long, so nothing looked short.
+//
+// The two rosters mean different things and the distinction is the whole point:
+//   RC_STORES     = the worker's ALL_STORES. What `store=all` actually touches.
+//   RC_STORES_WRS = the worker's WRS_STORES (ALL_STORES + frozen BL12). What T13
+//                   charts, so what a basket-count backfill has to cover.
+// Pinning only one of them would make the other's next drift look like a fix.
+console.log('\n── Repair console rosters ──');
+
+const parseList = (m) => m ? m[1].split(',').map(x => x.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean) : null;
+const workerAll = parseList(worker.match(/const ALL_STORES = \[([^\]]+)\]/)) || [];
+const rcStores = parseList(html.match(/const RC_STORES\s*=\s*\[([^\]]+)\]/));
+ok(rcStores && rcStores.length > 0, 'index.html declares RC_STORES');
+ok((rcStores || []).join(',') === workerAll.join(','),
+  `🔑 RC_STORES matches the worker's ALL_STORES exactly, order included `
+  + `(frontend ${(rcStores || []).join(',')} vs worker ${workerAll.join(',')})`);
+
+// The re-snapshot's cache eviction is the one consumer, and a literal there is
+// the bug coming back — it evicts per store, so a roster it disagrees with
+// leaves that store rendering pre-re-snapshot numbers until a reload.
+ok(/const affectedStores = store === 'all' \? RC_STORES :/.test(html),
+  'the re-snapshot evicts itemSalesCache over RC_STORES, not a literal');
+
+// WRS_STORES is DERIVED in both files, so the "+ BL12" cannot outlive ALL_STORES.
+ok(/const RC_STORES_WRS = \[\.\.\.RC_STORES, 'BL12'\];/.test(html),
+  "RC_STORES_WRS is derived as [...RC_STORES, 'BL12'] — not a seventh literal");
+ok(/const WRS_STORES\s*=\s*\[\.\.\.ALL_STORES, "BL12"\];/.test(worker),
+  'and mirrors how the worker derives WRS_STORES, so the two orders agree');
+ok(/const stores = RC_STORES_WRS;/.test(html),
+  '🔑 the basket-count backfill covers BL12 — it is live pre-cutover and T13 charts '
+  + 'it, so skipping it leaves BL12 L2 rows with no L3 beneath them');
+
+// 🛑 The tempting wrong fix. WRS_STORE_KEYS is the same seven codes in the same
+// order, and applyRoleUI SPLICES IT IN PLACE down to the signed-in user's grants.
+// Reaching for it here would give a store-scoped admin a silently short backfill
+// that still reports success.
+ok(/WRS_STORE_KEYS\.splice\(0, WRS_STORE_KEYS\.length,/.test(html),
+  'WRS_STORE_KEYS is still narrowed in place by the grant logic (the reason not to borrow it)');
+const bcoBody = html.slice(html.indexOf('async function runBackfillCategoryOrders('),
+                           html.indexOf('async function runBackfillCategoryOrders(') + 4000);
+ok(!/WRS_STORE_KEYS/.test(bcoBody),
+  'and the backfill does not borrow it');
+// The shape of the bug, not just the one string it wore: any roster literal that
+// names retired BL12 while leaving out BL16 is the same mistake. Comment lines are
+// skipped deliberately — the note above confirmDelete quotes the old literal on
+// purpose, and that record is worth more than the strictness.
+const bl12NoBl16 = html.split('\n')
+  .filter(l => !/^\s*(\/\/|\*|<!--)/.test(l))
+  .filter(l => /\[\s*'BL1'[^\]]*'BL12'[^\]]*\]/.test(l) && !/'BL16'/.test(l));
+ok(bl12NoBl16.length === 0,
+  `no live BL12-without-BL16 roster literal survives in index.html, found ${bl12NoBl16.length}`
+  + `${bl12NoBl16.length ? ': ' + bl12NoBl16.map(x => x.trim()).join(' | ') : ''}`);
+
 // ── Drawn vs COUNTED, the half that went unpinned and broke. ────────────────
 //
 // The original version of this file asserted BL8 in ALL_STORES and BL8 out of STORES,

@@ -15194,6 +15194,21 @@
   // ═══════════════════════════════════════════════════════════════
   //  SETTINGS – ADMIN RE-SNAPSHOT
   // ═══════════════════════════════════════════════════════════════
+  // 🔑 PINNED TO THE WORKER'S ALL_STORES BY TEST (scripts/test-closed-stores.mjs),
+  // for the same reason PS_STORES is. The Repair console's copy had drifted BOTH
+  // ways at once: it listed retired BL12 (Wyoming) and omitted BL16 (Indy East).
+  // Every store-fanning control on this page resolves "all" through this list, so
+  // a list that disagrees with the worker's is a control that half-runs.
+  const RC_STORES = ['BL1', 'BL2', 'BL4', 'BL8', 'BL14', 'BL16'];
+  // …and the worker's WRS_STORES, which is ALL_STORES + frozen Wyoming, in that
+  // order. DERIVED rather than written out so the two cannot drift apart. BL12 is
+  // the LIVE store for every week before the 2026-06-14 cutover and T13 charts it,
+  // so a basket-count backfill that skips it leaves BL12's L2 rows with no L3
+  // beneath them — the invariant scripts/test-t13-l3.mjs exists to hold.
+  //
+  // 🛑 NOT WRS_STORE_KEYS. applyRoleUI splices that array down to the signed-in
+  // user's grants, so a store-scoped admin would silently backfill a short roster.
+  const RC_STORES_WRS = [...RC_STORES, 'BL12'];
   (function initSettingsPage() {
     // Pre-fill date inputs with ET today (re-snapshot) and last-7-days (overrides range)
     const etToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
@@ -15239,7 +15254,12 @@
 
     const succeeded = [];
     const failed = [];
-    const affectedStores = store === 'all' ? ['BL1','BL2','BL4','BL8','BL12','BL14'] : [store.toUpperCase()];
+    // Which itemSalesCache keys this run invalidates. The worker resolves
+    // store=ALL to its own ALL_STORES, so this must mirror that exactly: a key
+    // left behind is a store still rendering its pre-re-snapshot figures until a
+    // reload. The old literal listed BL12 (a key that never exists — a harmless
+    // no-op) and omitted BL16, which is the half that bit.
+    const affectedStores = store === 'all' ? RC_STORES : [store.toUpperCase()];
 
     for (let i = 0; i < dateList.length; i++) {
       const date = dateList[i];
@@ -15596,7 +15616,9 @@
       statusEl.innerHTML = msg;
     };
 
-    const stores = ['BL1', 'BL2', 'BL4', 'BL8', 'BL12', 'BL14', 'BL16'];
+    // Seven, not six: BL12 belongs here on purpose (see RC_STORES_WRS), and the
+    // worker's ?action=backfill-category-orders whitelists it for that reason.
+    const stores = RC_STORES_WRS;
     let units;
     if (_ordFillFailed.length) {
       units = [..._ordFillFailed];
