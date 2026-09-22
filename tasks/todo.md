@@ -935,8 +935,12 @@ Logged late, because it belongs in the record.
   versions. Nothing in the suite could have caught the original, because every assertion was
   about source text and the defect was in behaviour against a server that answers differently.
 
-**Brian still has to delete the five duplicates** — Admin → Inventory, keep one per store,
-and check all six stores.
+~~**Brian still has to delete the five duplicates**~~ — **done 2026-09-22**, Brian deleted
+them himself. The cleanup was the one-time half; the guard that stops them coming back was
+verified live in the deployed bundle the same day (`cloverCodeInUse` / `duplicate-check` /
+"Nothing was created"), so `create-clover-item` now FAILS CLOSED when it cannot determine
+whether a code is in use, rather than shrugging and creating anyway. `isObCode` / `obFallback`
+are live too, so a PO-carrying sticker code cannot collide with its ordinary sibling.
 
 
 # Price Scan — print quantity, and a manual (no-lookup) mode (2026-09-21)
