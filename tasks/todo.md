@@ -1,3 +1,27 @@
+# Full code review, page by page (2026-09-22)
+
+**Brian:** *"complete code review … improve performance, speed, look for bugs, give me
+suggestions on UI and UX improvements. Break this down page by page. … only minor fixes,
+but anything major that's recorded and figure out a plan to fix in the future."*
+
+## Plan
+
+- [x] Map every page to its markup, its JS in `index.html` and the worker actions it calls
+      (20 review units: 18 page groups + 2 worker cross-cutting).
+- [~] One reviewer per unit. **15 of 20 done**, 389 findings (60 high; 355 minor, 34 major).
+      Stopped early at Brian's request to save usage. Not reviewed yet: app shell / nav / SW /
+      initial load, Labor, Inventory Receiver, Submit Photos + Marketing + Comments, Users.
+- [~] Two verifiers per unit. **Only Worker crons finished**: 15 of 15 confirmed.
+- [x] Report + major-items plan: `docs/code-review-2026-09-22.md`.
+- [ ] Apply verified **minor** fixes. Not started: nothing is verified outside Worker crons.
+- [ ] `npm test` green after fixes (baseline: 5,603 assertions / 81 suites, all pass).
+
+## Review
+
+The review is paused, not finished. The report carries everything the 15 reviewers produced,
+labelled unverified wherever no verifier ran, so no findings were lost. Next session: finish
+the 5 remaining units, run the verifiers page by page, then fix high + minor + verified first.
+
 # Phone nav: the More sheet becomes a Menu page (2026-09-22)
 
 **Brian**, after reviewing four options (artifact "RETJG Mobile Nav Options"):
