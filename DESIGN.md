@@ -227,6 +227,28 @@ top-right actions (refresh, etc.). Heading uses Lilita One brand font
 (`font-brand`), uppercase, accent green: `text-2xl font-brand
 text-accent-green uppercase tracking-wide`.
 
+The subtitle under it is **`text-sm text-opl-inkDim dark:text-op-inkDim`**
+(5.88:1 light, 5.74:1 dark). It used to be `text-gray-400 dark:text-gray-500`
+on every page, which fails AA in **both** themes — and for a reason worth
+knowing, because the same trap is one typo away on any muted text:
+
+| | on light grounds | on dark grounds |
+|---|---|---|
+| `gray-400` `#9ca3af` | **2.29 – 2.54 ✗** | 6.35 – 7.80 ✓ |
+| `gray-500` `#6b7280` | 4.35 ✗ – 4.83 ✓ | **3.34 – 4.10 ✗** |
+
+Each grey is usable on exactly one side, so `text-gray-400 dark:text-gray-500`
+puts **both halves on the wrong side**. The pair that happens to be right,
+`text-gray-500 dark:text-gray-400`, is the reverse and reads like a typo of it;
+27 attributes had the broken order and 58 the working one, which is how it
+survived. Reach for the `inkDim` pair instead and the question does not arise —
+`opl-inkDim` clears AA on every light ground and fails on every dark one, and
+`op-inkDim` the exact opposite, so a half-applied pair is visibly wrong rather
+than quietly 2.54:1.
+
+**`inkDimmer` is never text.** `#5a6478` is 2.99:1 on `op-panel` and `#9c9484`
+is 3.01:1 on `opl-panel`; it is for borders and badge outlines only (§4.8 trap 5).
+
 ---
 
 ## 4. Dashboard components
@@ -508,9 +530,28 @@ editable cells:
 | inkDimmer | `#9c9484` | `#5a6478` |
 | hairline | `rgba(20,16,8,.10)` | `rgba(255,255,255,.09)` |
 | border | `rgba(20,16,8,.18)` | `rgba(255,255,255,.16)` |
+| bad — **fills and edges** | `#c0392b` | `#ef4444` |
+| bad — **text** | `#c0392b` | `#f87171` |
 
 Accent `#22c55e` on `#06210f` text for a primary button; amber `#f59e0b` for
 draft/dirty.
+
+**`op-bad` splits, and only in dark.** `#ef4444` is 4.73:1 on bare `op-panel`,
+which is why it has always looked fine — but every red badge and every error row
+sits on its *own wash*, and there it measures **4.25:1 and fails AA**. So the
+token keeps the fills and the borders, and red TEXT in dark takes `#f87171`
+(5.78:1 on the red wash, 5.09 on amber, 5.49 on green, 6.43 on bare panel).
+Light needs no split: `opl-bad` `#c0392b` clears 4.69:1 even on its own wash.
+
+The same shape catches the light greens. `accent-green` `#22c55e` is **2.28:1 on
+`opl-panel`** — a fill and a dark-theme text colour, never light-theme text; use
+`#166534` (green-800, 7.13:1) there. `op-warn` `#f59e0b` is likewise 2.15:1 in
+light; use `#92400e` (amber-800, 7.09:1).
+
+**The rule the three of them share:** a semantic colour that passes on a bare
+panel can still fail on the tinted chip it actually lives in. Measure the colour
+against the *composited* background — the wash over the bar over the panel — not
+against the panel.
 
 ---
 

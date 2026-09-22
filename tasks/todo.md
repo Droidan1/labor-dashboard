@@ -1,3 +1,83 @@
+# Muted text across every page, and both findings into DESIGN.md (2026-09-22)
+
+**Brian:** *"yes add both to DESIGN.md and fix all the pages"* — answering the two things
+#276 flagged: the `op-bad` text/fill split, and the 2.54:1 app-bar subtitle.
+
+## The subtitle was backwards, not merely dim
+
+I reported it as "2.54:1 in light". That was true and incomplete: it fails in **both**
+themes, and the reason is worth more than the number.
+
+| | on light grounds | on dark grounds |
+|---|---|---|
+| `gray-400` `#9ca3af` | **2.29 – 2.54 ✗** | 6.35 – 7.80 ✓ |
+| `gray-500` `#6b7280` | 4.35 ✗ – 4.83 ✓ | **3.34 – 4.10 ✗** |
+
+Each grey works on exactly one side. `text-gray-400 dark:text-gray-500` puts **both
+halves on the wrong side** — 2.54:1 light, 3.68:1 dark. The pair that works is the
+reverse, `text-gray-500 dark:text-gray-400`, and it reads like a typo of the broken one.
+The file held **27 backwards and 58 correct**, which is exactly how it survived: half the
+codebase looked like a counter-example to the other half.
+
+## What changed
+
+Found by rendering **every** `#page-*` section in both themes and walking every visible
+text node, rather than grepping for a class name — which is how the scope turned out to
+be wider than the subtitle:
+
+| combo | n | why it failed |
+|---|---|---|
+| `text-gray-400` (bare) | 65 | 2.54:1 light, no dark override |
+| `text-gray-400 dark:text-gray-500` | 27 | both halves on the wrong side |
+| `text-gray-500 dark:text-op-inkDim` | 11 | 4.35:1 on `opl-bg` |
+| `text-gray-400 dark:text-op-inkDim` | 3 | light half fails |
+| `text-gray-400 dark:text-op-inkDimmer` | 3 | both fail; inkDimmer is 2.99:1 as text |
+| `text-gray-500` (bare) | 3 | 3.68:1 dark |
+
+**112 class attributes**, all to `text-opl-inkDim dark:text-op-inkDim` (5.88 / 5.74).
+Plus **3 JS-built class strings** a `class="…"` pass cannot see — two dashboard
+"no data" delta cells and one escaped `<span>` in a template literal. The 58 correct
+pairs were left alone: both halves pass, and rewriting them would be churn.
+
+🔑 **Zero background tokens changed** — verified on the diff, which is what makes a
+112-attribute sweep safe to read: every edit is a text colour.
+
+## Left failing, deliberately — a different family, and Brian has not ruled on it
+
+The sweep did not touch semantic/brand colours. What the survey still reports:
+
+| | n | ratio | where |
+|---|---|---|---|
+| `text-white` on `#3BB54A` | 17 | 2.66 both themes | "Save draft", "Submit photos" |
+| accent-green `#22c55e` as text | 9 | 2.15 light | "LIVE" pills — dashboard, ebay-cases, landing |
+| `text-green-600` | 2 | 3.30 light | dashboard delta cells |
+| `text-[#3BB54A]` | 1 | 2.39 light | Retail Summary "Summary" |
+| **`.ct-tab`, no colour class at all** | 5 | **1.10 dark** | Content / Marketing "Compose" tab |
+
+🛑 The last one is not a tint problem — it is **black text on the dark ground**, near
+invisible. The others are brand decisions (`#3BB54A` is the legacy green) or the known
+`#22c55e`-in-light problem DESIGN.md already records for the page `h1`. None are mine to
+decide, so none were touched.
+
+## DESIGN.md
+
+- **§3.3** now names the subtitle token and carries the grey table above, so the next
+  person reaches for the `inkDim` pair instead of guessing which grey goes where.
+- **§4.8's token table** gains `bad — fills and edges` vs `bad — text`, with the reason:
+  `#ef4444` is 4.73:1 on a bare panel and **4.25:1 on its own wash**, and every red badge
+  sits on the wash. It generalises to the light greens (`#22c55e` 2.28, `#f59e0b` 2.15)
+  under one rule: **measure against the composited background, not the panel.**
+
+## Verified
+
+- [x] Every figure written into DESIGN.md re-computed — **19/19 check out**. A number in a
+      spec is a claim; lessons.md is explicit that claims get run, not remembered.
+- [x] Survey re-run: the grey family is **gone from both themes**, nothing new appeared.
+- [x] No JS queries the changed classes (`querySelector`/`classList.contains` — 0 hits),
+      so a class rename cannot break behaviour.
+- [x] `npm test` — 5586 assertions, 80 suites. `browser-inventory-nav.mjs` — 72 checks.
+- [x] Looked at Supply Request in light: subtitle and empty state readable, layout intact.
+
 # Inventory, unbundled — preview for review (2026-09-22)
 
 **Brian:** *"I want Inventory not to be a page but like Marketing on the sidebar … and then
