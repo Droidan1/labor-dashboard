@@ -11084,7 +11084,10 @@ async function retailRunManifest(env, manifestId, opts = {}) {
 // ─── Manifest Scorer ──────────────────────────────────────────────────────────
 
 // The canonical shape every vendor's columns are mapped onto.
-const MANIFEST_FIELDS = ["identifier", "identifier_type", "description", "qty", "uom", "cost", "msrp", "vendor_claimed_retail", "units_per_case", "condition"];
+// 🔑 `ob_price` is mappable but never GUESSED on a vendor manifest — see MANIFEST_OB_HINTS.
+// It is listed here so manifestWriteLines can read the column when a map does name it; on
+// every scorer upload no map names it, so the field stays absent exactly as it is today.
+const MANIFEST_FIELDS = ["identifier", "identifier_type", "description", "qty", "uom", "cost", "msrp", "vendor_claimed_retail", "units_per_case", "condition", "ob_price"];
 
 // Vendors do not share a vocabulary for condition. Clorox writes "Grade B/Each",
 // "Pristine Cases" and "Each"; BStock writes "USED_GOOD" and "NEW". Normalise only what is
@@ -11163,6 +11166,25 @@ function manifestMissing(map, headers) {
   const missing = ["description", "qty"].filter(f => !has(f));
   if (!has("cost") && !has("msrp")) missing.push("cost");
   return missing;
+}
+
+// The same question for an opportunity buy's sheet, which needs different columns.
+//
+// 🛑 THE BARCODE IS REQUIRED HERE AND OPTIONAL THERE, and that is not an oversight either
+// way. A scorer line with no identifier is still a line you can cost, classify and score.
+// An OB line with no barcode can never be reached by a scan — which is the entire reason
+// this sheet is being uploaded — so accepting one would file a row that looks present and
+// is permanently unreachable. Same argument for the price: the scorer DERIVES a price and
+// can manage without a column, whereas on this sheet the column IS the answer.
+//
+// 🔑 Reported in Brian's words, not the field names, because this message is read by the
+// person looking at their own spreadsheet: "UPC", not "identifier".
+const MANIFEST_OB_REQUIRED = [
+  ["identifier", "UPC"], ["description", "description"], ["qty", "quantity"], ["ob_price", "our price"],
+];
+function manifestObMissing(map, headers) {
+  const has = (f) => map[f] && headers.includes(map[f]);
+  return MANIFEST_OB_REQUIRED.filter(([f]) => !has(f)).map(([, label]) => label);
 }
 
 // RFC-4180 enough for vendor exports: quoted fields, doubled quotes inside them, commas
@@ -11288,12 +11310,38 @@ const MANIFEST_HINTS = {
          /^total\s*(?:cost|price)/i,
          /^wholesale/i, /^wsl/i],
   // The reference we are beating, never what we pay. Read as a sanity check only.
-  msrp: [/^msrp\b/i, /^list\b/i, /retail\s*price/i, /^srp\b/i, /^orig(inal)?\s*retail/i,
+  // 🔑 /^street\b/ is new and deliberately GLOBAL. Brian's buy sheets head this column
+  // "Street Price"; no hint here matched it, so it landed nowhere. It means the same thing
+  // on a vendor's sheet, and nothing else claims that header today, so it is added to the
+  // shared table rather than to the OB-only one.
+  msrp: [/^msrp\b/i, /^street\b/i, /^list\b/i, /retail\s*price/i, /^srp\b/i, /^orig(inal)?\s*retail/i,
          /^unit\s*retail/i, /^retail$/i, /^unit\s*wholesale/i],
   vendor_claimed_retail: [/retail\s*comp/i, /^comp$/i, /^claimed/i],
   // BStock calls it "Condition"; Clorox calls it "Sort". /^grade$/ last, because a sheet
   // with both a "Grade" and a "Condition" column means the second one.
   condition: [/^condition/i, /^sort$/i, /^cosmetic/i, /^grade$/i],
+};
+
+// ─── The one thing a buy sheet says that a vendor sheet never does ───────────────
+//
+// 🛑 A PRICE COLUMN MEANS OPPOSITE THINGS ON THE TWO KINDS OF SHEET. On a VENDOR's
+// manifest the price is what THEY charge us — a cost, which is why MANIFEST_HINTS.cost
+// claims a bare "Price". On an opportunity buy's own sheet the price is what WE ring it up
+// for. Same header, inverted meaning.
+//
+// 🔑 THE CONCRETE REGRESSION, measured against the table above, is the bare "Price": today
+// it maps to `cost`, and an ob_price hint living in the SHARED table would take it first —
+// manifestGuessMap claims a header once — leaving every vendor sheet whose only money
+// column is "Price" with no cost at all, refused at upload for a column it plainly has.
+// ("Our Price" and "Our Retail" match nothing in the shared table today, so those two are
+// new readings rather than stolen ones; they are here for the same reason all the same.)
+//
+// So these are merged in FRONT of MANIFEST_HINTS, and ONLY when the upload carries a PO. A
+// vendor manifest still maps byte for byte the way it does today — the OB reading cannot
+// leak into the scorer, because on a scorer upload this table is never consulted.
+const MANIFEST_OB_HINTS = {
+  ob_price: [/^our\s*price/i, /^our\s*retail/i, /^sell(?:ing)?\s*price/i, /^shelf\s*price/i,
+             /^store\s*price/i, /^ticket(?:ed)?\s*price/i, /^price$/i],
 };
 
 // ─── What unit is the cost column quoted in? ─────────────────────────────────
@@ -11625,10 +11673,15 @@ function manifestFindHeader(rows) {
   return { headerRow: best.headerRow, score: best.score, skipped: best.headerRow };
 }
 
-function manifestGuessMap(headers) {
+// `ob` says this upload belongs to an opportunity buy, which changes what one header
+// means — see MANIFEST_OB_HINTS. Spread in this order so the OB fields are tried FIRST:
+// Object.keys walks insertion order, ob_price exists in neither table's overlap, and the
+// shared hints keep their own relative order behind it.
+function manifestGuessMap(headers, { ob = false } = {}) {
+  const hints = ob ? { ...MANIFEST_OB_HINTS, ...MANIFEST_HINTS } : MANIFEST_HINTS;
   const map = {}, taken = new Set();
-  for (const field of Object.keys(MANIFEST_HINTS)) {
-    for (const re of MANIFEST_HINTS[field]) {
+  for (const field of Object.keys(hints)) {
+    for (const re of hints[field]) {
       const hit = headers.find(h => !taken.has(h) && re.test(String(h).trim()));
       if (hit) { map[field] = hit; taken.add(hit); break; }
     }
@@ -11816,7 +11869,12 @@ function manifestRound(price, rule) {
 // Write a manifest's lines from a mapped CSV, filling anything item_cache already knows.
 // The cache is what makes the SECOND manifest carrying a product cost nothing to
 // classify — and what keeps a human's correction from being overwritten by the model.
-async function manifestWriteLines(env, manifestId, headers, dataRows, map, costBasis = "unit") {
+// `opts.loadId` is the purchase order this manifest belongs to, or null for an ordinary
+// scorer upload. It is taken from the MANIFEST ROW rather than from a caller's flag on
+// purpose: manifest-remap re-writes lines for a manifest it looked up by id, and a boolean
+// threaded through two call sites is a boolean that will eventually be threaded wrongly.
+async function manifestWriteLines(env, manifestId, headers, dataRows, map, costBasis = "unit", opts = {}) {
+  const loadId = opts.loadId || null;
   const col = {};
   for (const f of MANIFEST_FIELDS) if (map[f]) col[f] = headers.indexOf(map[f]);
 
@@ -11877,6 +11935,7 @@ async function manifestWriteLines(env, manifestId, headers, dataRows, map, costB
       uom: String(at("uom") ?? "").trim() || null,
       units_per_case: (() => { const n = manifestNum(at("units_per_case")); return n && n > 0 ? Math.round(n) : null; })(),
       cost: manifestNum(at("cost")), msrp: manifestNum(at("msrp")),
+      ob_price: manifestNum(at("ob_price")),
       vendor_claimed_retail: manifestNum(at("vendor_claimed_retail")),
       condition_raw: String(at("condition") ?? "").trim().slice(0, 80) || null,
       noDetail: noDetail.has(i),
@@ -11908,6 +11967,32 @@ async function manifestWriteLines(env, manifestId, headers, dataRows, map, costB
     }
   }
 
+  // ── The two columns an opportunity buy's scan reads ──────────────────────────
+  //
+  // 🛑 A MANIFEST BARCODE AND A SCANNED BARCODE ARE SPELLED DIFFERENTLY TODAY, and the
+  // mismatch is silent. `identifier` is kept exactly as the sheet wrote it — which is
+  // right, it is the vendor's own claim — while every scan is canonicalised through
+  // merchCanonicalUpc at the door. So "0085239098745" on the sheet and "085239098745" off
+  // the scanner are one can of beans that does not compare equal, and the scan reports
+  // "not on this manifest": the wrong answer wearing the right words. `ob_upc` is the
+  // sheet's number put through the SAME function, once, here — so the match downstream is
+  // plain equality between two values the same code produced.
+  //
+  // 🔑 ONLY ON AN OB MANIFEST, AND ONLY FOR A REAL BARCODE. A scorer manifest's lines can
+  // never be reached by a scan (no PO resolves to them), so filling this for them would
+  // grow the partial index by every line ever uploaded for rows no query can use. A model
+  // number or a vendor SKU is not a barcode and canonicalising one would invent a UPC.
+  const obUpcOf = (l) => (loadId && l.identifier && l.identifier_type === "upc")
+    ? (merchCanonicalUpc(l.identifier) || null) : null;
+
+  // 🛑 ZERO IS NOT A PRICE, AND NEITHER IS A NEGATIVE. A blank cell read as 0, or a credit
+  // written "(4.99)", would otherwise become a shelf price of $0.00 that a scan states with
+  // total confidence. Nulled and flagged, so the line is visibly unpriced rather than
+  // quietly free — the scan says "no price on the sheet" and a person fixes the sheet.
+  for (const l of parsed) {
+    if (l.ob_price !== null && !(l.ob_price > 0)) { l.obPriceBad = l.ob_price; l.ob_price = null; }
+  }
+
   // One read for the whole file. Range-bounded rather than IN(?,?,…): D1 caps bound
   // params at 100 per query and a manifest can carry thousands of identifiers.
   const cache = {};
@@ -11918,11 +12003,13 @@ async function manifestWriteLines(env, manifestId, headers, dataRows, map, costB
     for (const c of results || []) if (idents.has(c.identifier)) cache[c.identifier] = c;
   }
 
+  // 19 columns, 19 placeholders, 19 bound values. Counted, because an arity that drifts by
+  // one here binds every later column to the wrong field and nothing throws.
   const ins = env.DB.prepare(
     `INSERT INTO manifest_lines (manifest_id, row_no, identifier, identifier_type, description,
        qty, uom, cost, msrp, vendor_claimed_retail, units_per_case, l2, l3, l3_source, flags,
-       condition_raw, condition_grade)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+       condition_raw, condition_grade, ob_price, ob_upc)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   // Batched in chunks: one batch of several thousand statements is a way to discover a
   // subrequest limit in production rather than in a test.
   for (let i = 0; i < parsed.length; i += 200) {
@@ -11952,13 +12039,34 @@ async function manifestWriteLines(env, manifestId, headers, dataRows, map, costB
       const grade = manifestGrade(l.condition_raw);
       // Anything not pristine is worth seeing on the line without hunting for a column.
       if (grade && grade !== "new") flags.push(`condition: ${grade.replace("_", " ")}`);
+      const obUpc = obUpcOf(l);
+      if (loadId) {
+        // Each of these makes a line unreachable or unpriceable, and each is invisible
+        // unless the upload says so — the sheet looks fine, the scan just never works.
+        if (l.obPriceBad !== undefined) flags.push(`our price is not a price: ${l.obPriceBad}`);
+        else if (l.ob_price === null) flags.push("no our-price");
+        if (!obUpc) flags.push(l.identifier ? "identifier is not a barcode" : "no barcode — a scan can never find this line");
+        // Two numbers that disagree about which way round the sheet is. Never corrected
+        // here: it is Brian's sheet and his call, but it should not need finding by eye.
+        if (l.ob_price !== null && l.msrp !== null && l.ob_price > l.msrp) {
+          flags.push(`our price ${l.ob_price} is above the street price ${l.msrp}`);
+        }
+      }
       return ins.bind(manifestId, l.row_no, l.identifier, l.identifier_type, l.description,
         l.qty, l.uom, l.cost, l.msrp, l.vendor_claimed_retail, l.units_per_case,
         hit?.l2 ?? null, hit?.l3 ?? null, hit ? "cache" : null, JSON.stringify(flags),
-        l.condition_raw, grade);
+        l.condition_raw, grade, l.ob_price ?? null, obUpc);
     }));
   }
-  return { written: parsed.length, skippedHeaders, skippedSubtotals };
+  // 🔑 An OB upload is reported by what it can actually DO, not by how many rows were
+  // read. A sheet of 240 lines that yields 12 matchable ones is a sheet with a problem,
+  // and the only moment anyone will look is right after uploading it.
+  return {
+    written: parsed.length, skippedHeaders, skippedSubtotals,
+    obPriced: parsed.filter(l => l.ob_price !== null).length,
+    obMatchable: parsed.filter(l => obUpcOf(l) && l.ob_price !== null).length,
+    obUnits: parsed.reduce((a, l) => a + (l.qty > 0 ? l.qty : 0), 0),
+  };
 }
 
 // Ask Claude which of OUR categories a line belongs to. Batched, and only for lines the
@@ -12152,8 +12260,12 @@ async function retailDrainQueue(env) {
   if (sw && String(sw).trim().toLowerCase() === "off") return { skipped: "switched off" };
 
   const m = await env.DB.prepare(
+    // `load_id IS NULL` is belt and braces: auto_retail defaults to 0 and no OB upload
+    // sets it, so a buy's sheet cannot be picked up today. It is stated anyway because the
+    // cost of being wrong here is real money — this sweep spends TinyFish and Firecrawl
+    // credits looking up street prices for lines whose price is already decided.
     `SELECT id, vendor FROM manifests
-      WHERE auto_retail = 1 AND status IN ('draft','scored')
+      WHERE auto_retail = 1 AND status IN ('draft','scored') AND load_id IS NULL
         AND (retail_lock_until IS NULL OR retail_lock_until < ?)
       ORDER BY uploaded_at LIMIT 1`).bind(new Date().toISOString()).first();
   if (!m) return { idle: true };
@@ -21979,17 +22091,68 @@ export default {
     }
 
     // ── Manifest Scorer ───────────────────────────────────────────────────────
-    // POST ?action=manifest-upload  { vendor, filename, csv, sell_as?, units_per_case?, column_map? }
+    // POST ?action=manifest-upload  { vendor, filename, csv, sell_as?, units_per_case?, column_map?, load_id? }
     // Parses the CSV, maps it with the caller's map, else this vendor's saved template,
     // else a guess from the headers, and writes the lines. Returns what it used so the
     // page can show the mapping for correction rather than assuming it got it right.
+    //
+    // 🔑 `load_id` IS A PURCHASE ORDER, AND IT MAKES THIS A DIFFERENT DOCUMENT. With one,
+    // the upload is an opportunity buy's own sheet: Brian's barcodes, his descriptions, his
+    // quantities and — the part no vendor sheet has — the price WE will ring each item up
+    // at. It becomes the source of truth for every scan carrying that PO, it is required to
+    // name a buy that is open, it never touches a vendor template, and it is kept out of
+    // the Manifest Scorer's lists entirely. Without one, everything below behaves exactly
+    // as it did before this shipped.
     if (url.searchParams.get("action") === "manifest-upload" && request.method === "POST") {
       const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
       if (unauth) return unauth;
       if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
       try {
         const body = await request.json();
-        const vendor = String(body?.vendor || "").trim();
+
+        // ── Is this an opportunity buy's sheet? ─────────────────────────────────
+        //
+        // 🛑 A PO THAT DOES NOT NORMALISE IS AN ERROR, NEVER A SCORER UPLOAD. Falling back
+        // to the ordinary path on a malformed PO would accept the file, score it as a
+        // vendor manifest, and answer no scan — a success message for a load that went
+        // somewhere nobody will look. Same rule as stickerCode: a supplied PO that will not
+        // normalise fails, it does not degrade.
+        const poRaw = body?.load_id;
+        const poGiven = poRaw !== undefined && poRaw !== null && String(poRaw).trim() !== "";
+        const loadId = poGiven ? obPo(poRaw) : null;
+        if (poGiven && !loadId) {
+          return new Response(JSON.stringify({ error: "That is not a purchase order", code: "BAD_PO" }),
+            { status: 400, headers: corsJson });
+        }
+        // Attaching a manifest to a buy is the same decision as opening one, so it is the
+        // same gate — and explicitly, because the admin check above admits a different set.
+        if (loadId) {
+          const denied = obRequireEdit(currentUser, isAdminSecret, corsJson);
+          if (denied) return denied;
+        }
+        let buy = null;
+        if (loadId) {
+          buy = await env.DB.prepare(
+            `SELECT po, label, vendor, status FROM ob_buys WHERE po = ?`).bind(loadId).first();
+          // 🛑 NEVER CREATE THE BUY FROM HERE. A typo'd PO would silently open a buy nobody
+          // asked for, and every sticker printed against the real one would then miss it.
+          if (!buy) {
+            return new Response(JSON.stringify({
+              error: `There is no buy ${loadId}. Open it first, then give it a manifest.`, code: "NO_BUY",
+            }), { status: 404, headers: corsJson });
+          }
+          if (buy.status !== "open") {
+            return new Response(JSON.stringify({
+              error: `Buy ${loadId} is closed. Reopen it before replacing its manifest.`, code: "BUY_CLOSED",
+            }), { status: 409, headers: corsJson });
+          }
+        }
+
+        // A buy's sheet is filed under the buy's own vendor, so nobody has to retype it —
+        // and under the PO itself when the buy never recorded one, because `vendor` is NOT
+        // NULL and an empty string would file every unlabelled buy under the same name.
+        const vendor = String(body?.vendor || "").trim()
+          || (loadId ? (String(buy?.vendor || "").trim() || `PO ${loadId}`) : "");
         const csv = String(body?.csv || "");
         if (!vendor) return new Response(JSON.stringify({ error: "vendor required" }), { status: 400, headers: corsJson });
         if (csv.length > 4_000_000) {
@@ -22019,7 +22182,14 @@ export default {
           return new Response(JSON.stringify({ error: `That manifest has ${dataRows.length} lines; 5000 is the cap` }), { status: 400, headers: corsJson });
         }
 
-        const tpl = await env.DB.prepare(`SELECT * FROM vendor_templates WHERE vendor = ?`).bind(vendor).first();
+        // 🛑 AN OB SHEET NEITHER READS NOR WRITES A VENDOR TEMPLATE. The template is the
+        // memory of how ONE VENDOR heads their columns, and the two kinds of sheet disagree
+        // about what "Our Price" means (see MANIFEST_OB_HINTS). Letting a buy sheet teach a
+        // vendor's template, or read one, is how a scorer upload from that vendor would
+        // later map their wholesale column as our shelf price — quietly, months later.
+        const tpl = loadId
+          ? null
+          : await env.DB.prepare(`SELECT * FROM vendor_templates WHERE vendor = ?`).bind(vendor).first();
         let map = body?.column_map, mapSource = "supplied";
         if (!map && tpl) {
           try {
@@ -22028,8 +22198,21 @@ export default {
             mapSource = up.changed ? "template + newly detected columns" : "template";
           } catch (_) {}
         }
-        if (!map) { map = manifestGuessMap(headers); mapSource = "guessed"; }
-        const missing = manifestMissing(map, headers);
+        if (!map) { map = manifestGuessMap(headers, { ob: !!loadId }); mapSource = "guessed"; }
+        const missing = loadId ? manifestObMissing(map, headers) : manifestMissing(map, headers);
+        // 🛑 AN OB UPLOAD THAT CANNOT BE USED IS REFUSED BEFORE ANYTHING IS WRITTEN, and
+        // that is not merely tidy. The scorer's behaviour — insert the manifest, skip the
+        // lines, ask the human to fix the mapping — would here install an EMPTY LIVE
+        // manifest on the buy: it wins the one-live-manifest-per-PO index, so the previous
+        // working sheet is gone, every scan answers "not on this manifest", and the retry
+        // collides with the husk. Nothing is written until the columns are all there.
+        if (loadId && missing.length) {
+          return new Response(JSON.stringify({
+            error: `This sheet is missing ${missing.join(", ")}. Nothing was changed — buy ${loadId} still has the manifest it had.`,
+            code: "MISSING_COLUMNS", missing, headers, column_map: map,
+            header_row: hdr.headerRow + 1,
+          }), { status: 400, headers: corsJson });
+        }
         // 🔑 THE COLUMN GETS A VOTE AT LAST. `sell_as` used to be the caller's, else the
         // template's, else 'each' — and never once the header that was actually mapped to
         // `cost`. So "Case Price" and "Sale Price" both stored 'each', and the disagreement
@@ -22056,12 +22239,49 @@ export default {
 
         const id = randomHex(12), now = new Date().toISOString();
         const who = currentUser?.email || currentUser?.name || null;
-        await env.DB.prepare(
-          `INSERT INTO manifests (id, vendor, filename, uploaded_by, uploaded_at, sell_as, units_per_case, cost_basis, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft')`
-        ).bind(id, vendor, String(body?.filename || "").slice(0, 200) || null, who, now, sellAs, upc, costBasis).run();
 
-        const wrote = missing.length ? null : await manifestWriteLines(env, id, headers, dataRows, map, costBasis);
+        // 🛑 AN OB MANIFEST IS BORN SUPERSEDED, AND THAT IS THE WHOLE SAFETY PROPERTY.
+        //
+        // Brian's rule is that a second upload REPLACES the first, and migration-073 makes
+        // "two live manifests on one PO" impossible in the database rather than merely
+        // unlikely in this handler. That leaves one question: what happens when the lines
+        // fail to write halfway through — a D1 hiccup, a subrequest limit, a row the parser
+        // chokes on. If the new manifest were live from the first statement, the buy would
+        // be left pointing at a half-written sheet with its working one already retired,
+        // and every scan would answer off whatever landed before the failure.
+        //
+        // So the row is inserted with superseded_at ALREADY SET: attached to the PO,
+        // excluded from the live lookup, invisible to every scan. Its lines are written
+        // into that inert row. Only when they are all there does one batch retire the old
+        // manifest and clear the new one's stamp — in that order, because SQLite checks a
+        // unique index per statement, so the reverse order would collide with itself.
+        //
+        // Anything that fails before that batch leaves the previous manifest live and
+        // untouched, and leaves behind a row that looks exactly like what it is: a
+        // superseded attempt. Nothing is lost, and the retry is just another upload.
+        await env.DB.prepare(
+          `INSERT INTO manifests (id, vendor, filename, uploaded_by, uploaded_at, sell_as, units_per_case, cost_basis, status, load_id, superseded_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)`
+        ).bind(id, vendor, String(body?.filename || "").slice(0, 200) || null, who, now, sellAs, upc, costBasis,
+               loadId, loadId ? now : null).run();
+
+        const wrote = missing.length ? null : await manifestWriteLines(env, id, headers, dataRows, map, costBasis, { loadId });
+
+        // What this upload displaced, read BEFORE it is retired so the answer can be shown.
+        let replaced = null;
+        if (loadId) {
+          replaced = await env.DB.prepare(
+            `SELECT m.id, m.filename, m.uploaded_at, m.uploaded_by,
+                    (SELECT COUNT(*) FROM manifest_lines l WHERE l.manifest_id = m.id) AS lines
+               FROM manifests m
+              WHERE m.load_id = ? AND m.superseded_at IS NULL AND m.id <> ?`
+          ).bind(loadId, id).first();
+          await env.DB.batch([
+            env.DB.prepare(`UPDATE manifests SET superseded_at = ? WHERE load_id = ? AND superseded_at IS NULL AND id <> ?`)
+              .bind(now, loadId, id),
+            env.DB.prepare(`UPDATE manifests SET superseded_at = NULL WHERE id = ?`).bind(id),
+          ]);
+        }
         return new Response(JSON.stringify({
           ok: true, id, vendor, sell_as: sellAs, units_per_case: upc,
           // 🔑 The page shows BOTH, because "we read it off your column" and "we fell back
@@ -22080,9 +22300,27 @@ export default {
           skipped_repeat_headers: wrote?.skippedHeaders ?? 0,
           skipped_subtotals: wrote?.skippedSubtotals ?? 0,
           sample: dataRows.slice(0, 5),
+          // ── Only on a buy sheet ──────────────────────────────────────────────
+          // 🔑 REPORTED BY WHAT IT CAN DO, NOT BY HOW MANY ROWS WERE READ. "240 lines
+          // uploaded" is the number a person believes; "12 of 240 can be found by a scan"
+          // is the number that matters, and the only moment anyone looks at either is now.
+          load_id: loadId,
+          buy_label: loadId ? (buy?.label || "") : undefined,
+          ob_priced: loadId ? (wrote?.obPriced ?? 0) : undefined,
+          ob_matchable: loadId ? (wrote?.obMatchable ?? 0) : undefined,
+          ob_units: loadId ? (wrote?.obUnits ?? 0) : undefined,
+          replaced: loadId ? (replaced ? {
+            id: replaced.id, filename: replaced.filename || null,
+            uploaded_at: replaced.uploaded_at, uploaded_by: replaced.uploaded_by || null,
+            lines: Number(replaced.lines) || 0,
+          } : null) : undefined,
           note: missing.length
             ? `Map ${missing.join(", ")} before this can be scored.`
-            : (map.cost && headers.includes(map.cost)
+            : loadId
+              ? ((wrote?.obMatchable ?? 0) === (wrote?.written ?? 0)
+                  ? null
+                  : `${(wrote?.written ?? 0) - (wrote?.obMatchable ?? 0)} of ${wrote?.written ?? 0} lines cannot be reached by a scan — they have no barcode or no price. Check the flags on those lines.`)
+              : (map.cost && headers.includes(map.cost)
                 ? null
                 : "No per-line cost on this sheet — set the % of retail (or the load cost) in the cost basis to price it."),
         }), { headers: corsJson });
@@ -22139,7 +22377,10 @@ export default {
         await env.DB.prepare(`UPDATE manifests SET sell_as = ?, units_per_case = ?, cost_basis = ? WHERE id = ?`)
           .bind(sellAs, upc, costBasis, m.id).run();
         await env.DB.prepare(`DELETE FROM manifest_lines WHERE manifest_id = ?`).bind(m.id).run();
-        const rewrote = await manifestWriteLines(env, m.id, headers, rows.slice(rehdr.headerRow + 1), map, costBasis);
+        // From the manifest ROW, so a remap of a buy's sheet keeps filling ob_upc and a
+        // remap of a vendor's keeps not filling it. Nothing has to remember which is which.
+        const rewrote = await manifestWriteLines(env, m.id, headers, rows.slice(rehdr.headerRow + 1), map, costBasis,
+          { loadId: m.load_id || null });
 
         if (body?.save_template !== false) {
           const now = new Date().toISOString();
@@ -22190,7 +22431,13 @@ export default {
           `SELECT m.*, (SELECT COUNT(*) FROM manifest_lines l WHERE l.manifest_id = m.id) AS line_count,
                   (SELECT ROUND(SUM(l.cost * l.qty), 2) FROM manifest_lines l WHERE l.manifest_id = m.id)
                     + COALESCE(m.freight_cost, 0) AS landed_cost
-             FROM manifests m ORDER BY m.uploaded_at DESC LIMIT 50`
+             FROM manifests m
+            -- 🔑 A BUY'S SHEET IS NOT A MANIFEST TO SCORE, and Brian asked for the two kept
+            -- apart. It carries no vendor cost, so it would score as a catastrophe; its
+            -- prices are decisions already made, not a verdict to reach; and its superseded
+            -- copies would pile up in a list meant to show live work. The buy page shows it.
+            WHERE m.load_id IS NULL
+            ORDER BY m.uploaded_at DESC LIMIT 50`
         ).all();
         return new Response(JSON.stringify({ ok: true, manifests: results || [] }), { headers: corsJson });
       } catch (e) {
@@ -22314,6 +22561,17 @@ export default {
         const body = await request.json();
         const m = await env.DB.prepare(`SELECT * FROM manifests WHERE id = ?`).bind(body?.id).first();
         if (!m) return new Response(JSON.stringify({ error: "No such manifest" }), { status: 404, headers: corsJson });
+        // 🛑 EVERY OB MANIFEST IS status 'draft', so the status test below would wave one
+        // straight through. Deleting the live sheet for an open buy silently stops every
+        // scan on that PO from finding a price, and deleting a superseded one destroys the
+        // record of what a user was shown last week. Replacing it is an upload, not a
+        // delete, and that path is the buy page's.
+        if (m.load_id) {
+          return new Response(JSON.stringify({
+            error: `This is the manifest for buy ${m.load_id}. Upload a new one from the buy to replace it — the old sheet is kept as the record of what was scanned against it.`,
+            code: "OB_MANIFEST",
+          }), { status: 409, headers: corsJson });
+        }
         if (m.status !== "draft" && m.status !== "scored") {
           return new Response(JSON.stringify({
             error: `This manifest was marked "${String(m.status).replace("_", " ")}" — it is the record of a decision, not a draft, so it cannot be deleted.`,
@@ -23548,6 +23806,34 @@ export default {
         const totalSold = [...soldBy.values()].reduce((a, b) => a + b.sold, 0);
         const totalRefunded = [...soldBy.values()].reduce((a, b) => a + b.refunded, 0);
 
+        // ── The buy's manifest ──────────────────────────────────────────────
+        //
+        // 🔑 COUNTED BY WHAT A SCAN CAN REACH, not by how many rows were uploaded. A line
+        // with no barcode, or with a blank price cell, is on the sheet and is invisible to
+        // the floor — "240 lines" would read as done when 12 of them work. `priced` and
+        // `matchable` are separate because they fail for different reasons and are fixed
+        // in different columns of the spreadsheet.
+        //
+        // The superseded count is read even when there is no live manifest: a buy whose
+        // upload failed partway has history and no sheet, and that is worth seeing rather
+        // than looking identical to a buy nobody ever uploaded one for.
+        const [sheet, hist] = await Promise.all([
+          env.DB.prepare(
+            `SELECT m.id, m.filename, m.uploaded_at, m.uploaded_by,
+                    COUNT(l.id)                                                        AS lines,
+                    SUM(CASE WHEN l.ob_price IS NOT NULL THEN 1 ELSE 0 END)            AS priced,
+                    SUM(CASE WHEN l.ob_upc IS NOT NULL AND l.ob_price IS NOT NULL
+                             THEN 1 ELSE 0 END)                                        AS matchable,
+                    SUM(CASE WHEN l.qty > 0 THEN l.qty ELSE 0 END)                     AS units
+               FROM manifests m LEFT JOIN manifest_lines l ON l.manifest_id = m.id
+              WHERE m.load_id = ? AND m.superseded_at IS NULL
+              GROUP BY m.id`
+          ).bind(po).first(),
+          env.DB.prepare(
+            `SELECT COUNT(*) AS n FROM manifests WHERE load_id = ? AND superseded_at IS NOT NULL`
+          ).bind(po).first(),
+        ]);
+
         return new Response(JSON.stringify({
           ok: true,
           can_edit: obMayEdit(currentUser, isAdminSecret),
@@ -23557,6 +23843,22 @@ export default {
           tracked_from: (tracked && tracked.from_date) || null,
           sold: totalSold,
           refunded_units: totalRefunded,
+          // null means this buy has no live manifest — which the page says as "no manifest
+          // yet", never as a sheet of zero lines.
+          manifest: sheet ? {
+            id: sheet.id,
+            filename: sheet.filename || null,
+            uploaded_at: sheet.uploaded_at,
+            uploaded_by: sheet.uploaded_by || null,
+            lines: Number(sheet.lines) || 0,
+            priced: Number(sheet.priced) || 0,
+            matchable: Number(sheet.matchable) || 0,
+            // Units the sheet says were bought, which is a different claim from ob_buys.units
+            // — that one is what somebody typed when opening the buy. Both are shown; neither
+            // is corrected into the other, because a disagreement between them is information.
+            units: Number(sheet.units) || 0,
+          } : null,
+          manifest_history: Number(hist?.n) || 0,
           lines: (lines?.results || []).map(r => ({
             store: r.store, l3: r.l3, code: r.code, title: r.title || "",
             price: (Number(r.price_cents) || 0) / 100,
@@ -25408,11 +25710,19 @@ export default {
       }
     }
 
-    // POST ?action=merch-scan { identifier?, identifier_type?, description? }
+    // POST ?action=merch-scan { identifier?, identifier_type?, description?, po? }
     //
     // One item, priced. The warehouse counterpart of the Manifest Scorer: same criteria,
     // same ASP, same cost sources, the SAME price ladder — but for a thing in your hand
     // rather than a row on a spreadsheet.
+    //
+    // 🔑 `po` MEANS "THIS CAME OUT OF THAT BUY", AND THE BUY'S SHEET THEN OUTRANKS THE
+    // LADDER. Brian uploads a manifest against a purchase order carrying the barcode, the
+    // description, the quantity, the street price and — the part the ladder is guessing at
+    // — the price WE decided to sell it for. Once that sheet exists there is nothing left
+    // to derive: the answer was made by a person who bought the load. So a matched line
+    // wins outright and the ladder is not consulted, and a barcode the sheet does not carry
+    // is SAID SO, out loud, rather than quietly priced as if no PO had been given.
     //
     // 💰 CACHE FIRST, ALWAYS. A UPC we have seen answers instantly and for nothing, and an
     // override answers instantly forever. Only a genuinely new item costs an API call, so
@@ -25499,6 +25809,16 @@ export default {
           return new Response(JSON.stringify({ error: "Scan a barcode or type what the item is" }),
             { status: 400, headers: corsJson });
         }
+        // 🛑 A PO THAT WILL NOT NORMALISE FAILS RATHER THAN BEING DROPPED. Ignoring it would
+        // price the item off the ladder and report a perfectly ordinary scan — the manager
+        // would never learn that the buy they selected was not the buy that answered.
+        const scanPoRaw = body?.po;
+        const scanPoGiven = scanPoRaw !== undefined && scanPoRaw !== null && String(scanPoRaw).trim() !== "";
+        const scanPo = scanPoGiven ? obPo(scanPoRaw) : null;
+        if (scanPoGiven && !scanPo) {
+          return new Response(JSON.stringify({ error: "That is not a purchase order", code: "BAD_PO" }),
+            { status: 400, headers: corsJson });
+        }
         // Canonicalised HERE, at the one door every scan comes through — typed, decoded,
         // read off a photo, or handed over by a native detector. Downstream there is only
         // ever one spelling, so nothing further along has to remember this.
@@ -25530,6 +25850,37 @@ export default {
         // they were simply read LAST, so their time landed on the end of the critical path
         // instead of underneath the lookups. Fired here, they are done before anything
         // needs them, and a cached scan that looks nothing up gets them for nothing.
+        // ── THE BUY'S OWN SHEET ────────────────────────────────────────────────
+        //
+        // One query, and it deliberately answers TWO questions that are easy to confuse:
+        // "does this buy have a manifest at all" and "is this barcode on it". The LEFT
+        // JOIN is what separates them — no row means no live manifest, a row with a NULL
+        // row_no means the sheet exists and does not carry this barcode. Collapsing those
+        // into one empty result would let the screen say "not on the manifest" about a buy
+        // that never had one, which sends someone hunting for a line instead of a file.
+        //
+        // 🔑 MATCHED ON ob_upc, NEVER ON identifier. The sheet's own spelling is kept as the
+        // vendor wrote it; ob_upc is that number put through merchCanonicalUpc at import,
+        // which is the same function every scan came through at the door. Comparing the raw
+        // columns would miss a UPC-A written as an EAN-13 — silently, as a clean "not on
+        // this manifest". merchIdForms is NOT used: both sides are already canonical, and
+        // its extra spellings exist only to read item_cache rows written before this did.
+        //
+        // `superseded_at IS NULL` is the whole of the replacement rule on the read side.
+        const obSheet = scanPo ? env.DB.prepare(
+          `SELECT m.id AS manifest_id, m.filename, m.uploaded_at,
+                  (SELECT COUNT(*) FROM manifest_lines x WHERE x.manifest_id = m.id) AS sheet_lines,
+                  (SELECT COUNT(*) FROM manifest_lines d
+                    WHERE d.manifest_id = m.id AND d.ob_upc = ?) AS matches,
+                  l.row_no, l.description AS sheet_description, l.qty AS sheet_qty,
+                  l.ob_price, l.msrp AS sheet_msrp, l.identifier AS sheet_identifier
+             FROM manifests m
+             LEFT JOIN manifest_lines l ON l.manifest_id = m.id AND l.ob_upc = ?
+            WHERE m.load_id = ? AND m.superseded_at IS NULL
+            ORDER BY l.row_no LIMIT 1`
+        ).bind(identifier ? merchCanonicalUpc(identifier) : null,
+               identifier ? merchCanonicalUpc(identifier) : null, scanPo).first() : null;
+
         const sidecar = Promise.all([
           manifestAspVelocity(env),
           env.SALES_SNAPSHOTS.get(CATEGORY_COSTS_KEY, "json"),
@@ -25667,11 +26018,42 @@ export default {
                   ceiling: asNum(critAt("dollar_ceiling")),
                   rounding: critAt("rounding") },
         });
-        const price = manual !== null ? Number(manual) : lad.price;
+
+        // ── What the buy's sheet says ──────────────────────────────────────────
+        const ob = obSheet ? await obSheet : null;
+        const obMatched = !!(ob && ob.row_no !== null && ob.row_no !== undefined);
+        const obPrice = obMatched && ob.ob_price !== null && ob.ob_price !== undefined
+          ? Number(ob.ob_price) : null;
+        if (scanPo) {
+          if (!ob) missFlags.push(`buy ${scanPo} has no manifest`);
+          else if (!identifier) missFlags.push("scan the barcode to match this buy's manifest");
+          else if (!obMatched) missFlags.push(`this barcode is not on buy ${scanPo}'s manifest`);
+          else if (obPrice === null) missFlags.push(`buy ${scanPo}'s manifest carries no price for this line`);
+          // 🛑 ONE BARCODE, TWO PRICES, AND WE PICKED ONE. A UPC listed twice on the sheet
+          // is a sheet that contradicts itself; the lowest row_no answers, but silently
+          // choosing between two prices a person wrote is not something to do quietly.
+          if (obMatched && Number(ob.matches) > 1) {
+            missFlags.push(`this barcode is on the manifest ${Number(ob.matches)} times — row ${ob.row_no} answered`);
+          }
+          // A hand-set price on the item and a price on the sheet are two people's
+          // decisions about the same thing. The sheet is the more specific and the more
+          // recent, so it wins — but never without saying that it displaced something.
+          if (obPrice !== null && manual !== null && Number(manual) !== obPrice) {
+            missFlags.push(`the manifest price replaced a hand-set ${Number(manual).toFixed(2)}`);
+          }
+        }
+
+        // 🔑 THE ORDER IS THE DECISION: the buy's sheet, then a hand-set override, then the
+        // ladder. Brian's words were "this is where data will come from", and a manifest
+        // line is the narrowest, most recent statement anyone has made about what this item
+        // rings at — it is scoped to this buy, by the person who bought the load.
+        const price = obPrice !== null ? obPrice : (manual !== null ? Number(manual) : lad.price);
         const gpFloorPct = asNum(critAt("min_gross_margin_pct"));
         const gpPct = price && cost !== null && price > 0
           ? +(((price - cost) / price) * 100).toFixed(1) : null;
-        const belowFloor = manual !== null
+        // A price nobody derived cannot inherit the ladder's verdict about its own margin;
+        // it is measured directly, the same way a hand-set one already was.
+        const belowFloor = (obPrice !== null || manual !== null)
           ? (gpFloorPct !== null && gpPct !== null && gpPct < gpFloorPct)
           : lad.belowFloor;
 
@@ -25718,23 +26100,65 @@ export default {
 
         return new Response(JSON.stringify({
           ok: true,
-          identifier, identifier_type: identType, title, brand, size,
+          identifier, identifier_type: identType,
+          // 🔑 The sheet's words are used as the NAME only when nothing else has one —
+          // never to replace a resolved product title, which would make the same item read
+          // differently depending on whether a buy was selected. The description is in the
+          // `manifest` block either way, so the screen can always show both.
+          title: title || (obMatched ? ob.sheet_description : null) || null,
+          brand, size,
           l2, l3, l3_label: l3 ? merchLabel(l3) : null, l2_label: l2 ? merchLabel(l2) : null,
           l3_source: l3Source,
           retail, retail_source: retailSource, retail_confidence: retailConf,
           retail_overridden: !!overridden,
           asp, cost,
-          price, price_basis: manual !== null ? "set by hand" : lad.basis,
+          price,
+          price_basis: obPrice !== null ? "the buy's manifest" : manual !== null ? "set by hand" : lad.basis,
+          // Unchanged: this has always meant "a person set this price on this item by hand"
+          // and the screen dresses it accordingly. A manifest price is a different fact and
+          // says so through price_basis and the manifest block rather than borrowing this.
           price_overridden: manual !== null,
           gp_pct: gpPct, below_gp_floor: belowFloor, gp_floor_pct: gpFloorPct,
-          ceiling_bound: lad.ceilingBound,
-          floor_lifted: manual !== null ? false : !!lad.floorLifted,
+          // 🛑 The ladder did not run, so nothing of the ladder's is true of this price.
+          // The `manual` branch is deliberately left as it was — it is pre-existing and
+          // changing it is not this feature's business.
+          ceiling_bound: obPrice !== null ? false : lad.ceilingBound,
+          floor_lifted: (obPrice !== null || manual !== null) ? false : !!lad.floorLifted,
           // The RUNG ACTUALLY USED, not the category's preferred one — the ladder may
           // have stepped down to a finer rung to keep the price a deal, and a screen
           // that reports the preference would describe a price it did not print.
           rounding: lad.rounding ?? critAt("rounding"),
-          thin_deal: manual !== null ? false : !!lad.thinDeal,
+          thin_deal: (obPrice !== null || manual !== null) ? false : !!lad.thinDeal,
           criteria_version: live?.version ?? null,
+          // ── The buy's sheet, whether or not it had anything to say ───────────
+          // 🔑 Present for every scan that named a PO, including the ones that matched
+          // nothing. "There is no manifest", "the sheet does not carry this barcode" and
+          // "the line has no price" are three different problems with three different
+          // fixes, and a screen can only tell them apart if the answer distinguishes them.
+          manifest: scanPo ? {
+            po: scanPo,
+            has_manifest: !!ob,
+            matched: obMatched,
+            price: obPrice,
+            description: obMatched ? (ob.sheet_description || null) : null,
+            // How many of this item the buy expects — Brian's "18 of 24 priced" grain.
+            qty: obMatched && ob.sheet_qty !== null && ob.sheet_qty !== undefined
+              ? Number(ob.sheet_qty) : null,
+            // 🛑 The sheet's street price, reported and never priced from. It never reaches
+            // `retail` or item_cache: migration-043 is explicit that a manifest's MSRP
+            // "identifies the item; NOT trusted as retail", and one upload must not be able
+            // to rewrite the observed street price every other surface reads.
+            street_price: obMatched && ob.sheet_msrp !== null && ob.sheet_msrp !== undefined
+              ? Number(ob.sheet_msrp) : null,
+            // The barcode AS THE SHEET SPELLS IT, so a mismatch someone is arguing about
+            // can be seen rather than described.
+            sheet_identifier: obMatched ? (ob.sheet_identifier || null) : null,
+            row_no: obMatched ? Number(ob.row_no) : null,
+            duplicates: obMatched && Number(ob.matches) > 1 ? Number(ob.matches) : 0,
+            filename: ob?.filename || null,
+            uploaded_at: ob?.uploaded_at || null,
+            lines: ob ? Number(ob.sheet_lines) || 0 : 0,
+          } : undefined,
           // The category tree travels WITH the answer. The scan screen needs it the
           // moment someone taps Change, and a second round trip on warehouse wifi to
           // fetch a list that never varies is a worse trade than a few KB per scan.

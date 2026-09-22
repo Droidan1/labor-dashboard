@@ -61,6 +61,13 @@ const BUY = { po: '99999', label: 'test', vendor: 'Tester', received_on: null, u
   status: 'open', opened_by: 'bhoward@bargainlane.com', opened_at: '2026-09-21T20:11:50Z',
   closed_by: null, closed_at: null, labels: 11, items: 2, stores: 1, print_rows: 3,
   first_print: '2026-09-21T20:12:45Z', last_print: '2026-09-21T20:13:03Z' };
+// The buy's own manifest, as ob-buy-detail reports it. Deliberately IMPERFECT: 12 lines of
+// which only 9 can be reached by a scan, because the card's whole job is to say that out
+// loud rather than let "12 lines" read as done. The unit count also disagrees with the
+// buy's declared 5 — two claims about the same load, neither corrected into the other.
+const MANIFEST = { id: 'm1', filename: 'nov-toys.csv', uploaded_at: '2026-09-21T19:40:00Z',
+  uploaded_by: 'bhoward@bargainlane.com', lines: 12, priced: 10, matchable: 9, units: 240 };
+
 const LINES = [
   { store: 'BL2', l3: 'FG BL CONSUMABLES - FOOD - BEVERAGES', code: 'BL-50002-1_5',
     title: 'LIFEWTR Enhanced Water', price: 1.5, retail: 2.48, labels: 10, presses: 2,
@@ -106,11 +113,16 @@ for (const view of [{ name: 'phone', width: 390, height: 844 }, { name: 'desktop
         if (s.includes('auth-me')) return J({ authenticated: true, email: 'bhoward@bargainlane.com',
           name: 'Brian', role: 'superuser', stores: [], pages: {}, businesses: ['bl'] });
         if (s.includes('ob-buy-detail')) return J({ ok: true, can_edit: true, buy: BUY, lines: LINES,
-          tracked_from: null, sold: 0, refunded_units: 0 });
+          tracked_from: null, sold: 0, refunded_units: 0,
+          manifest: window.__OB_MANIFEST, manifest_history: window.__OB_MANIFEST ? 2 : 0 });
         if (s.includes('ob-buy-list')) return J({ ok: true, can_edit: true, buys: [BUY] });
         return real(u, o);
       };
     }, { BUY, LINES });
+    // 🔑 BOTH STATES GET RENDERED, not just the interesting one. A buy with no sheet is the
+    // common case on day one and has its own branch — "none yet" and a prompt — and a branch
+    // nothing exercises is a branch that breaks silently.
+    await page.addInitScript((m) => { window.__OB_MANIFEST = m; }, MANIFEST);
 
     await page.goto('http://127.0.0.1:8098/', { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(1200);
@@ -238,6 +250,85 @@ for (const view of [{ name: 'phone', width: 390, height: 844 }, { name: 'desktop
       `${tag}: header and row hide the same columns (${d.headVis} vs ${d.cellVis})`);
     check(d.scrollOver === null || (d.scrollOver > 1) === !!d.hasFade,
       `${tag}: the detail's scroll hint matches reality (overflow ${d.scrollOver}px, hint ${d.hasFade})`);
+
+    // ── The manifest card ────────────────────────────────────────────────────
+    const man = await page.evaluate(() => {
+      const card = document.querySelector('#page-opportunity-buys .ob-man');
+      if (!card) return null;
+      const cs = (e) => getComputedStyle(e);
+      const k = card.querySelector('.ob-man-k');
+      const warn = card.querySelector('.ob-note.warn');
+      const file = card.querySelector('input[type=file]');
+      const box = card.getBoundingClientRect();
+      const panel = document.getElementById('ob-panel').getBoundingClientRect();
+      return {
+        text: card.textContent.replace(/\s+/g, ' ').trim(),
+        bg: cs(card).backgroundColor,
+        ink: cs(card).color,
+        kColor: k ? cs(k).color : null,
+        warnColor: warn ? cs(warn).color : null,
+        warnText: warn ? warn.textContent.replace(/\s+/g, ' ').trim() : null,
+        hasFile: !!file,
+        fileScheme: file ? cs(file).colorScheme : null,
+        // A card wider than the panel it sits in is the same class of bug as the table
+        // running off the right edge, and on a phone it is what a file input causes.
+        over: Math.round(box.right - panel.right),
+      };
+    });
+    check(!!man, `${tag}: the buy's manifest card renders`);
+    if (man) {
+      check(/9/.test(man.text) && /12/.test(man.text),
+        `${tag}: the card shows BOTH how many lines there are and how many a scan can reach`);
+      // 🛑 THE SHORTFALL IS SPELLED OUT. 12 and 9 side by side is a subtraction the reader
+      // has to do; the whole point of the card is that nobody has to.
+      check(man.warnText && /cannot be found by a scan/.test(man.warnText),
+        `${tag}: …and says in words that 3 lines are unreachable`);
+      check(/240/.test(man.text) && /nov-toys\.csv/.test(man.text),
+        `${tag}: the sheet's units and filename are on the card`);
+      check(man.hasFile, `${tag}: an admin can replace the sheet from here`);
+      // 🛑 DESIGN.md trap 4, for a file input rather than a checkbox: the button is UA-drawn
+      // and follows color-scheme, which this app never sets — so on a dark panel it renders
+      // as a white slab unless the scheme is stated.
+      check(scheme !== 'dark' || man.fileScheme === 'dark',
+        `${tag}: the file input follows the dark scheme (${man.fileScheme})`);
+      check(man.over <= 1, `${tag}: the card stays inside the panel (${man.over}px past its right edge)`);
+      // 🛑 DESIGN.md trap 3/6 — measured against the card's OWN background in the live
+      // browser, not asserted from the stylesheet.
+      const rk = ratio(man.kColor, man.bg), ri = ratio(man.ink, man.bg), rw = ratio(man.warnColor, man.bg);
+      check(ri >= 4.5, `${tag}: card text reads against the card (${ri.toFixed(2)}:1)`);
+      check(rk >= 4.5, `${tag}: its captions read too (${rk.toFixed(2)}:1)`);
+      check(rw >= 4.5, `${tag}: the unreachable-lines warning reads (${rw.toFixed(2)}:1)`);
+    }
+
+    // ── And the same card for a buy that has NO sheet ────────────────────────
+    const bare = await page.evaluate(async () => {
+      window.__OB_MANIFEST = null;
+      await window.obOpenDetail('99999');
+      await new Promise(r => setTimeout(r, 250));
+      const card = document.querySelector('#page-opportunity-buys .ob-man');
+      if (!card) return null;
+      const none = card.querySelector('.ob-none');
+      return {
+        text: card.textContent.replace(/\s+/g, ' ').trim(),
+        noneColor: none ? getComputedStyle(none).color : null,
+        bg: getComputedStyle(card).backgroundColor,
+        hasFile: !!card.querySelector('input[type=file]'),
+      };
+    });
+    // 🛑 "NO SHEET" IS NOT "A SHEET OF ZERO LINES" — the same rule as this page's "not
+    // tracked" and Coverage's "no count". Exercised as a SECOND render, per DESIGN.md
+    // trap 8: both bugs that shipped on Coverage were invisible on first paint.
+    check(bare && /none yet/.test(bare.text),
+      `${tag}: a buy with no manifest says "none yet", never 0 lines`);
+    check(bare && !/\b0 lines?\b/.test(bare.text),
+      `${tag}: …and prints no zero anywhere on the card`);
+    check(bare && bare.hasFile, `${tag}: …while still offering the upload`);
+    check(bare && ratio(bare.noneColor, bare.bg) >= 4.5,
+      `${tag}: …and "none yet" reads against the card (${bare ? ratio(bare.noneColor, bare.bg).toFixed(2) : '?'}:1)`);
+
+    // Put the sheet back so the screenshot below shows the fuller card.
+    await page.evaluate(async (m) => { window.__OB_MANIFEST = m; await window.obOpenDetail('99999'); }, MANIFEST);
+    await page.waitForTimeout(250);
 
     const shot2 = `/tmp/claude-0/-home-user-labor-dashboard/50e6f723-4395-5d11-8524-2f90bfbfab23/scratchpad/ob-detail-${view.name}-${scheme}.png`;
     await page.screenshot({ path: shot2, fullPage: view.name === 'phone' });

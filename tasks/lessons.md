@@ -1,3 +1,60 @@
+## The rationale in the comment was a factual claim, and it was false (2026-09-21)
+
+Building the OB manifest, I wrote a comment explaining why `ob_price` lives in an OB-only
+hint table instead of the shared one:
+
+> On a VENDOR's manifest "Our Price" is what THEY charge us — a cost, and
+> `MANIFEST_HINTS.cost` is right to claim it.
+
+`MANIFEST_HINTS.cost` does not claim "Our Price". Nothing in the shared table matches that
+header; it maps to nothing at all today. I had built a whole design decision's stated
+justification on a behaviour I had never run.
+
+It surfaced because I wrote a test asserting the claim — `column_map.cost === 'Our Price'` —
+and it failed. Then I ran the real table against six real headers:
+
+```
+Our Price     -> (nothing)      Price        -> cost
+Street Price  -> msrp           Unit Price   -> cost
+```
+
+### The decision was right; the reason was invented
+
+That is what makes this the dangerous shape rather than a simple bug. Keeping `ob_price` out
+of the shared table **is** correct — but for a different, concrete reason I only found by
+measuring: `manifestGuessMap` claims a header **once**, so an `ob_price` pattern in the
+shared table would take a bare `Price` before `cost` could, and every vendor sheet whose only
+money column is "Price" would arrive with no cost at all and be refused at upload.
+
+A right decision resting on a false premise reads exactly like a right decision resting on a
+true one. Nobody reviews it, because the conclusion is fine. Then someone reorganises the
+hint table years later, reasons from the comment, and is reasoning from fiction.
+
+This is the fourth false claim I have stated as fact in this session — three of them
+corrected only after Brian or a test pushed back. The previous three were claims about
+history (*"this is the mechanism that put five copies in one store"* — it was not). This one
+is a claim about code sitting in the same file, which is worse, because it cost one command
+to check.
+
+### The rule
+
+**A "because X" in a comment is an assertion about behaviour. Run X before writing it
+down — and where the claim is load-bearing, write the assertion that proves it.**
+
+Concretely, before a comment that says a function/table/guard *does* something:
+
+1. Execute it against the actual input the comment names. Slicing a table out of the source
+   and running it takes one `node -e`; I did it here only after the test failed.
+2. If the comment is justifying a design decision, the test that asserts it belongs in the
+   suite — not because the behaviour might change, but because that is how I find out I was
+   wrong **while I still think I am right**.
+3. Prefer the claim you measured over the claim that sounds more sweeping. "Our Price means
+   a cost to a vendor" is the better story; "a bare Price maps to `cost` and would be stolen"
+   is the one that is true and the one that actually names the regression.
+
+The tell, every time: I wrote the sentence without running anything, because it *sounded*
+obviously true.
+
 ## The third one today: my escalation lost a seven-second race (2026-09-21)
 
 Same trap as the entry below, and as 2026-09-18's. This time I did everything that entry
