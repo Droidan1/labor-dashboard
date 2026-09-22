@@ -1,3 +1,119 @@
+# Inventory, unbundled — preview for review (2026-09-22)
+
+**Brian:** *"I want Inventory not to be a page but like Marketing on the sidebar … and then
+give Add item, Inventory Viewer, and Schedule Sale their own page with a redesign to match
+the rest of the app. Before we do this give me a preview … for me to review."*
+
+Preview only. **Nothing in `index.html` or `worker.js` is touched.** The deliverable is
+`docs/inventory-redesign-preview.html`, which `scripts/build.sh` excludes from its copy
+allowlist, so it cannot reach production.
+
+## What is actually there today
+
+Not what the nav implies. Inventory is **one page holding three tools**, while the four
+pages Brian named are already separate top-level nav items:
+
+| Surface | Today | Line |
+|---|---|---|
+| Add Item | collapsible card in `#page-inventory` | `index.html:1919` |
+| Inventory Viewer | collapsible card in `#page-inventory` | `index.html:1999` |
+| Schedule Sale | **modal**, reachable only from a Viewer row tick | `index.html:2127` |
+| Scheduled Sales | collapsible card, open by default | `index.html:2190` |
+| Bin Dump / Inventory Receiver / Opportunity Buys / Mark Out of Stock | already `#page-*` sections | 2220 / 2640 / 3177 / 3413 |
+
+So the change is: promote three cards to pages, and gather all seven under one group.
+
+The group pattern already exists **twice** — Marketing (`index.html:980`, 5 children) and
+Merchandising (`index.html:1014`, 7 children). Same wrapper, same `.nav-item` header with no
+`data-page`, same chevron rotated by inline style, same `toggle*Menu(force)` with no
+persistence and no ARIA. Inventory becomes the third; nothing new is invented.
+
+## The one open question
+
+The preview puts **all seven** inside the group. Brian's message named four for the dropdown
+and then asked for the other three to get their own page, which could mean either. Waiting
+on that before building.
+
+## Found while mapping — all verified by running, not by reading
+
+<rules>
+1. **`confirmDelete()` deletes from the wrong six stores.** `index.html:30570` hardcodes
+   `['BL1','BL2','BL4','BL8','BL12','BL14']`. **BL12 is closed Wyoming; BL16 (Indy East) is
+   absent** — and every store `<select>` on the page lists BL16, not BL12. "Also delete from
+   all other stores" therefore leaves the item alive in Indy East, silently. Live bug,
+   independent of this redesign.
+2. **`var isAdminBar = vis('nav-inventory')`** (`index.html:34603`) is the discriminator for
+   the *entire* mobile bar layout — flat admin bar vs manager bar with the centred Submit
+   squircle. If `nav-inventory` becomes a group *header*, that check changes meaning. Most
+   breakable line in the change.
+3. **A group wrapper can blank an associate's whole app.** `applyAssociateNav`
+   (`index.html:32745`) hides every `.nav-item` then un-hides only granted ones. The four
+   grantable pages (`GRANTABLE_PAGES`, `index.html:31407`) are exactly Bin Dump / Inventory
+   Receiver / MOS / Opportunity Buys. Un-hiding a child without its new wrapper **and**
+   `#nav-inventory-sub` leaves an empty sidebar.
+4. **The test that would catch a broken nav link does not run.**
+   `scripts/test-nav-registry.mjs` reports 17 passed — but its trailing "Page switcher
+   reachability" block sits **after `process.exit(fail ? 1 : 0)`**, and references `REPO`
+   where the constant is `repo`. Proved it: removing the exit gives
+   `ReferenceError: REPO is not defined`. So "every `data-page` has a matching `page-`
+   section" — precisely the invariant a nav restructure breaks — is **not** enforced. Repair
+   it *first* and let it guard the change.
+5. **Dead pagination.** `updateInvPagination` (`index.html:30409`) has no caller;
+   `invPagePrev`/`invPageNext` are reachable only from buttons inside `#inv-view-pagination`,
+   which is only ever hidden, and step an offset `loadInventory` ignores (it always starts
+   `offset = 0` and loops to the end).
+6. **Four hardcoded copies of the six stores** on one page — Add Item (1933), Viewer (2013),
+   sale modal (2134), schedule log (2199). That divergence is how BL16 went missing from
+   finding 1.
+</rules>
+
+## What the redesign changes beyond the skin
+
+- **Add Item**: category (L3) comes *first* and drives the reporting group (L2), which
+  auto-fills and locks when the L3 is a built-in. Today L2 is picked first and the worker
+  silently declines to remap, reporting `l3MapSkipped` **after** creating the item — so a
+  wrong pick is discovered only afterwards. Margin and multiple are computed live from price
+  and cost, which are both already collected and never multiplied. The six-store
+  `results[]` gets a coloured row per store with the reason and the one action that fixes it.
+- **Inventory Viewer**: §4.8 dense table — sticky header, sticky first column, legend. Adds a
+  GP% column and a `2 cats` badge for the many-to-many category link the endpoint already
+  returns and the current table flattens away. A missing cost renders **—**, never `$0.00`
+  or `0%`.
+- **Schedule Sale**: a page, not a modal (and not the file's one `style.display`-driven
+  modal with its special case in `closeInvModal`). Items, discount, window, live
+  was→now preview, the register rename string, and the schedule log on one screen. The
+  worker's **409 overlap** becomes a designed state — one POST goes out per checked store, so
+  "five scheduled, one refused" is a realistic outcome the current status line cannot express.
+
+## Verification
+
+- [x] Renders in headless Chromium, **no JS errors** (only a sandbox `ERR_CERT` on Google Fonts).
+- [x] **41/41 interaction checks pass** — including §4.8 trap 8, the *second* render: filters
+      toggled off and on, sort flipped, discount mode switched, L3 re-pointed twice.
+- [x] **50/50 contrast checks ≥ 4.5:1**, computed against *composited* backgrounds in both
+      themes — text on a wash is measured on the wash, not on the panel under it.
+- [x] No horizontal overflow at 390 px on any of the three pages.
+- [x] `node scripts/test-nav-registry.mjs` — 17 passed, 0 failed (unchanged; nothing shipped).
+
+### A token split this forced
+
+`op-bad` **#ef4444 fails AA as text on its own wash** — 4.25:1 (it is 4.73:1 on bare panel,
+which is why it has never been caught). Same shape as DESIGN.md §4.8 trap 5's `inkDimmer`
+rule. The preview keeps `--bad` for fills and edges and adds `--badText` (#f87171 dark,
+5.78:1 on the wash; light needs no split at 4.69:1). **If the redesign ships, this belongs in
+DESIGN.md §4.8's token table**, because the next red badge will hit it too.
+
+## Next — on Brian's answer
+
+- [ ] Confirm the grouping (all seven in the group, or three top-level + four in the group)
+- [ ] Repair `scripts/test-nav-registry.mjs` (move the block above `process.exit`, fix `REPO`)
+- [ ] Nav: `#nav-inventory-group` + header + chev + sub, `NAV_BUSINESS` rows for every new id
+- [ ] Re-point `isAdminBar`; add the new page ids to `morePages`; keep every `gate()` on a child id
+- [ ] `applyRoleUI` / `applyAssociateNav` including the wrapper + sub-list un-hide
+- [ ] Three `#page-*` sections + init hooks + `navigateToPage` guards
+- [ ] Fix the BL12/BL16 delete list; drop the dead pagination; single store list
+- [ ] `npm test`, then a browser pass switching business and role without re-running `applyRoleUI`
+
 # The identity lookup on an OB scan (2026-09-22)
 
 **Brian:** *"What's the identity lookup fix for OB scans?"* → *"build it"*
