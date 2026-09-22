@@ -406,6 +406,7 @@ curl -H "X-Snapshot-Secret: $SECRET" "https://<host>/?action=backfill&store=BL1"
 | Endpoint | What |
 |---|---|
 | `?action=backfill-items-snapshots&store=BLx&start=YYYY-MM-DD&end=YYYY-MM-DD` (POST) | Re-rolls KV `items:` snapshots over a date range. |
+| `?action=backfill-item-hours&store=BLx\|all&start=&end=[&dry=1]` (POST) | Banks `item-hours:` for days that predate nightly banking. Writes **only** `item-hours:` — never the day snapshot, never D1 — and skips any day whose hours don't reconcile to the cent against the existing `items:` snapshot. Capped at 120 store-days per call. Prefer `scripts/backfill-item-hours.sh`, which chunks the window and is a dry run unless you pass `--write`. |
 | `?action=rebuild-week-summaries` | Re-rolls the trailing-13-week summary KV entries. Run after a re-snapshot backfill. |
 | `?action=refresh-item-cats` | Forces the worker to refresh its per-store Clover item-category cache. Run if newly-added items aren't being classified. |
 | `?action=items-snapshot&store=BLx&date=YYYY-MM-DD` | One-off item-snapshot write (without touching D1). |

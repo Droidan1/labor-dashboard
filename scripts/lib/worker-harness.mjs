@@ -161,7 +161,37 @@ export function makeEnv(repo = '.') {
     env: {
       DB: d1(db),
       SALES_SNAPSHOTS: kv(),
-      MEDIA: { get: async () => null, put: async () => ({}), delete: async () => {} },
+      // 🛑 A REAL in-memory bucket, not a stub that swallows writes. The previous one
+      // returned null from get() no matter what had been put, so no test could ever
+      // assert that a photo was actually stored — the one thing worth asserting about
+      // an upload. Objects behave enough like R2's for the worker: body, arrayBuffer,
+      // text, and httpMetadata carried through.
+      MEDIA: (() => {
+        const store = new Map();
+        const obj = (v) => ({
+          key: v.key, size: v.bytes.length, httpMetadata: v.httpMetadata || {},
+          get body() { return new Blob([v.bytes]).stream(); },
+          arrayBuffer: async () => v.bytes.buffer.slice(v.bytes.byteOffset, v.bytes.byteOffset + v.bytes.byteLength),
+          text: async () => new TextDecoder().decode(v.bytes),
+        });
+        return {
+          _store: store,
+          get: async (k) => (store.has(k) ? obj(store.get(k)) : null),
+          put: async (k, body, opts = {}) => {
+            const bytes = body instanceof Uint8Array ? body
+              : body instanceof ArrayBuffer ? new Uint8Array(body)
+              : typeof body === 'string' ? new TextEncoder().encode(body)
+              : new Uint8Array(0);
+            store.set(k, { key: k, bytes, httpMetadata: opts.httpMetadata });
+            return { key: k, size: bytes.length };
+          },
+          delete: async (k) => { store.delete(k); },
+          list: async ({ prefix = '' } = {}) => ({
+            objects: [...store.keys()].filter(k => k.startsWith(prefix)).map(k => obj(store.get(k))),
+            truncated: false,
+          }),
+        };
+      })(),
       // Deliberately NOT the real secret — a request must not accidentally take
       // the isAdminSecret bypass and skip every check we are trying to observe.
       SNAPSHOT_SECRET: 'harness-secret-not-used',
@@ -191,4 +221,34 @@ export function req(url, { user, method = 'GET', body, secret } = {}) {
 // Which store codes appear anywhere in the response body.
 export function storesIn(text) {
   return [...new Set((text.match(/BL\d+/g) || []))].sort();
+}
+
+// ─── The price ladder, as a callable ──────────────────────────────────────────
+//
+// merchPriceLadder is a pure function, so it is worth exercising directly — a fuzz over
+// 96,000 criteria combinations is what found the `Number(null) === 0` bug that clamped
+// every price to $0.00, and no end-to-end test would have swept that space.
+//
+// 🛑 But hand-slicing it out of worker.js is fragile in a specific way: it captures the
+// function and NOT the module constants it closes over. Three separate test files each
+// cut their own slice, and adding one const (MANIFEST_RUNGS) broke all three at once with
+// a ReferenceError that pointed at the test rather than at the missing piece. The list of
+// dependencies belongs in ONE place, here, so the next one is a single line.
+export function loadLadder(repo) {
+  const src = fs.readFileSync(path.join(repo, "worker.js"), "utf8");
+  const fn = (sig) => { const i = src.indexOf(sig); return src.slice(i, src.indexOf("\n}", i) + 2); };
+  const obj = (name) => {
+    const i = src.indexOf(`const ${name}`);
+    if (i < 0) throw new Error(`loadLadder: ${name} not found in worker.js`);
+    return src.slice(i, src.indexOf("};", i) + 2);
+  };
+  const body = [
+    "const roundCents=(n)=>Math.round(n*100)/100;",
+    obj("MANIFEST_ROUND_STEP"),
+    obj("MANIFEST_RUNGS"),
+    fn("function manifestRound("),
+    fn("function merchPriceLadder("),
+    "return { manifestRound, merchPriceLadder, MANIFEST_ROUND_STEP, MANIFEST_RUNGS };",
+  ].join("\n");
+  return new Function(body)();
 }

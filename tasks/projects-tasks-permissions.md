@@ -107,6 +107,25 @@ the sibling plan: one grant still means "straight in, no picker", but *where*
 
 ---
 
+## ⚠️ Superseded in part: associates exist now, and admins make them (2026-09-09)
+
+`staff` is no longer hypothetical — see [associates.md](associates.md). Brian's decision
+was **admins only, with a six-digit code login**, not the manager-created emailed invite
+sketched below. What shipped:
+
+- An associate is a `staff` user with a `pin_hash`; the UI calls them "Associate".
+- They are created, edited, suspended and re-coded from the **Associates panel** on the
+  Users page, by an admin or superuser. `update-user` and `set-user-grants` refuse them
+  outright, so the two panels cannot disagree about the same row.
+- Access is per PAGE (`users.pages`, `{"bin-dump":"view"|"edit"}`), enforced by the
+  worker's `ACTION_PAGE` map, on top of the store scoping the grant already carried.
+- Sessions are 12 hours and do not slide; passkey enrolment is refused. Both keyed on
+  `pin_hash IS NOT NULL` through one `isAssociate()` helper — **not** on the role — so if
+  the email-invited `staff` below is ever built, those rules stay with code logins only.
+
+The bounded-invite rules below are still the right shape for a manager-created,
+email-logging-in `staff` user, and nothing here forecloses them.
+
 ## Bounded invite — the rules that MUST hold server-side
 
 Decision 2 is the security-relevant part. Same principle as the sibling plan:

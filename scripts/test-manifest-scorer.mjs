@@ -15,7 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadWorker, makeEnv, applyMigrationAlters, ctx, req } from './lib/worker-harness.mjs';
+import { loadWorker, makeEnv, applyMigrationAlters, ctx, req, loadLadder } from './lib/worker-harness.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -303,21 +303,53 @@ let mid;
   ok(s.lines.some(l => l.verdict === 'pass' || l.verdict === 'warn'), 'judged lines still get a real verdict');
 }
 
+// ── 🛑 A RETAIL-BACKED APPROVAL IS NOT RECORDED AS BLIND ────────────────────
+// The lookup sets scored_without_retail = 0 the moment it prices any line. Deciding used
+// to stomp it back to 1, so every approval in the history claimed it had been taken with
+// no street evidence — including the ones that had it. That flag is the provenance of the
+// numbers a buyer was shown; the endpoint recording a human's call does not know what
+// evidence the scoring used, and must not author it.
+{
+  const up = await post('manifest-upload', { vendor: 'RetailBacked', csv: CSV });
+  const rid = up.body.id;
+  // Stand in for a lookup that priced at least one line.
+  db.prepare(`UPDATE manifests SET scored_without_retail = 0 WHERE id = ?`).run(rid);
+  const r = await post('manifest-decide', { id: rid, status: 'approved', note: 'street prices checked' });
+  eq(r.status, 200, 'the decision is recorded');
+  const row = db.prepare(`SELECT * FROM manifests WHERE id=?`).get(rid);
+  eq(row.status, 'approved', 'status stored');
+  eq(row.scored_without_retail, 0,
+     '🛑 an approval taken WITH street retail is still recorded as having had it');
+  ok(row.criteria_version !== null, '🔑 …and the criteria version still comes along');
+  ok(row.decided_at, '…as does when it was decided');
+}
+
 // ── A decision records what it was measured against ─────────────────────────
 {
-  const noNote = await post('manifest-decide', { id: mid, status: 'approved' });
+  // 🔑 ON ITS OWN MANIFEST, NOT THE SHARED FIXTURE. Deciding `mid` used to be harmless
+  // because a decided manifest still re-scored live — so the ceiling and manual-price
+  // tests below kept working on it by accident. Now that a decision FREEZES what it was
+  // taken on, that accident becomes a silent dependency: those tests would read a
+  // snapshot and never see the criteria they just published.
+  const dmid = (await post('manifest-upload', { vendor: 'DecisionRecord', csv: CSV })).body.id;
+  const noNote = await post('manifest-decide', { id: dmid, status: 'approved' });
   eq(noNote.status, 400, 'a decision with no note is refused');
-  const bad = await post('manifest-decide', { id: mid, status: 'whatever', note: 'x' });
+  const bad = await post('manifest-decide', { id: dmid, status: 'whatever', note: 'x' });
   eq(bad.status, 400, 'an unknown status is refused');
-  const good = await post('manifest-decide', { id: mid, status: 'approved_edits', note: 'drop the widget' });
+  const good = await post('manifest-decide', { id: dmid, status: 'approved_edits', note: 'drop the widget' });
   eq(good.status, 200, 'the decision is recorded');
-  const row = db.prepare(`SELECT * FROM manifests WHERE id=?`).get(mid);
+  const row = db.prepare(`SELECT * FROM manifests WHERE id=?`).get(dmid);
   eq(row.status, 'approved_edits', 'status stored');
   ok(row.criteria_version !== null, '🔑 and the criteria version it was judged under');
-  eq(row.scored_without_retail, 1, '...and that it was judged without retail');
-  const locked = await post('manifest-remap', { id: mid, csv: CSV, column_map: { description:'Item Description', qty:'Qty', cost:'Unit Cost' } });
+  // 🛑 Right here for the WRONG REASON until now. This fixture genuinely was scored
+  // without retail — but manifest-decide hardcoded `scored_without_retail = 1` into its
+  // UPDATE, so this assertion passed no matter what the lookup had found. A test that
+  // holds whether or not the code is correct is what let the bug live. The property it
+  // was missing is asserted in its own block below.
+  eq(row.scored_without_retail, 1, '...and that this one really was judged without retail');
+  const locked = await post('manifest-remap', { id: dmid, csv: CSV, column_map: { description:'Item Description', qty:'Qty', cost:'Unit Cost' } });
   eq(locked.status, 409, 'a decided manifest cannot be silently remapped underneath the decision');
-  const del = await post('manifest-delete', { id: mid });
+  const del = await post('manifest-delete', { id: dmid });
   eq(del.status, 409, 'a decided manifest is not deletable either — it is the record of a call');
   ok(/record of a decision/i.test(del.body.error || ''), '...and says why');
 }
@@ -484,6 +516,1032 @@ let mid;
      'a defect rate above 95% is refused rather than silently clamped');
   eq((await post('manifest-costs', { id: bid, freight_cost: 0, defect_pct: -1 })).status, 400,
      'a negative defect rate is refused');
+}
+
+// ── The header is FOUND, not assumed to be row 1 ───────────────────────────
+// Vendors put letterheads, load numbers, contact lines and blank rows above the real
+// header. Taking rows[0] on faith does not misparse — it fails totally, because the
+// header found is ["Alliance Wholesale","",""] and nothing maps to anything.
+{
+  const CSV = [
+    'ALLIANCE WHOLESALE LIQUIDATION,,,',        // letterhead
+    'Load #88213 — Fort Wayne,,,',              // load reference
+    ',,,',                                      // blank
+    'Questions? sales@alliance.example,,,',     // contact line
+    'UPC,Item Description,Qty,Unit Cost',       // ← the real header, row 5
+    '012345678990,Bar soap 3 oz,100,1.00',
+    '012345678991,Shampoo 12 oz,50,2.00', ''].join('\n');
+  const r = await post('manifest-upload', { vendor: 'PreambleCo', csv: CSV });
+  eq(r.status, 200, 'a manifest with a four-line preamble uploads');
+  // csvParse drops the blank line first, so the header is parsed-row 4 even though it is
+  // line 5 of the file. `skipped` is the number that means something to a person.
+  eq(r.body.header_row, 4, '🔑 the header is FOUND, not assumed to be row 1');
+  eq(r.body.header_skipped, 3, '...and it reports the preamble rows it stepped over');
+  eq(r.body.rows, 2, 'two data lines, not six');
+  eq(r.body.missing.length, 0, 'and the columns map, which row 1 could never have done');
+  eq(r.body.column_map.identifier, 'UPC', 'UPC found under the preamble');
+  eq(r.body.column_map.cost, 'Unit Cost', 'cost found too');
+}
+
+// ── A data row that looks header-ish does not beat the real header above it ──
+{
+  const CSV = [
+    'UPC,Item Description,Qty,Unit Cost',
+    // "Pack" and "Cost" both hit hint patterns; this row must NOT win.
+    '012345678992,Pack of 6 Cost Cutter wipes,10,1.00',
+    '012345678993,Plain soap,10,1.00', ''].join('\n');
+  const r = await post('manifest-upload', { vendor: 'DecoyCo', csv: CSV });
+  eq(r.body.header_row, 1, '🔑 a real header outscores a data row that merely looks like one');
+  eq(r.body.rows, 2, 'both data lines are kept');
+}
+
+// ── A header with nothing under it is refused, not scored as an empty manifest ──
+{
+  const CSV = ['ACME LIQUIDATORS,,,', 'Load #1,,,', 'UPC,Item Description,Qty,Unit Cost', ''].join('\n');
+  const r = await post('manifest-upload', { vendor: 'EmptyCo', csv: CSV });
+  eq(r.status, 400, '🛑 a header with no lines under it is refused');
+  ok(/no lines under it/i.test(r.body.error || ''), '...and says exactly that');
+}
+
+// ── The score is reported, so a weak guess is visible rather than silent ────
+{
+  const CSV = ['Widget,Thing,Blah', 'a,b,c', ''].join('\n');
+  const r = await post('manifest-upload', { vendor: 'NoHeaderCo', csv: CSV });
+  // Nothing here looks like a manifest column. It still picks row 1 — it has to pick
+  // something — but the score says "do not trust this", and `missing` proves it.
+  ok((r.body.header_score ?? 0) <= 1, 'a sheet with no recognisable header scores low');
+  ok(r.body.missing.length > 0, '...and the required columns come back unmapped, as they should');
+}
+
+// ── Remap re-reads the SAME file and must find the SAME header ─────────────
+// If upload skipped a preamble and remap did not, a corrected mapping would be applied
+// against a different set of columns than the one the user was shown.
+{
+  const CSV = [
+    'VENDOR SHEET,,,', ',,,',
+    'UPC,Item Description,Qty,Unit Cost',
+    '012345678994,Soap,10,1.00', ''].join('\n');
+  const up = await post('manifest-upload', { vendor: 'RemapCo', csv: CSV });
+  eq(up.body.header_skipped, 1, 'upload steps over the preamble (the blank is dropped first)');
+  const re = await post('manifest-remap', { id: up.body.id, csv: CSV,
+    column_map: { identifier: 'UPC', description: 'Item Description', qty: 'Qty', cost: 'Unit Cost' } });
+  eq(re.status, 200, 'remap accepts the same file');
+  eq(re.body.rows, 1, '🔑 remap reads ONE data line, not three — it skipped the preamble too');
+}
+
+// ── .xlsx goes through the SAME door as CSV ────────────────────────────────
+// The fixture is a real ZIP built by scripts/fixtures/make-xlsx.py, and it carries every
+// trap the reader has to survive at once: a two-line vendor preamble, shared strings, a
+// row that SKIPS column B, a blank row, an inline string split across two <t> runs, and a
+// decoy sheet that is first on disk but second in workbook order.
+{
+  const buf = fs.readFileSync(path.join(repo, 'scripts/fixtures/manifest-sample.xlsx'));
+  const b64 = buf.toString('base64');
+  const r = await post('manifest-upload', { vendor: 'XlsxCo', filename: 'aug.xlsx', format: 'xlsx', file_b64: b64 });
+  eq(r.status, 200, '🔑 an .xlsx uploads without being exported to CSV first');
+  eq(r.body.column_map.identifier, 'UPC', 'columns map out of the workbook');
+  eq(r.body.column_map.cost, 'Unit Cost', '...including cost');
+  eq(r.body.header_skipped, 2, 'the two preamble rows are stepped over');
+  eq(r.body.rows, 3, 'three data lines — the blank row is not one of them');
+
+  const lines = db.prepare(`SELECT * FROM manifest_lines WHERE manifest_id=? ORDER BY row_no`).all(r.body.id);
+  eq(lines.length, 3, 'three lines written');
+  eq(lines[0].identifier, '012345678990', 'the UPC survives as text, not as 1.234e+10');
+  // 🔑 The sparse row: it has A, C and D but no B. If the reader indexed by encounter
+  // order instead of by the cell's own r="C4", qty would land in the description column
+  // and every number after it would shift one place left — silently.
+  eq(lines[0].description, null, 'the SKIPPED column B stays empty…');
+  near(lines[0].qty, 100, '…and qty is still qty, not shifted left into it');
+  near(lines[0].cost, 1.5, '…and cost is still cost');
+  eq(lines[1].description, 'Shampoo 12 oz', 'a shared string resolves');
+  eq(lines[2].description, 'Inline String Item', 'an inline string split across runs is rejoined');
+}
+
+// ── A file that is not a workbook is refused as the user's problem, not a 500 ──
+{
+  const r = await post('manifest-upload', { vendor: 'BadZip', format: 'xlsx', file_b64: btoa('this is not a zip') });
+  eq(r.status, 400, '🛑 a non-workbook is a 400, not a server error');
+  ok(/valid \.xlsx/i.test(r.body.error || ''), '...and says what is wrong with it');
+}
+
+// ── .pdf is READ by the model, and every failure mode is the user's, not a 500 ──
+// This is the only ingest path that costs money, and the only one whose output is a
+// reading rather than a parse. The model call is stubbed throughout — a test must never
+// reach the real API — and what is asserted is that the extraction lands in the SAME
+// mapping-confirmation flow as a CSV, so a misread row is caught by the screen that
+// already catches a misguessed column.
+{
+  modelReply = JSON.stringify({ rows: [
+    ['UPC', 'Item Description', 'Qty', 'Unit Cost'],
+    ['012345678995', 'Bar soap 3 oz', '100', '1.00'],
+    ['012345678996', 'Shampoo 12 oz', '50', '2.00'],
+  ]});
+  modelCalls = [];
+  const r = await post('manifest-upload', { vendor: 'PdfCo', filename: 'load.pdf', format: 'pdf', file_b64: btoa('%PDF-1.4 fake') });
+  eq(r.status, 200, '🔑 a PDF uploads and lands in the same pipeline as a CSV');
+  eq(r.body.rows, 2, 'two line items extracted');
+  eq(r.body.column_map.identifier, 'UPC', '…and the columns map exactly as a CSV would');
+  eq(r.body.missing.length, 0, 'nothing is left unmapped');
+
+  // The PDF has to actually be SENT as a document block, not pasted in as text.
+  const call = modelCalls[modelCalls.length - 1];
+  const content = call.messages[0].content;
+  ok(Array.isArray(content), 'the request uses a content-block array');
+  const doc = content.find(c => c.type === 'document');
+  ok(doc, '🔑 the PDF rides as a document block');
+  eq(doc.source.media_type, 'application/pdf', '…declared as a PDF');
+  eq(doc.source.type, 'base64', '…sent as base64');
+  ok(/verbatim/i.test(call.system || ''), 'the prompt tells it to copy values verbatim');
+  ok(/leading zero/i.test(call.system || ''), '…and to keep UPC leading zeros');
+}
+
+// ── A truncated read is refused: half a manifest scored whole LOOKS complete ──
+{
+  modelReply = JSON.stringify({ rows: [['UPC', 'Qty'], ['012345678997', '5']] });
+  // Force the truncation signal rather than the content.
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => {
+    if (String(u).includes('api.anthropic.com')) {
+      return new Response(JSON.stringify({
+        content: [{ type: 'text', text: modelReply }], stop_reason: 'max_tokens',
+      }), { status: 200 });
+    }
+    return realFetch(u, init);
+  };
+  const r = await post('manifest-upload', { vendor: 'TruncCo', format: 'pdf', file_b64: btoa('%PDF') });
+  globalThis.fetch = realFetch;
+  eq(r.status, 400, '🛑 a truncated extraction is refused, not scored as a whole manifest');
+  ok(/split it/i.test(r.body.error || ''), '...and says what to do about it');
+}
+
+// ── No table found says so, rather than writing an empty manifest ───────────
+{
+  modelReply = JSON.stringify({ rows: [] });
+  const r = await post('manifest-upload', { vendor: 'NoTableCo', format: 'pdf', file_b64: btoa('%PDF') });
+  eq(r.status, 400, '🛑 a PDF with no line-item table is refused');
+  ok(/no line-item table/i.test(r.body.error || ''), '...in words');
+}
+
+// ── With no key configured it SAYS so, rather than silently doing nothing ───
+{
+  const saved = env.ANTHROPIC_API_KEY; delete env.ANTHROPIC_API_KEY;
+  const r = await post('manifest-upload', { vendor: 'NoKeyCo', format: 'pdf', file_b64: btoa('%PDF') });
+  env.ANTHROPIC_API_KEY = saved;
+  eq(r.status, 400, 'without a key the PDF path refuses');
+  ok(/not configured/i.test(r.body.error || ''), '...and names the reason');
+}
+
+// ── 💰 The paid path NEVER fires for a format that parses on its own ────────
+{
+  modelCalls = [];
+  const CSV = ['UPC,Item Description,Qty,Unit Cost', '012345678998,Soap,10,1.00', ''].join('\n');
+  await post('manifest-upload', { vendor: 'FreeCo', csv: CSV });
+  const pdfCalls = modelCalls.filter(c =>
+    (c.messages?.[0]?.content || []).some?.(x => x.type === 'document'));
+  eq(pdfCalls.length, 0, '🔑 a CSV never reaches the billed PDF reader');
+}
+
+// ── LOT BUYS: a load priced as a share of retail, with no per-line cost ────
+// Three of eight real manifests have no cost column: both BStock truckloads and
+// Manifest # 07002. They are not broken — you are quoted a percentage of retail for the
+// whole load. 07002's real numbers: $12,175.00 against $32,902.19 of extended retail.
+{
+  // Two real lines off Manifest # 07002. Retail is per unit; Qty Bundle is the count.
+  const CSV = ['Product Description,Retail,Qty Bundle',
+               'Angel Soft 12 = 48,8.92,96',
+               'Sparkle 10 = 20,14.35,704', ''].join('\n');
+  const up = await post('manifest-upload', { vendor: 'LotCo', csv: CSV });
+  eq(up.status, 200, 'a manifest with no cost column still uploads');
+  eq(up.body.column_map.msrp, 'Retail', 'Retail maps as the reference, not as cost');
+  ok(!up.body.column_map.cost, '🔑 no cost column is found, because there is not one');
+
+  // Nothing entered yet: no cost anywhere.
+  const before = await get(`manifest&id=${up.body.id}`);
+  eq(before.body.lines[0].cost, null, 'before a rate is set, the line has no cost at all');
+
+  // The vendor quoted 37%.
+  eq((await post('manifest-costs', { id: up.body.id, freight_cost: 0, defect_pct: 0, retail_pct: 37 })).status,
+     200, 'the lot rate saves');
+  const after = await get(`manifest&id=${up.body.id}`);
+  near(after.body.lines[0].cost, 3.30, '🔑 $8.92 of retail at 37% is a $3.30 unit cost');
+  near(after.body.lines[1].cost, 5.31, '…and $14.35 at 37% is $5.31');
+  eq(after.body.lines[0].cost_from_lot, true, 'the line says the cost was DERIVED, not quoted');
+}
+
+// ── The same deal quoted as a lump sum lands on the same number ────────────
+{
+  const CSV = ['Product Description,Retail,Qty Bundle',
+               'Angel Soft 12 = 48,8.92,96',
+               'Sparkle 10 = 20,14.35,704', ''].join('\n');
+  const up = await post('manifest-upload', { vendor: 'LumpCo', csv: CSV });
+  // Extended retail = 8.92*96 + 14.35*704 = 856.32 + 10102.40 = 10958.72.
+  // A vendor quoting 37% and one quoting $4,054.73 are describing the same load.
+  await post('manifest-costs', { id: up.body.id, freight_cost: 0, defect_pct: 0, lot_cost: 4054.73 });
+  const after = await get(`manifest&id=${up.body.id}`);
+  near(after.body.lines[0].cost, 3.30, '🔑 a lump sum derives the same unit cost as the rate did');
+  near(after.body.lines[1].cost, 5.31, '…on every line');
+}
+
+// ── 🔑 A real per-line cost is NEVER overwritten by a lot rate ──────────────
+// The dangerous case: a manifest that quotes costs AND has a rate set by accident.
+{
+  const CSV = ['UPC,Item Description,Qty,Unit Cost,Unit Retail',
+               '012345679001,Soap,10,1.00,9.00', ''].join('\n');
+  const up = await post('manifest-upload', { vendor: 'RealCostCo', csv: CSV });
+  eq(up.body.column_map.cost, 'Unit Cost', 'the quoted cost is found');
+  await post('manifest-costs', { id: up.body.id, freight_cost: 0, defect_pct: 0, retail_pct: 37 });
+  const after = await get(`manifest&id=${up.body.id}`);
+  near(after.body.lines[0].cost, 1.00, '🔑 the vendor\'s own $1.00 stands — 37% of $9.00 does NOT replace it');
+  eq(after.body.lines[0].cost_from_lot, false, '…and the line does not claim to be derived');
+}
+
+// ── A nonsense rate is refused ──────────────────────────────────────────────
+{
+  const CSV = ['Product Description,Retail,Qty Bundle', 'Thing,5.00,10', ''].join('\n');
+  const up = await post('manifest-upload', { vendor: 'BadRate', csv: CSV });
+  eq((await post('manifest-costs', { id: up.body.id, freight_cost: 0, defect_pct: 0, retail_pct: 140 })).status,
+     400, '🛑 over 100% of retail is refused');
+  eq((await post('manifest-costs', { id: up.body.id, freight_cost: 0, defect_pct: 0, retail_pct: -5 })).status,
+     400, '🛑 a negative rate is refused');
+}
+
+// ── The real vendor headers map correctly — measured, not assumed ───────────
+// Every set below is copied from an actual file in ~/Documents/Opportunity buys.
+{
+  const HEADERS = {
+    'WI/PA Food':   [['Item#','Description','OZ','Case Pack',' Unit Wholesale ','BIUB','Case/ PLT','Case Wt','UPC','Case QTY','Unit Price','Case Price'],
+                     { identifier:'UPC', qty:'Case QTY', units_per_case:'Case Pack', cost:'Unit Price' }],
+    'Clorox':       [['Container','Parent Container','Quantity','Consumer Quantity','Universal Id','Description','Expiration Date','Wholesale','Category','Sort','%','Sale Price'],
+                     { identifier:'Universal Id', qty:'Quantity', cost:'Sale Price' }],
+    'UPDATED FOOD': [['PRODUCT NAME','CASE COUNT','EXP DATE','PACKAGING','AVAIL QTY','CASE PRICE','WEIGHT (in ounces)'],
+                     { description:'PRODUCT NAME', qty:'AVAIL QTY', units_per_case:'CASE COUNT', cost:'CASE PRICE' }],
+    'BStock':       [['Item #','Seller Category','Item Description','Qty','Unit Retail','Ext. Retail','Brand','UPC','TCIN','Condition'],
+                     { identifier:'UPC', qty:'Qty', msrp:'Unit Retail' }],
+    'MIDWEST pdf':  [['#','Product or service','SKU','Description','Qty','Rate','Amount'],
+                     { identifier:'Product or service', qty:'Qty', cost:'Rate' }],
+    'Kind':         [['Picture','UPC','Item','Date','Case pack','Cases','Units','Price per unit','Note'],
+                     { identifier:'UPC', description:'Item', qty:'Units', units_per_case:'Case pack', cost:'Price per unit' }],
+  };
+  for (const [name, [hdrs, want]] of Object.entries(HEADERS)) {
+    const csv = [hdrs.join(','), hdrs.map(() => 'x').join(','), ''].join('\n');
+    const r = await post('manifest-upload', { vendor: 'HDR ' + name, csv });
+    for (const [field, col] of Object.entries(want)) {
+      eq(r.body.column_map[field], col, `${name}: ${field} → ${col}`);
+    }
+  }
+  // 🔑 And the one that was silently destroying the food lists: qty and units_per_case
+  // must not be each other. "Case QTY" is how many we can have; "Case Pack" is how many
+  // are in one. Swapped, 56 cases of 18 becomes 18 cases of 56.
+  const wi = HEADERS['WI/PA Food'][0];
+  const r = await post('manifest-upload', { vendor: 'SwapCheck', csv: [wi.join(','), wi.map(() => '1').join(','), ''].join('\n') });
+  ok(r.body.column_map.qty !== 'Case Pack', '🔑 qty is NOT the case pack');
+  ok(r.body.column_map.units_per_case !== 'Case QTY', '🔑 …and the pack is NOT the availability');
+}
+
+// ── CONDITION GRADES ────────────────────────────────────────────────────────
+// Identical product at two grades is two different buys. Clorox prices Grade B at 25% of
+// wholesale against 54% for pristine; BStock's furniture is 208 USED_GOOD to 21 NEW.
+{
+  const CSV = ['UPC,Item Description,Qty,Unit Cost,Condition',
+               '012345679100,Dining chair,10,20.00,NEW',
+               '012345679101,Dining table,5,80.00,USED_GOOD',
+               '012345679102,Bar stool,4,15.00,Grade B/Each',
+               '012345679103,Side table,2,10.00,', ''].join('\n');
+  const r = await post('manifest-upload', { vendor: 'GradeCo', csv: CSV });
+  eq(r.body.column_map.condition, 'Condition', 'the condition column is found');
+  const lines = db.prepare(`SELECT * FROM manifest_lines WHERE manifest_id=? ORDER BY row_no`).all(r.body.id);
+  eq(lines[0].condition_grade, 'new', 'NEW normalises');
+  eq(lines[1].condition_grade, 'used', '🔑 USED_GOOD normalises — "_" is a word character, so /\\bused\\b/ alone would miss it');
+  eq(lines[2].condition_grade, 'grade_b', 'Grade B/Each normalises');
+  eq(lines[3].condition_grade, null, '🔑 a blank condition is NULL, never "new" — silence is not a claim of pristine');
+  eq(lines[1].condition_raw, 'USED_GOOD', "the vendor's own wording is kept verbatim");
+
+  const flags = JSON.parse(lines[2].flags || '[]');
+  ok(flags.some(f => /condition: grade b/i.test(f)), 'anything not pristine is flagged on the line');
+  ok(!JSON.parse(lines[0].flags || '[]').some(f => /condition/i.test(f)), '…and NEW is not flagged as a problem');
+
+  const sc = await get(`manifest&id=${r.body.id}`);
+  const mix = sc.body.score.grades;
+  eq(mix[0].grade, 'used', 'the grade mix leads with the WEAKEST grade in the load');
+  eq(mix.find(g => g.grade === 'grade_b').units, 4, '…and counts units per grade');
+}
+
+// ── Clorox's "Sort" is the same column under another name ──────────────────
+{
+  const CSV = ['Universal Id,Description,Quantity,Sale Price,Sort',
+               '1004460032243,CLX wipes,10,5.00,Case',
+               '4460008033,Clorox spray,5,3.00,Grade B/Each', ''].join('\n');
+  const r = await post('manifest-upload', { vendor: 'CloroxSort', csv: CSV });
+  eq(r.body.column_map.condition, 'Sort', "Clorox's `Sort` maps as the condition column");
+  eq(r.body.column_map.identifier, 'Universal Id', '…and Universal Id as the identifier');
+  eq(r.body.column_map.cost, 'Sale Price', '…and Sale Price as the cost');
+  const lines = db.prepare(`SELECT * FROM manifest_lines WHERE manifest_id=? ORDER BY row_no`).all(r.body.id);
+  eq(lines[0].condition_grade, null,
+     '🔑 a bare "Case" is NOT graded — on most sheets that word is the unit of sale, and reading one vendor\'s legend as universal would mislabel every other file');
+  eq(lines[1].condition_grade, 'grade_b', '…while Grade B is unambiguous anywhere');
+}
+
+// ── A REPEATED HEADER mid-file is dropped, and the drop is reported ─────────
+// The WI food list restarts at row 28 with a "Price Reduced - Closer Date" banner and
+// prints the whole header again beneath it.
+{
+  const CSV = ['Item#,Description,Case Pack,UPC,Case QTY,Unit Price',
+               '10720,GOLD MEDAL FLOUR,18,16000-10710-6,56,1.00',
+               '12610,GOLD MEDAL FLOUR 5LB,8,16000-10610-9,53,2.00',
+               ',Price Reduced - Closer Date,,,,',
+               'Item #,Description,OZ,Case Pack,Case QTY,Unit Price',
+               '20548,CHEX MIX ZESTY TACO,12,16000-20548-2,142,0.75', ''].join('\n');
+  const r = await post('manifest-upload', { vendor: 'RepeatHdrCo', csv: CSV });
+  eq(r.body.skipped_repeat_headers, 1, '🔑 the repeated header is recognised and dropped');
+  eq(r.body.rows, 4, 'four rows written: three products plus the banner line');
+  const lines = db.prepare(`SELECT description FROM manifest_lines WHERE manifest_id=? ORDER BY row_no`).all(r.body.id);
+  ok(!lines.some(l => /^Description$/i.test(l.description || '')),
+     '…and no line has "Description" as its product name');
+  ok(lines.some(l => /CHEX MIX/.test(l.description || '')),
+     '🔑 the section BELOW the repeated header is still imported — dropping it would lose the close-dated deals');
+}
+
+// ── A SUBTOTAL row is kept and flagged, but never counted twice ─────────────
+// Clorox interleaves per-container subtotals: no description, no identifier, just money
+// that is ALREADY counted in the rows above it.
+{
+  const CSV = ['Universal Id,Description,Quantity,Sale Price',
+               '1004460032243,CLX wipes,100,5.00',
+               '1004460060530,Clorox mist,100,3.00',
+               ',,200,800.00', ''].join('\n');
+  const r = await post('manifest-upload', { vendor: 'SubtotalCo', csv: CSV });
+  eq(r.body.skipped_subtotals, 1, 'the subtotal row is recognised');
+  eq(r.body.rows, 3, '🔑 …but still WRITTEN — a row that vanishes is indistinguishable from a parse failure');
+
+  const sc = await get(`manifest&id=${r.body.id}`);
+  eq(sc.body.score.totals.noDetailLines, 1, 'the load says one line carries no detail');
+  // 100x$5 + 100x$3 = $800. The subtotal says $800 too; counting it makes the load $1,600.
+  near(sc.body.score.totals.cost, 800, '🔑 the load costs $800, not $1,600 — the subtotal is not added again');
+  const line = db.prepare(`SELECT flags FROM manifest_lines WHERE manifest_id=? ORDER BY row_no DESC LIMIT 1`).get(r.body.id);
+  ok(JSON.parse(line.flags || '[]').includes('no line detail'), '…and the row says why it was not counted');
+}
+
+// ── THE PRICE LADDER ────────────────────────────────────────────────────────
+// Brian's rule, in his own numbers: street retail $4.00, category ASP $3.00, price cap
+// 50% → a $2.00 candidate. At $0.81 cost the $2.00 works. At $2.79 it does not, so we
+// step up to ASP — and $3.00 makes only 7% GP, so it prices there ANYWAY and says so.
+// The worker needs a number; what they must never get is a number that looks fine.
+{
+  // Set at the L3, not the chain: an earlier block in this file publishes
+  // rounding '.99' on the Consumable Food L2, which beats a chain default. A test that
+  // depends on what a previous test happened to leave behind is not a test.
+  await post('merch-criteria-draft', { cells: [
+    { category: SNACKS, field: 'price_cap_pct_retail', value: '50' },
+    { category: SNACKS, field: 'min_gross_margin_pct', value: '30' },
+    { category: SNACKS, field: 'rounding', value: '.00' },
+    // Explicitly high, NOT null: an earlier block sets a $1.25 ceiling on the
+    // Consumable Food L2, and clearing the L3 row just re-inherits it.
+    { category: SNACKS, field: 'dollar_ceiling', value: '999' },
+    { category: SNACKS, field: 'core', value: '1' },
+  ]});
+  await post('merch-criteria-publish', { note: 'price ladder test' });
+
+  const mk = async (vendor, cost, retail) => {
+    const CSV = ['UPC,Item Description,Qty,Unit Cost',
+                 `01234567${String(Math.abs(cost * 100) | 0).padStart(4, '0')},Chips snack bag,10,${cost}`, ''].join('\n');
+    const up = await post('manifest-upload', { vendor, csv: CSV });
+    eq(up.status, 200, `${vendor} uploads`);
+    // Pin the line to SNACKS and give it a street retail, so both inputs are known.
+    const n = db.prepare(`UPDATE manifest_lines SET l2=?, l3=?, retail_price=? WHERE manifest_id=?`)
+      .run('Consumable Food', SNACKS, retail, up.body.id);
+    eq(Number(n.changes), 1, `${vendor}: exactly one line pinned`);
+    return (await get(`manifest&id=${up.body.id}`)).body;
+  };
+
+  const cheap = await mk('LadderCheap', 0.81, 4.00);
+  const l1 = cheap.lines[0];
+  eq(l1.price_basis, 'street retail', '🔑 a cheap item prices off STREET RETAIL — the discount promise');
+  near(l1.suggested_price, 2.00, '…$4.00 x 50% = $2.00');
+  eq(l1.below_gp_floor, false, '…and it clears the 30% floor comfortably');
+  ok(l1.gp_pct > 55, `…at ~59% GP (got ${l1.gp_pct}%)`);
+
+  const dear = await mk('LadderDear', 2.79, 4.00);
+  const l2 = dear.lines[0];
+  ok(['our ASP', 'street retail'].includes(l2.price_basis), 'a basis is stated');
+  ok(l2.suggested_price >= 2.00,
+     `🔑 it never prices BELOW the cap to chase a margin it cannot reach (got $${l2.suggested_price})`);
+  ok(l2.suggested_price < 4.00,
+     '🛑 …and never AT the street price — $2.79 of cost needs $3.99 to make 30%, and a $4.00 tag on a $4.00 item is a bad buy wearing a price');
+  eq(l2.below_gp_floor, true, '🔑 …so it STILL says the floor is not met, rather than looking fine');
+  const fl = JSON.parse(db.prepare(`SELECT flags FROM manifest_lines WHERE manifest_id=?`).get(dear.manifest.id).flags || '[]');
+  ok(true, 'flags read');
+  ok(l2.gp_pct !== null && l2.gp_pct < 30, `…GP is under 30% and stated (got ${l2.gp_pct}%)`);
+}
+
+// ── The floor is re-tested on the price we ACTUALLY land on ────────────────
+// The dollar-store ceiling and the rounding rule can each drag a price below a floor
+// that the base figure cleared. Testing the base only would pass a losing price.
+{
+  await post('merch-criteria-draft', { cells: [
+    { category: SNACKS, field: 'price_cap_pct_retail', value: '50' },
+    { category: SNACKS, field: 'min_gross_margin_pct', value: '30' },
+    { category: SNACKS, field: 'rounding', value: '.00' },
+    { category: SNACKS, field: 'dollar_ceiling', value: '1.25' },
+  ]});
+  await post('merch-criteria-publish', { note: 'ceiling drags below the floor' });
+  const CSV = ['UPC,Item Description,Qty,Unit Cost', '012345679500,Chips snack bag,10,1.00', ''].join('\n');
+  const up = await post('manifest-upload', { vendor: 'CeilingFloor', csv: CSV });
+  db.prepare(`UPDATE manifest_lines SET l2=?, l3=?, retail_price=? WHERE manifest_id=?`)
+    .run('Consumable Food', SNACKS, 10.00, up.body.id);
+  const b = (await get(`manifest&id=${up.body.id}`)).body;
+  const l = b.lines[0];
+  // $10 x 50% = $5.00 clears the floor easily, but the $1.25 ceiling drags it to $1.25,
+  // where $1.00 of cost leaves 20% GP.
+  ok(l.suggested_price <= 1.25, `the ceiling holds the price (got $${l.suggested_price})`);
+  eq(l.below_gp_floor, true, '🔑 the floor is judged on the FINAL price, not the base figure');
+}
+
+// ── With no cost known, the floor cannot be judged and does not pretend to ──
+{
+  const CSV = ['UPC,Item Description,Qty,Unit Cost', '012345679501,Mystery thing,10,1.00', ''].join('\n');
+  const up = await post('manifest-upload', { vendor: 'NoCostCat', csv: CSV });
+  // No vendor cost AND a category with no standard cost: nothing to judge a floor with.
+  db.prepare(`UPDATE manifest_lines SET l2=?, l3=?, retail_price=?, cost=NULL WHERE manifest_id=?`)
+    .run('Consumable Food', 'FG BL CONSUMABLES - FOOD - FROZEN', 4.00, up.body.id);
+  const b = (await get(`manifest&id=${up.body.id}`)).body;
+  eq(b.lines[0].below_gp_floor, false,
+     '🔑 an unknown category cost is not a floor breach — absence of evidence is not evidence');
+}
+
+// ── 🛑 A HUMAN EDIT NEVER LOSES TO A FILE IMPORT ────────────────────────────
+// The L3 Category Costs card in Admin Tools writes category-costs:global. The IM master
+// is a file import. Ranking the import above the card silently ignored every edit made
+// there on the 53 categories both name — the same shape as the l3Map override incident
+// and the stale vendor template. Cost is now the FLOOR under every suggested price, so
+// getting this backwards prices goods below what they cost us.
+{
+  env.SALES_SNAPSHOTS.put('category-costs:global', JSON.stringify({
+    costs: { [SNACKS]: 0.81 },            // typed into the admin card
+  }));
+  env.SALES_SNAPSHOTS.put('item-costs:global', JSON.stringify({
+    items: {
+      '10001': { desc: SNACKS, cost: 2.00 },   // the import disagrees
+      '10002': { desc: ORAL,   cost: 1.40 },   // …and covers one the card does not
+    },
+  }));
+
+  const CSV = ['UPC,Item Description,Qty,Unit Cost',
+               '012345679600,Chips snack bag,10,0.50',
+               '012345679601,Toothpaste tube,10,0.50', ''].join('\n');
+  const up = await post('manifest-upload', { vendor: 'CostPrecedence', csv: CSV });
+  db.prepare(`UPDATE manifest_lines SET l2='Consumable Food', l3=? WHERE manifest_id=? AND row_no=1`)
+    .run(SNACKS, up.body.id);
+  db.prepare(`UPDATE manifest_lines SET l2='Consumable HBA', l3=? WHERE manifest_id=? AND row_no=2`)
+    .run(ORAL, up.body.id);
+
+  const b = (await get(`manifest&id=${up.body.id}`)).body;
+  near(b.lines[0].std_cost_l3, 0.81,
+       "🛑 the card's typed 0.81 WINS over the import's 2.00 — a person decided that");
+  near(b.lines[1].std_cost_l3, 1.40,
+       '🔑 …and the import still fills a category the card has nothing for');
+}
+
+// ── ROUNDING: whole and half dollars, always UP ─────────────────────────────
+// Bargain Lane does not price in cents. Until now the rule offered .99, .49, $1, $10 and
+// $100 — no half-dollar step at all — and the live setting was '.00', which is not a
+// rounding rule: it falls through to plain cents. That is why the Scorer had been
+// suggesting shelf prices like $2.14 and $0.74.
+{
+  const CSV = ['UPC,Item Description,Qty,Unit Cost', '012345679700,Chips snack bag,10,0.50', ''].join('\n');
+  await post('merch-criteria-draft', { cells: [
+    { category: SNACKS, field: 'rounding', value: '$0.50' },
+    { category: SNACKS, field: 'price_cap_pct_retail', value: '50' },
+    { category: SNACKS, field: 'min_gross_margin_pct', value: '30' },
+    { category: SNACKS, field: 'dollar_ceiling', value: '999' },
+  ]});
+  await post('merch-criteria-publish', { note: 'half-dollar rounding' });
+
+  const at = async (retail) => {
+    const up = await post('manifest-upload', { vendor: `Round${String(retail).replace('.','')}`, csv: CSV });
+    db.prepare(`UPDATE manifest_lines SET l2='Consumable Food', l3=?, retail_price=? WHERE manifest_id=?`)
+      .run(SNACKS, retail, up.body.id);
+    return (await get(`manifest&id=${up.body.id}`)).body.lines[0].suggested_price;
+  };
+
+  // $4.28 retail → 50% is $2.14 → UP to the next half dollar.
+  near(await at(4.28), 2.50, '🔑 $2.14 rounds UP to $2.50 — never $2.14, and never down to $2.00');
+  // An exact half dollar must stay put. ceil(2.50 * 2) / 2 is $2.50 in exact arithmetic,
+  // but a price reached by multiplication can be 2.5000000001, and without the epsilon
+  // guard a genuine $2.50 becomes $3.00 — a 20% error on the commonest price on the shelf.
+  near(await at(5.00), 2.50, '🔑 an exact $2.50 stays $2.50 — the float guard holds');
+  near(await at(1.48), 1.00, 'a 74c figure rounds up to a dollar');
+  near(await at(3.78), 2.00, '$1.89 rounds up to $2.00');
+  // A 50c price on a 50c cost makes 0% GP, so the FLOOR correctly steps it up — the
+  // rounding rule does not get the last word, and neither does the RUNG: a half-dollar
+  // price that is not far enough under the street steps down to a quarter. What must
+  // always hold is the shape of the number — every suggested price lands on a rung the
+  // rule's own ladder declares, and never on an arbitrary figure like $2.14.
+  for (const r of [0.40, 1.48, 3.78, 4.28, 5.00, 9.95]) {
+    const px = await at(r);
+    ok(px !== null && Math.abs(px * 4 - Math.round(px * 4)) < 0.001,
+       `$${px} lands on a declared rung (from $${r} retail)`);
+  }
+}
+
+// ── THE PRICE LADDER, as properties ────────────────────────────────────────
+// The ladder is now shared by the Manifest Scorer and Price Scan, so a caller passing a
+// missing value in a shape the other never produces is a live risk. These are properties
+// that must hold for EVERY combination, not examples.
+//
+// 🛑 This found a real one: Number(null) is 0 and Number("") is 0, and both are finite.
+// A Number-then-isFinite coercion therefore turned "no dollar ceiling set" into "a ceiling
+// of zero", and Math.min clamped the price to $0.00 — on the majority of categories, since
+// most have no ceiling. It would have printed free price tags.
+{
+  // The ladder and every module const it closes over, from ONE place — see loadLadder.
+  const { merchPriceLadder, MANIFEST_RUNGS, MANIFEST_ROUND_STEP } = loadLadder(repo);
+
+  const EMPTY  = [null, undefined, ''];
+  const money  = [...EMPTY, 0, -1, '4.28', 4.28, 10];
+  const asps   = [...EMPTY, 0, 2.08];
+  const costs  = [...EMPTY, 0.81, 2.79];
+  const caps   = [...EMPTY, '50', 50];
+  const floors = [...EMPTY, 30];
+  const ceils  = [...EMPTY, 0, -2, 1.25];
+  const rules  = ['$0.50', '$1', '.00', null];
+
+  let n = 0, zero = 0, neg = 0, nan = 0, phantomCeiling = 0, offStep = 0;
+  for (const retail of money) for (const asp of asps) for (const cost of costs)
+  for (const cap of caps) for (const gp of floors) for (const ceiling of ceils) for (const rounding of rules) {
+    const r = merchPriceLadder({ retail, asp, cost, crit: { priceCapPct: cap, gpFloorPct: gp, ceiling, rounding } });
+    n++;
+    if (r.price === 0) zero++;
+    if (r.price !== null && r.price < 0) neg++;
+    if (r.price !== null && !Number.isFinite(r.price)) nan++;
+    const noCeiling = ceiling === null || ceiling === undefined || ceiling === '' || Number(ceiling) <= 0;
+    if (r.ceilingBound && noCeiling) phantomCeiling++;
+    // 🔑 Every price must land on a rung the RULE'S OWN LADDER declares — never on an
+    // arbitrary figure. A '$0.50' rule may descend to '$0.25' when the half dollar is
+    // not far enough under the street, so the invariant is membership in that ladder,
+    // not "a multiple of 50c". It still bites: $2.14 is on neither rung.
+    // Including when a ceiling binds — snapping to the ceiling exactly would print an
+    // off-rung price, so the ladder takes the largest step at or below it.
+    const ladder = MANIFEST_RUNGS[rounding];
+    if (ladder && r.price !== null) {
+      const onSomeRung = ladder.some(rg => {
+        const st = MANIFEST_ROUND_STEP[rg];
+        return Math.abs(r.price / st - Math.round(r.price / st)) < 0.001;
+      });
+      if (!onSomeRung) offStep++;
+    }
+  }
+
+  ok(n > 50000, `the ladder was exercised across ${n.toLocaleString()} input combinations`);
+  eq(zero, 0, '🛑 NEVER prices at $0.00 — a free price tag is not a valid answer');
+  eq(neg, 0, 'never prices below zero');
+  eq(nan, 0, 'never returns NaN or Infinity');
+  eq(phantomCeiling, 0,
+     '🛑 never reports a ceiling as binding when none is set — that crashed on ceiling.toFixed()');
+  eq(offStep, 0, '🔑 every price lands on a rung its own rule declares — never on an arbitrary $2.14');
+}
+
+// ── 🛑 ONE RETAIL RUN PER MANIFEST, WHICHEVER DOOR IT CAME IN ──────────────
+// The drainer cron claimed a lock; the "Look up retail" button did not — and the cron
+// fires EVERY MINUTE. Pressing the button therefore started a 25-line batch beside a
+// drainer tick already working the same manifest. Both read the same pending set (neither
+// had written results yet) and both searched it: measured at 44 searches for 34 lines,
+// which is also what pushes us past TinyFish's 30/min and produces the 429s. Two runs can
+// also escalate the same line to Firecrawl and pay twice for one answer.
+{
+  const up = await post('manifest-upload', { vendor: 'LockTest', csv: CSV });
+  const lid = up.body.id;
+  env.TINYFISH_API_KEY = 'tf-test';
+
+  // A gate that holds the FIRST search open, so two runs are genuinely in flight at once
+  // rather than merely sequential.
+  let release, held = 0, searches = 0;
+  const gate = new Promise(r => { release = r; });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      searches++;
+      if (searches === 1) { held++; await gate; }
+      return new Response(JSON.stringify({ results: [] }), { status: 200 });
+    }
+    return realFetch(u, init);
+  };
+
+  const first = post('manifest-retail', { id: lid, batch: 2 });
+  first.catch(() => {});          // a rejection here must not go unhandled
+  // Let the first run reach its gated search before the second arrives.
+  // 🔑 BOUNDED. An unbounded spin turns "the first run never started" into a hang rather
+  // than a failure, and a test that hangs reports nothing at all.
+  for (let i = 0; held === 0 && i < 20000; i++) await new Promise(r => setImmediate(r));
+  ok(held > 0, 'the first run reached its search and is holding the lock');
+  const second = await post('manifest-retail', { id: lid, batch: 2 });
+
+  eq(second.status, 200, 'the second press is answered, not failed');
+  eq(second.body.already_running, true,
+     '🛑 …and does not start a second run over the same lines');
+  eq(second.body.priced, 0, '…having done no work of its own');
+  ok(/already running/i.test(second.body.note || ''), '…and says so plainly');
+
+  release();
+  const a = await first;
+  eq(a.status, 200, 'the run that held the lock finishes normally');
+  ok(!a.body.already_running, '…and it is the one that did the work');
+
+  const row = db.prepare(`SELECT retail_lock_until FROM manifests WHERE id=?`).get(lid);
+  eq(row.retail_lock_until, null, '🔑 the lock is released when the run ends');
+  globalThis.fetch = realFetch;
+}
+
+// ── 🔑 THE RELEASE IS OWNER-CHECKED ────────────────────────────────────────
+// A run that overshoots its five-minute lease must not free the lock a DIFFERENT worker
+// has since taken. An unconditional `SET retail_lock_until = NULL` frees whatever is
+// there, so the slow run hands the queue to a third tick while the rightful holder is
+// still working — the exact double-run the lock exists to prevent.
+{
+  const up = await post('manifest-upload', { vendor: 'StealTest', csv: CSV });
+  const sid = up.body.id;
+  env.TINYFISH_API_KEY = 'tf-test';
+
+  const STOLEN = '2099-01-01T00:00:00.000Z';   // unmistakably not our lease
+  let stole = false, searches = 0;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      // Mid-run, someone else takes the lock — as happens when our lease expires.
+      if (!stole) {
+        stole = true;
+        db.prepare(`UPDATE manifests SET retail_lock_until = ? WHERE id = ?`).run(STOLEN, sid);
+      }
+      searches++;
+      return new Response(JSON.stringify({ results: [] }), { status: 200 });
+    }
+    return realFetch(u, init);
+  };
+
+  const r = await post('manifest-retail', { id: sid, batch: 2 });
+  eq(r.status, 200, 'the run completes');
+  ok(stole, 'the lock really was taken mid-run');
+  const row = db.prepare(`SELECT retail_lock_until FROM manifests WHERE id=?`).get(sid);
+  eq(row.retail_lock_until, STOLEN,
+     '🛑 finishing does NOT clear a lock this run no longer owns');
+  globalThis.fetch = realFetch;
+}
+
+// ── 🛑 A THROTTLE IS NOT AN ANSWER ─────────────────────────────────────────
+// TinyFish answers 429 when asked faster than 30/min. That used to land on "lookup
+// failed", which is SETTLED — so a line that was never actually asked got written off
+// permanently and the drainer never offered it again. A throttle now aborts the run and
+// leaves the unreached lines exactly as they were: pending.
+{
+  const up = await post('manifest-upload', { vendor: 'ThrottleTest', csv: CSV });
+  const tid = up.body.id;
+  env.TINYFISH_API_KEY = 'tf-test';
+
+  let searches = 0, status = 429;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      searches++;
+      if (status) return new Response('rate limited', { status });
+      return new Response(JSON.stringify({ results: [] }), { status: 200 });
+    }
+    return realFetch(u, init);
+  };
+
+  const r = await post('manifest-retail', { id: tid, batch: 5 });
+  eq(r.status, 200, 'the run answers');
+  eq(r.body.throttled, true, '🔑 and reports that it stopped because it was throttled');
+  eq(searches, 1, '🛑 it STOPS at the first 429 — the next search would be refused too');
+  ok(r.body.remaining > 0, '🔑 the lines it never reached are still counted as pending');
+
+  const flagged = db.prepare(
+    `SELECT flags FROM manifest_lines WHERE manifest_id=? AND flags IS NOT NULL`).all(tid);
+  const settled = flagged.filter(l => /lookup failed|no retail|not at big box/.test(l.flags || ''));
+  eq(settled.length, 0,
+     '🛑 NOT ONE line is written off — a question we never got to ask has no answer');
+
+  // 🔑 …and the proof it is not settled: the very next run asks again.
+  status = 0;
+  searches = 0;
+  const again = await post('manifest-retail', { id: tid, batch: 5 });
+  eq(again.status, 200, 'the next run goes ahead');
+  ok(searches > 0, '🛑 the throttled lines ARE re-asked once the provider recovers');
+  ok(!again.body.throttled, '…and it is not throttled this time');
+  globalThis.fetch = realFetch;
+}
+
+// ── 🛑 DO NOT PAY TO RENDER A PAGE WE WILL THROW AWAY ──────────────────────
+// A price on a category or search page belongs to the PAGE, not to the item — three
+// different Olay creams all came back at $24.94 off one Walmart keyword page. The parse
+// already refuses those, but that rule ran AFTER the escalation, so a Firecrawl credit
+// could be spent rendering a list page whose every price was then discarded. Every reason
+// a URL is unusable now applies BEFORE either the free fetch or the paid render.
+{
+  const up = await post('manifest-upload', { vendor: 'ListPageTest', csv: CSV });
+  const pid = up.body.id;
+  env.TINYFISH_API_KEY = 'tf-test';
+  env.FIRECRAWL_API_KEY = 'fc-test';
+
+  const LIST    = 'https://www.walmart.com/browse/snacks/chips/12345';
+  const SEARCH  = 'https://www.target.com/s?searchTerm=sour+cream+chips';
+  const PRODUCT = 'https://www.walmart.com/ip/Chips-Sour-Cream-Onion-8oz/998877';
+  const fetched = [], scraped = [];
+
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      // The list pages rank ABOVE the product page, as they routinely do.
+      return new Response(JSON.stringify({ results: [
+        { url: LIST,    title: 'Chips - Walmart.com',       snippet: 'Shop chips' },
+        { url: SEARCH,  title: 'sour cream chips : Target', snippet: 'Results' },
+        { url: PRODUCT, title: 'Chips Sour Cream & Onion 8oz', snippet: '' },
+      ] }), { status: 200 });
+    }
+    if (url.startsWith('https://api.fetch.tinyfish.ai')) {
+      fetched.push(...(JSON.parse(init.body).urls || []));
+      return new Response(JSON.stringify({ results: [] }), { status: 200 });
+    }
+    if (url.includes('firecrawl')) {
+      scraped.push(JSON.parse(init.body).url);
+      return new Response(JSON.stringify({ data: {} }), { status: 200 });
+    }
+    if (url.includes('api.anthropic.com')) {
+      modelCalls.push(JSON.parse(init.body));
+      // No prices from the snippets, which is what forces the escalation.
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: '{"prices":[]}' }] }), { status: 200 });
+    }
+    throw new Error('unexpected egress: ' + url.slice(0, 60));
+  };
+
+  await post('manifest-retail', { id: pid, batch: 2 });
+
+  ok(fetched.length + scraped.length > 0,
+     'the escalation really ran — otherwise this test proves nothing');
+  eq(fetched.filter(u => u === LIST || u === SEARCH).length, 0,
+     '🛑 neither list page is even fetched for free');
+  eq(scraped.filter(u => u === LIST || u === SEARCH).length, 0,
+     '🛑 …and above all, no CREDIT is spent rendering one');
+  ok(fetched.includes(PRODUCT) || scraped.includes(PRODUCT),
+     '🔑 the real product page underneath them is still used');
+  globalThis.fetch = realFetch;
+  delete env.FIRECRAWL_API_KEY;
+}
+
+// ── The cost column decides what the cost MEANS ────────────────────────────
+//
+// `sell_as` was the caller's, else the template's, else 'each', and never once the header
+// that was mapped to `cost`. Two of the four saved vendor templates were wrong the moment
+// they were saved: WI Food maps "Case Price" and stored 'each' (costs read 12× high), and
+// Clorox maps "Sale Price" — a LINE TOTAL — and stored 'each', which read $900.93 as the
+// price of one bottle of bathroom cleaner.
+{
+  const CASE_CSV = ['UPC,Description,Qty,Case Price',
+                    '012345678905,Soda 12oz,40,24.00'].join('\n');
+  const r = await post('manifest-upload', { vendor: 'CaseCo', csv: CASE_CSV });
+  eq(r.status, 200, 'a sheet quoting case prices uploads');
+  eq(r.body.cost_basis, 'case', '🔑 "Case Price" is read as a CASE basis');
+  eq(r.body.sell_as, 'case', '...so sell_as follows the column instead of defaulting to each');
+  eq(r.body.cost_basis_source, 'column', '...and it says the column is where that came from');
+  const line = db.prepare(`SELECT cost FROM manifest_lines WHERE manifest_id=?`).get(r.body.id);
+  near(line.cost, 24.00, 'the case price is stored verbatim — the scorer divides it by the pack');
+}
+
+{
+  const UNIT_CSV = ['UPC,Description,Qty,Unit Price',
+                    '012345678905,Soda 12oz,40,2.00'].join('\n');
+  const r = await post('manifest-upload', { vendor: 'UnitCo', csv: UNIT_CSV });
+  eq(r.body.cost_basis, 'unit', '"Unit Price" is a unit basis');
+  eq(r.body.sell_as, 'each', '...and sells as each');
+}
+
+// ── An extended cost is normalised on the way in ───────────────────────────
+// Clorox's real shape: "Sale Price" $900.93 against a qty of 119. That is $7.57 a unit.
+// Divided at import so nothing downstream — the scorer's costPerUnit, freight
+// amortisation, the retail comparison — has to learn a third basis.
+{
+  const EXT_CSV = ['UPC,Description,Quantity,Extended Cost',
+                   '012345678905,Bathroom cleaner 30fo,119,900.93',
+                   // No qty: there is nothing to divide by, and a total left standing as a
+                   // unit price is the exact error this exists to stop.
+                   '012345678912,Wipes 75ct,,450.00'].join('\n');
+  const r = await post('manifest-upload', { vendor: 'ExtCo', csv: EXT_CSV });
+  eq(r.body.cost_basis, 'extended', '🔑 "Extended Cost" is recognised as a line total');
+  eq(r.body.sell_as, 'each', '...and normalises to each, because the cost is now per unit');
+  const rows = db.prepare(`SELECT qty, cost, flags FROM manifest_lines WHERE manifest_id=? ORDER BY row_no`).all(r.body.id);
+  near(rows[0].cost, 7.57, '🔑 $900.93 over 119 is stored as $7.57 a unit, not $900.93');
+  ok(JSON.parse(rows[0].flags).some(f => /line total: 900\.93/.test(f)),
+     '...and the sheet\'s own number is kept on the line, because someone will doubt it');
+  near(rows[1].cost, 450.00, '🛑 with no qty there is nothing to divide by, so nothing is divided');
+  ok(JSON.parse(rows[1].flags).includes('cost is a line total but the line has no qty'),
+     '...and the line SAYS so rather than passing a total off as a unit price');
+}
+
+// 🛑 A HEADER THAT NAMES NO UNIT IS NOT GUESSED AT. "Sale Price", "Deal Price", a bare
+// "Cost" — on another vendor's sheet any of them may well be per unit. Reading a unit off
+// a name that does not carry one is how the Clorox load came to say 'each' about a total.
+{
+  const AMBIG_CSV = ['UPC,Description,Quantity,Sale Price',
+                     '012345678905,Bathroom cleaner 30fo,119,900.93'].join('\n');
+  const r = await post('manifest-upload', { vendor: 'AmbigCo', csv: AMBIG_CSV });
+  eq(r.body.cost_basis, 'unit', 'an unclassifiable header keeps the behaviour every manifest already had');
+  eq(r.body.cost_basis_source, 'default', '🔑 ...and reports it as a DEFAULT, not as something we read');
+  eq(r.body.cost_header, 'Sale Price', '...naming the column, so the claim is checkable');
+}
+
+// A human outranks the column — including when the column is confidently named.
+{
+  const MISLEADING = ['UPC,Description,Quantity,Unit Price',
+                      '012345678905,Bathroom cleaner 30fo,100,500.00'].join('\n');
+  const r = await post('manifest-upload', { vendor: 'HumanCo', csv: MISLEADING, cost_basis: 'extended' });
+  eq(r.body.cost_basis, 'extended', '🔑 the caller beats a header that says otherwise');
+  eq(r.body.cost_basis_source, 'you', '...and it is attributed to them');
+  const line = db.prepare(`SELECT cost FROM manifest_lines WHERE manifest_id=?`).get(r.body.id);
+  near(line.cost, 5.00, '...and the normalisation follows their answer, not the header');
+}
+
+// ── A correction sticks ────────────────────────────────────────────────────
+// 🔑 THE REMEMBERED ANSWER BEATS THE HEADER ON UPLOAD, and that ordering is the whole
+// reason a correction is worth making: a vendor can name a column "Unit Cost" and quote
+// cases in it, and if the header could override what someone told us last time, there
+// would be no way to make the correction stick.
+{
+  const CSV2 = ['UPC,Description,Qty,Unit Cost',
+                '012345678905,Soda 12oz,40,24.00'].join('\n');
+  const first = await post('manifest-upload', { vendor: 'StickCo', csv: CSV2 });
+  eq(first.body.cost_basis, 'unit', 'the header is believed when nothing better exists');
+  const fixed = await post('manifest-remap', { id: first.body.id, csv: CSV2,
+    column_map: { identifier:'UPC', description:'Description', qty:'Qty', cost:'Unit Cost' },
+    cost_basis: 'case', units_per_case: 12 });
+  eq(fixed.status, 200, 'the mapping screen corrects it');
+  const again = await post('manifest-upload', { vendor: 'StickCo', csv: CSV2 });
+  eq(again.body.cost_basis, 'case', '🔑 the next load remembers the correction');
+  eq(again.body.cost_basis_source, 'remembered', '...and says where it came from');
+  eq(again.body.sell_as, 'case', '...with sell_as following it');
+}
+
+// 🔑 ON REMAP THE COLUMN OUTRANKS THE STORED BASIS — the reverse of upload, and for the
+// reason that settles it either way: whoever is remapping is editing the mapping right
+// now, so the column they just picked is fresher than a basis saved against the mapping
+// they are replacing. Inheriting blindly is how a line total gets divided twice, or never.
+{
+  const TWOCOL = ['UPC,Description,Qty,Extended Cost,Unit Price',
+                  '012345678905,Soda 12oz,40,80.00,2.00'].join('\n');
+  const up = await post('manifest-upload', { vendor: 'MoveCo', csv: TWOCOL,
+    column_map: { identifier:'UPC', description:'Description', qty:'Qty', cost:'Extended Cost' } });
+  eq(up.body.cost_basis, 'extended', 'mapped to the total, it normalises');
+  const moved = await post('manifest-remap', { id: up.body.id, csv: TWOCOL,
+    column_map: { identifier:'UPC', description:'Description', qty:'Qty', cost:'Unit Price' },
+    save_template: false });
+  eq(moved.status, 200, 'the cost column is moved to the per-unit one');
+  const line = db.prepare(`SELECT cost, flags FROM manifest_lines WHERE manifest_id=?`).get(up.body.id);
+  near(line.cost, 2.00, '🛑 $2.00 is stored as $2.00 — the stored "extended" does not divide it again');
+  ok(!JSON.parse(line.flags).some(f => /line total/.test(f)), '...and no division is claimed');
+}
+
+// ── 🛑 A DECISION IS FROZEN AT THE MOMENT IT IS TAKEN ──────────────────────
+// Opening a manifest recomputed it from whatever was true NOW — today's criteria, ASP,
+// costs and shelf. Right for a manifest still being weighed; wrong for one already
+// approved, because the page then shows numbers nobody agreed to under the same status
+// and the same note. Criteria went v1 → v12 in eleven days, several of those changing
+// pricing rules outright, so the drift is not hypothetical.
+{
+  const up = await post('manifest-upload', { vendor: 'FreezeTest', csv: CSV });
+  const fid = up.body.id;
+
+  // What the buyer sees before deciding.
+  const before = await get(`manifest&id=${fid}`);
+  eq(before.status, 200, 'a draft opens');
+  eq(before.body.frozen, false, '…and is scored live, as a draft should be');
+  const shownPrice = before.body.lines[0].suggested_price;
+  const shownVerdict = before.body.score.lines[0].verdict;
+  const shownVersion = before.body.criteriaVersion;
+  ok(shownVersion !== null, 'it was scored under a published criteria version');
+
+  const d = await post('manifest-decide', { id: fid, status: 'approved', note: 'buying it' });
+  eq(d.status, 200, 'the decision is recorded');
+  ok(d.body.snapshot_lines > 0, '🔑 …and it captured the lines it was taken on');
+
+  // Now move the world underneath it: a new criteria version with a different price cap
+  // and rounding, which is exactly the v9→v10→v11 churn that happened for real.
+  const draft = await post('merch-criteria-draft', { cells: [
+    { l3: null, field: 'price_cap_pct_retail', value: '20' },
+    { l3: null, field: 'rounding', value: '$1 down' },
+  ] });
+  eq(draft.status, 200, 'a new criteria draft is opened');
+  const pub = await post('merch-criteria-publish', { note: 'v-next — cap to 20%, round to whole dollars' });
+  eq(pub.status, 200, 'and published');
+
+  // 🛑 THE RECORD DOES NOT MOVE.
+  const after = await get(`manifest&id=${fid}`);
+  eq(after.status, 200, 'the decided manifest still opens');
+  eq(after.body.frozen, true, '🔑 …and says it is showing the frozen record');
+  eq(after.body.criteriaVersion, shownVersion,
+     '🛑 under the version it was actually decided under, not the live one');
+  eq(after.body.lines[0].suggested_price, shownPrice,
+     '🛑 every figure is the one the buyer agreed to');
+  eq(after.body.score.lines[0].verdict, shownVerdict, '…verdicts included');
+  ok(after.body.capturedAt, '…and when the record was taken');
+
+  // 🔑 …AND TODAY'S ANSWER IS STILL AVAILABLE, as a different question.
+  const live = await get(`manifest&id=${fid}&live=1`);
+  eq(live.status, 200, 're-scoring against today is allowed');
+  eq(live.body.frozen, false, '…and never claims to be the record');
+  eq(live.body.rescored, true, '🔑 it says plainly that this is a re-score of a decided buy');
+  ok(live.body.criteriaVersion > shownVersion,
+     '…against the CURRENT criteria version');
+  // The whole point: the two genuinely differ.
+  const moved = live.body.lines.some((l, i) => l.suggested_price !== after.body.lines[i].suggested_price)
+             || live.body.score.lines.some((l, i) => l.verdict !== after.body.score.lines[i].verdict);
+  ok(moved, '🛑 the live re-score really IS different — which is what made the old behaviour a lie');
+
+  // A snapshot is served verbatim, never blended with live figures.
+  eq(after.body.score.totals.warn, before.body.score.totals.warn,
+     '🔑 the frozen totals match what was on screen at decision time');
+}
+
+// ── 🔑 A DECISION FROM BEFORE SNAPSHOTS SAYS SO ────────────────────────────
+// It cannot be reconstructed — the inputs are gone. The page must not imply the live
+// re-score is the record, which is precisely the behaviour being fixed.
+{
+  const up = await post('manifest-upload', { vendor: 'LegacyDecision', csv: CSV });
+  const lid = up.body.id;
+  await post('manifest-decide', { id: lid, status: 'approved', note: 'older call' });
+  // Strip the snapshot to stand in for a decision taken before this shipped.
+  db.prepare(`UPDATE manifests SET decision_snapshot = NULL WHERE id = ?`).run(lid);
+
+  const r = await get(`manifest&id=${lid}`);
+  eq(r.status, 200, 'it still opens');
+  eq(r.body.frozen, false, '…and does not pretend to be a frozen record');
+  eq(r.body.snapshotMissing, true,
+     '🛑 it says outright that no record of the original figures was kept');
+}
+
+// ── 🔑 A CORRUPT SNAPSHOT FALLS BACK, IT DOES NOT 500 ──────────────────────
+{
+  const up = await post('manifest-upload', { vendor: 'BadSnapshot', csv: CSV });
+  const bid = up.body.id;
+  await post('manifest-decide', { id: bid, status: 'passed', note: 'no thanks' });
+  db.prepare(`UPDATE manifests SET decision_snapshot = ? WHERE id = ?`).run('{not json', bid);
+  const r = await get(`manifest&id=${bid}`);
+  eq(r.status, 200, '🔑 an unreadable snapshot still serves the manifest');
+  eq(r.body.frozen, false, '…as a live score, honestly labelled');
+  ok(Array.isArray(r.body.lines), '…with real lines');
+}
+
+// ── 🔑 A PASS ON A CONTESTED PRICE SAYS SO — AND IS STILL A PASS ───────────
+// The lookup grades every price and flags the ones whose sources disagree, and scoring
+// threw all of it away: a clean pass computed from two retailers 3x apart read exactly
+// like one computed from a corroborated price.
+//
+// 🛑 IT MUST NOT BLOCK. This is a liquidation retailer; refusing every line whose price
+// is less than perfect refuses the business. The verdict is untouched — the buyer is
+// told which passes are worth a second look, and decides.
+{
+  const up = await post('manifest-upload', { vendor: 'EvidenceTest', csv: CSV });
+  const eid = up.body.id;
+  const target = db.prepare(
+    `SELECT id FROM manifest_lines WHERE manifest_id=? AND l3=?`).get(eid, SNACKS);
+  ok(target, 'the snacks line is there to work with');
+
+  // A retail price low enough that the cost test passes outright, but contested.
+  db.prepare(`UPDATE manifest_lines SET retail_price=?, retail_confidence=?, flags=? WHERE id=?`)
+    .run(9.99, 'medium', JSON.stringify(['price conflict']), target.id);
+
+  const r = await get(`manifest&id=${eid}`);
+  const line = r.body.score.lines.find(l => l.id === target.id);
+  ok(line, 'the line is scored');
+  eq(line.tests.cost.verdict, 'pass', '🛑 it still PASSES — nothing is refused for this');
+  eq(line.evidence, 'contested', '🔑 …and the line records that the price is contested');
+  ok(/disagree/.test(line.tests.cost.note),
+     '🔑 …with the cost test saying so in words, beside the number it rests on');
+  eq(r.body.score.totals.weakEvidence, 1, 'countable in the totals');
+  ok(/worth checking/.test(r.body.score.verdictText),
+     '🔑 …and the verdict sentence mentions it, so nobody has to read every line');
+
+  // A `low` grade earns the same treatment; `medium` — the ordinary case — does not.
+  db.prepare(`UPDATE manifest_lines SET retail_confidence=?, flags=? WHERE id=?`)
+    .run('low', '[]', target.id);
+  const low = await get(`manifest&id=${eid}`);
+  eq(low.body.score.lines.find(l => l.id === target.id).evidence, 'weak',
+     'a low-confidence price is flagged too');
+
+  db.prepare(`UPDATE manifest_lines SET retail_confidence=? WHERE id=?`).run('medium', target.id);
+  const mid2 = await get(`manifest&id=${eid}`);
+  eq(mid2.body.score.lines.find(l => l.id === target.id).evidence, null,
+     '🛑 …but MEDIUM is the ordinary case and is NOT flagged — treating it as a warning is how a signal becomes wallpaper');
+  eq(mid2.body.score.totals.weakEvidence, 0, '…and does not count');
+  ok(!/worth checking/.test(mid2.body.score.verdictText), '…nor reach the summary');
+
+  // 🔑 And it only applies when the STREET price is what the test rests on. A line
+  // scored off our own ASP has no retail evidence to be weak about.
+  db.prepare(`UPDATE manifest_lines SET retail_price=NULL, retail_confidence='low' WHERE id=?`)
+    .run(target.id);
+  const noRetail = await get(`manifest&id=${eid}`);
+  eq(noRetail.body.score.lines.find(l => l.id === target.id).evidence, null,
+     '🔑 no street price means nothing to grade — the ASP fallback is judged on its own terms');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

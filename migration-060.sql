@@ -1,0 +1,20 @@
+-- The barcode identifies ONE PHYSICAL PALLET. `PRM-10490-30` is truck 10490, pallet 30 —
+-- so the same barcode arriving twice is the same pallet logged twice, and its unit count
+-- has been double-counted into the bins. That is a stronger signal than the PO check next
+-- to it: a PO is shared by every pallet on a truck and legitimately repeats 30 times.
+--
+-- 🔑 NOT store-prefixed, unlike idx_bin_dumps_po. This lookup deliberately crosses stores:
+-- one pallet cannot be at two stores, so a match at a DIFFERENT store is a real mistake
+-- worth catching, not noise. The worker redacts the detail of a store the caller cannot
+-- see, but it still has to find the row to say anything at all.
+--
+-- 🛑 Re-runnable, unlike migration-059 — CREATE INDEX takes IF NOT EXISTS where ALTER
+-- TABLE ADD COLUMN does not. Applying this twice is a no-op, not an error.
+--
+-- Apply (address databases by UUID; the staging one lives under [env.staging] and a bare
+-- name does not resolve):
+--   npx wrangler d1 execute b40982c2-4009-4842-bc17-fa0977468b07 --remote -y --file=migration-060.sql
+--   npx wrangler d1 execute 3fa911d7-31d6-438c-985f-7ac08c407d2d --remote -y --file=migration-060.sql
+--
+-- Index only. No column is added, no row is read or rewritten.
+CREATE INDEX IF NOT EXISTS idx_bin_dumps_barcode ON bin_dumps(barcode, logged_at DESC);

@@ -1,0 +1,20 @@
+-- "Sup. Ref:" — a supplier reference printed on some pallet tags, between the
+-- pallet name and the WO. Brian's second tag sample (2026-09-08) carries it;
+-- the first did not.
+--
+-- 🔑 NULLABLE, like every other tag field, and for the same reason: it is absent
+-- from whole tag formats, not merely unread. A row without one is not incomplete.
+--
+-- 🛑 SQLite has no ADD COLUMN IF NOT EXISTS. Re-running this file errors with
+-- "duplicate column name" — which is a safe failure (it changes nothing), but it
+-- means this is NOT re-runnable and should be applied exactly once per database.
+-- scripts/lib/worker-harness.mjs replays these ALTERs and tolerates the error, so
+-- the suite is unaffected either way.
+--
+-- Apply:
+--   npx wrangler d1 execute labor-dashboard-db-staging --remote --file=migration-059.sql
+--   npx wrangler d1 execute labor-dashboard-db         --remote --file=migration-059.sql
+--
+-- Additive: one nullable column. Existing rows keep NULL; nothing is backfilled,
+-- because the value was never captured and inventing one would be worse than a gap.
+ALTER TABLE bin_dumps ADD COLUMN sup_ref TEXT;

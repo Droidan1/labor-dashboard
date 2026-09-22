@@ -1,0 +1,45 @@
+-- migration-067: drop idx_bin_dumps_po. Nothing queries `po` any more.
+--
+-- Brian, 2026-09-16: "I only want a tag to be considered a duplicate if the PRM-10490-30
+-- or P-090926-729727 matches for example." That removed Bin Dump's PO duplicate check —
+-- the client prompt, the worker query and its six-hour window — and this index existed for
+-- that one query and nothing else. migration-058 built it for
+-- `WHERE store = ? AND po = ? AND logged_at >= ?`, which no longer appears anywhere.
+--
+-- 🔑 VERIFIED BY ENUMERATION, not by memory. Every surviving predicate against bin_dumps:
+--     bin-dump-recent   WHERE barcode = ? AND logged_at >= ?     -> idx_bin_dumps_barcode
+--     bin-dump-list     WHERE store = ? AND logged_at >= ?       -> idx_bin_dumps_store
+--     update / delete / photo   WHERE id = ?                     -> the primary key
+--   `po` now appears only in the INSERT and UPDATE column lists — written, never searched.
+--   Re-check before trusting this comment:
+--     grep -n "FROM bin_dumps\|UPDATE bin_dumps\|DELETE FROM bin_dumps" worker.js
+--
+-- Apply (address databases by UUID; the staging one lives under [env.staging] and a bare
+-- name does not resolve). STAGING FIRST:
+--   staging:     npx wrangler d1 execute b40982c2-4009-4842-bc17-fa0977468b07 --remote -y --file=migration-067.sql
+--   production:  npx wrangler d1 execute 3fa911d7-31d6-438c-985f-7ac08c407d2d --remote -y --file=migration-067.sql
+--
+-- Confirm it is gone (expects zero rows):
+--   npx wrangler d1 execute <uuid> --remote -y --json \
+--     --command="SELECT name FROM sqlite_master WHERE type='index' AND name='idx_bin_dumps_po'"
+--
+-- 🔑 AN INDEX ONLY. No row is read, rewritten or deleted, and the `po` COLUMN stays exactly
+-- where it is — every pallet keeps the PO or WO printed on its tag, and the log and the CSV
+-- export still show it. This drops the lookup structure, never the data.
+--
+-- 🔑 FULLY REVERSIBLE, and this is the statement that undoes it verbatim:
+--     CREATE INDEX IF NOT EXISTS idx_bin_dumps_po ON bin_dumps(store, po, logged_at DESC);
+--   SQLite rebuilds an index from the table, so nothing is lost by dropping one.
+--
+-- 🛑 migration-058 STILL CREATES THIS INDEX, and that is correct — it is history, not a
+-- live declaration, and editing an applied migration rewrites what actually happened.
+-- Replaying every migration in numeric order on a fresh database is still right: 058
+-- creates it, 067 drops it, and the end state matches production.
+--
+-- 🔑 SAFE IN EITHER DEPLOY ORDER, unlike a column change. Dropping an index can only cost
+-- speed, never correctness. If this lands before the worker that stopped querying `po`, the
+-- old worker's PO lookup simply degenerates to a scan of a table holding tens of rows. The
+-- tidy order is still worker first, then this.
+--
+-- Re-runnable: DROP INDEX takes IF EXISTS, so a second run is a no-op rather than an error.
+DROP INDEX IF EXISTS idx_bin_dumps_po;

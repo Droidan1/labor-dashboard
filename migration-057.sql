@@ -1,0 +1,12 @@
+-- The street price a label was printed with.
+--
+-- A reprint re-runs sticker-check, but sticker-check never knew the street price -- it takes
+-- only l3, price and store. So the history row is the only place a reprint can learn what the
+-- original label said. Without this column, turning the street-price field on would print it
+-- on a fresh label and silently omit it on the reprint: two different stickers for one shelf.
+--
+-- Nullable on purpose, and null is a normal value, not a gap to backfill:
+--   * every row printed before today has no street price and never will, and
+--   * "No street price found" is a real outcome of a scan, which the label must draw as
+--     nothing at all rather than as $0.00.
+ALTER TABLE sticker_prints ADD COLUMN retail_cents INTEGER;

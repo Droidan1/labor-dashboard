@@ -1,0 +1,1018 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Bin Dump — Page Preview</title>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Lilita+One&display=swap" rel="stylesheet">
+<style>
+/* ─────────────────────────────────────────────────────────────────────────
+   Bin Dump — interactive preview (docs/ is EXCLUDED from scripts/build.sh,
+   so this file never reaches production).
+
+   Every colour below is a LITERAL copy of a token in tailwind.config.js.
+   A <style> block cannot use the Tailwind token classes, so the literal is
+   duplicated here with the token named in a comment — DESIGN.md §4.8 trap 3.
+   Nothing inherits a colour: both themes are stated on the panel.
+
+   Contrast was COMPUTED, not eyeballed (§4.8 trap 6). Figures in the legend.
+   ───────────────────────────────────────────────────────────────────────── */
+
+:root{
+  /* op-* — V1 Operator dark (primary) */
+  --bg:#0a0f1a;          /* op-bg      */
+  --panel:#101826;       /* op-panel   */
+  --panelHi:#16203a;     /* op-panelHi */
+  --ink:#e7ecf3;         /* op-ink     */
+  --inkDim:#8893a7;      /* op-inkDim  */
+  --inkDimmer:#5a6478;   /* op-inkDimmer — BORDERS/BADGES ONLY (3.22:1 as text) */
+  --hairline:rgba(255,255,255,.09);
+  --border:rgba(255,255,255,.16);
+  --accent:#22c55e;      /* accent-green — 7.81:1 on op-panel */
+  --accentInk:#06210f;   /* text on a solid accent button */
+  --amber:#f59e0b;       /* op-warn — 8.28:1 on op-panel */
+  --amberWash:rgba(245,158,11,.14);
+  --amberEdge:rgba(245,158,11,.45);
+  --bad:#ef4444;         /* op-bad */
+  --badWash:rgba(239,68,68,.12);
+  --badEdge:rgba(239,68,68,.42);
+  --greenWash:rgba(34,197,94,.10);
+  --greenEdge:rgba(34,197,94,.28);
+  --shadow:rgba(0,0,0,.55);
+  color-scheme:dark;     /* §4.8 trap 4 — an unchecked box is UA-drawn */
+}
+html.light{
+  /* opl-* — V1 Operator light */
+  --bg:#f4f3ee;          /* opl-bg      */
+  --panel:#ffffff;       /* opl-panel   */
+  --panelHi:#fafaf6;     /* opl-panelHi */
+  --ink:#14110a;         /* opl-ink     */
+  --inkDim:#6b6453;      /* opl-inkDim — 5.29:1 on opl-bg */
+  --inkDimmer:#9c9484;   /* opl-inkDimmer — BORDERS ONLY (2.71:1 as text) */
+  --hairline:rgba(20,16,8,.10);
+  --border:rgba(20,16,8,.18);
+  --accent:#166534;      /* green-800. accent-green #22c55e is 2.28:1 on white — unusable as TEXT in light */
+  --accentInk:#ffffff;
+  --amber:#92400e;       /* amber-800 — 7.09:1 on opl-panel; #f59e0b is 2.15:1 */
+  --amberWash:rgba(245,158,11,.16);
+  --amberEdge:rgba(180,83,9,.45);
+  --bad:#c0392b;         /* opl-bad — 5.44:1 */
+  --badWash:rgba(192,57,43,.10);
+  --badEdge:rgba(192,57,43,.40);
+  --greenWash:rgba(34,197,94,.10);
+  --greenEdge:rgba(22,101,52,.28);
+  --shadow:rgba(20,16,8,.18);
+  color-scheme:light;
+}
+
+*{margin:0;padding:0;box-sizing:border-box;}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:'Geist',system-ui,-apple-system,sans-serif;
+  font-size:14px; line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+  transition:background-color .25s, color .25s;
+}
+.wrap{max-width:1240px;margin:0 auto;padding:34px 22px 96px;}
+
+/* ── Preview chrome (NOT part of the app) ───────────────────────────── */
+.doc-kicker{font-family:'Lilita One',cursive;color:var(--accent);font-size:12px;
+  letter-spacing:.14em;text-transform:uppercase;}
+.doc-title{font-family:'Lilita One',cursive;font-size:32px;font-weight:400;
+  margin:6px 0 10px;color:var(--ink);letter-spacing:.01em;}
+.doc-sub{color:var(--inkDim);font-size:14px;max-width:760px;line-height:1.65;}
+.doc-note{margin-top:14px;padding:11px 14px;border-radius:10px;font-size:12.5px;
+  background:var(--amberWash);border:1px solid var(--amberEdge);color:var(--ink);}
+.doc-note b{color:var(--amber);}
+
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;
+  margin:26px 0 22px;padding:11px 14px;border-radius:12px;
+  background:var(--panelHi);border:1px solid var(--hairline);}
+.tb-lbl{font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--inkDim);}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+.seg button{background:transparent;border:0;color:var(--inkDim);cursor:pointer;
+  font:inherit;font-size:12px;font-weight:600;padding:6px 13px;transition:.15s;}
+.seg button+button{border-left:1px solid var(--border);}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accentInk);}
+.tb-spacer{flex:1;}
+.tb-hint{font-size:11.5px;color:var(--inkDim);}
+
+.sect{margin:44px 0 0;}
+.sect-h{display:flex;align-items:baseline;gap:11px;margin-bottom:7px;}
+.sect-n{width:24px;height:24px;border-radius:7px;background:var(--accent);
+  color:var(--accentInk);font-family:'Lilita One',cursive;font-size:13px;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  align-self:center;}
+.sect-t{font-size:17px;font-weight:700;color:var(--ink);}
+.sect-d{color:var(--inkDim);font-size:13px;margin:0 0 16px 35px;max-width:780px;line-height:1.6;}
+
+.stage{background:var(--bg);border:1px solid var(--hairline);border-radius:16px;
+  padding:26px;display:flex;gap:26px;flex-wrap:wrap;align-items:flex-start;
+  justify-content:center;}
+
+/* ── Device frames ──────────────────────────────────────────────────── */
+.phone{width:380px;max-width:100%;border-radius:26px;border:1px solid var(--border);
+  background:var(--bg);overflow:hidden;box-shadow:0 10px 40px var(--shadow);
+  display:flex;flex-direction:column;}
+.phone-bar{height:26px;background:var(--panel);border-bottom:1px solid var(--hairline);
+  display:flex;align-items:center;justify-content:center;font-size:10px;
+  letter-spacing:.08em;color:var(--inkDimmer);flex-shrink:0;}
+.screen{position:relative;height:640px;overflow:hidden;}
+.screen-scroll{height:100%;overflow-y:auto;overflow-x:hidden;padding:14px;
+  -webkit-overflow-scrolling:touch;}
+.wide .phone{width:100%;max-width:940px;}
+
+/* ── App: page header (matches the app-bar idiom) ───────────────────── */
+.pg-head{display:flex;align-items:flex-start;gap:12px;margin-bottom:14px;}
+.pg-h1{font-family:'Lilita One',cursive;font-size:21px;font-weight:400;
+  color:var(--accent);text-transform:uppercase;letter-spacing:.03em;line-height:1.1;}
+.pg-sub{font-size:12px;color:var(--inkDim);margin-top:3px;line-height:1.45;}
+.store-pill{margin-left:auto;flex-shrink:0;font-size:10.5px;font-weight:700;
+  letter-spacing:.06em;padding:5px 10px;border-radius:999px;
+  border:1px solid var(--greenEdge);background:var(--greenWash);color:var(--accent);}
+
+/* ── App: generic panel (DESIGN.md §4.8 anatomy) ────────────────────── */
+.panel{background:var(--panel);border:1px solid var(--hairline);border-radius:14px;
+  overflow:hidden;color:var(--ink);margin-bottom:13px;}
+.panel-bar{background:var(--panelHi);border-bottom:1px solid var(--hairline);
+  padding:11px 15px;display:flex;gap:11px;align-items:center;flex-wrap:wrap;}
+.panel-bar .lbl{font-size:10.5px;font-weight:700;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--inkDim);}
+.panel-bar .right{margin-left:auto;display:flex;gap:7px;align-items:center;}
+.panel-status{padding:9px 15px 0;font-size:12px;color:var(--inkDim);line-height:1.5;}
+.panel-legend{border-top:1px solid var(--hairline);padding:10px 15px;
+  display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--inkDim);}
+.lg-item{display:inline-flex;align-items:center;gap:6px;}
+.lg-sw{width:22px;height:13px;border-radius:4px;border:1px solid var(--border);flex-shrink:0;}
+
+/* ── App: capture panel (the "Begin" state) ─────────────────────────── */
+.cap-body{padding:30px 20px 26px;text-align:center;}
+.cap-glyph{width:60px;height:60px;margin:0 auto 14px;border-radius:16px;
+  background:var(--greenWash);border:1px solid var(--greenEdge);
+  display:flex;align-items:center;justify-content:center;color:var(--accent);}
+.cap-glyph svg{width:29px;height:29px;}
+.cap-t{font-size:16px;font-weight:700;color:var(--ink);}
+.cap-d{font-size:12.5px;color:var(--inkDim);margin:6px auto 18px;max-width:270px;line-height:1.55;}
+.btn{font:inherit;font-weight:700;border-radius:10px;cursor:pointer;border:1px solid transparent;
+  transition:.15s;letter-spacing:.02em;}
+.btn-primary{background:var(--accent);color:var(--accentInk);padding:11px 30px;font-size:14.5px;}
+.btn-primary:hover{filter:brightness(1.08);}
+.btn-primary.big{padding:14px 46px;font-size:16px;border-radius:12px;}
+.btn-ghost{background:transparent;color:var(--ink);border-color:var(--border);
+  padding:9px 16px;font-size:13px;}
+.btn-ghost:hover{background:var(--panelHi);}
+.btn-sm{padding:6px 11px;font-size:11.5px;border-radius:8px;}
+.btn:disabled{opacity:.45;cursor:not-allowed;}
+
+/* ── App: week strip ────────────────────────────────────────────────── */
+.wk-strip{display:flex;gap:9px;margin-bottom:13px;}
+.wk-tile{flex:1;background:var(--panel);border:1px solid var(--hairline);
+  border-radius:12px;padding:11px 13px;color:var(--ink);}
+.wk-cap{font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--inkDim);}
+.wk-num{font-size:23px;font-weight:700;line-height:1.15;margin-top:3px;
+  font-variant-numeric:tabular-nums;letter-spacing:-.02em;color:var(--ink);}
+.wk-sub{font-size:11px;color:var(--inkDim);margin-top:1px;}
+
+/* ── App: log — week accordions ─────────────────────────────────────── */
+.wk-sec{border-bottom:1px solid var(--hairline);}
+.wk-sec:last-of-type{border-bottom:0;}
+.wk-head{width:100%;background:transparent;border:0;font:inherit;cursor:pointer;
+  display:flex;align-items:center;gap:8px;padding:11px 15px;text-align:left;
+  color:var(--ink);transition:background .15s;flex-wrap:wrap;}
+.wk-head:hover{background:var(--panelHi);}
+.wk-caret{width:9px;height:9px;flex-shrink:0;border-right:2px solid var(--inkDim);
+  border-bottom:2px solid var(--inkDim);transform:rotate(-45deg);transition:transform .22s;}
+.wk-sec.open .wk-caret{transform:rotate(45deg);}
+.wk-name{font-size:13px;font-weight:600;color:var(--ink);white-space:nowrap;}
+.wk-badge{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  padding:2px 6px;border-radius:5px;border:1px solid var(--greenEdge);
+  background:var(--greenWash);color:var(--accent);white-space:nowrap;}
+.wk-meta{margin-left:auto;font-size:11.5px;color:var(--inkDim);
+  font-variant-numeric:tabular-nums;white-space:nowrap;}
+.wk-body{display:grid;grid-template-rows:0fr;transition:grid-template-rows .26s cubic-bezier(.4,0,.2,1);}
+.wk-sec.open .wk-body{grid-template-rows:1fr;}
+.wk-body>div{overflow:hidden;}
+
+/* ── App: the log table (§4.8 dense table) ──────────────────────────── */
+.tbl-scroll{overflow-x:auto;background:var(--panel);}
+table.log{border-collapse:collapse;width:100%;min-width:640px;
+  font-variant-numeric:tabular-nums;color:var(--ink);}
+table.log th{height:30px;padding:0 10px;font-size:10px;font-weight:700;
+  letter-spacing:.05em;text-transform:uppercase;text-align:left;
+  background:var(--panelHi);color:var(--inkDim);
+  border-bottom:1px solid var(--hairline);position:sticky;top:0;}
+table.log td{height:40px;padding:0 10px;font-size:12.5px;
+  border-bottom:1px solid var(--hairline);color:var(--ink);white-space:nowrap;}
+table.log tr:last-child td{border-bottom:0;}
+table.log tr:hover td{background:var(--panelHi);}
+table.log .num{text-align:right;}
+/* §4.8 trap 2 — a sticky column needs its OWN opaque background */
+table.log .stick{position:sticky;left:0;background:var(--panel);z-index:1;}
+table.log tr:hover .stick{background:var(--panelHi);}
+table.log th.stick{background:var(--panelHi);z-index:2;}
+.mono{font-variant-numeric:tabular-nums;letter-spacing:.01em;}
+.dim{color:var(--inkDim);}
+.pname{font-weight:600;}
+.row-edit{background:transparent;border:1px solid var(--border);border-radius:6px;
+  color:var(--inkDim);font:inherit;font-size:10.5px;font-weight:700;padding:3px 8px;
+  cursor:pointer;letter-spacing:.05em;}
+.row-edit:hover{color:var(--ink);background:var(--panelHi);}
+tr.edited td{background:var(--amberWash);}
+tr.edited:hover td{background:var(--amberWash);}
+tr.edited .stick{background:var(--amberWash);}
+
+/* ── App: modal ─────────────────────────────────────────────────────── */
+.scrim{position:absolute;inset:0;background:rgba(4,7,13,.72);display:flex;
+  align-items:center;justify-content:center;padding:14px;z-index:40;
+  opacity:0;pointer-events:none;transition:opacity .22s;}
+.scrim.show{opacity:1;pointer-events:auto;}
+.modal{background:var(--panel);border:1px solid var(--border);border-radius:15px;
+  width:100%;max-width:400px;max-height:100%;overflow:auto;color:var(--ink);
+  box-shadow:0 18px 50px var(--shadow);transform:translateY(10px);transition:transform .22s;}
+.scrim.show .modal{transform:none;}
+.m-head{background:var(--panelHi);border-bottom:1px solid var(--hairline);
+  padding:12px 15px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:2;}
+.m-title{font-size:13.5px;font-weight:700;color:var(--ink);}
+.m-x{margin-left:auto;background:transparent;border:0;color:var(--inkDim);
+  font-size:20px;line-height:1;cursor:pointer;padding:0 3px;}
+.m-x:hover{color:var(--ink);}
+.m-body{padding:14px 15px;}
+.m-foot{border-top:1px solid var(--hairline);padding:12px 15px;display:flex;gap:9px;
+  align-items:center;background:var(--panel);position:sticky;bottom:0;}
+.m-foot .right{margin-left:auto;display:flex;gap:9px;}
+
+.shot{display:flex;gap:12px;align-items:flex-start;margin-bottom:15px;
+  padding-bottom:14px;border-bottom:1px solid var(--hairline);}
+.shot-img{width:82px;flex-shrink:0;border-radius:9px;overflow:hidden;
+  border:1px solid var(--border);background:#fff;cursor:zoom-in;}
+.shot-img svg{display:block;width:100%;height:auto;}
+.shot-meta .t{font-size:12.5px;font-weight:600;color:var(--ink);}
+.shot-meta .d{font-size:11.5px;color:var(--inkDim);margin-top:4px;line-height:1.5;}
+
+/* ── App: the three field states (§4.8's three cell states, for OCR) ─ */
+.fld{margin-bottom:11px;}
+.fld-l{display:flex;align-items:center;gap:7px;font-size:9.5px;font-weight:700;
+  letter-spacing:.08em;text-transform:uppercase;color:var(--inkDim);margin-bottom:4px;}
+.fld input[type="text"]{  /* §4.8 trap 1 — CSS matches the ATTRIBUTE, not the default */
+  width:100%;font:inherit;font-size:14px;font-weight:600;padding:9px 11px;
+  border-radius:9px;background:var(--panelHi);border:1px solid var(--border);
+  color:var(--ink);font-variant-numeric:tabular-nums;transition:.15s;}
+.fld input[type="text"]:focus{outline:none;border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--greenWash);}
+.fld input[type="text"]::placeholder{color:var(--inkDim);font-weight:400;}
+/* state: read confidently — the default box above */
+/* state: low confidence — amber wash + amber border */
+.fld.warn input[type="text"]{background:var(--amberWash);border-color:var(--amberEdge);}
+/* state: nothing on the tag — must be typed */
+.fld.miss input[type="text"]{background:var(--badWash);border-color:var(--badEdge);}
+.fld-tag{font-size:9px;font-weight:700;letter-spacing:.06em;padding:1px 5px;
+  border-radius:4px;border:1px solid transparent;}
+.fld.warn .fld-tag{background:var(--amberWash);border-color:var(--amberEdge);color:var(--amber);}
+.fld.miss .fld-tag{background:var(--badWash);border-color:var(--badEdge);color:var(--bad);}
+.fld-note{font-size:11px;color:var(--inkDim);margin-top:4px;}
+
+/* ── App: reading state ─────────────────────────────────────────────── */
+.reading{padding:34px 20px;text-align:center;}
+.spin{width:34px;height:34px;margin:0 auto 14px;border-radius:50%;
+  border:3px solid var(--hairline);border-top-color:var(--accent);
+  animation:sp .85s linear infinite;}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation-duration:2.4s}}
+.reading .t{font-size:14.5px;font-weight:700;color:var(--ink);}
+.reading .d{font-size:12px;color:var(--inkDim);margin-top:5px;}
+
+/* ── App: status strip ──────────────────────────────────────────────────
+   index.html has NO toast helper — zero matches for `toast` in the file.
+   Transient feedback is an inline strip per card (invSetStatus / invViewSetStatus).
+   This copies that idiom rather than introducing a ninth pattern. */
+.status{margin:0 15px 14px;border-radius:10px;padding:9px 12px;font-size:12.5px;
+  display:flex;align-items:center;gap:9px;border:1px solid var(--greenEdge);
+  background:var(--greenWash);color:var(--ink);}
+.status[hidden]{display:none;}
+.status .tick{width:18px;height:18px;border-radius:50%;background:var(--accent);
+  color:var(--accentInk);display:flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:700;flex-shrink:0;}
+
+/* ── Preview-only: sample-photo chooser ─────────────────────────────── */
+.chooser{padding:16px;}
+.chooser .h{font-size:12.5px;font-weight:700;margin-bottom:3px;color:var(--ink);}
+.chooser .s{font-size:11.5px;color:var(--inkDim);margin-bottom:13px;line-height:1.5;}
+.ch-grid{display:flex;gap:9px;}
+.ch-card{flex:1;background:var(--panelHi);border:1px solid var(--border);
+  border-radius:11px;padding:9px;cursor:pointer;text-align:left;font:inherit;
+  color:var(--ink);transition:.15s;}
+.ch-card:hover{border-color:var(--accent);}
+.ch-card .cn{font-size:11.5px;font-weight:700;margin-top:7px;color:var(--ink);}
+.ch-card .cd{font-size:10.5px;color:var(--inkDim);line-height:1.4;margin-top:2px;}
+.ch-card .thumb{border-radius:7px;overflow:hidden;background:#fff;border:1px solid var(--border);}
+.ch-card .thumb svg{display:block;width:100%;height:auto;}
+
+/* ── Q&A block ──────────────────────────────────────────────────────── */
+.qa{background:var(--panel);border:1px solid var(--hairline);border-radius:14px;
+  overflow:hidden;color:var(--ink);}
+.qa-row{display:flex;gap:13px;padding:14px 16px;border-bottom:1px solid var(--hairline);}
+.qa-row:last-child{border-bottom:0;}
+.qa-n{width:22px;height:22px;border-radius:6px;flex-shrink:0;font-size:11px;font-weight:700;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--amberWash);border:1px solid var(--amberEdge);color:var(--amber);}
+.qa-q{font-size:13.5px;font-weight:600;color:var(--ink);}
+.qa-a{font-size:12.5px;color:var(--inkDim);margin-top:5px;line-height:1.6;}
+.qa-a b{color:var(--ink);font-weight:600;}
+.qa-a code{background:var(--panelHi);border:1px solid var(--hairline);border-radius:4px;
+  padding:1px 5px;font-size:11.5px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="doc-kicker">Bargain Lane · Inventory</div>
+  <h1 class="doc-title">Bin Dump — page preview</h1>
+  <p class="doc-sub">
+    A working click-through of the proposed <b>Bin Dump</b> surface: photograph a pallet tag,
+    Claude reads the seven fields off it, you check and correct them, and the pallet is logged
+    with a timestamp into a week-grouped log you can edit later.
+  </p>
+  <div class="doc-note">
+    <b>Nothing is wired up.</b> This is a static prototype in <code>docs/</code> — a directory
+    <code>scripts/build.sh</code> deliberately excludes, so it never reaches production. No API is
+    called, no photo leaves the page, the "extraction" is canned. <b>No app code has been changed.</b>
+  </div>
+
+  <div class="toolbar">
+    <span class="tb-lbl">Theme</span>
+    <span class="seg">
+      <button id="th-dark"  aria-pressed="true">Dark</button>
+      <button id="th-light" aria-pressed="false">Light</button>
+    </span>
+    <span class="tb-lbl" style="margin-left:8px">Width</span>
+    <span class="seg">
+      <button id="w-phone" aria-pressed="true">Phone</button>
+      <button id="w-wide"  aria-pressed="false">Desktop</button>
+    </span>
+    <span class="tb-spacer"></span>
+    <button class="btn btn-ghost btn-sm" id="reset">Reset prototype</button>
+  </div>
+  <div class="tb-hint" style="margin:-12px 0 0 2px">
+    Check it in <b>both</b> themes — CLAUDE.md requires it, and the accent green flips to
+    <code>#166534</code> in light because <code>#22c55e</code> is 2.28:1 on white.
+  </div>
+
+  <!-- ══════════════ 1. THE LIVE PROTOTYPE ══════════════ -->
+  <div class="sect">
+    <div class="sect-h"><span class="sect-n">1</span><span class="sect-t">The page, end to end</span></div>
+    <p class="sect-d">
+      Tap <b>Begin</b> and walk the whole flow. Two sample tags are offered where the camera
+      would open — one that reads cleanly, one deliberately awkward (creased, glare over the PO,
+      no truck number) so you can see how a bad read presents itself.
+    </p>
+
+    <div class="stage" id="stage">
+      <div class="phone">
+        <div class="phone-bar">BIN DUMP · INVENTORY</div>
+        <div class="screen" id="screen">
+         <div class="screen-scroll">
+
+          <div class="pg-head">
+            <div>
+              <div class="pg-h1">Bin Dump</div>
+              <div class="pg-sub">Log a pallet into the bins from its tag.</div>
+            </div>
+            <span class="store-pill" id="store-pill">BL1</span>
+          </div>
+
+          <!-- CAPTURE PANEL — swaps between begin / chooser / reading -->
+          <div class="panel" id="cap-panel">
+            <div id="cap-begin" class="cap-body">
+              <div class="cap-glyph">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+                     stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14.5 4h-5L8 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-4l-1.5-2Z"/>
+                  <circle cx="12" cy="13" r="3.5"/>
+                </svg>
+              </div>
+              <div class="cap-t">Scan a pallet tag</div>
+              <div class="cap-d">Get the whole tag in frame, flat and well lit. You'll check
+                every field before anything is logged.</div>
+              <button class="btn btn-primary big" id="btn-begin">Begin</button>
+            </div>
+
+            <div id="cap-choose" class="chooser" hidden>
+              <div class="h">Camera would open here</div>
+              <div class="s">On a phone this is the rear camera
+                (<code>capture="environment"</code>). Pick a sample to continue:</div>
+              <div class="ch-grid">
+                <button class="ch-card" data-sample="clean">
+                  <span class="thumb" id="thumb-clean"></span>
+                  <span class="cn">Clean tag</span>
+                  <span class="cd">Flat, sharp, all 7 fields</span>
+                </button>
+                <button class="ch-card" data-sample="rough">
+                  <span class="thumb" id="thumb-rough"></span>
+                  <span class="cn">Rough tag</span>
+                  <span class="cd">Glare on PO, no truck #</span>
+                </button>
+              </div>
+              <div style="margin-top:12px;display:flex;gap:8px">
+                <button class="btn btn-ghost btn-sm" id="btn-cancel-cap">Cancel</button>
+              </div>
+            </div>
+
+            <div id="cap-reading" class="reading" hidden>
+              <div class="spin"></div>
+              <div class="t">Reading tag…</div>
+              <div class="d" id="reading-sub">Sending the photo to Claude</div>
+            </div>
+
+            <div class="status" id="status" hidden>
+              <span class="tick">&check;</span>
+              <span id="status-text"></span>
+            </div>
+          </div>
+
+          <!-- WEEK STRIP -->
+          <div class="wk-strip">
+            <div class="wk-tile">
+              <div class="wk-cap">This week</div>
+              <div class="wk-num" id="wk-pallets">6</div>
+              <div class="wk-sub">pallets dumped</div>
+            </div>
+            <div class="wk-tile">
+              <div class="wk-cap">Units</div>
+              <div class="wk-num" id="wk-units">1,428</div>
+              <div class="wk-sub">on those pallets</div>
+            </div>
+          </div>
+
+          <!-- LOG PANEL -->
+          <div class="panel">
+            <div class="panel-bar">
+              <span class="lbl">Bin Dump Log</span>
+              <span class="right">
+                <button class="btn btn-ghost btn-sm" id="btn-csv">Export CSV</button>
+              </span>
+            </div>
+            <div class="panel-status" id="log-status">24 pallets across 4 weeks.</div>
+            <div id="log-weeks" style="margin-top:9px"></div>
+            <div class="panel-legend">
+              <span class="lg-item"><span class="lg-sw" style="background:var(--greenWash);border-color:var(--greenEdge)"></span>Current week</span>
+              <span class="lg-item"><span class="lg-sw" style="background:var(--amberWash);border-color:var(--amberEdge)"></span>Edited after logging</span>
+              <span class="lg-item"><span class="lg-sw" style="background:var(--panelHi)"></span>As first logged</span>
+            </div>
+          </div>
+
+         </div><!-- /.screen-scroll -->
+
+          <!-- VERIFY / EDIT MODAL -->
+          <div class="scrim" id="scrim">
+            <div class="modal" role="dialog" aria-modal="true" aria-labelledby="m-title">
+              <div class="m-head">
+                <span class="m-title" id="m-title">Verify pallet tag</span>
+                <button class="m-x" id="m-close" aria-label="Close">&times;</button>
+              </div>
+              <div class="m-body">
+                <div class="shot" id="m-shot">
+                  <span class="shot-img" id="m-photo"></span>
+                  <span class="shot-meta">
+                    <span class="t" id="m-read">Read 7 of 7 fields</span>
+                    <span class="d" id="m-readsub">Everything matched. Give it a glance and submit.</span>
+                  </span>
+                </div>
+                <div id="m-fields"></div>
+              </div>
+              <div class="m-foot">
+                <button class="btn btn-ghost btn-sm" id="m-retake">Retake</button>
+                <span class="right">
+                  <button class="btn btn-ghost btn-sm" id="m-cancel">Cancel</button>
+                  <button class="btn btn-primary btn-sm" id="m-submit">Submit</button>
+                </span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ 2. WHAT GETS READ OFF THE TAG ══════════════ -->
+  <div class="sect">
+    <div class="sect-h"><span class="sect-n">2</span><span class="sect-t">What gets read off the tag</span></div>
+    <p class="sect-d">
+      Redrawn from the real tag. <b>The layout has a trap in it:</b> every value is right-aligned
+      and printed one line <i>above</i> its own label, so a label and its value pair up
+      <b>diagonally</b>, not across. The dotted lines show it. A prompt told to "read what is to the
+      right of <code>PO:</code>" finds nothing on that line and shifts every field by one — which is
+      why this is worth drawing rather than describing.
+    </p>
+    <div class="stage" style="align-items:flex-start">
+      <div style="flex:0 0 300px"><div id="tag-annotated"></div></div>
+      <div style="flex:1;min-width:280px">
+        <div class="panel" style="margin:0">
+          <div class="panel-bar"><span class="lbl">Field map</span></div>
+          <div class="tbl-scroll">
+            <table class="log" style="min-width:0">
+              <thead><tr><th class="stick">Field</th><th>Read from</th><th>Type</th></tr></thead>
+              <tbody id="fieldmap"></tbody>
+            </table>
+          </div>
+          <div class="panel-legend" style="display:block;line-height:1.65">
+            <div><b>The barcode is not the item number</b> — it is
+            <code>PRM</code> + the truck # + this pallet's index
+            (<code>PRM-10490-30</code>, and the footer reads "Pallet 30 of 30").
+            That gives two free cross-checks: the truck # read off the tag should match the
+            middle of the barcode, and a mismatch is worth flagging rather than silently
+            accepting.</div>
+            <div style="margin-top:7px">Every field stays editable before submit, and nothing is
+            stored until you press it.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ 3. QUESTIONS ══════════════ -->
+  <div class="sect">
+    <div class="sect-h"><span class="sect-n">3</span><span class="sect-t">Decided</span></div>
+    <p class="sect-d">Settled, and the build follows these.</p>
+    <div class="qa" id="decided" style="margin-bottom:26px"></div>
+
+    <div class="sect-h"><span class="sect-n">4</span><span class="sect-t">Still open</span></div>
+    <p class="sect-d">
+      What the real tag raised. The defaults below apply unless you say otherwise.
+    </p>
+    <div class="qa" id="qa"></div>
+  </div>
+
+  <!-- ══════════════ 4. HOW IT'S BUILT ══════════════ -->
+  <div class="sect">
+    <div class="sect-h"><span class="sect-n">5</span><span class="sect-t">How it would be built</span></div>
+    <p class="sect-d">
+      For the record, so the review covers the plumbing and not just the pixels.
+    </p>
+    <div class="qa" id="build"></div>
+  </div>
+
+</div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   Prototype logic. Canned data only — no network, no storage.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── Theme + width ───────────────────────────────────────────────────── */
+const root = document.documentElement;
+function setTheme(light){
+  root.classList.toggle('light', light);
+  thDark.setAttribute('aria-pressed', String(!light));
+  thLight.setAttribute('aria-pressed', String(light));
+  paintTags();                       // the SVG tags carry their own colours
+}
+const thDark = document.getElementById('th-dark');
+const thLight = document.getElementById('th-light');
+thDark.onclick  = () => setTheme(false);
+thLight.onclick = () => setTheme(true);
+
+const wPhone = document.getElementById('w-phone');
+const wWide  = document.getElementById('w-wide');
+function setWide(wide){
+  document.getElementById('stage').classList.toggle('wide', wide);
+  wPhone.setAttribute('aria-pressed', String(!wide));
+  wWide.setAttribute('aria-pressed', String(wide));
+}
+wPhone.onclick = () => setWide(false);
+wWide.onclick  = () => setWide(true);
+
+/* ── The mock pallet tag, as SVG ─────────────────────────────────────── */
+function tagSVG(opts){
+  const o = Object.assign({rough:false, annotate:false}, opts);
+  const W = o.annotate ? 348 : 300;
+  const bars = (seed0, x0, x1, y, h) => {   /* a plausible Code-128 look */
+    let x = x0, out = '', seed = seed0;
+    while (x < x1){
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      const w = 1 + (seed >> 16) % 3;
+      if ((seed >> 8) % 3) out += `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="#111"/>`;
+      x += w + 1 + ((seed >> 12) % 2);
+    }
+    return out;
+  };
+  /* Label on the left, value RIGHT-aligned one line ABOVE it — the pairing
+     runs diagonally. Each row is [labelY, valueY, label, value]. */
+  const L = (y, t, extra='') =>
+    `<text x="22" y="${y}" font-family="Geist,Arial,sans-serif" font-size="13.5"
+           font-weight="700" fill="#111" ${extra}>${t}</text>`;
+  const V = (y, t, size=15, weight=400, fill='#111') =>
+    `<text x="278" y="${y}" font-family="Geist,Arial,sans-serif" font-size="${size}"
+           font-weight="${weight}" fill="${fill}" text-anchor="end">${t}</text>`;
+  /* The callout links the LABEL to its value, because that diagonal is the
+     whole point — a horizontal read shifts every field by one. */
+  const A = (ly, vy, n) => o.annotate
+    ? `<path d="M96 ${ly-4} L300 ${vy-4}" stroke="#22c55e" stroke-width="1.1"
+             stroke-dasharray="2.5 2.5" fill="none" opacity=".85"/>
+       <circle cx="322" cy="${vy-4}" r="9.5" fill="#22c55e"/>
+       <text x="322" y="${vy-0.5}" font-family="Geist,Arial,sans-serif" font-size="10.5"
+             font-weight="700" fill="#06210f" text-anchor="middle">${n}</text>` : '';
+
+  const poVal = V(203, '5036');
+  const glare = o.rough
+    ? `<rect x="150" y="188" width="132" height="22" fill="#fff" opacity=".8"/>
+       <rect x="150" y="188" width="132" height="22" fill="#e6eaf0" opacity=".55"/>` : '';
+  const crease = o.rough
+    ? `<path d="M0 262 L300 286" stroke="#c9ced6" stroke-width="2.5" opacity=".9"/>` : '';
+  const truckVal = o.rough ? '' : V(307, '10490');
+
+  return `
+  <svg viewBox="0 0 ${W} 452" xmlns="http://www.w3.org/2000/svg"
+       style="width:100%;height:auto;background:#fff;display:block">
+    <rect width="${W}" height="452" fill="#ffffff"/>
+    <rect x="7" y="7" width="286" height="438" rx="10" fill="none" stroke="#d7dbe0" stroke-width="1.4"/>
+
+    ${bars(7, 26, 274, 26, 74)}
+    <text x="150" y="129" font-family="Geist,Arial,sans-serif" font-size="15"
+          fill="#111" text-anchor="middle" letter-spacing=".6">PRM-10490-30</text>
+    ${o.annotate ? `<circle cx="322" cy="99" r="9.5" fill="#22c55e"/>
+       <text x="322" y="102.5" font-family="Geist,Arial,sans-serif" font-size="10.5"
+             font-weight="700" fill="#06210f" text-anchor="middle">1</text>
+       <path d="M215 126 L300 100" stroke="#22c55e" stroke-width="1.1"
+             stroke-dasharray="2.5 2.5" fill="none" opacity=".85"/>` : ''}
+
+    ${V(136, '50201', 19, 700)}
+    ${L(160, 'Item:')}
+    ${A(160, 136, 2)}
+
+    <text x="22" y="184" font-family="Geist,Arial,sans-serif" font-size="14.5"
+          font-style="italic" fill="#111">PALLET AMAZON IND8</text>
+    ${o.annotate ? `<circle cx="322" cy="180" r="9.5" fill="#22c55e"/>
+       <text x="322" y="183.5" font-family="Geist,Arial,sans-serif" font-size="10.5"
+             font-weight="700" fill="#06210f" text-anchor="middle">3</text>
+       <path d="M170 180 L300 180" stroke="#22c55e" stroke-width="1.1"
+             stroke-dasharray="2.5 2.5" fill="none" opacity=".85"/>` : ''}
+
+    ${poVal}${glare}
+    ${L(222, 'PO:')}
+    ${A(222, 203, 4)}
+
+    ${V(240, '1')}
+    ${L(258, '# of Units:')}
+    ${A(258, 240, 5)}
+
+    ${V(276, 'Ranon Price', 14.5)}
+    ${L(294, 'Created By:')}
+    ${A(294, 276, 6)}
+
+    ${truckVal}
+    ${L(330, 'Truck #:')}
+    ${A(330, 307, 7)}
+
+    <text x="22" y="378" font-family="Geist,Arial,sans-serif" font-size="13"
+          font-weight="700" fill="#111">Initialed By:</text>
+    <line x1="112" y1="381" x2="276" y2="381" stroke="#111" stroke-width="1.2"/>
+
+    ${bars(31, 108, 192, 392, 20)}
+    <text x="150" y="422" font-family="Geist,Arial,sans-serif" font-size="8"
+          fill="#8b9099" text-anchor="middle" letter-spacing=".5">UNKNOWN</text>
+
+    <text x="22" y="440" font-family="Geist,Arial,sans-serif" font-size="12"
+          fill="#111">Pallet 30 of 30</text>
+    <text x="278" y="440" font-family="Geist,Arial,sans-serif" font-size="11.5"
+          font-style="italic" fill="#111" text-anchor="end">09/08/2026 10:22 AM</text>
+    ${crease}
+  </svg>`;
+}
+function paintTags(){
+  document.getElementById('thumb-clean').innerHTML = tagSVG({});
+  document.getElementById('thumb-rough').innerHTML = tagSVG({rough:true});
+  document.getElementById('tag-annotated').innerHTML = tagSVG({annotate:true});
+}
+
+/* ── Field definitions ───────────────────────────────────────────────── */
+const FIELDS = [
+  {k:'barcode',  label:'Barcode',    from:'The text under the big barcode',                type:'text'},
+  {k:'item',     label:'Item #',     from:'Bold, top right &mdash; pairs with <b>Item:</b>', type:'text'},
+  {k:'pallet',   label:'Pallet name',from:'The italic line under <b>Item:</b>',            type:'text'},
+  {k:'po',       label:'PO',         from:'Right-aligned, one line above <b>PO:</b>',      type:'text'},
+  {k:'units',    label:'# of units', from:'Right-aligned, above <b># of Units:</b>',       type:'whole number'},
+  {k:'createdBy',label:'Created by', from:'Right-aligned, above <b>Created By:</b>',       type:'text'},
+  {k:'truck',    label:'Truck #',    from:'Right-aligned, above <b>Truck #:</b>',          type:'text'},
+];
+document.getElementById('fieldmap').innerHTML = FIELDS.map((f,i) =>
+  `<tr><td class="stick"><b>${i+1}. ${f.label}</b></td><td class="dim">${f.from}</td><td class="dim">${f.type}</td></tr>`
+).join('');
+
+/* ── Canned extraction results ───────────────────────────────────────── */
+const SAMPLES = {
+  clean: {
+    photo: () => tagSVG({}),
+    read: 7, of: 7,
+    sub: 'Every field came through, and the truck # agrees with the barcode.',
+    v: {barcode:'PRM-10490-30', item:'50201', pallet:'PALLET AMAZON IND8',
+        po:'5036', units:'1', createdBy:'Ranon Price', truck:'10490'},
+    state: {},
+  },
+  rough: {
+    photo: () => tagSVG({rough:true}),
+    read: 5, of: 7,
+    sub: 'Two fields need you &mdash; the PO is under glare and the truck # did not print.',
+    v: {barcode:'PRM-10490-30', item:'50201', pallet:'PALLET AMAZON IND8',
+        po:'5O36', units:'1', createdBy:'Ranon Price', truck:''},
+    state: {po:'warn', truck:'miss'},
+  },
+};
+
+/* ── Seed log data ───────────────────────────────────────────────────── */
+const MS_DAY = 86400000;
+function sundayOf(d){ const x = new Date(d); x.setHours(0,0,0,0); x.setDate(x.getDate() - x.getDay()); return x; }
+function fmtWeek(sun){
+  const end = new Date(sun.getTime() + 6*MS_DAY);
+  const m = d => d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+  // Same month reads "Sep 6 – 12"; the repeated month only costs a line wrap.
+  return sun.getMonth() === end.getMonth()
+    ? `${m(sun)} – ${end.getDate()}`
+    : `${m(sun)} – ${m(end)}`;
+}
+function fmtTime(d){ return d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); }
+function fmtDay(d){ return d.toLocaleDateString('en-US',{weekday:'short'}); }
+
+const NAMES = ['PALLET AMAZON IND8','PALLET AMAZON IND9','PALLET TARGET RTV',
+               'PALLET AMAZON MIXED','PALLET WALMART GM','PALLET AMAZON APPAREL',
+               'PALLET HOME MIXED','PALLET AMAZON IND8'];
+const PEOPLE = ['Ranon Price','J. Alvarez','D. Nguyen','M. Hale'];
+let seq = 5100000, uid = 1;
+function mkEntry(when, i){
+  seq += 1237;
+  // The barcode is PRM + truck # + pallet index, exactly as on the real tag.
+  const truck = String(10400 + (i*13) % 90);
+  return {
+    id: uid++,
+    at: when,
+    barcode: `PRM-${truck}-${1 + (i % 30)}`,
+    item: String(50100 + (seq % 400)),
+    pallet: NAMES[(i*3+2) % NAMES.length],
+    po: String(5000 + (seq % 90)),
+    units: 1 + ((i*7) % 4),
+    createdBy: PEOPLE[i % PEOPLE.length],
+    truck,
+    edited: false,
+  };
+}
+let LOG = [];
+(function seed(){
+  const now = new Date();
+  const counts = [6, 9, 5, 4];                 // this week, then 3 back
+  counts.forEach((n, wk) => {
+    const sun = sundayOf(now.getTime() - wk*7*MS_DAY);
+    for (let i = 0; i < n; i++){
+      const day = wk === 0 ? (i % (now.getDay()+1)) : (i % 6) + 1;
+      const t = new Date(sun.getTime() + day*MS_DAY);
+      t.setHours(8 + (i*3) % 9, (i*17) % 60, 0, 0);
+      if (wk === 0 && t > now) t.setTime(now.getTime() - (i+1)*3600e3);
+      LOG.push(mkEntry(t, i + wk*7));
+    }
+  });
+  LOG.sort((a,b) => b.at - a.at);
+})();
+
+/* ── Render the log ──────────────────────────────────────────────────── */
+const openWeeks = new Set();
+let weeksSeeded = false;          // the default-open applies ONCE, not on every render —
+                                  // otherwise collapsing the only open week re-opens it
+function weekKey(d){ return sundayOf(d).getTime(); }
+function renderLog(){
+  const groups = new Map();
+  for (const e of LOG){
+    const k = weekKey(e.at);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(e);
+  }
+  const keys = [...groups.keys()].sort((a,b) => b - a);
+  if (!weeksSeeded && keys.length){ openWeeks.add(keys[0]); weeksSeeded = true; }  // current week opens first paint
+
+  const thisWk = groups.get(weekKey(new Date())) || [];
+  document.getElementById('wk-pallets').textContent = thisWk.length;
+  document.getElementById('wk-units').textContent =
+    thisWk.reduce((s,e) => s + Number(e.units || 0), 0).toLocaleString();
+  document.getElementById('log-status').textContent =
+    `${LOG.length} pallet${LOG.length===1?'':'s'} across ${keys.length} week${keys.length===1?'':'s'}. Tap a week to open it; tap Edit on a row to correct it.`;
+
+  document.getElementById('log-weeks').innerHTML = keys.map(k => {
+    const rows  = groups.get(k).sort((a,b) => b.at - a.at);
+    const units = rows.reduce((s,e) => s + Number(e.units||0), 0);
+    const isNow = k === weekKey(new Date());
+    const open  = openWeeks.has(k);
+    return `
+    <section class="wk-sec ${open?'open':''}" data-wk="${k}">
+      <button class="wk-head" data-toggle="${k}" aria-expanded="${open}">
+        <span class="wk-caret"></span>
+        <span class="wk-name">Week of ${fmtWeek(new Date(k))}</span>
+        ${isNow ? '<span class="wk-badge">This week</span>' : ''}
+        <span class="wk-meta">${rows.length} pallet${rows.length===1?'':'s'} · ${units.toLocaleString()} units</span>
+      </button>
+      <div class="wk-body"><div>
+        <div class="tbl-scroll">
+          <table class="log">
+            <thead><tr>
+              <th class="stick">When</th><th>Item #</th><th>Pallet</th>
+              <th class="num">Units</th><th>PO</th><th>Truck</th><th>Created by</th><th></th>
+            </tr></thead>
+            <tbody>
+              ${rows.map(e => `
+              <tr class="${e.edited?'edited':''}" data-id="${e.id}">
+                <td class="stick"><b>${fmtDay(e.at)}</b> <span class="dim mono">${fmtTime(e.at)}</span></td>
+                <td class="mono">${e.item}</td>
+                <td class="pname">${e.pallet}</td>
+                <td class="num mono">${Number(e.units).toLocaleString()}</td>
+                <td class="mono dim">${e.po}</td>
+                <td class="mono dim">${e.truck || '—'}</td>
+                <td class="dim">${e.createdBy}</td>
+                <td><button class="row-edit" data-edit="${e.id}">EDIT</button></td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div></div>
+    </section>`;
+  }).join('');
+}
+
+document.getElementById('log-weeks').addEventListener('click', ev => {
+  const t = ev.target.closest('[data-toggle]');
+  if (t){
+    const k = Number(t.dataset.toggle);
+    openWeeks.has(k) ? openWeeks.delete(k) : openWeeks.add(k);
+    renderLog();
+    return;
+  }
+  const e = ev.target.closest('[data-edit]');
+  if (e) openEdit(Number(e.dataset.edit));
+});
+
+/* ── Capture flow ────────────────────────────────────────────────────── */
+const capBegin = document.getElementById('cap-begin');
+const capChoose = document.getElementById('cap-choose');
+const capReading = document.getElementById('cap-reading');
+function capState(s){
+  capBegin.hidden   = s !== 'begin';
+  capChoose.hidden  = s !== 'choose';
+  capReading.hidden = s !== 'reading';
+}
+document.getElementById('btn-begin').onclick = () => capState('choose');
+document.getElementById('btn-cancel-cap').onclick = () => capState('begin');
+
+document.querySelectorAll('[data-sample]').forEach(b => {
+  b.onclick = () => {
+    const key = b.dataset.sample;
+    capState('reading');
+    document.getElementById('reading-sub').textContent = 'Sending the photo to Claude';
+    setTimeout(() => { document.getElementById('reading-sub').textContent = 'Pulling the seven fields'; }, 700);
+    setTimeout(() => { capState('begin'); openVerify(key); }, 1500);
+  };
+});
+
+/* ── Verify / edit modal ─────────────────────────────────────────────── */
+const scrim = document.getElementById('scrim');
+let editingId = null;
+
+function fieldRow(f, val, state){
+  const tag = state === 'warn' ? '<span class="fld-tag">CHECK</span>'
+            : state === 'miss' ? '<span class="fld-tag">NOT FOUND</span>' : '';
+  const note = state === 'warn' ? '<div class="fld-note">Low confidence — glare over this line.</div>'
+             : state === 'miss' ? '<div class="fld-note">Nothing printed here. Type it or leave it blank.</div>' : '';
+  return `
+  <div class="fld ${state||''}">
+    <label class="fld-l" for="f-${f.k}">${f.label}${tag}</label>
+    <input type="text" id="f-${f.k}" data-k="${f.k}" value="${val ?? ''}"
+           placeholder="${state==='miss' ? 'not on the tag' : ''}"
+           inputmode="${f.type.includes('number') ? 'numeric' : 'text'}" />
+    ${note}
+  </div>`;
+}
+
+function openVerify(key){
+  const s = SAMPLES[key];
+  editingId = null;
+  document.getElementById('m-title').textContent = 'Verify pallet tag';
+  document.getElementById('m-photo').innerHTML = s.photo();
+  document.getElementById('m-read').textContent = `Read ${s.read} of ${s.of} fields`;
+  document.getElementById('m-readsub').textContent = s.sub;
+  document.getElementById('m-shot').hidden = false;
+  document.getElementById('m-retake').hidden = false;
+  document.getElementById('m-submit').textContent = 'Submit';
+  document.getElementById('m-fields').innerHTML =
+    FIELDS.map(f => fieldRow(f, s.v[f.k], s.state[f.k])).join('');
+  scrim.classList.add('show');
+}
+
+function openEdit(id){
+  const e = LOG.find(x => x.id === id);
+  if (!e) return;
+  editingId = id;
+  document.getElementById('m-title').textContent = 'Edit logged pallet';
+  document.getElementById('m-shot').hidden = true;
+  document.getElementById('m-retake').hidden = true;
+  document.getElementById('m-submit').textContent = 'Save changes';
+  document.getElementById('m-fields').innerHTML =
+    FIELDS.map(f => fieldRow(f, e[f.k], '')).join('') +
+    `<div class="fld-note" style="margin-top:2px">Logged ${e.at.toLocaleString('en-US',
+      {weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}
+      · edits are marked in the log and keep the original timestamp.</div>`;
+  scrim.classList.add('show');
+}
+
+function closeModal(){ scrim.classList.remove('show'); }
+document.getElementById('m-close').onclick  = closeModal;
+document.getElementById('m-cancel').onclick = closeModal;
+document.getElementById('m-retake').onclick = () => { closeModal(); capState('choose'); };
+scrim.addEventListener('click', e => { if (e.target === scrim) closeModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+function readFields(){
+  const out = {};
+  document.querySelectorAll('#m-fields input[data-k]').forEach(i => out[i.dataset.k] = i.value.trim());
+  return out;
+}
+
+document.getElementById('m-submit').onclick = () => {
+  const v = readFields();
+  if (editingId != null){
+    const e = LOG.find(x => x.id === editingId);
+    Object.assign(e, v, {units: Number(v.units) || 0, edited: true});
+    toast('Changes saved.');
+  } else {
+    LOG.unshift(Object.assign(mkEntry(new Date(), LOG.length), v,
+      {units: Number(v.units) || 0, at: new Date(), edited: false, id: uid++}));
+    LOG.sort((a,b) => b.at - a.at);
+    openWeeks.add(weekKey(new Date()));
+    const n = Number(v.units) || 0;
+    toast(`Pallet logged · ${v.pallet || 'unnamed'} · ${n} unit${n === 1 ? '' : 's'}`);
+  }
+  closeModal();
+  renderLog();
+};
+
+/* ── Status strip (the house idiom — see the CSS comment) ────────────── */
+let statusT = null;
+function toast(msg){
+  document.getElementById('status-text').textContent = msg;
+  const t = document.getElementById('status');
+  t.hidden = false;
+  clearTimeout(statusT);
+  statusT = setTimeout(() => { t.hidden = true; }, 4000);
+}
+document.getElementById('btn-csv').onclick = () => toast('CSV export — one row per pallet, whole week.');
+document.getElementById('reset').onclick = () => location.reload();
+
+/* ── Questions + build notes ─────────────────────────────────────────── */
+const DECIDED = [
+  ['Its own page, open to managers',
+   'Not a card buried on Inventory. Its own sidebar entry and mobile row, reachable by managers and district managers as well as admins — Inventory itself stays admin-only, so a card there could not be used by the people actually dumping pallets. Price Scan is already gated exactly this way, so the pattern exists.'],
+  ['The current design language',
+   'What you are looking at — the tokens eBay, Marketing and Merchandising use, and what DESIGN.md &sect;4.8 prescribes for a dense table. The Inventory page is still on the older chrome, but it is on the list to be converted, and matching a look on its way out means building this twice.'],
+  ['The tag photo is kept',
+   'Stored in the existing media bucket, openable from its log row. It is the only way to settle a disputed count months later, or to tell a misread from a mistyped correction.'],
+  ['Edit in place, marked as edited',
+   'A corrected row keeps its original timestamp and shows the amber state you see in the log. Delete stays admin-only.'],
+];
+document.getElementById('decided').innerHTML = DECIDED.map(([q,a]) =>
+  `<div class="qa-row"><span class="qa-n" style="background:var(--greenWash);border-color:var(--greenEdge);color:var(--accent)">&check;</span>
+   <span><span class="qa-q">${q}</span><span class="qa-a">${a}</span></span></div>`).join('');
+
+const QUESTIONS = [
+  ['Your example reads <b># of Units: 1</b> — is that usual?',
+   'If most pallets are one unit, then a "units" total is just the pallet count wearing a different hat, and the second tile on this page is dead weight. <b>Something like "trucks represented this week" would earn its place instead</b> — and the barcode already carries the truck number, so it costs nothing to compute. If units genuinely varies (some pallets 200, some 1), the tile stays as it is. Which is it?'],
+  ['Should a truck # that disagrees with the barcode be flagged?',
+   'On your tag the barcode is <code>PRM-10490-30</code> and the truck # is <code>10490</code>. If that holds generally, a disagreement means one of the two was misread and the popup should say so — free accuracy on the field most likely to be fat-fingered. <b>My default is a soft flag, never a block.</b> Tell me if the pattern does not always hold and I will drop it.'],
+  ['Is "Pallet 30 of 30" worth capturing after all?',
+   'You said the seven fields are all you need, so this is not in the build. But it is printed on every tag, it is already inside the barcode, and it would let the page tell you <b>"you have logged 29 of 30 pallets off truck 10490"</b> — which is the question a receiving log usually gets asked. Nearly free now; a migration later. Say the word either way.'],
+  ['Weeks run Sunday to Saturday',
+   'Matching the helper the marketing side already groups by, and derived from the date rather than the Flow Calendar — whose weeks stop on 2026-12-26. Speak up if bins run on a different week.'],
+  ['The remaining defaults',
+   'After Submit you land back on <b>Begin</b>, so the next pallet is one tap away. A PO logged in the last little while gets a <b>soft duplicate warning</b>, never a block. An unreadable photo opens the popup <b>empty and editable</b> rather than failing, so a torn tag can still be keyed by hand.'],
+];
+document.getElementById('qa').innerHTML = QUESTIONS.map(([q,a],i) =>
+  `<div class="qa-row"><span class="qa-n">${i+1}</span>
+   <span><span class="qa-q">${q}</span><span class="qa-a">${a}</span></span></div>`).join('');
+
+const BUILD = [
+  ['Frontend — <code>index.html</code>',
+   'The camera is a plain <code>&lt;input type="file" accept="image/*" capture="environment"&gt;</code> — the native camera, no <code>getUserMedia</code>. That is exactly what Price Scan already does, and it is what survives inside an installed PWA. The photo is downscaled in the browser first with the existing <code>psShrink()</code> helper (1280 px, JPEG 0.82) so a 12 MP phone shot does not blow the API\'s size cap. Popups use <code>uiConfirm()</code>/<code>uiAlert()</code>, never native <code>confirm()</code> — those freeze the installed app on iOS.'],
+  ['Backend — <code>worker.js</code>',
+   'Two actions on the existing <code>?action=</code> chain: one that takes the photo and returns the seven fields, one that writes the confirmed row, plus a read for the log. <b>The photo goes to Claude from the worker, never from the browser</b> — the API key stays server-side. Each new action also has to be registered in the worker\'s business table or it is a hard 403 in production; there is already a test that fails on an unregistered action, which is how I will catch it.'],
+  ['Extraction',
+   'A strict prompt returning <b>JSON only</b>, one key per field, <code>null</code> where the tag does not show something — so "not found" is a real state and never an invented value. Same shape as the two vision endpoints already in the worker. A guessed field comes back flagged and lands amber in the popup. <b>A misread digit is worse than a blank</b>, so the prompt is told to leave a field empty rather than guess — the price-scan prompt already says exactly that about barcodes.'],
+  ['Storage — D1 + R2',
+   'One new table, one row per pallet: the seven fields, the store, who logged it, the timestamp, the photo\'s key, and an edited-at. The week is <b>derived from the timestamp</b>, never stored — the Flow Calendar\'s weeks run out on 2026-12-26 and this must not run out with them. The photo lands in the existing media bucket under its own prefix.'],
+  ['Verification before I call it done',
+   'A new test suite driving the real worker through the same harness the other 49 suites use: a clean tag, a partial tag, a junk photo, the duplicate warning, the edit path, and week grouping across a Saturday→Sunday boundary. Contrast computed in both themes at ≥4.5:1 — already done for this preview, which is why the accent flips to a darker green in light mode. And the service-worker cache version bumped in the same commit, or installed phones keep serving the old bundle and the feature simply will not appear.'],
+];
+document.getElementById('build').innerHTML = BUILD.map(([q,a]) =>
+  `<div class="qa-row"><span class="qa-n" style="background:var(--greenWash);border-color:var(--greenEdge);color:var(--accent)">&#9679;</span>
+   <span><span class="qa-q">${q}</span><span class="qa-a">${a}</span></span></div>`).join('');
+
+/* ── Boot ────────────────────────────────────────────────────────────── */
+paintTags();
+renderLog();
+</script>
+</body>
+</html>

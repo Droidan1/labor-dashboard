@@ -1,0 +1,57 @@
+-- migration-066: the manager approval PIN, in its own column.
+--
+-- Inventory Receiver blocks a duplicate pallet barcode and a repeated BOL number. Brian's
+-- call on how a block is cleared (2026-09-15): a manager approves ON THE SPOT — the
+-- associate keeps the phone, a manager types six digits, and their name goes on the row.
+-- Not "a manager must be logged in", and not "a manager fixes it afterwards".
+--
+-- Apply (address databases by UUID; the staging one lives under [env.staging] and a bare
+-- name does not resolve). STAGING FIRST:
+--   staging:     npx wrangler d1 execute b40982c2-4009-4842-bc17-fa0977468b07 --remote -y --file=migration-066.sql
+--   production:  npx wrangler d1 execute 3fa911d7-31d6-438c-985f-7ac08c407d2d --remote -y --file=migration-066.sql
+--
+-- 🛑 NOT RE-RUNNABLE. SQLite has no ALTER TABLE ADD COLUMN IF NOT EXISTS, so a second run
+-- errors with `duplicate column name: approval_pin_hash`. That error is harmless and is in
+-- fact the cleanest way to ask whether this has already been applied — the same property
+-- migration-059 has. Check the schema rather than inferring from whether a command errored:
+--   npx wrangler d1 execute <uuid> --remote -y --json \
+--     --command="SELECT name FROM pragma_table_info('users') WHERE name LIKE 'approval_pin%'"
+--
+-- Columns only. No row is read, rewritten or deleted, and every existing account keeps NULL
+-- in both — which is exactly "cannot approve anything", the correct default.
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- 🛑 WHY THIS IS NOT `users.pin_hash`, WHICH ALREADY EXISTS AND ALREADY DOES THIS
+-- ══════════════════════════════════════════════════════════════════════════════
+--
+-- `pin_hash` is the obvious column to reuse and reusing it would be a silent, wide fault.
+-- In this codebase `pin_hash IS NOT NULL` is not "has a PIN" — it is THE DEFINITION OF AN
+-- ASSOCIATE. getAuthUser derives `(u.pin_hash IS NOT NULL) AS is_associate` straight off
+-- the column, so writing a PIN there for a manager reclassifies that manager account:
+--
+--   • their session becomes the associate session — 12 hours, and NOT sliding, so a
+--     manager is logged out mid-shift instead of the expiry extending as they work;
+--   • passkey registration is refused outright;
+--   • they become findable by the `associate-login` name lookup, which lists names to
+--     anyone who can reach the login screen.
+--
+-- None of the three announces itself. The first one to be noticed would be the logout, and
+-- it would be blamed on anything but a column. So the approval PIN gets its own column and
+-- reuses only the CODE: pinHash() (HMAC-SHA256 with the PIN_PEPPER secret, never a bare
+-- digest — six digits is a million candidates and reverses in seconds from a dump),
+-- validPin() and the WEAK_PINS list, and the same failure-counter shape below.
+ALTER TABLE users ADD COLUMN approval_pin_hash TEXT;
+
+-- Wrong codes in a row, on the SAME counter shape as pin_failures: a D1 UPDATE is atomic
+-- where a KV counter is eventually consistent, so this is a real rate limiter and a KV one
+-- would not be. Ten locks approval until an admin sets a new code; a correct code resets it
+-- to zero.
+--
+-- 🔑 SEPARATE FROM `pin_failures`. Sharing the counter would let someone stand at the dock
+-- guessing approval codes until an associate's login locks, or the reverse — two different
+-- credentials, two different lockouts, neither able to deny the other.
+--
+-- 🛑 The lockout is checked BEFORE the hash comparison, as in associate-login: comparing
+-- first and then reporting "locked" tells an attacker which of the two happened, and the
+-- timing difference says it even when the message does not.
+ALTER TABLE users ADD COLUMN approval_pin_failures INTEGER NOT NULL DEFAULT 0;

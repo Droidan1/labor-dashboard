@@ -1,0 +1,718 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Categories — two date ranges instead of buckets (preview)</title>
+<style>
+:root{
+  /* op-* — V1 Operator dark (primary). Same literals as the phase-1 preview;
+     this is the app's palette, not a second look (CLAUDE.md: extend DESIGN.md,
+     do not derive). Light-theme values are stated inline where they differ. */
+  --bg:#0a0f1a; --panel:#101826; --panelHi:#16203a;
+  --ink:#e7ecf3; --inkDim:#8893a7; --inkDimmer:#5a6478;
+  --hairline:rgba(255,255,255,.09); --border:rgba(255,255,255,.16);
+  --accent:#22c55e; --accentInk:#06210f;
+  --good:#22c55e; --bad:#ef4444;
+  --goodWash:rgba(34,197,94,.16); --badWash:rgba(239,68,68,.16);
+  --amber:#f59e0b; --amberWash:rgba(245,158,11,.14); --amberEdge:rgba(245,158,11,.45);
+  /* Series palette — validated on #101826 AND #0a0a0a: lightness band PASS ·
+     chroma floor PASS · CVD adjacent worst ΔE 8.4 (protan) · normal-vision
+     worst ΔE 19.3 · all six ≥3:1. Carried over unchanged. */
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70;
+  --s4:#c98500; --s5:#d55181; --s6:#008300;
+  --sOther:#8893a7;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+     font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+     padding-block:28px;padding-left:20px;padding-right:20px}
+.wrap{max-width:1180px;margin:0 auto}
+h1{font-size:21px;margin:0 0 6px}
+h2{font-size:16px;margin:34px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--hairline)}
+h3{font-size:13px;margin:20px 0 8px;color:var(--inkDim);text-transform:uppercase;letter-spacing:.06em}
+p{margin:0 0 12px;color:var(--ink)}
+.lead{color:var(--inkDim);margin-bottom:20px;max-width:78ch}
+code{font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--panelHi);
+     padding:1px 5px;border-radius:4px;color:var(--ink)}
+a{color:var(--accent)}
+.note{border-left:3px solid var(--amberEdge);background:var(--amberWash);
+      padding:10px 14px;border-radius:0 8px 8px 0;margin:14px 0;max-width:88ch}
+.note b{color:var(--amber)}
+.win{border-left:3px solid var(--accent);background:var(--goodWash);
+     padding:10px 14px;border-radius:0 8px 8px 0;margin:14px 0;max-width:88ch}
+
+/* ── the panel: DESIGN.md §4.8 — panel + bar + legend ────────────── */
+#panel{background:var(--panel);border:1px solid var(--border);border-radius:14px;overflow:hidden}
+#bar{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;
+     padding:12px 14px;border-bottom:1px solid var(--hairline);background:var(--panelHi)}
+.lbl{font-size:10px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--inkDim)}
+.ctl{display:flex;gap:6px;align-items:center}
+.pill{display:inline-flex;border:1px solid var(--border);border-radius:9px;overflow:hidden}
+.pill button{appearance:none;background:transparent;border:0;color:var(--inkDim);
+  font:600 12px/1 ui-sans-serif,system-ui;padding:7px 11px;cursor:pointer}
+.pill button+button{border-left:1px solid var(--border)}
+.pill button[aria-pressed="true"]{background:var(--accent);color:var(--accentInk)}
+.pill button:disabled{opacity:.4;cursor:not-allowed}
+
+/* the two range chips — the whole point of this preview */
+.rangechip{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);
+  border-radius:9px;background:var(--panel);padding:6px 10px;cursor:pointer;
+  font:600 12px/1 ui-sans-serif,system-ui;color:var(--ink)}
+.rangechip:hover{border-color:var(--inkDim)}
+.rangechip .swatch{width:9px;height:9px;border-radius:2px;flex:none}
+.rangechip .days{color:var(--inkDim);font-weight:600}
+.rangechip.b{border-style:dashed}
+#pop{position:fixed;z-index:40;background:var(--panel);border:1px solid var(--border);
+     border-radius:12px;box-shadow:0 18px 48px rgba(0,0,0,.55);width:288px;padding:6px}
+#pop[hidden]{display:none!important}
+#pop .ph{font-size:10px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;
+         color:var(--inkDim);padding:8px 10px 4px}
+#pop .opt{display:block;width:100%;text-align:left;background:transparent;border:0;
+  color:var(--ink);font:500 13px/1 ui-sans-serif,system-ui;padding:8px 10px;border-radius:7px;cursor:pointer}
+#pop .opt:hover{background:var(--panelHi)}
+#pop .opt[aria-pressed="true"]{color:var(--accent);font-weight:700}
+#pop .custom{border-top:1px solid var(--hairline);margin-top:6px;padding:10px}
+#pop input[type=date]{width:100%;background:var(--panelHi);border:1px solid var(--border);
+  color:var(--ink);border-radius:7px;padding:6px 8px;font:500 12px ui-sans-serif,system-ui;margin-bottom:6px}
+#pop .apply{width:100%;background:var(--accent);color:var(--accentInk);border:0;border-radius:7px;
+  padding:7px;font:800 12px ui-sans-serif,system-ui;cursor:pointer}
+
+#status{padding:10px 14px;font-size:12px;color:var(--inkDim);border-bottom:1px solid var(--hairline)}
+#status b{color:var(--ink)}
+.warn{color:var(--amber);font-weight:800}
+#body{padding:14px}
+#legend{padding:10px 14px;border-top:1px solid var(--hairline);font-size:12px;color:var(--inkDim)}
+.lp{display:inline-flex;align-items:center;gap:6px;margin-right:16px}
+.lp i{width:10px;height:10px;border-radius:2px;display:inline-block}
+.lpv{color:var(--ink);font-weight:800}
+
+/* rows under the Vs card */
+.rows{margin-top:12px;border-top:1px solid var(--hairline)}
+.row{display:grid;grid-template-columns:minmax(120px,1.5fr) 1fr auto;gap:10px;align-items:center;
+     padding:7px 4px;border-bottom:1px solid var(--hairline);cursor:pointer;background:transparent;
+     border-left:0;border-right:0;border-top:0;width:100%;text-align:left;color:var(--ink);font:inherit}
+.row:hover{background:var(--panelHi)}
+.row[aria-pressed="true"]{background:var(--panelHi);box-shadow:inset 2px 0 0 var(--accent)}
+.rname{font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bars{display:grid;gap:3px}
+.bwrap{height:8px;background:rgba(255,255,255,.05);border-radius:3px;overflow:hidden}
+/* display:block is load-bearing — a span is inline, and an inline box ignores
+   height, so the fill renders at zero height while the track above still looks
+   right. Exactly the kind of thing a passing assertion does not catch. */
+.bar{display:block;height:100%;border-radius:3px}
+.bar.cur{background:#22c55e}   /* CHART_COLORS.tw */
+.bar.prv{background:#f59e0b}   /* CHART_COLORS.lw */
+.rdelta{font-size:12px;font-weight:800;text-align:right;min-width:74px}
+.up{color:var(--good)} .down{color:var(--bad)} .flat{color:var(--inkDim)}
+
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{padding:6px 8px;border-bottom:1px solid var(--hairline);text-align:right}
+th:first-child,td:first-child{text-align:left}
+th{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--inkDim);font-weight:800}
+td.num{font-variant-numeric:tabular-nums}
+.tblwrap{overflow-x:auto}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px}
+.gcell{border:1px solid var(--hairline);border-radius:10px;padding:9px}
+.gname{font-size:11px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gtot{font-size:15px;font-weight:800;font-variant-numeric:tabular-nums;margin-top:2px}
+.gsub{font-size:11px;color:var(--inkDim);margin-top:1px}
+
+.q{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin:10px 0;background:var(--panel)}
+.q b{color:var(--accent)}
+.qa{color:var(--inkDim);margin-top:6px;font-size:13px}
+ul{margin:6px 0 12px;padding-left:20px;color:var(--ink)} li{margin:4px 0}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:13px;margin:8px 0}
+.kv dt{color:var(--inkDim)} .kv dd{margin:0}
+.strike{color:var(--inkDimmer);text-decoration:line-through}
+</style>
+
+<div class="wrap">
+<h1>Categories — two date ranges instead of fixed buckets</h1>
+<p class="lead">
+  Proposal: replace the <code>Day / Week / Month / Quarter</code> bucket control with
+  <b>two range pickers</b> — one for the dates you want to look at, one for the dates you
+  want them measured against. The buckets stay, as one-click presets that fill both.
+  Everything below is live: change the ranges and the whole panel re-reads.
+</p>
+
+<div class="win">
+  <b>Why this is worth doing beyond flexibility.</b> Two explicit ranges are answered by
+  <code>?action=category-series</code>, the per-day feed. That means the weekly-rollup path
+  is not involved at all — so the 108-week wall disappears (<b>quarter-vs-quarter works
+  today</b>, on the data that already exists), and "a month means two different things on
+  one tab" stops being true, because there is only one feed left.
+</div>
+
+<h2>The panel</h2>
+<div id="panel">
+  <div id="bar"></div>
+  <div id="status"></div>
+  <div id="body"></div>
+  <div id="legend"></div>
+</div>
+<div id="pop" hidden></div>
+
+<p style="margin-top:10px;color:var(--inkDim);font-size:12px">
+  The preview uses native date inputs for custom ranges. The real one reuses the app's
+  existing calendar popover (<code>#wrs-range-cal-grids</code>) and its preset list, so
+  this control looks and behaves like the range picker already at the top of the page.
+</p>
+
+<h2>What this removes</h2>
+<p>Worth being explicit, because some of it is code shipped earlier today.</p>
+<ul>
+  <li><b>The week-derived path for this tab.</b> Month and quarter are currently built from
+    whole weeks assigned by end date; the Vs card is calendar-exact from day snapshots. Two
+    ranges are always the second thing, so the caveat <span class="strike">"these months are
+    built from whole weeks"</span> goes away — along with the discrepancy it was warning about.</li>
+  <li><b>The 108-week ask.</b> Nothing requests <code>weekly-t13&amp;weeks=108</code> any more,
+    so the short-history caption (<span class="strike">"Only 42 of the 108 weeks … exist"</span>)
+    has nothing to report.</li>
+  <li><b>The version guard</b> (<span class="strike">"the worker half of this deploy is older
+    than this page"</span>) — same reason: it watches a feed this tab would no longer use.</li>
+</ul>
+<div class="note">
+  <b>To be clear about what stays.</b> Both worker fixes remain load-bearing: the
+  <code>weeksWindow</code> echo and the <code>GROUP BY date(date,'weekday 6')</code> correction
+  serve <b>the T13 tab</b>, which reads <code>weekly-t13</code> directly and was silently
+  reading the wrong year's numbers. Only the two Categories-tab guards become dead code.
+</div>
+
+<h2>What it costs</h2>
+<p>
+  <code>category-series</code> refuses beyond <b>840 store-days</b> per request. Two ranges are
+  two requests, each with its own budget, so the limit is per range:
+</p>
+<div class="tblwrap"><table>
+  <tr><th>Range</th><th>All 7 stores</th><th>One store</th></tr>
+  <tr><td>Longest allowed</td><td class="num">120 days</td><td class="num">840 days</td></tr>
+  <tr><td>A quarter (~92 days)</td><td class="num">644 store-days ✅</td><td class="num">92 ✅</td></tr>
+  <tr><td>A year (365 days)</td><td class="num">2,555 ✗ refused</td><td class="num">365 ✅</td></tr>
+</table></div>
+<p style="color:var(--inkDim);font-size:13px">
+  So year-over-year is a single-store question on this path. The panel computes the store-days
+  <b>before</b> asking and says so in the control, rather than letting the request come back 413 —
+  try <i>Last 12 Months</i> with all stores below.
+</p>
+
+<h2>Questions I need answered before building</h2>
+
+<div class="q"><b>1. Do the bucket presets stay?</b>
+  <div class="qa">Built as shown: <code>Day / Week / Month / Quarter</code> survive as presets that
+  fill both pickers, so one click still gets you "this month vs last month". The pickers are the
+  truth; presets are shortcuts. Say if you would rather they go entirely.</div></div>
+
+<div class="q"><b>2. Which comparison should B default to? (the one I would most like answered)</b>
+  <div class="qa">There are two sensible rules and they answer different questions. Try the
+  <b>Compare to</b> control:
+  <div class="tblwrap" style="margin:8px 0"><table>
+    <tr><th>Rule</th><th>"This Quarter" (Jul 1 – Sep 10, 72d) compares against</th><th>Reads as</th></tr>
+    <tr><td><b>Same span, prev period</b></td><td class="num">Apr 1 – Jun 11 (Q2's first 72 days)</td>
+        <td>quarter-over-quarter, boundary-anchored</td></tr>
+    <tr><td><b>The days just before</b></td><td class="num">Apr 20 – Jun 30 (the 72 days before Jul 1)</td>
+        <td>a rolling "how are we doing lately"</td></tr>
+  </table></div>
+  Both are like-for-like on length. Built as shown: <b>aligned is the default</b>, because
+  quarter-over-quarter is the question the bucket control was trying to answer. A <b>custom</b> range
+  has no period boundary, so it always rolls — the status line says when that happens rather than
+  leaving it as a silent difference.</div></div>
+
+<div class="q"><b>2b. And should B stay put once you set it yourself?</b>
+  <div class="qa">Built as shown: setting B by hand pins it (the chip goes solid) and it stops
+  following A. The <b>⇄</b> button toggles that. Alternative: B never moves on its own at all.</div></div>
+
+<div class="q"><b>3. What should happen when the two ranges are different lengths?</b>
+  <div class="qa">Built as shown: both are drawn from their own day 1, each running its own length,
+  and the status line says the totals are not like-for-like. There is a <b>Match length</b> action
+  on the B chip. Alternative: normalise the x-axis to % of period elapsed, which makes the shapes
+  comparable but the axis abstract.</div></div>
+
+<div class="q"><b>4. Is auto granularity right?</b>
+  <div class="qa">Built as shown: ≤31 days plots by day, ≤182 by week, longer by month — overridable.
+  This is where Day/Week/Month now lives: <b>how the x-axis is bucketed</b>, not what period is being
+  compared. That separation is what makes arbitrary ranges tractable.</div></div>
+
+<div class="q"><b>5. What should Trend show, given there are now two ranges?</b>
+  <div class="qa">Built as shown: Trend draws <b>range A</b> over time for the top 6 categories; click
+  a category and it charts A against B for that one alone. Showing both ranges for all categories at
+  once is 12–24 lines, which is unreadable. Alternative: Trend plots the <b>delta</b> per category.</div></div>
+
+<div class="q"><b>6. Should Table become the default view?</b>
+  <div class="qa">With two explicit ranges, "A total, B total, Δ, Δ%" per category is the most direct
+  answer to the question being asked, and it is the only view that needs no chart at all. Currently Vs
+  is the default. Built as shown: Vs stays default. Easy to flip.</div></div>
+
+<div class="q"><b>7. Anything to keep from the current controls?</b>
+  <div class="qa">The <code>To date</code> pill becomes unnecessary — "this month so far vs the same
+  days last month" is just what the auto-B rule produces. Built as shown: it is removed. Level (L2/L3),
+  Measure ($/units), store scope and the four views are all unchanged.</div></div>
+
+<h2>Notes on correctness</h2>
+<ul>
+  <li><b>BL12/BL16 still gate.</b> They share a Clover merchant; <code>category-series</code> already
+    applies <code>wrsGateDates</code>, so a range straddling the 2026-06-14 cutover does not
+    double-count. Nothing here changes that.</li>
+  <li><b>An absent day stays absent.</b> The feed omits days with no snapshot rather than returning
+    zero; a range containing a gap shows a shorter line, not a dip to zero.</li>
+  <li><b>Part-covered periods stop being a concept.</b> There is no bucket to be partly covered — you
+    asked for these dates, so you get these dates. The class of bug that produced
+    "every category down exactly −24.7%" cannot occur on this path.</li>
+</ul>
+
+</div>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════
+   Synthetic day-level data, deterministic so the preview is stable.
+   Shaped like the real thing: weekly seasonality, a slow trend, a few
+   chain-wide shocks, and per-category drift so the two lines actually
+   separate instead of averaging into one another.
+   ══════════════════════════════════════════════════════════════════ */
+const CATS = ['Consumable Food','Consumable HBA','Consumable Other','Furniture','Hardlines',
+              'Home','Seasonal','Softline - Accessories','Softline - Apparel','Softline - Shoes',
+              'Bin Products','Gift Cards'];
+const STORES = {BL1:'Coliseum',BL2:'South Bend',BL4:'Dupont',BL8:'Holland',
+                BL12:'Wyoming',BL14:'Battle Creek',BL16:'Indy East'};
+const SERIES = ['var(--s1)','var(--s2)','var(--s3)','var(--s4)','var(--s5)','var(--s6)'];
+const TW = '#22c55e', LW = '#f59e0b';       // CHART_COLORS.tw / .lw
+const DAY = 86400000;
+
+function hash(s){let h=2166136261>>>0;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)>>>0;}return h>>>0;}
+const rnd = s => (hash(s)%1000)/1000;
+
+// The data only reaches back as far as production does.
+const DATA_FROM = '2025-05-01';
+const TODAY = '2026-09-10';
+
+function ymd(d){return new Date(d).toISOString().slice(0,10);}
+function parse(s){return new Date(s+'T00:00:00Z').getTime();}
+function shift(s,n){return ymd(parse(s)+n*DAY);}
+function daysBetween(a,b){return Math.round((parse(b)-parse(a))/DAY)+1;}
+function firstOfMonth(s){return s.slice(0,7)+'-01';}
+function lastOfMonth(s){const d=new Date(parse(s));return ymd(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()+1,0));}
+function monthShift(s,n){const d=new Date(parse(s));return ymd(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()+n,Math.min(d.getUTCDate(),28)));}
+function sundayOf(s){const d=new Date(parse(s));return ymd(parse(s)-d.getUTCDay()*DAY);}
+function quarterStart(s){const d=new Date(parse(s));return ymd(Date.UTC(d.getUTCFullYear(),Math.floor(d.getUTCMonth()/3)*3,1));}
+
+function dayValue(cat, dateStr){
+  const t = parse(dateStr), d = new Date(t);
+  const dow = d.getUTCDay();
+  const base = 900 + rnd(cat)*2600;
+  const weekend = (dow===0?1.34:dow===6?1.42:dow===5?1.12:0.88);
+  const age = (parse(TODAY)-t)/DAY;
+  const trend = 1 + (300-Math.min(age,600))/2600;          // gentle growth toward now
+  const drift = 1 + (rnd(cat+'d')-0.5)*0.5*(1-Math.min(age,500)/500);
+  const shock = rnd('shock'+dateStr) > 0.955 ? 1.5 : 1;    // chain-wide spike days
+  const noise = 0.86 + rnd(cat+dateStr)*0.3;
+  const seasonal = cat==='Seasonal' ? 1+0.6*Math.sin((d.getUTCMonth()/12)*Math.PI*2) : 1;
+  return Math.round(base*weekend*trend*drift*shock*noise*seasonal*100)/100;
+}
+
+/* ══ State ═════════════════════════════════════════════════════════ */
+const S = {
+  level:'l2', measure:'net', view:'vs', gran:'auto', store:'ALL',
+  a:{from:'2026-07-01', to:'2026-09-10', label:'This Quarter', prevStart:'2026-04-01'},
+  bRule:'aligned',      // 'aligned' = same span of the previous period; 'rolling' = the n days before A
+  b:null,               // derived unless pinned
+  bPinned:false,
+  focus:null,
+};
+
+// Two defensible rules, and they answer different questions.
+//
+//   aligned  — the SAME span of the previous period, measured from its start.
+//              "This quarter, 72 days in" against "Q2, 72 days in". Like-for-
+//              like AND anchored to the period boundary, which is what people
+//              mean by quarter-over-quarter.
+//   rolling  — the n days immediately before A. No boundary needed, so it is
+//              the only rule available for a custom range.
+//
+// A named preset carries its own previous-period start, so it can do either.
+// A custom range has no period to align to and always rolls.
+function autoB(a){
+  const n = daysBetween(a.from,a.to);
+  if (S.bRule === 'aligned' && a.prevStart) {
+    return {from: a.prevStart, to: shift(a.prevStart, n-1), label:'Same '+n+' days, previous period'};
+  }
+  const to = shift(a.from,-1);
+  return {from: shift(to,-(n-1)), to, label:'Preceding '+n+' days'};
+}
+function rangeB(){ return S.bPinned && S.b ? S.b : autoB(S.a); }
+
+/* ══ Presets — the buckets, as shortcuts that fill BOTH pickers ════ */
+// prevStart = where the PREVIOUS period of the same kind begins. Rolling
+// windows ("last N days") have no period boundary, so they carry none and
+// always fall back to the rolling rule.
+const PRESETS = [
+  ['thisWeek','This Week',      () => ({from:sundayOf(TODAY), to:TODAY, prevStart:shift(sundayOf(TODAY),-7)})],
+  ['lastWeek','Last Week',      () => {const to=shift(sundayOf(TODAY),-1),from=shift(to,-6);
+                                       return {from,to,prevStart:shift(from,-7)};}],
+  ['last7','Last 7 Days',       () => ({from:shift(TODAY,-6), to:TODAY})],
+  ['thisMonth','This Month',    () => ({from:firstOfMonth(TODAY), to:TODAY,
+                                        prevStart:firstOfMonth(monthShift(TODAY,-1))})],
+  ['lastMonth','Last Month',    () => {const lm=monthShift(TODAY,-1);
+                                       return {from:firstOfMonth(lm),to:lastOfMonth(lm),
+                                               prevStart:firstOfMonth(monthShift(lm,-1))};}],
+  ['last30','Last 30 Days',     () => ({from:shift(TODAY,-29), to:TODAY})],
+  ['thisQuarter','This Quarter',() => {const q=quarterStart(TODAY);
+                                       return {from:q,to:TODAY,prevStart:quarterStart(shift(q,-1))};}],
+  ['lastQuarter','Last Quarter',() => {const q=quarterStart(TODAY),p=shift(q,-1),ps=quarterStart(p);
+                                       return {from:ps,to:p,prevStart:quarterStart(shift(ps,-1))};}],
+  ['last90','Last 90 Days',     () => ({from:shift(TODAY,-89), to:TODAY})],
+  ['last12mo','Last 12 Months', () => ({from:shift(monthShift(TODAY,-12),1), to:TODAY,
+                                        prevStart:shift(monthShift(TODAY,-24),1)})],
+];
+
+/* ══ Budget — computed BEFORE asking, not discovered as a 413 ══════ */
+const MAX_STORE_DAYS = 840;
+function storeDays(r){
+  const n = daysBetween(r.from,r.to);
+  return n * (S.store==='ALL' ? Object.keys(STORES).length : 1);
+}
+function overBudget(r){ return storeDays(r) > MAX_STORE_DAYS; }
+
+/* ══ Granularity ═══════════════════════════════════════════════════ */
+function granFor(r){
+  if (S.gran !== 'auto') return S.gran;
+  const n = daysBetween(r.from,r.to);
+  return n<=31 ? 'day' : n<=182 ? 'week' : 'month';
+}
+// Bucket a range into [{label, dates[]}], oldest first.
+function buckets(r){
+  const g = granFor(r), out = [];
+  let cur = null;
+  for (let t=parse(r.from); t<=parse(r.to); t+=DAY){
+    const ds = ymd(t), d = new Date(t);
+    let key, label;
+    if (g==='day'){ key=ds; label=d.toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:'UTC'}); }
+    else if (g==='week'){ key=sundayOf(ds); label='wk '+new Date(parse(key)).toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:'UTC'}); }
+    // (end buckets are relabelled below once we know how many days they hold)
+    else { key=ds.slice(0,7); label=d.toLocaleDateString('en-US',{month:'short',timeZone:'UTC'}); }
+    if (!cur || cur.key!==key){ cur={key,label,dates:[]}; out.push(cur); }
+    cur.dates.push(ds);
+  }
+  // A first or last bucket can be PART-COVERED: "Jul 1 – Sep 10" bucketed by
+  // week opens inside the week of Jun 28, holding four days of it. Labelling
+  // that "wk Jun 28" claims a whole week that is not there — the same lie the
+  // quarter chart used to tell, one level down. Nothing is dropped (you asked
+  // for these dates, you get them); the label just says what it really holds.
+  const full = g==='day' ? 1 : g==='week' ? 7 : null;
+  [out[0], out[out.length-1]].forEach(b => {
+    if (!b || !full || b.dates.length >= full) return;
+    const a = new Date(parse(b.dates[0])), z = new Date(parse(b.dates[b.dates.length-1]));
+    const mo = d => d.toLocaleDateString('en-US',{month:'short',timeZone:'UTC'});
+    b.label = b.dates.length===1 ? `${mo(a)} ${a.getUTCDate()}`
+      : `${mo(a)} ${a.getUTCDate()}–${mo(z)===mo(a)?z.getUTCDate():mo(z)+' '+z.getUTCDate()}`;
+    b.partial = b.dates.length;
+  });
+  if (g==='month') [out[0], out[out.length-1]].forEach(b => {
+    if (!b) return;
+    const first = b.dates[0].slice(8) === '01';
+    const lastDay = lastOfMonth(b.dates[0]).slice(8);
+    const whole = first && b.dates[b.dates.length-1].slice(8) === lastDay;
+    if (!whole) { b.partial = b.dates.length; b.label += ` (${b.dates.length}d)`; }
+  });
+  return out;
+}
+function seriesFor(r, cat){
+  return buckets(r).map(b => b.dates.reduce((s,d)=>s+dayValue(cat,d),0));
+}
+function totalFor(r, cat){
+  let s=0; for(let t=parse(r.from);t<=parse(r.to);t+=DAY) s+=dayValue(cat,ymd(t)); return s;
+}
+const scale = () => S.store==='ALL' ? 1 : 1/Object.keys(STORES).length;
+const money = n => '$'+Math.round(n*scale()).toLocaleString('en-US');
+
+/* ══ Formatting, matching the app ══════════════════════════════════ */
+function fmtRangeShort(from,to){
+  const a=new Date(parse(from)), b=new Date(parse(to));
+  const mo=d=>d.toLocaleDateString('en-US',{month:'short',timeZone:'UTC'});
+  if(from===to) return `${mo(a)} ${a.getUTCDate()}, ${a.getUTCFullYear()}`;
+  if(a.getUTCFullYear()!==b.getUTCFullYear())
+    return `${mo(a)} ${a.getUTCDate()}, ${a.getUTCFullYear()} – ${mo(b)} ${b.getUTCDate()}, ${b.getUTCFullYear()}`;
+  const right = mo(a)===mo(b) ? `${b.getUTCDate()}` : `${mo(b)} ${b.getUTCDate()}`;
+  return `${mo(a)} ${a.getUTCDate()} – ${right}`;
+}
+
+/* ══ Chart primitives — the app's Sales Trend card language ════════ */
+function spline(pts, tension){
+  if(pts.length<2) return '';
+  let d=`M${pts[0][0]},${pts[0][1]}`;
+  for(let i=0;i<pts.length-1;i++){
+    const p0=pts[i-1]||pts[i], p1=pts[i], p2=pts[i+1], p3=pts[i+2]||p2;
+    const c1x=p1[0]+(p2[0]-p0[0])/6*tension, c1y=p1[1]+(p2[1]-p0[1])/6*tension;
+    const c2x=p2[0]-(p3[0]-p1[0])/6*tension, c2y=p2[1]-(p3[1]-p1[1])/6*tension;
+    d+=` C${c1x},${c1y} ${c2x},${c2y} ${p2[0]},${p2[1]}`;
+  }
+  return d;
+}
+function chart(seriesList, labels, opts){
+  const W=opts.w||860, H=opts.h||280, narrow=W<560;
+  const M={t:14,r:14,b:30,l:narrow?46:64};
+  const pw=W-M.l-M.r, ph=H-M.t-M.b;
+  let max=0; seriesList.forEach(s=>s.values.forEach(v=>{if(v>max)max=v;}));
+  if(!max) max=1;
+  const n = Math.max(...seriesList.map(s=>s.values.length), 1);
+  const X = i => M.l + (n<=1 ? pw/2 : pw*i/(n-1));
+  const Y = v => M.t + ph - (v/max)*ph;
+  let g=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img">`;
+  for(let i=0;i<=4;i++){
+    const y=M.t+ph*i/4, val=max*(1-i/4);
+    g+=`<line x1="${M.l}" y1="${y}" x2="${W-M.r}" y2="${y}" stroke="rgba(255,255,255,.09)" stroke-width="1"/>`;
+    g+=`<text x="${M.l-8}" y="${y+4}" text-anchor="end" font-size="10" fill="#8893a7">${money(val)}</text>`;
+  }
+  // x labels: first, middle, last — anchored INWARD at the ends so the last
+  // one is not clipped (a trap this panel already shipped broken once).
+  const marks=[0, Math.floor((n-1)/2), n-1].filter((v,i,a)=>a.indexOf(v)===i && v>=0);
+  marks.forEach(i=>{
+    const anchor = i===0?'start' : i===n-1?'end' : 'middle';
+    g+=`<text x="${X(i)}" y="${H-10}" text-anchor="${anchor}" font-size="10" fill="#8893a7">${labels[i]||''}</text>`;
+  });
+  seriesList.forEach(s=>{
+    const pts=s.values.map((v,i)=>[X(i),Y(v)]);
+    g+=`<path d="${spline(pts,0.3)}" fill="none" stroke="${s.color}" stroke-width="${s.w||2}" stroke-linejoin="round" stroke-linecap="round"${s.dash?` stroke-dasharray="${s.dash}"`:''}/>`;
+    if(s.dots!==false) pts.forEach(p=>{g+=`<circle cx="${p[0]}" cy="${p[1]}" r="${s.r||3}" fill="${s.color}"/>`;});
+  });
+  return g+'</svg>';
+}
+
+/* ══ Render ════════════════════════════════════════════════════════ */
+const el = id => document.getElementById(id);
+
+function rangeChipHTML(which){
+  const r = which==='a' ? S.a : rangeB();
+  const n = daysBetween(r.from,r.to);
+  const over = overBudget(r);
+  const sw = which==='a' ? TW : LW;
+  return `<button class="rangechip${which==='b'&&!S.bPinned?' b':''}" onclick="openPop('${which}',event)">
+      <span class="swatch" style="background:${sw}"></span>
+      <span>${fmtRangeShort(r.from,r.to)}</span>
+      <span class="days">${n}d${over?' ⚠':''}</span>
+    </button>`;
+}
+
+function renderBar(){
+  const bn = daysBetween(rangeB().from, rangeB().to), an = daysBetween(S.a.from,S.a.to);
+  el('bar').innerHTML = `
+    <span class="ctl"><span class="lbl">Level</span><span class="pill" id="p-level"></span></span>
+    <span class="ctl"><span class="lbl">Showing</span>${rangeChipHTML('a')}</span>
+    <span class="ctl"><span class="lbl">Compared with</span>${rangeChipHTML('b')}
+      <span class="pill">
+        <button onclick="togglePin()" aria-pressed="${S.bPinned}" title="${S.bPinned?'Following is off — B stays where you put it':'B follows A automatically'}">⇄</button>
+        ${an!==bn?`<button onclick="matchLength()" title="Make B the same length as A">Match length</button>`:''}
+      </span></span>
+    <span class="ctl"><span class="lbl">Compare to</span><span class="pill" id="p-rule"></span></span>
+    <span class="ctl"><span class="lbl">X-axis</span><span class="pill" id="p-gran"></span></span>
+    <span class="ctl"><span class="lbl">Measure</span><span class="pill" id="p-measure"></span></span>
+    <span class="ctl"><span class="lbl">Stores</span><span class="pill" id="p-store"></span></span>
+    <span style="flex:1"></span>
+    <span class="pill" id="p-view"></span>`;
+  pills('p-level',[['l2','L2'],['l3','L3']],()=>S.level,v=>S.level=v);
+  pills('p-rule',[['aligned','Same span, prev period'],['rolling','The days just before']],
+        ()=>S.bRule, v=>{S.bRule=v; S.bPinned=false;});
+  pills('p-gran',[['auto','Auto'],['day','Day'],['week','Week'],['month','Month']],()=>S.gran,v=>S.gran=v);
+  pills('p-measure',[['net','Net $'],['units','Units']],()=>S.measure,v=>S.measure=v);
+  pills('p-store',[['ALL','All 7'],['BL1','Coliseum']],()=>S.store,v=>S.store=v);
+  pills('p-view',[['vs','Vs'],['trend','Trend'],['grid','Grid'],['table','Table']],()=>S.view,v=>S.view=v);
+}
+function pills(id,opts,get,set){
+  const host=el(id); host.innerHTML='';
+  opts.forEach(([v,label])=>{
+    const b=document.createElement('button');
+    b.type='button'; b.textContent=label;
+    b.setAttribute('aria-pressed',String(get()===v));
+    b.onclick=()=>{set(v); render();};
+    host.appendChild(b);
+  });
+}
+
+window.togglePin=()=>{ if(!S.bPinned){S.b=rangeB();} S.bPinned=!S.bPinned; render(); };
+window.matchLength=()=>{ const n=daysBetween(S.a.from,S.a.to); const b=rangeB();
+  S.b={from:shift(b.to,-(n-1)),to:b.to,label:'Custom'}; S.bPinned=true; render(); };
+
+/* ── the picker popover ──────────────────────────────────────────── */
+window.openPop=(which,ev)=>{
+  ev.stopPropagation();
+  const p=el('pop'), r=which==='a'?S.a:rangeB();
+  let h=`<div class="ph">${which==='a'?'Dates to show':'Dates to compare against'}</div>`;
+  PRESETS.forEach(([id,label,fn])=>{
+    const v=fn();
+    // No leading whitespace before the label: it lands in textContent and any
+    // anchored match against it then fails for a reason nobody can see.
+    h+=`<button class="opt" aria-pressed="${v.from===r.from&&v.to===r.to}" onclick="pickPreset('${which}','${id}')"`
+      +`>${label}<span style="float:right;color:var(--inkDimmer)">${daysBetween(v.from,v.to)}d</span></button>`;
+  });
+  h+=`<div class="custom"><div class="ph" style="padding:0 0 6px">Custom</div>
+      <input type="date" id="cf" value="${r.from}" min="${DATA_FROM}" max="${TODAY}">
+      <input type="date" id="ct" value="${r.to}" min="${DATA_FROM}" max="${TODAY}">
+      <button class="apply" onclick="applyCustom('${which}')">Apply</button></div>`;
+  p.innerHTML=h; p.hidden=false;
+  const rect=ev.currentTarget.getBoundingClientRect();
+  p.style.left=Math.min(rect.left,window.innerWidth-300)+'px';
+  p.style.top=Math.min(rect.bottom+6,window.innerHeight-460)+'px';
+};
+document.addEventListener('click',()=>{el('pop').hidden=true;});
+el('pop').addEventListener('click',e=>e.stopPropagation());
+window.pickPreset=(which,id)=>{
+  const v=PRESETS.find(p=>p[0]===id)[2]();
+  const label=PRESETS.find(p=>p[0]===id)[1];
+  if(which==='a'){S.a={...v,label};} else {S.b={...v,label};S.bPinned=true;}   // v carries prevStart
+  el('pop').hidden=true; render();
+};
+window.applyCustom=(which)=>{
+  let f=el('cf').value, t=el('ct').value;
+  if(!f||!t) return;
+  if(f>t){const x=f;f=t;t=x;}
+  // No prevStart: a custom span has no period boundary to align to, so the
+  // aligned rule has nothing to anchor on and B rolls instead. Stated in the
+  // status line rather than left as a silent difference in behaviour.
+  if(which==='a'){S.a={from:f,to:t,label:'Custom'};} else {S.b={from:f,to:t,label:'Custom'};S.bPinned=true;}
+  el('pop').hidden=true; render();
+};
+
+/* ── status ──────────────────────────────────────────────────────── */
+function renderStatus(){
+  const a=S.a,b=rangeB(), an=daysBetween(a.from,a.to), bn=daysBetween(b.from,b.to);
+  const g=granFor(a), nb=buckets(a).length;
+  const scope=S.store==='ALL'?'7 stores':STORES[S.store];
+  let t=`<b>${scope}</b> · ${S.measure==='net'?'net sales':'units'} · <b>all ${CATS.length} ${S.level.toUpperCase()} categories</b>`
+    + ` — <b>${fmtRangeShort(a.from,a.to)}</b> against <b>${fmtRangeShort(b.from,b.to)}</b>,`
+    + ` ${nb} ${g}${nb===1?'':'s'} across the x-axis.`;
+  if(!S.bPinned){
+    const aligned = S.bRule==='aligned' && S.a.prevStart;
+    t += ` The comparison range is <b>${aligned?'the same '+an+' days of the previous period':'the '+an+' days immediately before'}</b>`
+       + `, chosen for you.`;
+    if(S.bRule==='aligned' && !S.a.prevStart)
+      t += ` <span class="warn">▲</span> A custom range has no period boundary to align to, so it rolled instead.`;
+  }
+  const partials = buckets(a).filter(x=>x.partial);
+  if(partials.length) t+=`<br><span class="warn">▲</span> <b>${partials.length} end bucket${partials.length===1?' is':'s are'} part-covered</b>`
+    + ` — ${partials.map(x=>`${x.label} holds ${x.partial} day${x.partial===1?'':'s'}`).join(', ')}.`
+    + ` Nothing is dropped: you asked for these dates. The label says what it holds rather than`
+    + ` claiming a whole ${granFor(a)}.`;
+  if(an!==bn) t+=`<br><span class="warn">▲</span> <b>The two ranges are different lengths</b>`
+    + ` — ${an} days against ${bn}. Each line runs its own length from its own day 1, so the shapes`
+    + ` are comparable but <b>the totals are not like-for-like</b>. <i>Match length</i> fixes that.`;
+  const oa=overBudget(a), ob=overBudget(b);
+  if(oa||ob) t+=`<br><span class="warn">▲</span> <b>Too wide to fetch</b> — ${oa?`showing needs ${storeDays(a).toLocaleString()}`:''}`
+    + `${oa&&ob?' and comparing needs ':''}${ob&&!oa?`comparing needs ${storeDays(b).toLocaleString()}`:ob?storeDays(b).toLocaleString():''} store-days`
+    + ` against a limit of ${MAX_STORE_DAYS}. Pick one store, or a shorter range. <b>The panel knows this before asking</b>, so no request is sent.`;
+  if(b.from<DATA_FROM) t+=`<br><span class="warn">▲</span> <b>The comparison range starts before the data does</b>`
+    + ` (${DATA_FROM}) — those days are absent, not zero, so the amber line begins later.`;
+  el('status').innerHTML=t;
+}
+
+/* ── views ───────────────────────────────────────────────────────── */
+function rowsData(){
+  const a=S.a,b=rangeB();
+  return CATS.map(c=>({cat:c, a:totalFor(a,c), b:totalFor(b,c)}))
+             .map(r=>({...r, d:r.a-r.b, p:r.b?((r.a-r.b)/r.b)*100:0}))
+             .sort((x,y)=>y.a-x.a);
+}
+function deltaHTML(p){
+  const cls=p>0.5?'up':p<-0.5?'down':'flat';
+  return `<span class="${cls}">${p>0?'+':''}${p.toFixed(1)}%</span>`;
+}
+
+function renderBody(){
+  const a=S.a,b=rangeB();
+  if(overBudget(a)||overBudget(b)){
+    el('body').innerHTML=`<div style="padding:34px 18px;text-align:center;color:var(--inkDim);font-size:13px">
+      Nothing is fetched while a range is over the read budget — the status line above says by how much.</div>`;
+    el('legend').innerHTML=''; return;
+  }
+  const rows=rowsData();
+  if(S.view==='vs') return renderVs(rows,a,b);
+  if(S.view==='trend') return renderTrend(rows,a,b);
+  if(S.view==='grid') return renderGrid(rows,a,b);
+  return renderTable(rows,a,b);
+}
+
+function renderVs(rows,a,b){
+  const focus = S.focus ? [S.focus] : CATS;
+  const sum = (r,cats) => { const bs=buckets(r); return bs.map((bk,i)=>
+      cats.reduce((s,c)=>s+seriesFor(r,c)[i],0)); };
+  const av=sum(a,focus), bv=sum(b,focus);
+  const labels=buckets(a).map(x=>x.label);
+  el('body').innerHTML = chart(
+    [{values:bv,color:LW,w:2},{values:av,color:TW,w:2.4,r:3.5}], labels, {h:280})
+    + `<div class="rows">` + rows.map(r=>{
+        const mx=Math.max(...rows.map(x=>Math.max(x.a,x.b)))||1;
+        return `<button class="row" aria-pressed="${S.focus===r.cat}" onclick="pick('${r.cat.replace(/'/g,"\\'")}')">
+          <span class="rname">${r.cat}</span>
+          <span class="bars">
+            <span class="bwrap"><span class="bar cur" style="width:${(r.a/mx*100).toFixed(1)}%"></span></span>
+            <span class="bwrap"><span class="bar prv" style="width:${(r.b/mx*100).toFixed(1)}%"></span></span>
+          </span>
+          <span class="rdelta">${deltaHTML(r.p)}</span></button>`;
+      }).join('') + `</div>`;
+  const at=focus.reduce((s,c)=>s+totalFor(a,c),0), bt=focus.reduce((s,c)=>s+totalFor(b,c),0);
+  el('legend').innerHTML =
+    `<span class="lp"><i style="background:${TW}"></i>${fmtRangeShort(a.from,a.to)} <span class="lpv">${money(at)}</span></span>`
+   +`<span class="lp"><i style="background:${LW}"></i>${fmtRangeShort(b.from,b.to)} <span class="lpv">${money(bt)}</span></span>`
+   +`<span class="lp">${deltaHTML(bt?((at-bt)/bt)*100:0)} against the comparison range</span>`
+   +(S.focus?`<span class="lp" style="color:var(--accent)">${S.focus} only — click it again for all</span>`:'');
+}
+window.pick=c=>{S.focus=S.focus===c?null:c;render();};
+
+function renderTrend(rows,a,b){
+  const top=rows.slice(0,6);
+  const labels=buckets(a).map(x=>x.label);
+  let list, legend;
+  if(S.focus){
+    list=[{values:seriesFor(b,S.focus),color:LW,w:2},{values:seriesFor(a,S.focus),color:TW,w:2.4}];
+    legend=`<span class="lp"><i style="background:${TW}"></i>${S.focus} · showing</span>`
+          +`<span class="lp"><i style="background:${LW}"></i>${S.focus} · compared</span>`
+          +`<span class="lp" style="color:var(--accent)">click the name again for the top six</span>`;
+  } else {
+    list=top.map((r,i)=>({values:seriesFor(a,r.cat),color:SERIES[i],w:2,dots:false}));
+    legend=top.map((r,i)=>`<span class="lp"><i style="background:${SERIES[i]}"></i>${r.cat} <span class="lpv">${money(r.a)}</span></span>`).join('');
+  }
+  el('body').innerHTML = chart(list,labels,{h:300})
+    + `<div class="rows">`+top.map((r,i)=>`<button class="row" aria-pressed="${S.focus===r.cat}" onclick="pick('${r.cat.replace(/'/g,"\\'")}')">
+        <span class="rname"><i style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${SERIES[i]};margin-right:6px"></i>${r.cat}</span>
+        <span class="bars"></span><span class="rdelta">${deltaHTML(r.p)}</span></button>`).join('')+`</div>`;
+  el('legend').innerHTML = legend
+    + `<div style="margin-top:6px">Trend charts <b>the range you are showing</b>; click a category to chart it against the comparison range.</div>`;
+}
+
+function renderGrid(rows,a,b){
+  el('body').innerHTML = `<div class="grid">` + rows.map(r=>{
+    const av=seriesFor(a,r.cat), bv=seriesFor(b,r.cat);
+    return `<div class="gcell">
+      <div class="gname">${r.cat}</div>
+      <div class="gtot">${money(r.a)}</div>
+      <div class="gsub">${money(r.b)} before · ${deltaHTML(r.p)}</div>
+      ${chart([{values:bv,color:LW,w:1.4,dots:false},{values:av,color:TW,w:1.8,dots:false}],[],{w:260,h:64})}
+    </div>`;
+  }).join('') + `</div>`;
+  el('legend').innerHTML=`<span class="lp"><i style="background:${TW}"></i>showing</span>`
+    +`<span class="lp"><i style="background:${LW}"></i>compared</span>`
+    +`<span class="lp">Each panel is scaled to its own high and low — <b>the baseline is not zero</b>, so read the shape and take size from the printed total.</span>`;
+}
+
+function renderTable(rows,a,b){
+  el('body').innerHTML=`<div class="tblwrap"><table>
+    <tr><th>${S.level.toUpperCase()} category</th>
+        <th>${fmtRangeShort(a.from,a.to)}</th>
+        <th>${fmtRangeShort(b.from,b.to)}</th>
+        <th>Δ</th><th>Δ%</th></tr>
+    ${rows.map(r=>`<tr><td>${r.cat}</td>
+      <td class="num">${money(r.a)}</td>
+      <td class="num">${money(r.b)}</td>
+      <td class="num">${r.d>=0?'+':'−'}${money(Math.abs(r.d))}</td>
+      <td class="num">${deltaHTML(r.p)}</td></tr>`).join('')}
+    <tr style="border-top:2px solid var(--border)">
+      <td><b>Total</b></td>
+      <td class="num"><b>${money(rows.reduce((s,r)=>s+r.a,0))}</b></td>
+      <td class="num"><b>${money(rows.reduce((s,r)=>s+r.b,0))}</b></td>
+      <td class="num"><b>${money(rows.reduce((s,r)=>s+r.d,0))}</b></td>
+      <td class="num"><b>${deltaHTML((()=>{const A=rows.reduce((s,r)=>s+r.a,0),B=rows.reduce((s,r)=>s+r.b,0);return B?((A-B)/B)*100:0;})())}</b></td></tr>
+  </table></div>`;
+  el('legend').innerHTML=`Every category, both ranges, no fold. This is the view that answers the question with no chart at all — see question 6.`;
+}
+
+function render(){ renderBar(); renderStatus(); renderBody(); }
+render();
+</script>
