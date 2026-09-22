@@ -24182,8 +24182,12 @@
     // used to make a perfectly good sheet answer nothing.
     const spelled = m.sheet_identifier && m.sheet_identifier !== j.identifier
       ? ` · sheet reads ${psEsc(m.sheet_identifier)}` : '';
+    // The description is omitted when it is already the item's name overhead — it became
+    // the name precisely because nothing else could supply one, and printing a vendor's
+    // wording twice on one screen reads as two different facts about the item.
+    const sheetWords = m.description && m.description !== j.title ? ' · ' + psEsc(m.description) : '';
     return strip(false,
-      `From PO ${po}'s manifest${m.description ? ' · ' + psEsc(m.description) : ''}`
+      `From PO ${po}'s manifest${sheetWords}`
       + `${m.qty ? ' · ' + m.qty + ' bought' : ''}`
       + `${m.street_price ? ' · street ' + psMoney(m.street_price) : ''}${spelled}`
       + `${m.duplicates ? ` &middot; <strong>listed ${m.duplicates} times on the sheet; row ${m.row_no} answered</strong>` : ''}`);
@@ -24265,7 +24269,15 @@
         <div class="ps-ident">
           ${j.brand ? `<div class="ps-up" style="font-weight:700;letter-spacing:.06em;text-transform:uppercase;font-size:10.5px">${psEsc(j.brand)}</div>` : ''}
           <div class="ps-nm">${psEsc(j.title || 'Unidentified item')}</div>
-          <div class="ps-up">${[j.size, j.identifier].filter(Boolean).map(psEsc).join(' &middot; ') || ''}</div>
+          <div class="ps-up">${[
+            j.size, j.identifier,
+            // 🔑 "WE IDENTIFIED THIS" AND "A VENDOR'S SPREADSHEET CALLED IT THIS" ARE
+            // DIFFERENT CLAIMS. The sheet's wording is often abbreviated — PED DRY DOG
+            // 14LB STK/VEG — and printing it in the same weight as a resolved product name
+            // would let the weaker claim pass for the stronger one. Said once, quietly,
+            // and only when it is true.
+            j.title_source === 'manifest' ? 'named from the buy&rsquo;s sheet' : null,
+          ].filter(Boolean).map(v => v === 'named from the buy&rsquo;s sheet' ? v : psEsc(v)).join(' &middot; ') || ''}</div>
         </div>
 
         ${psManifestStrip(j)}
