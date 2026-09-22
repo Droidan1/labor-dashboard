@@ -1,0 +1,1430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Inventory Redesign — Page Preview</title>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Lilita+One&display=swap" rel="stylesheet">
+<style>
+/* ─────────────────────────────────────────────────────────────────────────
+   Inventory redesign — interactive preview.
+
+   docs/ is EXCLUDED from scripts/build.sh's allowlist, so this file never
+   reaches production. It is a review artefact, not a shipping surface.
+
+   Every colour below is a LITERAL copy of a token in tailwind.config.js.
+   A <style> block cannot use the Tailwind token classes, so the literal is
+   duplicated here with the token named in a comment — DESIGN.md §4.8 trap 3.
+   Nothing inherits a colour: both themes are stated on the panel.
+
+   Contrast was COMPUTED, not eyeballed (§4.8 trap 6). Figures are in the
+   legends and in tasks/todo.md.
+   ───────────────────────────────────────────────────────────────────────── */
+
+:root{
+  /* op-* — V1 Operator dark (primary) */
+  --bg:#0a0f1a;          /* op-bg      */
+  --panel:#101826;       /* op-panel   */
+  --panelHi:#16203a;     /* op-panelHi */
+  --sidebar:#070b14;     /* op-sidebar */
+  --ink:#e7ecf3;         /* op-ink      — 14.98:1 on panel */
+  --inkDim:#8893a7;      /* op-inkDim   — 5.74:1 on panel  */
+  --inkDimmer:#5a6478;   /* op-inkDimmer — BORDERS/BADGES ONLY (2.99:1 as text) */
+  --hairline:rgba(255,255,255,.09);
+  --border:rgba(255,255,255,.16);
+  --accent:#22c55e;      /* accent-green — 7.81:1 on op-panel */
+  --accentInk:#06210f;   /* text on a solid accent button */
+  --amber:#f59e0b;       /* op-warn — 8.28:1 on op-panel */
+  --amberWash:rgba(245,158,11,.14);
+  --amberEdge:rgba(245,158,11,.45);
+  --bad:#ef4444;         /* op-bad — FILLS AND EDGES ONLY. As text on --badWash it
+                            measures 4.25:1 and fails AA (4.73:1 on bare panel). */
+  --badText:#f87171;     /* red-400 — 5.78:1 on badWash, 5.09:1 on amberWash,
+                            5.49:1 on greenWash, 6.43:1 on panel. */
+  --badWash:rgba(239,68,68,.12);
+  --badEdge:rgba(239,68,68,.42);
+  --greenWash:rgba(34,197,94,.10);
+  --greenEdge:rgba(34,197,94,.28);
+  --blue:#60a5fa;        /* informational only — 6.93:1 on op-panel */
+  --blueWash:rgba(96,165,250,.12);
+  --blueEdge:rgba(96,165,250,.38);
+  --shadow:rgba(0,0,0,.55);
+  color-scheme:dark;     /* §4.8 trap 4 — an unchecked box is UA-drawn */
+}
+html.light{
+  /* opl-* — V1 Operator light */
+  --bg:#f4f3ee;          /* opl-bg      */
+  --panel:#ffffff;       /* opl-panel   */
+  --panelHi:#fafaf6;     /* opl-panelHi */
+  --sidebar:#ece8dc;     /* opl-sidebar */
+  --ink:#14110a;         /* opl-ink     — 18.85:1 on opl-panel */
+  --inkDim:#6b6453;      /* opl-inkDim  — 5.88:1 on opl-panel, 5.29:1 on opl-bg */
+  --inkDimmer:#9c9484;   /* opl-inkDimmer — BORDERS ONLY (3.01:1 as text) */
+  --hairline:rgba(20,16,8,.10);
+  --border:rgba(20,16,8,.18);
+  --accent:#166534;      /* green-800 — 7.13:1. accent-green #22c55e is 2.28:1 on white: unusable as TEXT in light */
+  --accentInk:#ffffff;
+  --amber:#92400e;       /* amber-800 — 7.09:1 on opl-panel; #f59e0b is 2.15:1 */
+  --amberWash:rgba(245,158,11,.16);
+  --amberEdge:rgba(180,83,9,.45);
+  --bad:#c0392b;         /* opl-bad — 5.44:1 */
+  --badText:#c0392b;     /* light needs no split — 4.69:1 even on its own wash. */
+  --badWash:rgba(192,57,43,.10);
+  --badEdge:rgba(192,57,43,.40);
+  --greenWash:rgba(34,197,94,.10);
+  --greenEdge:rgba(22,101,52,.28);
+  --blue:#1d4ed8;        /* blue-700 — 6.70:1; #60a5fa is 2.28:1 on white */
+  --blueWash:rgba(29,78,216,.09);
+  --blueEdge:rgba(29,78,216,.34);
+  --shadow:rgba(20,16,8,.18);
+  color-scheme:light;
+}
+
+*{margin:0;padding:0;box-sizing:border-box;}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:'Geist',system-ui,-apple-system,sans-serif;
+  font-size:14px; line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+  transition:background-color .25s, color .25s;
+}
+.wrap{max-width:1480px;margin:0 auto;padding:34px 22px 96px;}
+
+/* ── Preview chrome (NOT part of the app) ───────────────────────────── */
+.doc-kicker{font-family:'Lilita One',cursive;color:var(--accent);font-size:12px;
+  letter-spacing:.14em;text-transform:uppercase;}
+.doc-title{font-family:'Lilita One',cursive;font-size:32px;font-weight:400;
+  margin:6px 0 10px;color:var(--ink);letter-spacing:.01em;}
+.doc-sub{color:var(--inkDim);font-size:14px;max-width:820px;line-height:1.65;}
+.doc-note{margin-top:14px;padding:11px 14px;border-radius:10px;font-size:12.5px;
+  background:var(--amberWash);border:1px solid var(--amberEdge);color:var(--ink);
+  max-width:820px;line-height:1.6;}
+.doc-note b{color:var(--amber);}
+.doc-note.ask{background:var(--blueWash);border-color:var(--blueEdge);}
+.doc-note.ask b{color:var(--blue);}
+
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;
+  margin:26px 0 22px;padding:11px 14px;border-radius:12px;
+  background:var(--panelHi);border:1px solid var(--hairline);
+  position:sticky;top:0;z-index:60;backdrop-filter:blur(6px);}
+.tb-lbl{font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--inkDim);}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+.seg button{background:transparent;border:0;color:var(--inkDim);cursor:pointer;
+  font:inherit;font-size:12px;font-weight:600;padding:6px 13px;transition:.15s;}
+.seg button+button{border-left:1px solid var(--border);}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accentInk);}
+.tb-spacer{flex:1;}
+.tb-hint{font-size:11.5px;color:var(--inkDim);}
+
+.sect{margin:44px 0 0;}
+.sect-h{display:flex;align-items:baseline;gap:11px;margin-bottom:7px;}
+.sect-n{width:24px;height:24px;border-radius:7px;background:var(--accent);
+  color:var(--accentInk);font-family:'Lilita One',cursive;font-size:13px;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  align-self:center;}
+.sect-t{font-size:17px;font-weight:700;color:var(--ink);}
+.sect-d{color:var(--inkDim);font-size:13px;margin:0 0 16px 35px;max-width:840px;line-height:1.6;}
+.sect-d b{color:var(--ink);font-weight:600;}
+.sect-d code{background:var(--panelHi);border:1px solid var(--hairline);border-radius:4px;
+  padding:1px 5px;font-size:11.5px;}
+
+.stage{background:var(--bg);border:1px solid var(--hairline);border-radius:16px;
+  padding:22px;display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start;
+  justify-content:center;}
+
+/* ═══ APP SHELL — sidebar + main, mirroring index.html's own hand-rolled CSS ═══
+   The real sidebar is NOT Tailwind: index.html:527-592 defines .nav-item /
+   .nav-sub / .nav-subitem / .nav-chev by hand. These rules copy those values so
+   the mock and the app cannot drift apart for cosmetic reasons.               */
+.app{display:flex;border:1px solid var(--border);border-radius:16px;overflow:hidden;
+  background:var(--bg);box-shadow:0 10px 40px var(--shadow);min-height:720px;}
+.app.mobile{max-width:392px;margin:0 auto;border-radius:26px;
+  flex-direction:column;min-height:0;height:780px;}
+.app.mobile .side{display:none;}
+
+/* ── Sidebar ─────────────────────────────────────────────────────────── */
+.side{width:256px;flex-shrink:0;background:var(--sidebar);
+  border-right:1px solid var(--hairline);display:flex;flex-direction:column;
+  align-self:stretch;}
+.side-logo{display:flex;align-items:center;gap:10px;padding:16px 14px 14px;}
+.side-mark{width:30px;height:30px;border-radius:9px;background:var(--accent);
+  color:var(--accentInk);font-family:'Lilita One',cursive;font-size:15px;
+  display:grid;place-content:center;flex-shrink:0;}
+.side-name{font-family:'Lilita One',cursive;font-size:15px;letter-spacing:.02em;color:var(--ink);}
+.side-nav{flex:1;padding:0 8px;display:flex;flex-direction:column;gap:4px;overflow-y:auto;}
+
+/* .nav-item — index.html:527. 44px, radius 10, inkDim, 500. */
+.nav-item{display:flex;align-items:center;height:44px;width:100%;border-radius:10px;
+  cursor:pointer;transition:background .2s,color .2s;color:var(--inkDim);
+  font-size:.875rem;font-weight:500;border:0;background:transparent;font-family:inherit;
+  text-align:left;padding:0;}
+.nav-item:hover{background:rgba(255,255,255,.04);color:var(--ink);}
+html.light .nav-item:hover{background:rgba(20,16,8,.035);color:var(--ink);}
+/* .nav-item.active — index.html:572. The green pill. */
+.nav-item.active{background:rgba(34,197,94,.12);color:#22c55e;font-weight:600;}
+html.light .nav-item.active{background:rgba(34,197,94,.10);color:var(--accent);}
+.nav-icon{flex-shrink:0;width:48px;display:grid;place-content:center;}
+.nav-icon svg{width:18px;height:18px;}
+.nav-label{white-space:nowrap;}
+/* .nav-chev — index.html:582. Rotated by INLINE STYLE, matching toggleMarketingMenu. */
+.nav-chev{margin-left:auto;margin-right:12px;display:grid;place-content:center;
+  transition:transform .2s;opacity:.55;}
+.nav-chev svg{width:14px;height:14px;}
+/* .nav-sub — index.html:585. :not(.hidden) is load-bearing: a plain display:flex
+   would out-specify Tailwind's .hidden and the menu could never close.        */
+.nav-sub{margin-top:2px;}
+.nav-sub:not(.is-open){display:none;}
+.nav-sub.is-open{display:flex;flex-direction:column;gap:1px;}
+.nav-subitem{height:38px;font-size:.825rem;}
+.nav-subitem .nav-icon{width:40px;margin-left:8px;}
+.nav-subitem .nav-icon svg{width:15px;height:15px;}
+.side-foot{padding:8px;border-top:1px solid var(--hairline);}
+.side-user{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:10px;}
+.side-av{width:26px;height:26px;border-radius:50%;background:var(--panelHi);
+  border:1px solid var(--border);display:grid;place-content:center;font-size:10.5px;
+  font-weight:700;color:var(--inkDim);flex-shrink:0;}
+.side-un{font-size:12px;font-weight:600;color:var(--ink);line-height:1.25;}
+.side-ur{font-size:10px;color:var(--inkDim);text-transform:uppercase;letter-spacing:.07em;}
+/* NEW-marker: the only thing in this mock that is not already in index.html. */
+.nav-new{margin-left:auto;margin-right:12px;font-size:8.5px;font-weight:700;
+  letter-spacing:.07em;padding:1px 5px;border-radius:4px;
+  background:var(--greenWash);border:1px solid var(--greenEdge);color:var(--accent);}
+.nav-subitem .nav-new{margin-right:10px;}
+
+/* ── Main column ─────────────────────────────────────────────────────── */
+.main{flex:1;min-width:0;background:var(--bg);display:flex;flex-direction:column;}
+/* Page app bar — DESIGN.md §3.3: sticky, panel bg, bottom border, brand h1. */
+.appbar{background:var(--panel);border-bottom:1px solid var(--hairline);
+  padding:16px 24px 14px;position:sticky;top:0;z-index:10;display:flex;
+  align-items:flex-start;gap:14px;flex-wrap:wrap;}
+.appbar h1{font-family:'Lilita One',cursive;font-size:22px;font-weight:400;
+  color:var(--accent);text-transform:uppercase;letter-spacing:.03em;line-height:1.15;}
+.appbar .sub{font-size:12.5px;color:var(--inkDim);margin-top:2px;}
+.appbar .acts{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+.page-body{padding:18px 24px 40px;flex:1;overflow-y:auto;max-height:760px;}
+.app.mobile .main{flex:1;min-height:0;overflow:hidden;}
+/* On a phone a bar control takes its own full row rather than being squeezed. */
+.app.mobile .panel-bar .right{margin-left:0;flex:1 1 100%;flex-wrap:wrap;}
+.app.mobile input.inp.inp-sm.grow{flex:1 1 100%;max-width:none;min-width:0;}
+.app.mobile .panel-bar select.inp.inp-sm{flex:1 1 auto;min-width:0;}
+.app.mobile .appbar{padding:14px 15px 12px;}
+.app.mobile .appbar h1{font-size:19px;}
+.app.mobile .page-body{padding:13px 13px 26px;max-height:none;}
+
+/* ── Mobile bottom bar (mock of #bottom-nav) ─────────────────────────── */
+.bnav{display:none;}
+.app.mobile .bnav{display:flex;position:sticky;bottom:0;background:var(--panel);
+  border-top:1px solid var(--hairline);padding:7px 6px calc(7px + env(safe-area-inset-bottom));
+  gap:2px;}
+.bn-tab{flex:1;min-width:0;background:transparent;border:0;font:inherit;cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;gap:3px;padding:5px 2px;
+  color:var(--inkDim);border-radius:9px;}
+.bn-tab svg{width:19px;height:19px;}
+.bn-tab .bn-lb{font-size:9.5px;font-weight:600;letter-spacing:.01em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
+.bn-tab.on{color:var(--accent);}
+
+/* ═══ PAGE COMPONENTS — DESIGN.md §4.8 anatomy ════════════════════════════
+   One PANEL owns controls + content + legend. Colour is stated ON THE PANEL,
+   never inherited (§4.8 trap 3).                                            */
+.panel{background:var(--panel);border:1px solid var(--hairline);border-radius:14px;
+  overflow:hidden;color:var(--ink);margin-bottom:14px;}
+.panel-bar{background:var(--panelHi);border-bottom:1px solid var(--hairline);
+  padding:13px 18px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;}
+.panel-bar .lbl{font-size:10.5px;font-weight:700;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--inkDim);white-space:nowrap;}
+.panel-bar .right{margin-left:auto;display:flex;gap:8px;align-items:center;min-width:0;}
+.panel-status{padding:10px 18px 0;font-size:12.5px;color:var(--inkDim);line-height:1.55;}
+.panel-status + .tbl-scroll,.panel-status + .pager{margin-top:11px;}
+.panel-status b{color:var(--ink);font-weight:600;}
+.panel-status .hi{color:var(--amber);font-weight:600;}
+.panel-body{padding:16px 18px 18px;}
+.panel-foot{border-top:1px solid var(--hairline);padding:13px 18px;display:flex;
+  gap:10px;align-items:center;flex-wrap:wrap;background:var(--panel);}
+.panel-foot .right{margin-left:auto;display:flex;gap:9px;align-items:center;}
+.panel-legend{border-top:1px solid var(--hairline);padding:11px 18px;
+  display:flex;gap:18px;flex-wrap:wrap;font-size:11px;color:var(--inkDim);}
+.lg-item{display:inline-flex;align-items:center;gap:6px;}
+.lg-sw{width:22px;height:13px;border-radius:4px;border:1px solid var(--border);flex-shrink:0;}
+
+/* ── Controls ────────────────────────────────────────────────────────── */
+.btn{font:inherit;font-weight:700;border-radius:10px;cursor:pointer;
+  border:1px solid transparent;transition:.15s;letter-spacing:.02em;}
+.btn-primary{background:var(--accent);color:var(--accentInk);padding:10px 22px;font-size:14px;}
+.btn-primary:hover{filter:brightness(1.08);}
+.btn-ghost{background:transparent;color:var(--ink);border-color:var(--border);
+  padding:8px 14px;font-size:12.5px;}
+.btn-ghost:hover{background:var(--panelHi);}
+.btn-sm{padding:6px 11px;font-size:11.5px;border-radius:8px;}
+.btn-danger{background:transparent;color:var(--badText);border-color:var(--badEdge);
+  padding:6px 11px;font-size:11.5px;border-radius:8px;font-weight:700;}
+.btn-danger:hover{background:var(--badWash);}
+.btn:disabled{opacity:.45;cursor:not-allowed;}
+
+/* §4.8 trap 1 — CSS matches the ATTRIBUTE, so type="text" must be explicit. */
+.inp,input[type="text"].inp,input[type="number"].inp,input[type="search"].inp,
+input[type="datetime-local"].inp,select.inp{
+  width:100%;font:inherit;font-size:13.5px;font-weight:600;padding:9px 11px;
+  border-radius:9px;background:var(--panelHi);border:1px solid var(--border);
+  color:var(--ink);font-variant-numeric:tabular-nums;transition:.15s;}
+.inp:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--greenWash);}
+.inp::placeholder{color:var(--inkDim);font-weight:400;}
+select.inp{cursor:pointer;}
+/* An ATTRIBUTE selector counts in the class column, so `input[type="search"].inp`
+   is (0,2,1) — a bare `.inp-sm` at (0,1,0) lost, and every bar control rendered
+   full-width, stacking the bar into three rows. Match (0,2,1) and win on order. */
+input.inp.inp-sm,select.inp.inp-sm,textarea.inp.inp-sm{
+  font-size:12.5px;padding:7px 10px;border-radius:8px;width:auto;}
+/* The search box is the one control that should take the slack in the bar. */
+input.inp.inp-sm.grow{flex:1 1 220px;width:auto;min-width:200px;}
+
+.fld{display:flex;flex-direction:column;}
+.fld-l{display:flex;align-items:center;gap:7px;font-size:9.5px;font-weight:700;
+  letter-spacing:.08em;text-transform:uppercase;color:var(--inkDim);margin-bottom:5px;}
+.req{color:var(--badText);font-weight:700;}
+.opt{color:var(--inkDimmer);font-weight:600;letter-spacing:.04em;}
+.fld-note{font-size:11px;color:var(--inkDim);margin-top:5px;line-height:1.5;}
+.fld-note.warn{color:var(--amber);}
+.fld.locked .inp{background:transparent;border-style:dashed;color:var(--inkDim);}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px 16px;}
+.app.mobile .grid2{grid-template-columns:1fr;}
+.span2{grid-column:1/-1;}
+.chk{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--ink);
+  cursor:pointer;padding:9px 11px;border-radius:9px;border:1px solid var(--border);
+  background:var(--panelHi);font-weight:600;}
+.chk input{width:15px;height:15px;accent-color:var(--accent);cursor:pointer;flex-shrink:0;}
+.chk .sub{font-size:11px;color:var(--inkDim);font-weight:400;margin-left:auto;}
+
+/* ── Derived read-out (the margin strip) ─────────────────────────────── */
+.derive{display:flex;gap:0;border:1px solid var(--hairline);border-radius:11px;
+  overflow:hidden;background:var(--panelHi);}
+.derive .d{flex:1;padding:10px 13px;border-right:1px solid var(--hairline);}
+.derive .d:last-child{border-right:0;}
+.derive .dc{font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--inkDim);}
+.derive .dv{font-size:19px;font-weight:700;line-height:1.2;margin-top:2px;
+  font-variant-numeric:tabular-nums;letter-spacing:-.02em;color:var(--ink);}
+.derive .dv.good{color:var(--accent);}
+.derive .dv.warnv{color:var(--amber);}
+.derive .dv.badv{color:var(--badText);}
+.derive .dn{font-size:10.5px;color:var(--inkDim);margin-top:1px;}
+
+/* ── Status strip — index.html has NO toast helper (invSetStatus idiom) ─ */
+.status{border-radius:10px;padding:10px 13px;font-size:12.5px;display:flex;
+  align-items:flex-start;gap:9px;line-height:1.55;margin-bottom:13px;
+  border:1px solid var(--greenEdge);background:var(--greenWash);color:var(--ink);}
+.status .ico{width:18px;height:18px;border-radius:50%;display:grid;place-content:center;
+  font-size:11px;font-weight:700;flex-shrink:0;margin-top:1px;
+  background:var(--accent);color:var(--accentInk);}
+.status.warn{border-color:var(--amberEdge);background:var(--amberWash);}
+.status.warn .ico{background:var(--amber);color:#1a1205;}
+.status.err{border-color:var(--badEdge);background:var(--badWash);}
+.status.err .ico{background:var(--bad);color:#2a0606;}
+.status.info{border-color:var(--blueEdge);background:var(--blueWash);}
+.status.info .ico{background:var(--blue);color:#04122e;}
+html.light .status.info .ico{color:#fff;}
+html.light .status.warn .ico{color:#fff;}
+html.light .status.err .ico{color:#fff;}
+.status b{font-weight:700;}
+
+/* ── Dense table (§4.8) ──────────────────────────────────────────────── */
+.tbl-scroll{overflow-x:auto;background:var(--panel);max-height:430px;overflow-y:auto;}
+table.dt{border-collapse:separate;border-spacing:0;width:100%;min-width:940px;
+  font-variant-numeric:tabular-nums;color:var(--ink);}
+table.dt th{height:34px;padding:0 9px;font-size:10.5px;font-weight:700;
+  letter-spacing:.05em;text-transform:uppercase;text-align:left;white-space:nowrap;
+  background:var(--panelHi);color:var(--inkDim);
+  border-bottom:1px solid var(--hairline);position:sticky;top:0;z-index:3;}
+table.dt td{height:42px;padding:0 9px;font-size:12.5px;
+  border-bottom:1px solid var(--hairline);color:var(--ink);white-space:nowrap;}
+table.dt tr:last-child td{border-bottom:0;}
+table.dt tbody tr:hover td{background:var(--panelHi);}
+table.dt .num{text-align:right;}
+table.dt .ck{width:34px;padding-left:12px;}
+table.dt input[type="checkbox"]{width:14px;height:14px;accent-color:var(--accent);cursor:pointer;}
+/* §4.8 trap 2 — a sticky column needs its OWN opaque background. */
+table.dt .stick{position:sticky;left:0;background:var(--panel);z-index:2;
+  box-shadow:1px 0 0 var(--hairline);}
+table.dt tbody tr:hover .stick{background:var(--panelHi);}
+table.dt th.stick{background:var(--panelHi);z-index:4;}
+table.dt tr.sel td{background:var(--greenWash);}
+table.dt tr.sel .stick{background:var(--greenWash);}
+table.dt tr.dup td{background:var(--amberWash);}
+table.dt tr.dup .stick{background:var(--amberWash);}
+table.dt tr.off .iname,table.dt tr.off .num{opacity:.55;}
+.iname{font-weight:600;overflow:hidden;text-overflow:ellipsis;max-width:215px;
+  display:inline-block;vertical-align:middle;}
+.dim{color:var(--inkDim);}
+.dimmer{color:var(--inkDim);}   /* never inkDimmer as text — 2.99:1 dark / 3.01:1 light */
+.mono{font-variant-numeric:tabular-nums;}
+.sort{cursor:pointer;user-select:none;}
+.sort .ar{margin-left:4px;opacity:.85;color:var(--accent);}
+
+/* ── Badges / chips ──────────────────────────────────────────────────── */
+.bdg{display:inline-flex;align-items:center;gap:4px;font-size:9.5px;font-weight:700;
+  letter-spacing:.055em;text-transform:uppercase;padding:2px 6px;border-radius:5px;
+  border:1px solid var(--border);color:var(--inkDim);background:transparent;
+  white-space:nowrap;vertical-align:middle;}
+.bdg.g{border-color:var(--greenEdge);background:var(--greenWash);color:var(--accent);}
+.bdg.a{border-color:var(--amberEdge);background:var(--amberWash);color:var(--amber);}
+.bdg.r{border-color:var(--badEdge);background:var(--badWash);color:var(--badText);}
+.bdg.b{border-color:var(--blueEdge);background:var(--blueWash);color:var(--blue);}
+.chip{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:600;
+  padding:6px 10px;border-radius:9px;border:1px solid var(--border);
+  background:var(--panelHi);color:var(--ink);}
+.chip .x{background:transparent;border:0;color:var(--inkDim);cursor:pointer;
+  font-size:15px;line-height:1;padding:0 1px;font-family:inherit;}
+.chip .x:hover{color:var(--badText);}
+.chip .pr{color:var(--inkDim);font-weight:500;font-variant-numeric:tabular-nums;}
+
+/* ── Store multiselect ───────────────────────────────────────────────── */
+.stores{display:flex;gap:7px;flex-wrap:wrap;}
+.st{display:inline-flex;align-items:center;gap:7px;padding:7px 11px;border-radius:9px;
+  border:1px solid var(--border);background:var(--panelHi);cursor:pointer;
+  font-size:12.5px;font-weight:600;color:var(--ink);transition:.15s;}
+.st input{width:14px;height:14px;accent-color:var(--accent);cursor:pointer;}
+.st .nm{color:var(--inkDim);font-weight:500;font-size:11px;}
+.st.on{border-color:var(--greenEdge);background:var(--greenWash);}
+.st.on .nm{color:var(--inkDim);}
+
+/* ── Per-store result rows ───────────────────────────────────────────── */
+.res{display:flex;align-items:center;gap:11px;padding:11px 13px;
+  border-bottom:1px solid var(--hairline);font-size:12.5px;}
+.res:last-child{border-bottom:0;}
+.res .s{font-weight:700;width:52px;flex-shrink:0;font-variant-numeric:tabular-nums;}
+.res .nm{color:var(--inkDim);width:96px;flex-shrink:0;}
+.res .msg{color:var(--inkDim);line-height:1.5;}
+.res .msg b{color:var(--ink);font-weight:600;}
+.res .right{margin-left:auto;display:flex;gap:8px;align-items:center;flex-shrink:0;}
+.res.ok{background:var(--greenWash);}
+.res.dupe{background:var(--amberWash);}
+.res.bad{background:var(--badWash);}
+
+/* ── Schedule log cards ──────────────────────────────────────────────── */
+.sched{border-bottom:1px solid var(--hairline);padding:14px 18px;}
+.sched:last-child{border-bottom:0;}
+.sched-h{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.sched-t{font-size:13.5px;font-weight:700;color:var(--ink);}
+.sched-m{font-size:11.5px;color:var(--inkDim);font-variant-numeric:tabular-nums;}
+.sched-h .right{margin-left:auto;display:flex;gap:7px;}
+.sched-items{margin-top:9px;display:flex;flex-direction:column;gap:1px;}
+.si{display:flex;align-items:center;gap:10px;font-size:12px;padding:6px 10px;
+  border-radius:7px;background:var(--panelHi);}
+.si .n{font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;}
+.si .p{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--inkDim);
+  flex-shrink:0;}
+.si .p s{color:var(--inkDim);}
+.si .p b{color:var(--accent);font-weight:700;}
+.si.errrow{background:var(--badWash);}
+.si.errrow .p{color:var(--badText);}
+
+/* ── Step header ─────────────────────────────────────────────────────── */
+.step{display:flex;align-items:center;gap:9px;}
+.step-n{width:21px;height:21px;border-radius:6px;background:var(--accent);
+  color:var(--accentInk);font-size:11px;font-weight:700;display:grid;
+  place-content:center;flex-shrink:0;}
+.step-n.idle{background:transparent;border:1px solid var(--border);color:var(--inkDim);}
+
+/* ── Empty state ─────────────────────────────────────────────────────── */
+.empty{padding:38px 20px;text-align:center;}
+.empty-g{width:52px;height:52px;margin:0 auto 13px;border-radius:15px;
+  background:var(--panelHi);border:1px solid var(--border);display:grid;
+  place-content:center;color:var(--inkDim);}
+.empty-g svg{width:24px;height:24px;}
+.empty .t{font-size:14.5px;font-weight:700;color:var(--ink);}
+.empty .d{font-size:12.5px;color:var(--inkDim);margin:5px auto 0;max-width:340px;line-height:1.55;}
+
+/* ── Pager ───────────────────────────────────────────────────────────── */
+.pager{border-top:1px solid var(--hairline);padding:10px 18px;display:flex;
+  align-items:center;gap:10px;font-size:11.5px;color:var(--inkDim);
+  font-variant-numeric:tabular-nums;}
+.pager .right{margin-left:auto;display:flex;gap:7px;}
+
+/* ── Q&A / notes block ───────────────────────────────────────────────── */
+.qa{background:var(--panel);border:1px solid var(--hairline);border-radius:14px;
+  overflow:hidden;color:var(--ink);}
+.qa-row{display:flex;gap:13px;padding:14px 17px;border-bottom:1px solid var(--hairline);}
+.qa-row:last-child{border-bottom:0;}
+.qa-n{width:22px;height:22px;border-radius:6px;flex-shrink:0;font-size:11px;font-weight:700;
+  display:grid;place-content:center;
+  background:var(--amberWash);border:1px solid var(--amberEdge);color:var(--amber);}
+.qa-n.g{background:var(--greenWash);border-color:var(--greenEdge);color:var(--accent);}
+.qa-n.r{background:var(--badWash);border-color:var(--badEdge);color:var(--badText);}
+.qa-q{font-size:13.5px;font-weight:600;color:var(--ink);}
+.qa-a{font-size:12.5px;color:var(--inkDim);margin-top:5px;line-height:1.65;}
+.qa-a b{color:var(--ink);font-weight:600;}
+.qa-a code{background:var(--panelHi);border:1px solid var(--hairline);border-radius:4px;
+  padding:1px 5px;font-size:11.5px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="doc-kicker">Bargain Lane · Inventory</div>
+  <h1 class="doc-title">Inventory, unbundled</h1>
+  <p class="doc-sub">
+    Today <b style="color:var(--ink)">Inventory is one page</b> holding three tools as
+    collapsed cards and a modal, while Bin Dump, Inventory Receiver, Mark Out of Stock and
+    Opportunity Buys sit beside it as four separate top-level nav items. This preview turns
+    <b style="color:var(--ink)">Inventory into a sidebar group</b> — the same mechanism
+    Marketing and Merchandising already use — and promotes
+    <b style="color:var(--ink)">Add Item</b>, <b style="color:var(--ink)">Inventory Viewer</b>
+    and <b style="color:var(--ink)">Schedule Sale</b> to real pages, rebuilt on the V1
+    Operator panel from DESIGN.md §4.8.
+  </p>
+
+  <div class="doc-note">
+    <b>Nothing here is wired.</b> This file lives in <code style="background:var(--panelHi);border:1px solid var(--hairline);border-radius:4px;padding:1px 5px">docs/</code>,
+    which <code style="background:var(--panelHi);border:1px solid var(--hairline);border-radius:4px;padding:1px 5px">scripts/build.sh</code>
+    deliberately excludes from its copy allowlist, so it can never reach production. The
+    numbers are plausible sample data. Every field, endpoint and validation rule shown is
+    read from the live <code style="background:var(--panelHi);border:1px solid var(--hairline);border-radius:4px;padding:1px 5px">index.html</code>
+    and <code style="background:var(--panelHi);border:1px solid var(--hairline);border-radius:4px;padding:1px 5px">worker.js</code> — nothing is invented.
+  </div>
+
+  <div class="toolbar">
+    <span class="tb-lbl">Page</span>
+    <div class="seg" role="group" aria-label="Page">
+      <button type="button" data-pg="add" aria-pressed="true">Add Item</button>
+      <button type="button" data-pg="viewer" aria-pressed="false">Inventory Viewer</button>
+      <button type="button" data-pg="sale" aria-pressed="false">Schedule Sale</button>
+    </div>
+    <span class="tb-lbl" style="margin-left:6px">Theme</span>
+    <div class="seg" role="group" aria-label="Theme">
+      <button type="button" data-th="dark" aria-pressed="true">Dark</button>
+      <button type="button" data-th="light" aria-pressed="false">Light</button>
+    </div>
+    <span class="tb-lbl" style="margin-left:6px">Width</span>
+    <div class="seg" role="group" aria-label="Width">
+      <button type="button" data-w="desk" aria-pressed="true">Desktop</button>
+      <button type="button" data-w="mob" aria-pressed="false">Phone</button>
+    </div>
+    <span class="tb-spacer"></span>
+    <span class="tb-hint">The sidebar group is live — click <b style="color:var(--ink)">Inventory</b> to collapse it.</span>
+  </div>
+
+  <!-- ══ 1. THE NAV CHANGE ══════════════════════════════════════════════ -->
+  <div class="sect">
+    <div class="sect-h"><span class="sect-n">1</span><span class="sect-t">Inventory becomes a group</span></div>
+    <p class="sect-d">
+      The sidebar already has this exact pattern twice — <b>Marketing</b> (5 children) and
+      <b>Merchandising</b> (7 children). Both are a <code>#nav-*-group</code> wrapper, a
+      header <code>.nav-item</code> with no <code>data-page</code>, a chevron rotated by
+      inline style, and a <code>.nav-sub</code> list of <code>.nav-subitem</code> children.
+      Inventory becomes the third. The four pages you named keep their ids and their code —
+      they only move <i>under</i> the group. The three tools inside today's Inventory page
+      become siblings of them.
+    </p>
+  </div>
+
+  <div class="stage" style="padding:18px">
+  <div class="app" id="app">
+
+    <!-- ══ SIDEBAR ══════════════════════════════════════════════════════ -->
+    <aside class="side">
+      <div class="side-logo">
+        <div class="side-mark">BL</div>
+        <div class="side-name">Bargain&nbsp;Lane</div>
+      </div>
+      <nav class="side-nav">
+        <button type="button" class="nav-item"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></span><span class="nav-label">Dashboard</span></button>
+        <button type="button" class="nav-item"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span><span class="nav-label">Retail Summary</span></button>
+
+        <!-- Marketing — EXISTING group, shown for comparison -->
+        <div>
+          <button type="button" class="nav-item" data-grp="mkt"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg></span><span class="nav-label">Marketing</span><span class="nav-chev" data-chev="mkt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span></button>
+          <div class="nav-sub" data-sub="mkt"></div>
+        </div>
+        <!-- Merchandising — EXISTING group -->
+        <div>
+          <button type="button" class="nav-item" data-grp="mch"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41 13.42 20.6a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg></span><span class="nav-label">Merchandising</span><span class="nav-chev" data-chev="mch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span></button>
+          <div class="nav-sub" data-sub="mch"></div>
+        </div>
+
+        <!-- ★ Inventory — THE NEW GROUP -->
+        <div>
+          <button type="button" class="nav-item" data-grp="inv" id="grp-inv">
+            <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span>
+            <span class="nav-label">Inventory</span>
+            <span class="nav-chev" data-chev="inv" style="transform:rotate(90deg)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
+          </button>
+          <div class="nav-sub is-open" data-sub="inv">
+            <button type="button" class="nav-item nav-subitem active" data-pgnav="add"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg></span><span class="nav-label">Add Item</span><span class="nav-new">NEW</span></button>
+            <button type="button" class="nav-item nav-subitem" data-pgnav="viewer"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></span><span class="nav-label">Inventory Viewer</span><span class="nav-new">NEW</span></button>
+            <button type="button" class="nav-item nav-subitem" data-pgnav="sale"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg></span><span class="nav-label">Schedule Sale</span><span class="nav-new">NEW</span></button>
+            <button type="button" class="nav-item nav-subitem" data-pgnav="x"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg></span><span class="nav-label">Bin Dump</span></button>
+            <button type="button" class="nav-item nav-subitem" data-pgnav="x"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg></span><span class="nav-label">Inventory Receiver</span></button>
+            <button type="button" class="nav-item nav-subitem" data-pgnav="x"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg></span><span class="nav-label">Mark Out of Stock</span></button>
+            <button type="button" class="nav-item nav-subitem" data-pgnav="x"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg></span><span class="nav-label">Opportunity Buys</span></button>
+          </div>
+        </div>
+
+        <button type="button" class="nav-item"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/></svg></span><span class="nav-label">Labor</span></button>
+        <button type="button" class="nav-item"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg></span><span class="nav-label">Supply Request</span></button>
+      </nav>
+      <div class="side-foot">
+        <div class="side-user">
+          <div class="side-av">BH</div>
+          <div><div class="side-un">Brian Howard</div><div class="side-ur">Superuser</div></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ══ MAIN ═════════════════════════════════════════════════════════ -->
+    <div class="main">
+
+      <!-- ══════════ PAGE: ADD ITEM ══════════ -->
+      <div class="pg" data-pg="add">
+        <div class="appbar">
+          <div>
+            <h1>Add Item</h1>
+            <div class="sub">Create a Clover item in one store or all six.</div>
+          </div>
+          <div class="acts">
+            <button class="btn btn-ghost btn-sm" type="button">Item cost data&nbsp;·&nbsp;<b style="color:var(--accent)">2,214 SKUs</b></button>
+          </div>
+        </div>
+
+        <div class="page-body">
+
+          <div class="panel">
+            <div class="panel-bar">
+              <span class="lbl">New item</span>
+              <span class="right">
+                <span class="lbl" style="letter-spacing:.06em">Create in</span>
+                <select class="inp inp-sm" id="add-scope">
+                  <option value="all">All 6 locations</option>
+                  <option value="BL1">BL1 · Coliseum</option>
+                  <option value="BL2">BL2 · South Bend</option>
+                  <option value="BL4">BL4 · Dupont</option>
+                  <option value="BL8">BL8 · Holland</option>
+                  <option value="BL14">BL14 · Battle Creek</option>
+                  <option value="BL16">BL16 · Indy East</option>
+                </select>
+              </span>
+            </div>
+
+            <div class="panel-status">
+              Creating in <b id="add-scope-txt">all 6 locations</b>. Each store gets its own
+              Clover item; the duplicate check runs per store and a store that already has this
+              code is skipped, not overwritten.
+            </div>
+
+            <div class="panel-body">
+              <div class="grid2">
+                <div class="fld span2">
+                  <label class="fld-l" for="ai-name">Name <span class="req">*</span></label>
+                  <input class="inp" type="text" id="ai-name" value="Downy Liquid Fabric Softener 26oz" placeholder="Item name">
+                </div>
+
+                <div class="fld">
+                  <label class="fld-l" for="ai-code">Code / SKU <span class="req">*</span></label>
+                  <input class="inp" type="text" id="ai-code" value="41284" placeholder="e.g. 12345">
+                  <div class="fld-note" id="ai-code-note">Links to Item Master cost data.</div>
+                </div>
+
+                <div class="fld">
+                  <label class="fld-l" for="ai-price">Retail price <span class="req">*</span></label>
+                  <input class="inp" type="number" id="ai-price" value="6.99" min="0.01" step="0.01" placeholder="9.99">
+                  <div class="fld-note">Cents are rounded at submit.</div>
+                </div>
+
+                <div class="fld">
+                  <label class="fld-l" for="ai-cost">Unit cost <span class="opt">optional</span></label>
+                  <input class="inp" type="number" id="ai-cost" value="2.40" min="0" step="0.01" placeholder="3.00">
+                  <div class="fld-note">Also written to the shared item-cost table.</div>
+                </div>
+
+                <div class="fld" style="justify-content:flex-end">
+                  <div class="derive">
+                    <div class="d"><div class="dc">Margin</div><div class="dv good" id="ai-gp">65.7%</div><div class="dn" id="ai-gp-n">$4.59 per unit</div></div>
+                    <div class="d"><div class="dc">Multiple</div><div class="dv" id="ai-mult">2.9×</div><div class="dn">retail ÷ cost</div></div>
+                  </div>
+                </div>
+
+                <div class="fld span2">
+                  <label class="fld-l" for="ai-l3">Clover category <span class="req">*</span> <span class="opt">L3</span></label>
+                  <input class="inp" type="text" id="ai-l3" list="ai-l3-list" value="FG BL CONSUMABLES - HBA - HYGIENE" placeholder="Type a new category or pick an existing one">
+                  <datalist id="ai-l3-list"></datalist>
+                  <div class="fld-note" id="ai-l3-note">Existing Clover category in BL1.</div>
+                </div>
+
+                <div class="fld span2" id="ai-l2-fld">
+                  <label class="fld-l" for="ai-l2">Reporting group <span class="req">*</span> <span class="opt">L2</span> <span class="bdg g" id="ai-l2-bdg">auto</span></label>
+                  <select class="inp" id="ai-l2">
+                    <option>Consumable Food</option><option>Consumable HBA</option>
+                    <option>Consumable Other</option><option>Furniture</option>
+                    <option>Hardlines</option><option>Home</option><option>Seasonal</option>
+                    <option>Softline - Accessories</option><option>Softline - Apparel</option>
+                    <option>Softline - Shoes</option><option>Bin Products</option>
+                    <option>Gift Cards</option>
+                  </select>
+                  <div class="fld-note" id="ai-l2-note">
+                    Set by the category above — this L3 is a built-in that always books to
+                    <b style="color:var(--ink)">Consumable HBA</b>.
+                  </div>
+                </div>
+
+                <label class="chk" for="ai-tax"><input type="checkbox" id="ai-tax" checked> Taxable <span class="sub">default tax rate</span></label>
+                <label class="chk" for="ai-hid"><input type="checkbox" id="ai-hid"> Hidden <span class="sub">not on the register</span></label>
+              </div>
+            </div>
+
+            <div class="panel-foot">
+              <span class="dim" style="font-size:12px" id="ai-foot">
+                Will create <b style="color:var(--ink)">6 items</b> · category resolved per store · cost table updated
+              </span>
+              <span class="right">
+                <button class="btn btn-ghost" type="button">Reset</button>
+                <button class="btn btn-primary" type="button" id="ai-go">Create item</button>
+              </span>
+            </div>
+          </div>
+
+          <!-- Results -->
+          <div class="panel">
+            <div class="panel-bar">
+              <span class="lbl">Result · 6 locations</span>
+              <span class="right"><span class="bdg g">4 created</span><span class="bdg a">1 exists</span><span class="bdg r">1 failed</span></span>
+            </div>
+            <div class="panel-status">
+              Item-cost table updated · the new L3 was mapped to <b>Consumable HBA</b> for every store.
+            </div>
+            <div style="padding:8px 0 0">
+              <div class="res ok"><span class="s">BL1</span><span class="nm">Coliseum</span><span class="msg">Created · <b>N9WQ4K2XJ8A1P</b> · category matched</span><span class="right"><span class="bdg g">created</span></span></div>
+              <div class="res ok"><span class="s">BL2</span><span class="nm">South Bend</span><span class="msg">Created · <b>7TRM5V0YB3C6D</b> · category matched</span><span class="right"><span class="bdg g">created</span></span></div>
+              <div class="res ok"><span class="s">BL4</span><span class="nm">Dupont</span><span class="msg">Created · <b>K2JX8H6NQ4W0Z</b> · <b>category created</b></span><span class="right"><span class="bdg b">new category</span><span class="bdg g">created</span></span></div>
+              <div class="res dupe"><span class="s">BL8</span><span class="nm">Holland</span><span class="msg">Code <b>41284</b> is already in use by <b>Downy Softener 26 oz</b> — nothing was created.</span><span class="right"><button class="btn btn-ghost btn-sm" type="button">Open in Viewer</button></span></div>
+              <div class="res ok"><span class="s">BL14</span><span class="nm">Battle Creek</span><span class="msg">Created · <b>3QF7L1D9S5G2M</b> · category matched</span><span class="right"><span class="bdg g">created</span></span></div>
+              <div class="res bad"><span class="s">BL16</span><span class="nm">Indy East</span><span class="msg">Could not check whether <b>41284</b> is already in use — Clover returned 503. <b>Nothing was created.</b></span><span class="right"><button class="btn btn-ghost btn-sm" type="button">Retry BL16</button></span></div>
+            </div>
+            <div class="panel-legend">
+              <span class="lg-item"><span class="lg-sw" style="background:var(--greenWash);border-color:var(--greenEdge)"></span>Created — a new Clover item exists</span>
+              <span class="lg-item"><span class="lg-sw" style="background:var(--amberWash);border-color:var(--amberEdge)"></span>Skipped — the code was already in use, nothing changed</span>
+              <span class="lg-item"><span class="lg-sw" style="background:var(--badWash);border-color:var(--badEdge)"></span>Failed — the duplicate check could not answer, so creation refused</span>
+            </div>
+          </div>
+
+        </div><!-- /page-body -->
+      </div><!-- /pg add -->
+
+      <!-- ══════════ PAGE: INVENTORY VIEWER ══════════ -->
+      <div class="pg" data-pg="viewer" hidden>
+        <div class="appbar">
+          <div>
+            <h1>Inventory Viewer</h1>
+            <div class="sub">The Clover catalog for one store — search, fix, and select for a sale.</div>
+          </div>
+          <div class="acts">
+            <button class="btn btn-ghost btn-sm" type="button">Export CSV</button>
+            <button class="btn btn-ghost btn-sm" type="button">Add item</button>
+          </div>
+        </div>
+
+        <div class="page-body">
+
+          <!-- Selection bar — only present when rows are ticked -->
+          <div class="status info" id="iv-selbar" hidden>
+            <span class="ico">✓</span>
+            <span>
+              <b id="iv-selcount">3 items</b> selected · <span id="iv-selval">$47.97</span> combined retail.
+              <span class="dim">A sale scheduled from here opens Schedule Sale with these items already loaded.</span>
+            </span>
+            <span style="margin-left:auto;display:flex;gap:8px;flex-shrink:0">
+              <button class="btn btn-ghost btn-sm" type="button" id="iv-clearsel">Clear</button>
+              <button class="btn btn-primary btn-sm" type="button" id="iv-tosale" style="padding:6px 13px">Schedule sale →</button>
+            </span>
+          </div>
+
+          <div class="panel">
+            <div class="panel-bar">
+              <span class="lbl">Catalog</span>
+              <select class="inp inp-sm" id="iv-store">
+                <option value="BL1">BL1 · Coliseum</option>
+                <option value="BL2">BL2 · South Bend</option>
+                <option value="BL4">BL4 · Dupont</option>
+                <option value="BL8">BL8 · Holland</option>
+                <option value="BL14">BL14 · Battle Creek</option>
+                <option value="BL16">BL16 · Indy East</option>
+              </select>
+              <input class="inp inp-sm grow" type="search" id="iv-q" placeholder="Search name, code or category…">
+              <span class="right">
+                <button class="btn btn-ghost btn-sm" type="button" id="iv-dup">Find duplicates</button>
+                <button class="btn btn-ghost btn-sm" type="button" id="iv-nocost">No cost</button>
+                <button class="btn btn-ghost btn-sm" type="button" id="iv-reload">Reload</button>
+              </span>
+            </div>
+
+            <div class="panel-status" id="iv-status">
+              <b>1,284 items</b> in BL1 · <span class="hi">37 carry no cost</span>, so no margin can be shown for them ·
+              <span class="hi">6 codes are used twice</span>. Loaded 11:42, straight from Clover.
+            </div>
+
+            <div class="tbl-scroll">
+              <table class="dt">
+                <thead>
+                  <tr>
+                    <th class="ck stick" style="width:34px"><input type="checkbox" id="iv-all" aria-label="Select all"></th>
+                    <th class="stick sort" data-s="name" style="left:34px">Item <span class="ar" data-ar="name">▲</span></th>
+                    <th class="sort" data-s="code">Code <span class="ar" data-ar="code"></span></th>
+                    <th>Category</th>
+                    <th class="num sort" data-s="price">Price <span class="ar" data-ar="price"></span></th>
+                    <th class="num sort" data-s="cost">Cost <span class="ar" data-ar="cost"></span></th>
+                    <th class="num sort" data-s="gp">GP% <span class="ar" data-ar="gp"></span></th>
+                    <th>Flags</th>
+                    <th class="num sort" data-s="mod">Modified <span class="ar" data-ar="mod"></span></th>
+                    <th style="width:92px"></th>
+                  </tr>
+                </thead>
+                <tbody id="iv-tbody"></tbody>
+              </table>
+            </div>
+
+            <div class="pager">
+              <span id="iv-pglabel">Showing 1–12 of 1,284</span>
+              <span class="right">
+                <button class="btn btn-ghost btn-sm" type="button" disabled>← Prev</button>
+                <button class="btn btn-ghost btn-sm" type="button">Next →</button>
+              </span>
+            </div>
+
+            <div class="panel-legend">
+              <span class="lg-item"><span class="lg-sw" style="background:var(--amberWash);border-color:var(--amberEdge)"></span>Duplicate code — two items share this SKU</span>
+              <span class="lg-item"><span class="lg-sw" style="background:var(--greenWash);border-color:var(--greenEdge)"></span>Selected for a sale</span>
+              <span class="lg-item"><span class="bdg">hidden</span>Off the register — still in the catalog</span>
+              <span class="lg-item"><span class="bdg b">2 cats</span>In more than one Clover category</span>
+              <span class="lg-item"><span class="dim">—</span>&nbsp;No cost recorded, so GP% is unknowable (never shown as 0%)</span>
+            </div>
+          </div>
+
+        </div><!-- /page-body -->
+      </div><!-- /pg viewer -->
+
+      <!-- ══════════ PAGE: SCHEDULE SALE ══════════ -->
+      <div class="pg" data-pg="sale" hidden>
+        <div class="appbar">
+          <div>
+            <h1>Schedule Sale</h1>
+            <div class="sub">Temporary price changes that apply and revert themselves.</div>
+          </div>
+          <div class="acts">
+            <span class="bdg g">scheduler healthy · ran 41s ago</span>
+          </div>
+        </div>
+
+        <div class="page-body">
+
+          <!-- ── Step 1 · Items ── -->
+          <div class="panel">
+            <div class="panel-bar">
+              <span class="step"><span class="step-n">1</span><span class="lbl" style="font-size:11px">Items</span></span>
+              <span class="right">
+                <input class="inp inp-sm grow" type="search" placeholder="Add an item…" style="max-width:300px">
+              </span>
+            </div>
+            <div class="panel-status">
+              <b id="ss-n">3 items</b> carried over from the Inventory Viewer · combined retail
+              <b id="ss-val">$47.97</b>. Prices are re-read from Clover when the sale activates,
+              so an item repriced between now and then still discounts off its real price.
+            </div>
+            <div class="panel-body">
+              <div style="display:flex;gap:8px;flex-wrap:wrap" id="ss-chips"></div>
+            </div>
+          </div>
+
+          <!-- ── Step 2 · The sale ── -->
+          <div class="panel">
+            <div class="panel-bar">
+              <span class="step"><span class="step-n">2</span><span class="lbl" style="font-size:11px">Discount &amp; window</span></span>
+            </div>
+            <div class="panel-body">
+              <div class="grid2">
+                <div class="fld span2">
+                  <span class="fld-l">Locations <span class="req">*</span></span>
+                  <div class="stores" id="ss-stores">
+                    <label class="st on"><input type="checkbox" value="BL1" checked> BL1 <span class="nm">Coliseum</span></label>
+                    <label class="st"><input type="checkbox" value="BL2"> BL2 <span class="nm">South Bend</span></label>
+                    <label class="st"><input type="checkbox" value="BL4"> BL4 <span class="nm">Dupont</span></label>
+                    <label class="st"><input type="checkbox" value="BL8"> BL8 <span class="nm">Holland</span></label>
+                    <label class="st"><input type="checkbox" value="BL14"> BL14 <span class="nm">Battle Creek</span></label>
+                    <label class="st"><input type="checkbox" value="BL16"> BL16 <span class="nm">Indy East</span></label>
+                  </div>
+                  <div class="fld-note">One schedule is created per location.</div>
+                </div>
+
+                <div class="fld">
+                  <span class="fld-l">Discount <span class="req">*</span></span>
+                  <div style="display:flex;gap:9px">
+                    <div class="seg" style="flex-shrink:0">
+                      <button type="button" data-k="percent" aria-pressed="true">% off</button>
+                      <button type="button" data-k="amount" aria-pressed="false">$ off</button>
+                    </div>
+                    <input class="inp" type="number" id="ss-val-in" value="25" min="0.01" step="0.01" placeholder="20">
+                  </div>
+                  <div class="fld-note" id="ss-dnote">Must be under 100%. Never prices an item below $0.01.</div>
+                </div>
+
+                <div class="fld">
+                  <label class="fld-l" for="ss-label">Sale label <span class="opt">optional · 30 max</span></label>
+                  <input class="inp" type="text" id="ss-label" maxlength="30" value="Manager Sale" placeholder="e.g. Flash Sale">
+                  <div class="fld-note">Appears in the item name on the register while the sale runs.</div>
+                </div>
+
+                <div class="fld">
+                  <label class="fld-l" for="ss-start">Starts <span class="req">*</span> <span class="opt">Eastern</span></label>
+                  <input class="inp" type="datetime-local" id="ss-start" value="2026-09-23T08:00">
+                  <div class="fld-note">Must be in the future. Applies within ~60s.</div>
+                </div>
+
+                <div class="fld">
+                  <label class="fld-l" for="ss-end">Ends <span class="req">*</span> <span class="opt">Eastern</span></label>
+                  <input class="inp" type="datetime-local" id="ss-end" value="2026-09-25T20:00">
+                  <div class="fld-note" id="ss-dur">Runs 2 days 12 hours, then reverts itself.</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- live preview -->
+            <div class="panel-bar" style="border-top:1px solid var(--hairline);border-bottom:0">
+              <span class="lbl">Preview</span>
+              <span class="right dim" style="font-size:11.5px">Exactly what the register will show</span>
+            </div>
+            <div class="panel-body" style="padding-top:12px">
+              <div class="sched-items" id="ss-prev" style="margin-top:0"></div>
+              <div class="status info" style="margin:13px 0 0">
+                <span class="ico">i</span>
+                <span>On the register the item is renamed while the sale runs, then renamed back:
+                  <br><code style="background:var(--panelHi);border:1px solid var(--hairline);border-radius:4px;padding:1px 5px;font-size:11.5px" id="ss-rename">SALE Downy Liquid Fabric Softener 26oz (was $6.99 Manager Sale)</code>
+                </span>
+              </div>
+            </div>
+
+            <div class="panel-foot">
+              <span class="dim" style="font-size:12px" id="ss-foot">
+                <b style="color:var(--ink)">3 items</b> × <b style="color:var(--ink)">1 location</b> = 3 scheduled price changes
+              </span>
+              <span class="right">
+                <button class="btn btn-ghost" type="button">Cancel</button>
+                <button class="btn btn-primary" type="button">Schedule sale</button>
+              </span>
+            </div>
+          </div>
+
+          <!-- conflict state -->
+          <div class="status err">
+            <span class="ico">!</span>
+            <span>
+              <b>BL8 was not scheduled.</b> <b>Pantene Shampoo 12oz</b> already has a sale
+              running 24 Sep – 27 Sep that overlaps this window. The other five locations were
+              scheduled. <span class="dim">Change the window, drop the item, or cancel the existing sale below.</span>
+            </span>
+          </div>
+
+          <!-- ── Step 3 · The log ── -->
+          <div class="panel">
+            <div class="panel-bar">
+              <span class="step"><span class="step-n idle">3</span><span class="lbl" style="font-size:11px">Scheduled sales</span></span>
+              <select class="inp inp-sm" style="margin-left:4px">
+                <option>BL1 · Coliseum</option><option>BL2 · South Bend</option>
+                <option>BL4 · Dupont</option><option>BL8 · Holland</option>
+                <option>BL14 · Battle Creek</option><option>BL16 · Indy East</option>
+              </select>
+              <div class="seg">
+                <button type="button" aria-pressed="true">All</button>
+                <button type="button" aria-pressed="false">Upcoming</button>
+                <button type="button" aria-pressed="false">Active</button>
+                <button type="button" aria-pressed="false">Past</button>
+              </div>
+            </div>
+            <div class="panel-status">
+              <b>1 running</b>, 1 upcoming, 1 finished, 1 errored in BL1.
+            </div>
+
+            <div style="padding-top:4px">
+              <div class="sched">
+                <div class="sched-h">
+                  <span class="bdg g">● Active</span>
+                  <span class="sched-t">30% off · Weekend</span>
+                  <span class="sched-m">until Sun 21 Sep, 8:00 PM ET · 2 items</span>
+                  <span class="right"><button class="btn btn-danger" type="button">Cancel &amp; restore</button></span>
+                </div>
+                <div class="sched-items">
+                  <div class="si"><span class="n">Tide Pods 42ct</span><span class="p"><s>$18.99</s> → <b>$13.29</b></span></div>
+                  <div class="si"><span class="n">Gain Flings 31ct</span><span class="p"><s>$14.99</s> → <b>$10.49</b></span></div>
+                </div>
+              </div>
+
+              <div class="sched">
+                <div class="sched-h">
+                  <span class="bdg b">◷ Upcoming</span>
+                  <span class="sched-t">$2.00 off · Clearance</span>
+                  <span class="sched-m">Wed 23 Sep, 8:00 AM → Fri 25 Sep, 8:00 PM ET · 3 items</span>
+                  <span class="right"><button class="btn btn-ghost btn-sm" type="button">Cancel</button></span>
+                </div>
+                <div class="sched-items">
+                  <div class="si"><span class="n">Downy Liquid Fabric Softener 26oz</span><span class="p"><s>$6.99</s> → <b>$4.99</b></span></div>
+                  <div class="si"><span class="n">Pantene Shampoo 12oz</span><span class="p"><s>$8.49</s> → <b>$6.49</b></span></div>
+                  <div class="si"><span class="n">Dove Bar Soap 4pk</span><span class="p"><s>$5.99</s> → <b>$3.99</b></span></div>
+                </div>
+              </div>
+
+              <div class="sched">
+                <div class="sched-h">
+                  <span class="bdg r">▲ Error</span>
+                  <span class="sched-t">40% off · Labor Day</span>
+                  <span class="sched-m">ended Mon 1 Sep, 9:00 PM ET · 2 items</span>
+                  <span class="right"><button class="btn btn-ghost btn-sm" type="button">Remove</button></span>
+                </div>
+                <div class="sched-items">
+                  <div class="si"><span class="n">Cascade Total Clean 103ct</span><span class="p"><s>$22.99</s> → <b>$13.79</b></span></div>
+                  <div class="si errrow"><span class="n">Bounce Sheets 160ct</span><span class="p">Revert failed — item deleted in Clover</span></div>
+                </div>
+              </div>
+
+              <div class="sched">
+                <div class="sched-h">
+                  <span class="bdg">✓ Completed</span>
+                  <span class="sched-t">15% off · Back to School</span>
+                  <span class="sched-m">ended Sun 24 Aug, 8:00 PM ET · 4 items · all reverted</span>
+                  <span class="right"><button class="btn btn-ghost btn-sm" type="button">Remove</button></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel-legend">
+              <span class="lg-item"><span class="bdg g">● Active</span>Running now — prices are discounted on the register</span>
+              <span class="lg-item"><span class="bdg b">◷ Upcoming</span>Not applied yet; cancelling costs nothing</span>
+              <span class="lg-item"><span class="bdg">✓ Completed</span>Ran and reverted cleanly</span>
+              <span class="lg-item"><span class="bdg r">▲ Error</span>At least one item did not revert — <b style="color:var(--badText)">check the price by hand</b></span>
+            </div>
+          </div>
+
+        </div><!-- /page-body -->
+      </div><!-- /pg sale -->
+
+    </div><!-- /main -->
+
+    <!-- mobile bottom bar -->
+    <nav class="bnav">
+      <button class="bn-tab" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg><span class="bn-lb">Home</span></button>
+      <button class="bn-tab" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><span class="bn-lb">Retail</span></button>
+      <button class="bn-tab" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg><span class="bn-lb">Bin</span></button>
+      <button class="bn-tab" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg><span class="bn-lb">MOS</span></button>
+      <button class="bn-tab on" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/><circle cx="5" cy="12" r="1.6"/></svg><span class="bn-lb">More</span></button>
+    </nav>
+
+  </div><!-- /app -->
+  </div><!-- /stage -->
+
+  <!-- ══ 2. WHAT CHANGES ═══════════════════════════════════════════════ -->
+  <div class="sect">
+    <div class="sect-h"><span class="sect-n">2</span><span class="sect-t">What each page gains</span></div>
+    <p class="sect-d">
+      Beyond the V1 skin, these are the behaviour changes the redesign makes. Each one exists
+      because the current page has a specific gap, named below.
+    </p>
+    <div class="qa">
+      <div class="qa-row"><span class="qa-n g">A</span><div>
+        <div class="qa-q">Add Item — the L3 → L2 conflict moves <i>before</i> the submit</div>
+        <div class="qa-a">
+          Today you pick the reporting group (L2) first, then type a Clover category (L3). If the
+          L3 is a built-in that already maps elsewhere, the worker <b>creates the item anyway</b>
+          and tells you afterwards, in a yellow banner, that sales will book somewhere other than
+          where you chose. In the redesign the category comes first and the reporting group
+          follows from it — auto-filled and explained when the mapping is known, free to set when
+          the category is genuinely new. The conflict becomes impossible to submit by accident
+          rather than something you read about afterwards.
+        </div></div></div>
+      <div class="qa-row"><span class="qa-n g">B</span><div>
+        <div class="qa-q">Add Item — margin is shown while you type</div>
+        <div class="qa-a">
+          Price and cost are both already collected and never multiplied together. A buyer
+          entering <b>$6.99</b> against a <b>$2.40</b> cost currently gets no signal that this is
+          a 65.7% margin until it shows up in a report weeks later.
+        </div></div></div>
+      <div class="qa-row"><span class="qa-n g">C</span><div>
+        <div class="qa-q">Add Item — the six-store result becomes readable</div>
+        <div class="qa-a">
+          The endpoint already returns a per-store <code>results[]</code> with a
+          <code>stage</code> and a duplicate flag. The current UI renders it as a four-column
+          table (Store / Status / Item ID / Category) with <code>✓ Created</code>,
+          <code>⚠ Exists</code>, <code>✗ Error</code> — and only when more than one store was
+          targeted. The redesign gives each outcome a coloured row, the reason in plain English,
+          and the one action that resolves it.
+        </div></div></div>
+      <div class="qa-row"><span class="qa-n g">D</span><div>
+        <div class="qa-q">Inventory Viewer — GP% becomes a column, and “no cost” stops reading as free</div>
+        <div class="qa-a">
+          Price and cost are both already in the table. A missing cost renders as
+          <b>—</b>, never <code>$0.00</code> or <code>0%</code> — the same rule DESIGN.md §4.8
+          sets for the Coverage heatmap, where printing <code>0%</code> for absent data tells you
+          to cut a category nobody measured.
+        </div></div></div>
+      <div class="qa-row"><span class="qa-n g">E</span><div>
+        <div class="qa-q">Inventory Viewer — an item in two Clover categories is finally visible</div>
+        <div class="qa-a">
+          The endpoint returns <code>categories[]</code> as well as the flattened
+          <code>category</code>, precisely because collapsing to the first one hid whether an
+          item also sat in the sku book alongside a real category. The current table shows only
+          the flattened name. A <span class="bdg b">2 cats</span> badge surfaces it.
+        </div></div></div>
+      <div class="qa-row"><span class="qa-n g">F</span><div>
+        <div class="qa-q">Schedule Sale — stops being a modal</div>
+        <div class="qa-a">
+          It is currently a modal reachable <b>only</b> by ticking rows in the Inventory Viewer,
+          and it is the one modal in the page driven by inline <code>style.display</code> rather
+          than <code>.hidden</code> — with a special case in <code>closeInvModal</code> to match.
+          As a page it is reachable directly, the item list and the schedule log sit on the same
+          screen, and the special case goes away.
+        </div></div></div>
+      <div class="qa-row"><span class="qa-n g">G</span><div>
+        <div class="qa-q">Schedule Sale — the 409 overlap becomes a designed state</div>
+        <div class="qa-a">
+          The worker refuses a schedule that overlaps a pending or active one for the same item
+          and returns a 409 naming the item. Since one POST goes out <b>per checked store</b>, a
+          realistic outcome is “five scheduled, one refused” — which the current status line
+          cannot express.
+        </div></div></div>
+    </div>
+  </div>
+
+  <!-- ══ 3. DECIDE ═════════════════════════════════════════════════════ -->
+  <div class="sect">
+    <div class="sect-h"><span class="sect-n">3</span><span class="sect-t">One thing to decide, four things found</span></div>
+    <p class="sect-d">
+      The mock above puts all seven pages inside the group. Your message listed four for the
+      dropdown and then asked for the other three to get their own page — which could mean
+      either. Say which and I will build it that way.
+    </p>
+    <div class="qa">
+      <div class="qa-row"><span class="qa-n">?</span><div>
+        <div class="qa-q">Do Add Item / Inventory Viewer / Schedule Sale go <i>inside</i> the Inventory group, or beside it?</div>
+        <div class="qa-a">
+          <b>Shown above:</b> all seven inside the group, catalog tools first, floor tools after.
+          <b>The alternative</b> is three top-level nav items plus a four-item Inventory group —
+          but that puts nine Inventory-ish rows in a sidebar that already has Marketing and
+          Merchandising groups, and “Add Item” as a top-level peer of “Dashboard” reads oddly.
+          The order inside the group is trivial to change either way.
+        </div></div></div>
+      <div class="qa-row"><span class="qa-n r">1</span><div>
+        <div class="qa-q">“Delete from all other stores” targets a closed store and misses a live one</div>
+        <div class="qa-a">
+          <code>confirmDelete()</code> hardcodes
+          <code>['BL1','BL2','BL4','BL8','BL12','BL14']</code>. <b>BL12 is Wyoming, which is
+          closed</b>; <b>BL16 (Indy East) is missing</b> — and every store dropdown on the page
+          lists BL16 and not BL12. So today that checkbox silently leaves the item alive in Indy
+          East. This is a live bug independent of the redesign; I would fix it in the same change
+          unless you want it separately.
+        </div></div></div>
+      <div class="qa-row"><span class="qa-n r">2</span><div>
+        <div class="qa-q">The whole mobile bar layout keys off the Inventory nav item</div>
+        <div class="qa-a">
+          <code>var isAdminBar = vis('nav-inventory')</code> is the discriminator that decides
+          whether a phone gets the flat admin bar or the manager bar with the centred Submit
+          button. If <code>nav-inventory</code> becomes a group <i>header</i>, that check changes
+          meaning. It needs re-pointing deliberately, and it is the single most breakable line in
+          the change.
+        </div></div></div>
+      <div class="qa-row"><span class="qa-n r">3</span><div>
+        <div class="qa-q">Moving the four pages into a group can blank an associate's whole app</div>
+        <div class="qa-a">
+          <code>applyAssociateNav</code> hides every nav item, then un-hides only the granted
+          ones. Bin Dump, Inventory Receiver, Mark Out of Stock and Opportunity Buys are exactly
+          the four grantable pages. Un-hiding the child without also un-hiding the new group
+          wrapper and sub-list leaves an associate with an empty sidebar.
+        </div></div></div>
+      <div class="qa-row"><span class="qa-n">4</span><div>
+        <div class="qa-q">The test that would catch a broken nav link does not run</div>
+        <div class="qa-a">
+          <code>scripts/test-nav-registry.mjs</code> reports <b>17 passed</b>, but its last block
+          — the one asserting “every <code>data-page</code> has a matching
+          <code>page-</code> section” — sits after <code>process.exit()</code>, and throws
+          <code>ReferenceError: REPO is not defined</code> if reached. Verified by removing the
+          exit and running it. That is precisely the check a nav restructure needs, so I would
+          repair it first and let it guard the change.
+        </div></div></div>
+      <div class="qa-row"><span class="qa-n">5</span><div>
+        <div class="qa-q">Dead pagination, and four copies of the store list</div>
+        <div class="qa-a">
+          <code>updateInvPagination</code> has no caller; <code>invPagePrev</code> /
+          <code>invPageNext</code> are reachable only from buttons inside a container that is
+          never shown, and step an offset <code>loadInventory</code> ignores. Separately, the six
+          stores are hardcoded four times on this page — Add Item, the Viewer, the sale modal and
+          the schedule log — which is how BL16 went missing from one of them.
+        </div></div></div>
+    </div>
+  </div>
+
+  <p class="doc-sub" style="margin-top:34px">
+    Reply with the grouping decision and anything you want changed in these three pages, and I
+    will write the plan to <code style="background:var(--panelHi);border:1px solid var(--hairline);border-radius:4px;padding:1px 5px">tasks/todo.md</code>
+    and start on it.
+  </p>
+
+<script>
+(function () {
+  'use strict';
+  const $  = (s, r) => (r || document).querySelector(s);
+  const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
+  const money = c => '$' + (c / 100).toFixed(2);
+
+  /* ── Toolbar: theme / width / page ──────────────────────────────────── */
+  function press(group, val, attr) {
+    $$(`[${attr}]`).forEach(b => b.setAttribute('aria-pressed', String(b.getAttribute(attr) === val)));
+  }
+  $$('[data-th]').forEach(b => b.onclick = () => {
+    document.documentElement.classList.toggle('light', b.dataset.th === 'light');
+    press(null, b.dataset.th, 'data-th');
+  });
+  $$('[data-w]').forEach(b => b.onclick = () => {
+    $('#app').classList.toggle('mobile', b.dataset.w === 'mob');
+    press(null, b.dataset.w, 'data-w');
+  });
+
+  function showPage(pg) {
+    $$('.pg').forEach(p => { p.hidden = p.dataset.pg !== pg; });
+    press(null, pg, 'data-pg');
+    $$('[data-pgnav]').forEach(n => n.classList.toggle('active', n.dataset.pgnav === pg));
+    $('.page-body') && $('.pg:not([hidden]) .page-body').scrollTo(0, 0);
+  }
+  $$('[data-pg]').forEach(b => { if (b.tagName === 'BUTTON') b.onclick = () => showPage(b.dataset.pg); });
+  $$('[data-pgnav]').forEach(b => b.onclick = () => { if (b.dataset.pgnav !== 'x') showPage(b.dataset.pgnav); });
+
+  /* ── Sidebar groups — mirrors toggleMarketingMenu()'s inline rotate ─── */
+  $$('[data-grp]').forEach(h => h.onclick = () => {
+    const k = h.dataset.grp;
+    const sub = $(`[data-sub="${k}"]`), chev = $(`[data-chev="${k}"]`);
+    const open = !sub.classList.contains('is-open');
+    sub.classList.toggle('is-open', open);
+    chev.style.transform = open ? 'rotate(90deg)' : '';
+  });
+
+  /* ══ ADD ITEM ═══════════════════════════════════════════════════════ */
+  // A slice of worker.js's L3_TO_L2 (89 entries there). A category IN this map
+  // is a built-in: the worker refuses to re-map it, so the form must not offer to.
+  const L3_TO_L2 = {
+    'FG BL CONSUMABLES - HBA - HYGIENE':   'Consumable HBA',
+    'FG BL CONSUMABLES - HBA - HAIRCARE':  'Consumable HBA',
+    'FG BL CONSUMABLES - FOOD - SNACKS':   'Consumable Food',
+    'FG BL CONSUMABLES - FOOD - PANTRY':   'Consumable Food',
+    'FG BL CONSUMABLES - OTHER - LAUNDRY': 'Consumable Other',
+    'FG BL HARDLINES - TOOLS':             'Hardlines',
+    'FG BL HOME - KITCHEN':                'Home',
+    'FG BL SEASONAL - CHRISTMAS':          'Seasonal',
+  };
+  const l3list = $('#ai-l3-list');
+  if (l3list) Object.keys(L3_TO_L2).forEach(k => l3list.insertAdjacentHTML('beforeend', `<option value="${k}">`));
+
+  const STORE_N = { all: 'all 6 locations', BL1: 'BL1 · Coliseum', BL2: 'BL2 · South Bend',
+    BL4: 'BL4 · Dupont', BL8: 'BL8 · Holland', BL14: 'BL14 · Battle Creek', BL16: 'BL16 · Indy East' };
+
+  function addRecalc() {
+    const price = parseFloat($('#ai-price').value) || 0;
+    const cost  = parseFloat($('#ai-cost').value);
+    const gp = $('#ai-gp'), gpn = $('#ai-gp-n'), mult = $('#ai-mult');
+    if (!price || isNaN(cost) || cost <= 0) {
+      // No cost is not zero margin — it is an unknown. Never print 0%. (§4.8)
+      gp.textContent = '—'; gp.className = 'dv dim';
+      gpn.textContent = cost > 0 ? 'enter a price' : 'enter a unit cost';
+      mult.textContent = '—';
+    } else {
+      const m = (price - cost) / price * 100;
+      gp.textContent = m.toFixed(1) + '%';
+      gp.className = 'dv ' + (m >= 50 ? 'good' : m >= 30 ? 'warnv' : 'badv');
+      gpn.textContent = '$' + (price - cost).toFixed(2) + ' per unit';
+      mult.textContent = (price / cost).toFixed(1) + '×';
+    }
+    // SKU shape — the app warns about this only AFTER a successful create.
+    const code = $('#ai-code').value.trim();
+    const n = $('#ai-code-note');
+    if (!code) { n.textContent = 'Links to Item Master cost data.'; n.className = 'fld-note'; }
+    else if (/^\d{4,5}$/.test(code)) { n.textContent = 'Links to Item Master cost data.'; n.className = 'fld-note'; }
+    else { n.textContent = 'Not a 4–5 digit number — this will not auto-link to Item Master cost data.'; n.className = 'fld-note warn'; }
+
+    // L3 drives L2.
+    const l3 = $('#ai-l3').value.trim(), builtin = L3_TO_L2[l3];
+    const l2 = $('#ai-l2'), fld = $('#ai-l2-fld'), bdg = $('#ai-l2-bdg'), note = $('#ai-l2-note'), l3n = $('#ai-l3-note');
+    if (builtin) {
+      l2.value = builtin; l2.disabled = true; fld.classList.add('locked');
+      bdg.textContent = 'auto'; bdg.className = 'bdg g';
+      note.innerHTML = `Set by the category above — this L3 is a built-in that always books to <b style="color:var(--ink)">${builtin}</b>.`;
+      l3n.textContent = 'Existing Clover category.'; l3n.className = 'fld-note';
+    } else if (l3) {
+      l2.disabled = false; fld.classList.remove('locked');
+      bdg.textContent = 'new mapping'; bdg.className = 'bdg a';
+      note.innerHTML = `This category is new, so your choice becomes its mapping <b style="color:var(--ink)">for every store</b>. Sales for it will book to the group you pick.`;
+      l3n.textContent = 'New category — it will be created in each location.'; l3n.className = 'fld-note warn';
+    } else {
+      l2.disabled = false; fld.classList.remove('locked');
+      bdg.textContent = 'required'; bdg.className = 'bdg';
+      note.textContent = 'Pick a Clover category above first.';
+      l3n.textContent = 'Type a new category or pick an existing one.'; l3n.className = 'fld-note';
+    }
+
+    const scope = $('#add-scope').value, n6 = scope === 'all' ? 6 : 1;
+    $('#add-scope-txt').textContent = STORE_N[scope];
+    $('#ai-foot').innerHTML = `Will create <b style="color:var(--ink)">${n6} item${n6 > 1 ? 's' : ''}</b> · category resolved per store`
+      + (isNaN(cost) ? '' : ' · cost table updated');
+  }
+  ['ai-price','ai-cost','ai-code','ai-l3','add-scope'].forEach(id => {
+    const e = $('#' + id); if (e) { e.oninput = addRecalc; e.onchange = addRecalc; }
+  });
+  if ($('#ai-price')) addRecalc();
+
+  /* ══ INVENTORY VIEWER ═══════════════════════════════════════════════ */
+  const ITEMS = [
+    { n:'Downy Liquid Fabric Softener 26oz', c:'41284', cat:'FG BL CONSUMABLES - OTHER - LAUNDRY', p:699,  k:240,  h:0, t:1, cats:1, d:'2d' },
+    { n:'Tide Pods 42ct',                    c:'41290', cat:'FG BL CONSUMABLES - OTHER - LAUNDRY', p:1899, k:920,  h:0, t:1, cats:1, d:'2d' },
+    { n:'Pantene Shampoo 12oz',              c:'38812', cat:'FG BL CONSUMABLES - HBA - HAIRCARE',  p:849,  k:310,  h:0, t:1, cats:1, d:'5d' },
+    { n:'Dove Bar Soap 4pk',                 c:'38815', cat:'FG BL CONSUMABLES - HBA - HYGIENE',   p:599,  k:0,    h:0, t:1, cats:1, d:'5d' },
+    { n:'Cascade Total Clean Shine 103ct',   c:'41301', cat:'FG BL CONSUMABLES - OTHER - LAUNDRY', p:2299, k:1140, h:0, t:1, cats:2, d:'9d' },
+    { n:'Marvel Titan Hero Captain America', c:'52204', cat:'FG BL HARDLINES - TOYS',              p:1499, k:600,  h:0, t:1, cats:1, d:'12d' },
+    { n:'Bounce Dryer Sheets 160ct',         c:'41284', cat:'FG BL CONSUMABLES - OTHER - LAUNDRY', p:799,  k:295,  h:0, t:1, cats:1, d:'14d' },
+    { n:'Fronte Pasta 5lbs',                 c:'PASTA5',cat:'FG BL CONSUMABLES - FOOD - PANTRY',   p:499,  k:0,    h:0, t:1, cats:1, d:'21d' },
+    { n:'Ceramic Table Lamp — Cream',        c:'60118', cat:'FG BL HOME - DECOR',                  p:2499, k:980,  h:0, t:1, cats:1, d:'21d' },
+    { n:'Christmas Light Set 300ct',         c:'71002', cat:'FG BL SEASONAL - CHRISTMAS',          p:1299, k:540,  h:1, t:1, cats:1, d:'88d' },
+    { n:'Gift Card',                         c:'GC',    cat:'Gift Cards',                          p:0,    k:0,    h:0, t:0, cats:1, d:'1y' },
+    { n:'Bin Item $1.00',                    c:'BIN100',cat:'Bin Products',                        p:100,  k:0,    h:0, t:1, cats:2, d:'1y' },
+  ];
+  const dupCodes = new Set(['41284']);
+  const sel = new Set();
+  let sortK = 'name', sortAsc = true, filter = null;
+
+  const gp = it => (!it.k || !it.p) ? null : (it.p - it.k) / it.p * 100;
+
+  function renderViewer() {
+    const tb = $('#iv-tbody'); if (!tb) return;
+    const q = ($('#iv-q').value || '').trim().toLowerCase();
+    let rows = ITEMS.filter(it =>
+      (!q || it.n.toLowerCase().includes(q) || it.c.toLowerCase().includes(q) || it.cat.toLowerCase().includes(q))
+      && (filter !== 'dup'    || dupCodes.has(it.c))
+      && (filter !== 'nocost' || !it.k));
+    const dir = sortAsc ? 1 : -1;
+    rows.sort((a, b) => {
+      const v = k => k === 'name' ? a.n.localeCompare(b.n) : k === 'code' ? a.c.localeCompare(b.c)
+        : k === 'price' ? a.p - b.p : k === 'cost' ? a.k - b.k
+        : k === 'gp' ? ((gp(a) ?? -1) - (gp(b) ?? -1)) : parseInt(a.d) - parseInt(b.d);
+      return v(sortK) * dir;
+    });
+    tb.innerHTML = rows.map(it => {
+      const m = gp(it), dup = dupCodes.has(it.c), on = sel.has(it.c + it.n);
+      const cls = [on ? 'sel' : '', dup ? 'dup' : '', it.h ? 'off' : ''].filter(Boolean).join(' ');
+      return `<tr class="${cls}" data-k="${it.c + it.n}">
+        <td class="ck stick"><input type="checkbox" ${on ? 'checked' : ''} aria-label="Select ${it.n}"></td>
+        <td class="stick" style="left:34px"><span class="iname" title="${it.n}">${it.n}</span></td>
+        <td class="mono">${it.c}${dup ? ' <span class="bdg a">dup</span>' : ''}</td>
+        <td class="dim" style="max-width:210px;overflow:hidden;text-overflow:ellipsis">${it.cat}${it.cats > 1 ? ` <span class="bdg b">${it.cats} cats</span>` : ''}</td>
+        <td class="num">${it.p ? money(it.p) : '<span class="dim">—</span>'}</td>
+        <td class="num">${it.k ? money(it.k) : '<span class="dim">—</span>'}</td>
+        <td class="num">${m === null ? '<span class="dim">—</span>' : `<b style="color:${m >= 50 ? 'var(--accent)' : m >= 30 ? 'var(--amber)' : 'var(--badText)'}">${m.toFixed(0)}%</b>`}</td>
+        <td>${it.h ? '<span class="bdg">hidden</span> ' : ''}${!it.t ? '<span class="bdg">no tax</span>' : ''}</td>
+        <td class="num dim">${it.d}</td>
+        <td><button class="btn btn-ghost btn-sm" type="button">Edit</button></td></tr>`;
+    }).join('') || `<tr><td colspan="10"><div class="empty">
+        <div class="empty-g"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
+        <div class="t">Nothing matches</div><div class="d">No item in this store matches that search or filter.</div></div></td></tr>`;
+
+    $$('#iv-tbody input[type=checkbox]').forEach(cb => cb.onchange = () => {
+      const k = cb.closest('tr').dataset.k;
+      cb.checked ? sel.add(k) : sel.delete(k);
+      renderViewer(); syncSel();
+    });
+    $('#iv-pglabel').textContent = `Showing ${rows.length} of ${filter || q ? ITEMS.length + ' loaded' : '1,284'}`;
+    $$('.ar').forEach(a => a.textContent = '');
+    const ar = $(`[data-ar="${sortK}"]`); if (ar) ar.textContent = sortAsc ? '▲' : '▼';
+  }
+
+  function syncSel() {
+    const bar = $('#iv-selbar'); if (!bar) return;
+    bar.hidden = sel.size === 0;
+    if (!sel.size) return;
+    const tot = ITEMS.filter(it => sel.has(it.c + it.n)).reduce((s, it) => s + it.p, 0);
+    $('#iv-selcount').textContent = sel.size + (sel.size === 1 ? ' item' : ' items');
+    $('#iv-selval').textContent = money(tot);
+  }
+
+  if ($('#iv-tbody')) {
+    $('#iv-q').oninput = renderViewer;
+    $$('.sort').forEach(th => th.onclick = () => {
+      const k = th.dataset.s;
+      sortAsc = sortK === k ? !sortAsc : true; sortK = k; renderViewer();
+    });
+    $('#iv-dup').onclick    = e => { filter = filter === 'dup' ? null : 'dup';
+      e.target.setAttribute('aria-pressed', filter === 'dup');
+      e.target.style.borderColor = filter === 'dup' ? 'var(--accent)' : ''; renderViewer(); };
+    $('#iv-nocost').onclick = e => { filter = filter === 'nocost' ? null : 'nocost';
+      e.target.style.borderColor = filter === 'nocost' ? 'var(--accent)' : ''; renderViewer(); };
+    $('#iv-all').onchange = e => {
+      ITEMS.forEach(it => e.target.checked ? sel.add(it.c + it.n) : sel.delete(it.c + it.n));
+      renderViewer(); syncSel();
+    };
+    $('#iv-clearsel').onclick = () => { sel.clear(); $('#iv-all').checked = false; renderViewer(); syncSel(); };
+    $('#iv-tosale').onclick   = () => showPage('sale');
+    $('#iv-reload').onclick   = renderViewer;
+    // Seed a selection so the sale page has something to carry.
+    ['41284Downy Liquid Fabric Softener 26oz', '38812Pantene Shampoo 12oz', '38815Dove Bar Soap 4pk']
+      .forEach(k => sel.add(k));
+    renderViewer(); syncSel();
+  }
+
+  /* ══ SCHEDULE SALE ══════════════════════════════════════════════════ */
+  const SALE = [
+    { n: 'Downy Liquid Fabric Softener 26oz', p: 699 },
+    { n: 'Pantene Shampoo 12oz',              p: 849 },
+    { n: 'Dove Bar Soap 4pk',                 p: 599 },
+  ];
+  let kind = 'percent';
+
+  function saleRecalc() {
+    if (!$('#ss-prev')) return;
+    const v = parseFloat($('#ss-val-in').value) || 0;
+    const label = $('#ss-label').value.trim();
+    const price = p => kind === 'percent' ? Math.max(1, Math.round(p * (1 - v / 100)))
+                                          : Math.max(1, p - Math.round(v * 100));
+    $('#ss-prev').innerHTML = SALE.map(it => {
+      const s = price(it.p);
+      return `<div class="si"><span class="n">${it.n}</span><span class="p"><s>${money(it.p)}</s> → <b>${money(s)}</b>
+        <span class="dim">(−${Math.round((1 - s / it.p) * 100)}%)</span></span></div>`;
+    }).join('');
+    $('#ss-rename').textContent = `SALE ${SALE[0].n} (was ${money(SALE[0].p)}${label ? ' ' + label : ''})`;
+    $('#ss-n').textContent   = SALE.length + (SALE.length === 1 ? ' item' : ' items');
+    $('#ss-val').textContent = money(SALE.reduce((s2, it) => s2 + it.p, 0));
+    $('#ss-dnote').textContent = kind === 'percent'
+      ? 'Must be under 100%. Never prices an item below $0.01.'
+      : 'Taken off every item, whatever its price. Never below $0.01.';
+
+    const nStores = $$('#ss-stores input:checked').length;
+    $('#ss-foot').innerHTML = `<b style="color:var(--ink)">${SALE.length} items</b> × `
+      + `<b style="color:var(--ink)">${nStores} location${nStores === 1 ? '' : 's'}</b> = `
+      + `${SALE.length * nStores} scheduled price change${SALE.length * nStores === 1 ? '' : 's'}`;
+
+    const a = new Date($('#ss-start').value), b = new Date($('#ss-end').value);
+    const dur = $('#ss-dur');
+    if (!isNaN(a) && !isNaN(b) && b > a) {
+      const h = Math.round((b - a) / 36e5);
+      dur.textContent = `Runs ${Math.floor(h / 24)} days ${h % 24} hours, then reverts itself.`;
+      dur.className = 'fld-note';
+    } else { dur.textContent = 'End must be after start.'; dur.className = 'fld-note warn'; }
+  }
+  if ($('#ss-chips')) {
+    $('#ss-chips').innerHTML = SALE.map(it =>
+      `<span class="chip">${it.n} <span class="pr">${money(it.p)}</span><button class="x" type="button" aria-label="Remove">×</button></span>`).join('');
+    $$('[data-k]').forEach(b => b.onclick = () => {
+      kind = b.dataset.k;
+      $$('[data-k]').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.k === kind)));
+      $('#ss-val-in').value = kind === 'percent' ? 25 : 2;
+      saleRecalc();
+    });
+    $$('#ss-stores input').forEach(cb => cb.onchange = () => {
+      cb.closest('.st').classList.toggle('on', cb.checked); saleRecalc();
+    });
+    ['ss-val-in','ss-label','ss-start','ss-end'].forEach(id => { const e = $('#' + id); if (e) e.oninput = saleRecalc; });
+    saleRecalc();
+  }
+})();
+</script>
+</div>
+</body>
+</html>
