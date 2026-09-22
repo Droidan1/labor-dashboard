@@ -267,16 +267,17 @@ for (const [role, pages, expect] of [
   }
   if (role === 'manager') {
     // 🛑 isAdminBar. nav-inventory is the group header now, which a manager sees.
-    check(await page.$eval('#bottom-nav', e => e.classList.contains('bn-mgr')),
+    check(await page.$eval('#bn-submit-photos', e => !e.classList.contains('hidden')),
           'manager: still gets the manager bar with the centred Submit');
-    check(await page.$eval('#more-inventory', e => e.classList.contains('hidden')),
-          'manager: Add Item is not offered under More');
+    await page.evaluate(() => navigateToPage('menu')); await page.waitForTimeout(100);
+    check(!(await page.$('#menu-list .menu-row[data-page="inventory-add"]')),
+          'manager: Add Item is not offered on the phone Menu');
     await page.evaluate(() => navigateToPage('inventory-add')); await page.waitForTimeout(150);
     check(await page.$eval('#page-inventory-add', e => e.classList.contains('hidden')),
           'manager: navigateToPage refuses Add Item');
   }
   if (role === 'superuser') {
-    check(!(await page.$eval('#bottom-nav', e => e.classList.contains('bn-mgr'))), 'superuser: gets the flat admin bar');
+    check(await page.$eval('#bn-submit-photos', e => e.classList.contains('hidden')), 'superuser: gets the admin bar, without Submit');
   }
   check(errs.length === 0, `${role}: no JS errors${errs.length ? ': ' + errs.join(' | ') : ''}`);
   blocked.forEach(h => allBlocked.add(h));

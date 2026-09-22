@@ -552,9 +552,11 @@ function seedTruck(db, { store = 'BL1', bol = '7679', count = 40, closed = null 
      '🛑 ...and the client lists it in GRANTABLE_PAGES, or the checkbox grants nothing');
   ok(/'nav-inventory-receiver': 'bl'/.test(html),
      '🛑 the nav id is classified in NAV_BUSINESS, or it leaks into every business');
-  ok(/more-inventory-receiver/.test(html),
-     '🛑 there is a More-sheet row, or the page is unreachable on a phone');
-  ok(/gate\('more-inventory-receiver'/.test(html), '...and it is gated with the others');
+  // The phone reaches it through the Menu page, which is built from the sidebar — so the
+  // sidebar item's data-page is the whole phone registration. (It was a hand-copied More-sheet
+  // row plus its own gate() line until 2026-09-22.)
+  ok(/id="nav-inventory-receiver"[^>]*data-page="inventory-receiver"/.test(html),
+     '🛑 the sidebar item carries its data-page, or the page is unreachable on a phone');
   ok(/if \(page === 'inventory-receiver'\)/.test(html), 'navigateToPage guards the page');
   ok(/initInventoryReceiver/.test(html), '...and inits it');
   ok(/#page-inventory-receiver \[hidden\]\{display:none !important\}/.test(html),

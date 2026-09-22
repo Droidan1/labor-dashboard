@@ -194,19 +194,47 @@ V1 "comfortable" density:
 - **Sidebar:** `max-lg:hidden`. The old mobile hamburger
   (`#mobile-menu-btn`) is force-hidden via `!hidden` so the app's
   per-page nav logic can't reveal it.
-- **Bottom nav** (`#bottom-nav`, `lg:hidden`): fixed bottom bar with
-  five tabs — Dashboard, Weekly, Inventory, Supply, **More**
-  (horizontal ellipsis "•••"). Role-gated tabs (`bn-inventory`,
-  `bn-supply`) hide when the user lacks access, mirroring sidebar
-  visibility.
-- **More sheet** (`#more-sheet`): slide-up bottom sheet, opens via
-  the More tab. Contains user identity, Users / Admin Settings /
-  Settings (role-gated), Dark mode toggle (delegates to existing
-  `#dark-toggle`), Sign out.
-  - Dismiss: tap the scrim OR swipe down on the grab handle. The
-    swipe handler uses `pointermove` non-passive + `preventDefault`
-    to consume the gesture so it can't chain into iOS pull-to-
-    refresh.
+- **Bottom nav** (`#bottom-nav`, `lg:hidden`): a floating bar in which
+  every visible tab takes an equal share of the width (`.bn-tab` is
+  `flex-1`, and no tab carries side padding — under border-box that
+  padding floors a flex item's basis and makes it wider). Per role:
+  - Admin / superuser: Dashboard · Retail · Content · Flow · **Menu**
+  - Manager: Dashboard · Retail · **Submit** · Supply · Menu. The Submit
+    squircle is centred by having two tabs either side of it, not by a
+    layout of its own. (Price Scan moved from this bar to the Menu,
+    2026-09-22.)
+  - Associate: a tab for Bin Dump / MOS when they hold that page and no
+    dashboard, then Menu. E-Commerce: eBay Cases · Menu.
+
+  Tabs mirror the sidebar (`vis('nav-…')`). The lit tab is **derived**:
+  the page's own visible tab, Dashboard for the two detail pages,
+  otherwise Menu — no list of pages to keep in step.
+- **Menu page** (`#page-menu`, the last tab): a real page, not an
+  overlay, so it scrolls like any page and swipe-back works. Sticky app
+  bar, a search box (16px, or iOS zooms on focus; Go opens the first
+  *page* left — never an action row, so it cannot sign anyone out), an
+  account card (initials, name, role · business, dark-mode toggle), then
+  `#menu-list`, which `renderMenuPage()` builds **from the sidebar**:
+  - each sidebar group is a section titled by its header;
+  - each top-level item joins the section its `data-menu-section` names
+    (Store / E-Commerce / Admin; unnamed falls back to "More");
+  - `data-menu-hint` adds a small tag — the five Merchandising tables say
+    "Desktop";
+  - a row shows iff its sidebar item and that item's group wrapper are
+    not `.hidden`. The `.nav-sub` between them is only the dropdown being
+    collapsed, and is ignored.
+
+  So the Menu inherits every role, associate and business gate, and **a
+  page added to the sidebar reaches the phone with no second edit.** The
+  flip side: a sidebar item a role can see but `navigateToPage` refuses
+  is a dead row on the phone — keep the sidebar's gates equal to the
+  router's. `scripts/browser-mobile-menu.mjs` opens every row for every
+  role to prove it.
+
+  It replaced the More sheet (2026-09-22): 18 hand-copied rows with no
+  height budget — a superuser's ran 1,007px on a 956px phone, off the top
+  and impossible to dismiss — and eight pages that were never copied
+  across.
 - **Scroll hide/show**: the bar gets `translate-y-full` when the
   user scrolls *down* past 40 px; it returns on any upward scroll.
 - **iOS safe areas:**
@@ -577,7 +605,7 @@ on the brand green and 2.28:1 on `accent-green`.
 | Pattern | Where used | Implementation note |
 |---|---|---|
 | Mobile accordion | Hero (`#hero-extra`), Budget (`#budget-detail`) | `grid-template-rows: 0fr ↔ 1fr` + inner `overflow: hidden`; CSS class swap on parent toggles. Use `display: contents` at `lg:` to "untangle" the wrapper for desktop. |
-| Slide-up sheet | More menu (`#more-sheet`) | `position: fixed; bottom: 0; translate-y-full ↔ 0`; scrim with `opacity-0` ↔ visible. Touch-drag handle uses non-passive `touchmove + preventDefault`. |
+| Generated nav page | Menu (`#page-menu`) | Rows rendered from the sidebar DOM by `renderMenuPage()`, so there is one list of pages, not two. Search hides rows with the `[hidden]` ATTRIBUTE so `divide-y` skips them; `#page-menu [hidden] { display:none !important }` is needed because a bare `.flex` beats the attribute. Rebuilt only when the markup would differ — replacing identical rows under a finger mid-tap swallows the tap. |
 | Scroll hide/show | Bottom nav | Listener on `window` (the document scrolls, not `#main-scroll`). Toggle `translate-y-full` based on direction; threshold ≥40 px to avoid jitter. |
 | Skeleton shimmer | Hero total, store-card total | `.skel` with sized width/height matching the final content. |
 | Inline retry | Store cards on fetch failure | `liveCloverErrors[store]` / `histErrors[store]` populated in `loadAll` per-store try/catch. Card renders "Couldn't load · Retry" instead of the total; Retry calls `retryStore(store)`. |
@@ -641,8 +669,8 @@ mobile. The original handoff left this range unspecified.
 
 - All interactive elements that previously were clickable `<span>`s
   were converted to real `<button>`s for native focus / keyboard.
-- The mobile More sheet uses `aria-pressed` semantics on the tab
-  buttons and a real `<button>` for each row.
+- Every Menu page row is a real `<button>`, at least 48 px tall; the
+  account card's dark-mode button carries `aria-pressed`.
 - `prefers-reduced-motion` disables the `.skel` shimmer and the
   sheet/accordion transitions.
 - iOS tap targets are kept ≥40 px height where realistic (bottom
