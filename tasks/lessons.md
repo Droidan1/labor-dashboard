@@ -2564,3 +2564,53 @@ counts LINES and a bundler re-joins them, so the two numbers were never comparab
    That is worth stating out loud rather than letting "18 clean passes" imply the
    behaviour was exercised end to end.
 </rules>
+
+## I carried a bug's severity across from a bug that only LOOKED the same (2026-09-22)
+
+Brian pointed at `index.html:15242`, a six-store roster reading
+`['BL1','BL2','BL4','BL8','BL12','BL14']`. I had fixed that exact literal an hour earlier
+in `confirmDelete`, where it was the `stores` array of a **delete-from-every-location**
+POST — a real destructive operation. So when I met it again I told him, twice, that this
+one was "a destructive operation under CLAUDE.md's rules" and declined to touch it without
+his call.
+
+It is a cache-key list. `affectedStores` has exactly one consumer —
+`delete itemSalesCache[\`${s}:${date}\`]` — against an in-memory render cache. Nothing is
+written. The re-snapshot itself is driven by the fetch's `store` param and the worker
+resolves `store=ALL` through its own `ALL_STORES`, so the right stores were being
+snapshotted the whole time. Rule 7 never applied, and I had used it to refuse a one-line
+fix.
+
+Grepping the variable takes five seconds and answers it outright: two hits, one
+declaration and one `delete`. I never ran it, because I had already recognised the shape.
+
+The bug underneath was real but small and inverted: `BL12` (retired Wyoming) is a key that
+never exists, so deleting it is a no-op; `BL16` (Indy East) was **missing**, so after an
+all-stores re-snapshot Indy East kept rendering its pre-re-snapshot figures until a
+reload. Wrong in both directions, which is exactly why nobody caught it — the list was
+still six long. The A/B proved it: on `HEAD` the `BL16:` key survives the run and the
+status line still reads `Done — 1/1 date(s) re-snapshotted`.
+
+And while fixing it, the trap that would have been the elegant-looking mistake: the
+seven-store list 350 lines below is **correct** (BL12 is the live store for every week
+before the 2026-06-14 cutover and T13 charts it), and the array that already holds those
+seven codes, `WRS_STORE_KEYS`, is **spliced in place** by `applyRoleUI` down to the
+signed-in user's grants. Reusing it would have given a store-scoped admin a silently short
+backfill that still reported success — a worse bug than the one I was fixing, introduced
+by tidying.
+
+<rules>
+29. **A roster's NAME tells you nothing about its blast radius — find the consumer first.**
+   Six store codes in a `delete` loop and six in a POST body are visually identical and are
+   not remotely the same risk. `grep -n <var>` before you classify it, every time.
+30. **A list that is wrong in both directions stays the right LENGTH.** "Six stores, looks
+   right" is not a check. Compare element by element against the roster the OTHER side
+   resolves — and pin that comparison in a test, because the next drift will look just as
+   plausible.
+31. **Never borrow an array that something splices in place.** Deriving (`[...X, 'BL12']`)
+   says what you mean, matches how the worker derives its own, and cannot be narrowed out
+   from under you by a role check that runs at sign-in.
+32. **Invoking a safety rule is an action, not a neutral hedge.** Citing "destructive
+   operation" to defer a fix has a cost: the bug stays in production and Brian gets a
+   decision he did not need to make. Earn the citation with the grep.
+</rules>
