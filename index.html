@@ -24614,6 +24614,13 @@
     // field vanishes rather than printing "Compare at $0.00" or a bare dash.
     const st = Number(extras && extras.retail);
     if (rt.on && Number.isFinite(st) && st > 0) out.push(line(rt, `${rt.prefix}$${st.toFixed(2)}`));
+    // ✅ ^PQ IS VERIFIED ON THE REAL ZD410. Brian printed a qty of 3 on 2026-09-22 and all
+    // three came out; the log carries two runs of 5 the same evening. Recorded here for the
+    // same reason the geometry note above is — a check nobody wrote down is a check the next
+    // person re-runs. 🛑 And it could NOT have been verified from the screen: Browser Print
+    // returns its 200 long before the last label clears, so "Sent ×3" reads identically
+    // whether one label emerged or three. Only the physical stock settles it.
+    //
     // 🔑 ^PQ ONLY ABOVE ONE, AND THAT IS NOT A STYLE CHOICE. A test compares this
     // function's output byte-for-byte against the hardcoded label it replaced, so a single
     // sticker must emit exactly the bytes it emitted before quantity existed. `^PQ1` is

@@ -985,9 +985,10 @@ Answers captured up front, because three of them change who can write to product
 - [x] `migration-069.sql`: `ALTER TABLE sticker_prints ADD COLUMN qty INTEGER` (nullable —
       every existing row is a single print and must stay readable).
 - [x] `sticker-printed` accepts and stores `qty`; Reprint rows show `×3`.
-- [x] ⚠️ `^PQ` on continuous media (`^MNN`) is **unverified on the real ZD410**. psZpl's own
-      comment records that a stale UNVERIFIED warning is worse than none — so this ships
-      flagged, and Brian test-prints qty 3 before it is called done.
+- [x] ✅ `^PQ` on continuous media (`^MNN`) — **verified on the real ZD410, 2026-09-22**.
+      Brian printed a qty of 3: all three came out. This shipped flagged UNVERIFIED because
+      psZpl's own comment records that a stale UNVERIFIED warning is worse than none; the
+      flag is cleared here rather than left to rot.
 
 ## 2 · Manual mode
 
@@ -1095,10 +1096,17 @@ No new colour was invented — every value is one already used on this screen.
 
 ### Two things worth knowing
 
-**`^PQ` is still unverified on the real ZD410.** The tests prove the bytes: absent at one,
-`^PQ3` immediately before `^XZ` at three, clamped at the cap, and the label otherwise
-byte-identical. They cannot prove the printer feeds continuous stock correctly across a run.
-Brian test-prints a qty of 3 before quantity is called done.
+**✅ `^PQ` is verified on the real ZD410 (2026-09-22).** Brian printed a qty of 3 and all
+three came out. The tests proved the bytes — absent at one, `^PQ3` immediately before `^XZ`
+at three, clamped at the cap, the label otherwise byte-identical — but bytes cannot prove a
+printer feeds continuous stock across a run, which is why this waited on hardware.
+
+Corroborated by the print log rather than by the report alone: `sticker_prints` carries
+`qty=3` at 15:54 and two `qty=5` runs at 20:12 and 20:13 against PO 99999, so the path was
+exercised above three as well. 🔑 Worth remembering that the screen could NOT have told
+anyone this — Browser Print returns its 200 long before the last label clears the printer,
+so "Sent ×3" reads identically whether one label emerged or three. That is the whole reason
+a human had to look at the physical stock.
 
 **The "Add it at every store" button appears on scans too, not only in Manual.** Brian asked
 for this while describing hand-typed prices, but the refusal it attaches to is identical
