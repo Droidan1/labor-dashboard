@@ -1,3 +1,25 @@
+# Full code review, page by page (2026-09-22)
+
+**Brian:** *"complete code review … improve performance, speed, look for bugs, give me
+suggestions on UI and UX improvements. Break this down page by page. … only minor fixes,
+but anything major that's recorded and figure out a plan to fix in the future."*
+
+## Plan
+
+- [ ] Map every page to its markup, its JS in `index.html` and the worker actions it calls
+      (20 review units: 18 page groups + 2 worker cross-cutting).
+- [ ] One reviewer per unit: bugs, performance/speed, UI/UX, accessibility, security.
+      Each finding classified **minor** (local, frontend-only or self-contained, no API /
+      schema / deploy coupling, no change to a data-writing path beyond adding safety) or
+      **major** (everything else — gets a future plan, not a code change).
+- [ ] Two independent verifiers per unit try to refute every finding: a correctness lens
+      (bug / perf / security) and a UI lens (premise checked in markup, contrast computed in
+      both themes, DESIGN.md not contradicted).
+- [ ] Write the page-by-page report and the major-items plan to `docs/code-review-2026-09-22.md`.
+- [ ] Apply only verified **minor** fixes. Nothing destructive, no migrations, no deploys.
+- [ ] `npm test` green; browser-check any UI fix; contrast computed, not eyeballed.
+- [ ] Draft PR. Merging is Brian's click; worker-side fixes (if any) also need `wrangler deploy`.
+
 # Phone nav: the More sheet becomes a Menu page (2026-09-22)
 
 **Brian**, after reviewing four options (artifact "RETJG Mobile Nav Options"):
