@@ -358,11 +358,9 @@ console.log('Opportunity buys');
   const checks = [
     [/\{ id: 'opportunity-buys', label: '[^']+', nav: 'nav-opportunity-buys' \}/,
      'client GRANTABLE_PAGES — without it no admin can tick the page'],
-    [/id="nav-opportunity-buys"[^>]*data-page="opportunity-buys"/, 'the sidebar nav item'],
+    [/id="nav-opportunity-buys"[^>]*data-page="opportunity-buys"/,
+     'the sidebar nav item — also the phone\'s only registration: the Menu page is built from it'],
     [/'nav-opportunity-buys': 'bl'/, 'NAV_BUSINESS — unmapped ids show in every business'],
-    [/id="more-opportunity-buys"/, 'the More-sheet button'],
-    [/gate\('more-opportunity-buys'/, '…and its gate'],
-    [/'opportunity-buys': 1/, 'morePages, so the More tab lights on this page'],
     [/id="page-opportunity-buys"/, 'the page container showOnlyPage derives from'],
     [/if \(page === 'opportunity-buys'\)/, 'the router guard and init hook'],
     [/initOppBuys/, 'the init function itself'],

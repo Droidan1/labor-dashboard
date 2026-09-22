@@ -706,19 +706,26 @@
     }
     .dark .bn-submit-ic { background: rgba(34,197,94,.16); color: #22c55e; }
     .bn-submit-ic svg { width: 21px; height: 21px; }
-    /* Tab labels (10px, under the icon). Submit's label is brand green. */
+    /* Tab labels (10px, under the icon). Submit's label is brand green —
+       as TEXT, so light mode takes green-800: #16a34a measured 3.23:1 on the
+       frosted bar; #166534 is 7.00:1. The icon keeps the brand hex (a fill,
+       not text — DESIGN.md §4.8). */
     .bn-lb { font-size: 10px; font-weight: 600; margin-top: 3px; letter-spacing: .01em; line-height: 1; }
-    #bn-submit-photos .bn-lb { color: #16a34a; }
+    #bn-submit-photos .bn-lb { color: #166534; }
     .dark #bn-submit-photos .bn-lb { color: #22c55e; }
     /* Slightly stronger tint while the Submit page is the active tab. */
     #bn-submit-photos.text-accent-green .bn-submit-ic { background: rgba(34,197,94,.22); }
     .dark #bn-submit-photos.text-accent-green .bn-submit-ic { background: rgba(34,197,94,.26); }
-    /* Non-admin bar: flex groups keep the Submit squircle dead-center.
-       Admins/superusers have no Submit button — the groups collapse
-       (display:contents) into one flat, evenly-spaced 5-icon row. */
-    #bottom-nav .bn-group { display: contents; }
-    #bottom-nav.bn-mgr .bn-group { display: flex; flex: 1 1 0%; }
-    #bottom-nav.bn-mgr .bn-group-r { justify-content: flex-end; }
+    /* Every visible tab takes an equal share of the bar (.bn-tab is flex-1).
+       There used to be two flex halves to keep the manager's Submit centred;
+       any bar with an odd split then went lopsided — an associate's or
+       E-Commerce's More sat alone in a 176px half. Submit is centred now by
+       having two tabs either side of it: Dashboard · Retail · Submit · Supply · Menu. */
+    /* Menu page (#page-menu). Rows are hidden by the [hidden] ATTRIBUTE while
+       searching, so `divide-y` (which skips :not([hidden])) keeps the card
+       edges clean — and a bare .flex would beat the attribute without this. */
+    #page-menu [hidden] { display: none !important; }
+    #page-menu .menu-ic svg { width: 100%; height: 100%; display: block; }
     /* Floating island chrome (all roles): frosted glass, full border,
        rounded, lifted. Light is more opaque (82%) so busy content
        underneath doesn't tint it muddy; dark leans clearer (64%). */
@@ -746,7 +753,9 @@
     /* Labeled + compact: uniform 68px bar across roles. */
     .bn-skinny { min-height: 68px; }
     .bn-skinny .bn-tab { padding-top: 7px; padding-bottom: 6px; position: relative; }
-    .bn-skinny #bn-submit-photos { padding: 0 4px; }
+    /* No side padding: under border-box a flex-1 item's padding is a floor on its
+       basis, so 4px each side made Submit 8px wider than every other tab. */
+    .bn-skinny #bn-submit-photos { padding: 0; }
     /* Active tab: soft green halo pill hugging the ICON (label sits below).
        The Submit squircle has its own active tint, so it's excluded. */
     #bottom-nav .bn-tab.text-accent-green:not(#bn-submit-photos)::before {
@@ -983,12 +992,15 @@
       </div>
 
       <!-- Nav Items -->
+      <!-- This list is also the phone's Menu page: renderMenuPage() walks it. A group
+           becomes a section titled by its header; a top-level item joins the section
+           its data-menu-section names; data-menu-hint adds a small tag to the row. -->
       <nav class="flex-1 px-2 space-y-1">
-        <div class="nav-item active" data-page="dashboard" onclick="navigateToPage('dashboard')">
+        <div class="nav-item active" data-page="dashboard" data-menu-section="Store" onclick="navigateToPage('dashboard')">
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span>
           <span class="nav-label">Dashboard</span>
         </div>
-        <div class="nav-item" data-page="weekly-summary" onclick="navigateToPage('weekly-summary')">
+        <div class="nav-item" data-page="weekly-summary" data-menu-section="Store" onclick="navigateToPage('weekly-summary')">
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
           <span class="nav-label">Retail Summary</span>
         </div>
@@ -1037,23 +1049,23 @@
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="8" x2="7" y2="16"/><line x1="10.5" y1="8" x2="10.5" y2="16"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="17" y1="8" x2="17" y2="16"/></svg></span>
               <span class="nav-label">Price Scan</span>
             </div>
-            <div id="nav-merch-coverage" class="nav-item nav-subitem" data-page="merch-coverage" onclick="navigateToPage('merch-coverage')">
+            <div id="nav-merch-coverage" class="nav-item nav-subitem" data-page="merch-coverage" data-menu-hint="Desktop" onclick="navigateToPage('merch-coverage')">
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
               <span class="nav-label">Coverage</span>
             </div>
-            <div id="nav-merch-products" class="nav-item nav-subitem" data-page="merch-products" onclick="navigateToPage('merch-products')">
+            <div id="nav-merch-products" class="nav-item nav-subitem" data-page="merch-products" data-menu-hint="Desktop" onclick="navigateToPage('merch-products')">
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7 12 3 4 7v10l8 4 8-4z"/><path d="M4 7l8 4 8-4"/><path d="M12 11v10"/></svg></span>
               <span class="nav-label">Products</span>
             </div>
-            <div id="nav-merch-velocity" class="nav-item nav-subitem" data-page="merch-velocity" onclick="navigateToPage('merch-velocity')">
+            <div id="nav-merch-velocity" class="nav-item nav-subitem" data-page="merch-velocity" data-menu-hint="Desktop" onclick="navigateToPage('merch-velocity')">
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="15 7 21 7 21 13"/></svg></span>
               <span class="nav-label">Velocity</span>
             </div>
-            <div id="nav-merch-manifests" class="nav-item nav-subitem" data-page="merch-manifests" onclick="navigateToPage('merch-manifests')">
+            <div id="nav-merch-manifests" class="nav-item nav-subitem" data-page="merch-manifests" data-menu-hint="Desktop" onclick="navigateToPage('merch-manifests')">
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg></span>
               <span class="nav-label">Manifests</span>
             </div>
-            <div id="nav-merch-criteria" class="nav-item nav-subitem" data-page="merch-criteria" onclick="navigateToPage('merch-criteria')">
+            <div id="nav-merch-criteria" class="nav-item nav-subitem" data-page="merch-criteria" data-menu-hint="Desktop" onclick="navigateToPage('merch-criteria')">
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><polyline points="9 15 11 17 15 12"/></svg></span>
               <span class="nav-label">Buy Criteria</span>
             </div>
@@ -1067,7 +1079,7 @@
              applyRoleUI only for an account that actually holds E-Commerce;
              applyBusinessNav then hides it again while you are inside Bargain
              Lane. Both must agree, same as every other item here. -->
-        <div id="nav-ebay-cases" class="hidden nav-item" data-page="ebay-cases" onclick="navigateToPage('ebay-cases')">
+        <div id="nav-ebay-cases" class="hidden nav-item" data-page="ebay-cases" data-menu-section="E-Commerce" onclick="navigateToPage('ebay-cases')">
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
           <span class="nav-label">eBay Cases</span>
         </div>
@@ -1118,19 +1130,19 @@
             </div>
           </div>
         </div>
-        <div id="nav-labor" class="hidden nav-item" data-page="labor" onclick="navigateToPage('labor')">
+        <div id="nav-labor" class="hidden nav-item" data-page="labor" data-menu-section="Store" onclick="navigateToPage('labor')">
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg></span>
           <span class="nav-label">Labor</span>
         </div>
-        <div id="nav-supply-request" class="hidden nav-item" data-page="supply-request" onclick="navigateToPage('supply-request')">
+        <div id="nav-supply-request" class="hidden nav-item" data-page="supply-request" data-menu-section="Store" onclick="navigateToPage('supply-request')">
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/><line x1="9" y1="9" x2="10" y2="9"/></svg></span>
           <span class="nav-label">Supply Request</span>
         </div>
-        <div id="nav-users" class="hidden nav-item" data-page="users" onclick="navigateToPage('users')">
+        <div id="nav-users" class="hidden nav-item" data-page="users" data-menu-section="Admin" onclick="navigateToPage('users')">
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
           <span class="nav-label">Users</span>
         </div>
-        <div id="nav-admin-settings" class="hidden nav-item" data-page="admin-settings" onclick="navigateToPage('admin-settings')">
+        <div id="nav-admin-settings" class="hidden nav-item" data-page="admin-settings" data-menu-section="Admin" onclick="navigateToPage('admin-settings')">
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>
           <span class="nav-label">Admin Settings</span>
         </div>
@@ -1178,47 +1190,46 @@
     </aside>
     <div id="sidebar-overlay" class="sidebar-overlay" onclick="document.getElementById('sidebar').classList.add('collapsed');this.style.display='none';localStorage.setItem('sidebarCollapsed','true')"></div>
 
-    <!-- Floating labeled bar (all roles). Non-admins get the centered Submit
-         squircle (.bn-mgr groups) with Supply on the right; admins/superusers
-         get 5 flat slots — Dashboard · Retail · Content · Flow · More — and
-         reach Submit Photos / Inventory / Supply via the More sheet. -->
+    <!-- Floating labeled bar (all roles). Every visible tab takes an equal share.
+         Admins/superusers: Dashboard · Retail · Content · Flow · Menu. Managers:
+         Dashboard · Retail · Submit · Supply · Menu — the Submit squircle is centred
+         by having two tabs either side of it. E-Commerce: eBay Cases · Menu. Every
+         other page is on the Menu page (#page-menu), which is built from the sidebar. -->
     <nav id="bottom-nav" class="lg:hidden fixed z-30 flex items-center bn-float bn-skinny transition-transform duration-300" style="left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));padding:7px 8px">
-      <div class="bn-group flex-1 flex">
-        <button id="bn-dashboard" data-tab="dashboard" aria-label="Dashboard" onclick="navigateToPage('dashboard')" class="bn-tab flex-1 flex flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
-          <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><span class="bn-lb">Dashboard</span>
-        </button>
-        <button id="bn-retail" data-tab="weekly-summary" aria-label="Retail" onclick="navigateToPage('weekly-summary')" class="bn-tab flex-1 flex flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
-          <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg><span class="bn-lb">Retail</span>
-        </button>
-        <button id="bn-content" data-tab="content" aria-label="Content" onclick="navigateToPage('content')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
-          <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg><span class="bn-lb">Content</span>
-        </button>
-        <button id="bn-flow" data-tab="flow-calendar" aria-label="Flow Calendar" onclick="navigateToPage('flow-calendar')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
-          <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg><span class="bn-lb">Flow</span>
-        </button>
-        <!-- An associate's whole app may be one page. Without a bar tab of its own
-             it would live under More, two taps deep, on the phone it is used from. -->
-        <button id="bn-bin-dump" data-tab="bin-dump" aria-label="Bin Dump" onclick="navigateToPage('bin-dump')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
-          <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L8 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-4l-1.5-2Z"/><circle cx="12" cy="13" r="3.5"/></svg><span class="bn-lb">Bin Dump</span>
-        </button>
-        <button id="bn-mos" data-tab="mos" aria-label="Mark Out of Stock" onclick="navigateToPage('mos')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
-          <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 7.3 12 3 3.5 7.3v9.4L12 21l8.5-4.3z"/><line x1="4" y1="4" x2="20" y2="20"/></svg><span class="bn-lb">MOS</span>
-        </button>
-        <button id="bn-scan" data-tab="merch-scan" aria-label="Price Scan" onclick="navigateToPage('merch-scan')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
-          <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="8" x2="7" y2="16"/><line x1="10.5" y1="8" x2="10.5" y2="16"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="17" y1="8" x2="17" y2="16"/></svg><span class="bn-lb">Scan</span>
-        </button>
-      </div>
-      <button id="bn-submit-photos" data-tab="submit-photos" onclick="navigateToPage('submit-photos')" aria-label="Submit photos" class="bn-tab hidden flex-shrink-0 flex-col items-center font-semibold">
+      <button id="bn-dashboard" data-tab="dashboard" aria-label="Dashboard" onclick="navigateToPage('dashboard')" class="bn-tab flex-1 flex flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><span class="bn-lb">Dashboard</span>
+      </button>
+      <button id="bn-retail" data-tab="weekly-summary" aria-label="Retail" onclick="navigateToPage('weekly-summary')" class="bn-tab flex-1 flex flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg><span class="bn-lb">Retail</span>
+      </button>
+      <button id="bn-content" data-tab="content" aria-label="Content" onclick="navigateToPage('content')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg><span class="bn-lb">Content</span>
+      </button>
+      <button id="bn-flow" data-tab="flow-calendar" aria-label="Flow Calendar" onclick="navigateToPage('flow-calendar')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg><span class="bn-lb">Flow</span>
+      </button>
+      <!-- An associate's whole app may be one page. Without a bar tab of its own
+           it would live on the Menu page, two taps deep, on the phone it is used from. -->
+      <button id="bn-bin-dump" data-tab="bin-dump" aria-label="Bin Dump" onclick="navigateToPage('bin-dump')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L8 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-4l-1.5-2Z"/><circle cx="12" cy="13" r="3.5"/></svg><span class="bn-lb">Bin Dump</span>
+      </button>
+      <button id="bn-mos" data-tab="mos" aria-label="Mark Out of Stock" onclick="navigateToPage('mos')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 7.3 12 3 3.5 7.3v9.4L12 21l8.5-4.3z"/><line x1="4" y1="4" x2="20" y2="20"/></svg><span class="bn-lb">MOS</span>
+      </button>
+      <!-- E-Commerce's front door. Its one page used to sit under More — which was
+           the only tab that business had. -->
+      <button id="bn-ebay-cases" data-tab="ebay-cases" aria-label="eBay Cases" onclick="navigateToPage('ebay-cases')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span class="bn-lb">eBay Cases</span>
+      </button>
+      <button id="bn-submit-photos" data-tab="submit-photos" onclick="navigateToPage('submit-photos')" aria-label="Submit photos" class="bn-tab hidden flex-1 flex-col items-center font-semibold">
         <span class="bn-submit-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span><span class="bn-lb">Submit</span>
       </button>
-      <div class="bn-group bn-group-r flex-1 flex justify-end">
-        <button id="bn-supply" data-tab="supply-request" aria-label="Supply" onclick="navigateToPage('supply-request')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
-          <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg><span class="bn-lb">Supply</span>
-        </button>
-        <button id="bn-more" aria-label="More" onclick="openMoreSheet()" class="bn-tab flex-1 flex flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
-          <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg><span class="bn-lb">More</span>
-        </button>
-      </div>
+      <button id="bn-supply" data-tab="supply-request" aria-label="Supply" onclick="navigateToPage('supply-request')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg><span class="bn-lb">Supply</span>
+      </button>
+      <button id="bn-menu" data-tab="menu" aria-label="Menu" onclick="toggleMenuPage()" class="bn-tab flex-1 flex flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg><span class="bn-lb">Menu</span>
+      </button>
     </nav>
 
     <!-- Main content -->
@@ -1228,77 +1239,6 @@
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-gray-600 dark:text-gray-300"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
 
-      <!-- ── Mobile bottom navigation (lg:hidden) ── -->
-      <div id="more-scrim" class="lg:hidden fixed inset-0 z-40 bg-black/55 opacity-0 pointer-events-none transition-opacity duration-200" onclick="closeMoreSheet()"></div>
-      <div id="more-sheet" class="lg:hidden fixed left-0 right-0 bottom-0 z-50 bg-opl-panel dark:bg-op-panel border-t border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-t-[20px] translate-y-full transition-transform duration-300 ease-out" style="padding-bottom:calc(14px + env(safe-area-inset-bottom))">
-        <div id="more-grab" class="pt-2.5 pb-2 cursor-grab active:cursor-grabbing"><div class="w-9 h-1 rounded-full bg-[rgba(20,16,8,0.18)] dark:bg-[rgba(255,255,255,0.18)] mx-auto"></div></div>
-        <div class="flex items-center justify-between px-5 pb-3.5 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
-          <div class="min-w-0"><div id="more-email" class="text-sm font-semibold text-opl-ink dark:text-op-ink truncate"></div><div id="more-role" class="text-xs text-opl-inkDim dark:text-op-inkDim capitalize"></div></div>
-        </div>
-        <!-- E-Commerce's only page. The bottom bar's tabs are all Bargain Lane's,
-             so without this row E-Commerce has no navigation whatsoever on a
-             phone — and this is an installed PWA. -->
-        <button id="more-ebay-cases" onclick="navigateToPage('ebay-cases');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
-          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>eBay Cases
-        </button>
-        <button id="more-submit-photos" onclick="navigateToPage('submit-photos');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
-          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>Submit Photos
-        </button>
-        <button id="more-merch-scan" onclick="navigateToPage('merch-scan');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
-          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="8" x2="7" y2="16"/><line x1="10.5" y1="8" x2="10.5" y2="16"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="17" y1="8" x2="17" y2="16"/></svg>Price Scan
-        </button>
-        <button id="more-inventory" onclick="navigateToPage('inventory-add');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
-          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>Add Item
-        </button>
-        <button id="more-inventory-viewer" onclick="navigateToPage('inventory-viewer');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
-          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>Inventory Viewer
-        </button>
-        <button id="more-inventory-sale" onclick="navigateToPage('inventory-sale');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
-          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg>Schedule Sale
-        </button>
-        <button id="more-bin-dump" onclick="navigateToPage('bin-dump');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
-          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L8 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-4l-1.5-2Z"/><circle cx="12" cy="13" r="3.5"/></svg>Bin Dump
-        </button>
-        <button id="more-opportunity-buys" onclick="navigateToPage('opportunity-buys');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
-          <svg class="w-[18px] h-[18px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2A2 2 0 0 1 3 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.6z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg>
-          Opportunity Buys
-        </button>
-        <button id="more-inventory-receiver" onclick="navigateToPage('inventory-receiver');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
-          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 7h12v9H1z"/><path d="M13 10h4.5l3.5 3.5V16H13z"/><circle cx="5.5" cy="18.5" r="1.9"/><circle cx="17" cy="18.5" r="1.9"/></svg>Inventory Receiver
-        </button>
-        <button id="more-mos" onclick="navigateToPage('mos');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
-          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 7.3 12 3 3.5 7.3v9.4L12 21l8.5-4.3z"/><line x1="4" y1="4" x2="20" y2="20"/></svg>Mark Out of Stock
-        </button>
-        <button id="more-supply" onclick="navigateToPage('supply-request');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
-          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>Supply Requests
-        </button>
-        <button id="more-marketing" onclick="navigateToPage('marketing');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
-          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Ad Reporting
-        </button>
-        <button id="more-users" onclick="navigateToPage('users');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
-          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Users
-        </button>
-        <button id="more-admin" onclick="navigateToPage('admin-settings');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
-          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Admin Settings
-        </button>
-        <!-- Mobile twin of the sidebar's "Switch business". The sidebar is
-             max-lg:hidden, so without this row the picker is unreachable on a
-             phone once you have entered a business. -->
-        <button id="more-switch-business" onclick="closeMoreSheet();switchBusiness()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
-          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Switch business
-        </button>
-        <button id="more-settings" onclick="navigateToPage('settings');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
-          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V15z"/></svg>Settings
-        </button>
-        <div class="h-px bg-[rgba(20,16,8,0.08)] dark:bg-op-border my-1.5"></div>
-        <button onclick="document.getElementById('dark-toggle').click()" class="w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
-          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/></svg>Dark mode
-        </button>
-        <div class="h-px bg-[rgba(20,16,8,0.08)] dark:bg-op-border my-1.5"></div>
-        <button onclick="logout()" class="w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-bad dark:text-[#f87171] active:bg-opl-panelHi dark:active:bg-op-panelHi">
-          <svg class="w-5 h-5 stroke-op-bad" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>Sign out
-        </button>
-      </div>
       <!-- Swipe-back affordance — persistent green rail on the very left edge
            of detail pages + one-time "Swipe back" label on the first visit.
            Both fixed-position so they survive the page-translate during the
@@ -1316,6 +1256,45 @@
         style="transform:translate(-50%,-8px);background:rgb(var(--op-panel) / .92);border:1px solid rgba(34,197,94,.42);backdrop-filter:blur(6px)">
         <svg class="w-[12px] h-[12px] ptr-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
         Pull down to refresh
+      </div>
+
+      <!-- ── Menu (phone) ─────────────────────────────────────────────────
+           The bar's last tab. It replaces the More sheet, which was a hand-kept
+           copy of the sidebar: 18 buttons with a gate() line each and no height
+           budget (a superuser's ran 1,007px on a 956px phone, off the top and
+           impossible to close), and eight pages nobody ever copied across.
+           #menu-list is GENERATED from #sidebar by renderMenuPage(), so it
+           inherits every role, associate and business gate the sidebar already
+           applies, and a page added to the sidebar reaches the phone on its own.
+           A top-level sidebar item names its section with data-menu-section.
+           #menu-list holds ONLY rendered rows (DESIGN.md §4.8 trap 7). -->
+      <div id="page-menu" class="hidden">
+        <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+          <div class="max-w-2xl mx-auto">
+            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Menu</h1>
+          </div>
+        </div>
+        <div class="max-w-2xl mx-auto px-4 pt-4 pb-6">
+          <label class="flex items-center gap-2.5 h-11 px-3.5 rounded-xl border border-[rgba(20,16,8,0.18)] dark:border-op-borderHi bg-opl-panel dark:bg-op-panel text-opl-inkDim dark:text-op-inkDim focus-within:border-accent-green/60 transition-colors">
+            <svg class="w-[18px] h-[18px] flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <!-- 16px, not 15: iOS zooms the whole page into any smaller input on focus. -->
+            <input id="menu-search" type="search" placeholder="Find a page" aria-label="Find a page" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go"
+              class="flex-1 min-w-0 h-full bg-transparent border-0 outline-none text-[16px] text-opl-ink dark:text-op-ink placeholder:text-opl-inkDim dark:placeholder:text-op-inkDim">
+          </label>
+          <div class="mt-3 flex items-center gap-3 pl-3.5 pr-2.5 py-2.5 rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-opl-panel dark:bg-op-panel">
+            <span id="menu-avatar" class="w-10 h-10 flex-shrink-0 rounded-full grid place-content-center text-[15px] font-bold text-accent-green bg-accent-green/10 border border-accent-green/40" aria-hidden="true"></span>
+            <div class="flex-1 min-w-0">
+              <div id="menu-name" class="text-[15px] font-semibold text-opl-ink dark:text-op-ink truncate"></div>
+              <div id="menu-sub" class="text-xs text-opl-inkDim dark:text-op-inkDim truncate capitalize"></div>
+            </div>
+            <button id="menu-dark" type="button" onclick="menuToggleDark()" aria-label="Dark mode" aria-pressed="false"
+              class="w-10 h-10 flex-shrink-0 rounded-[11px] grid place-content-center border border-[rgba(20,16,8,0.08)] dark:border-accent-green/40 bg-opl-panelHi dark:bg-accent-green/10 text-opl-inkDim dark:text-accent-green">
+              <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/></svg>
+            </button>
+          </div>
+          <div id="menu-list"></div>
+          <p id="menu-empty" class="mt-6 px-1 text-sm text-opl-inkDim dark:text-op-inkDim" hidden></p>
+        </div>
       </div>
 
       <div id="page-dashboard">
@@ -6426,8 +6405,8 @@
          Reached only from the Settings row, so the app bar carries the
          store-detail back button. `showOnlyPage` finds this by its
          `page-` id prefix, and swipe-back works off navStack with no
-         extra wiring — the one registration needed is `morePages` in
-         syncBottomNav, so the ••• tab stays lit while you stand here. -->
+         extra wiring. The phone bar's Menu tab lights here on its own:
+         syncBottomNav lights Menu for any page without a tab of its own. -->
     <div id="page-accessibility" class="hidden">
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
         <div class="max-w-3xl mx-auto flex items-center gap-3">
@@ -11842,7 +11821,9 @@
     // those lists — they are gated by PAGE, not by role — so without this they
     // could open nothing at all, and with only the Bin Dump list widened they
     // could open everything else.
-    if (isAssociate(currentUser) && page !== 'no-access') {
+    // The phone's Menu page is exempt the same way no-access is: it is navigation,
+    // not a grantable page, and it lists only what the sidebar already shows them.
+    if (isAssociate(currentUser) && page !== 'no-access' && page !== 'menu') {
       if (pageLevel(page) < 1) return;
     }
     // Guard pages that show money. The worker refuses the data for these roles
@@ -33389,9 +33370,16 @@
     // store manager can reach the form; Buy Criteria is gated to admins beneath it.
     // Same shape as Marketing directly below.
     const merchRoles = ['superuser', 'admin', 'district_manager', 'manager'];
-    el('nav-merch-group').classList.toggle('hidden', !merchRoles.includes(user.role));
     // Managers see Price Scan; the rest of Merchandising stays admin-only.
     const canScan = ['superuser', 'admin', 'executive', 'manager'].includes(currentUser?.role);
+    // The GROUP's audience is the union of its children's, the same rule as the
+    // Inventory group below. It used to be merchRoles alone, which left an
+    // executive — whom the router admits to Price Scan — with no way to it.
+    // Shelf Count therefore carries merchRoles itself. This matters twice now:
+    // the phone's Menu page is built from this sidebar, so a child left visible
+    // here is a row that navigateToPage refuses.
+    el('nav-merch-group').classList.toggle('hidden', !merchRoles.includes(user.role) && !canScan);
+    el('nav-merch-shelf-count').classList.toggle('hidden', !merchRoles.includes(user.role));
     el('nav-merch-scan').classList.toggle('hidden', !canScan);
     el('nav-merch-coverage').classList.toggle('hidden', !isAdmin);
     el('nav-merch-products').classList.toggle('hidden', !isAdmin);
@@ -33402,6 +33390,9 @@
     el('nav-marketing-group').classList.remove('hidden');
     el('nav-marketing-ads').classList.toggle('hidden', !isAdmin);     // Ad Reporting: admin/superuser
     el('nav-flow-calendar').classList.toggle('hidden', !isAdmin);     // Flow Calendar: admin/superuser
+    // Comments: admin/superuser — it is on navigateToPage's adminOnly list. It was
+    // never gated here, so every manager had a Comments item that did nothing.
+    el('nav-comments').classList.toggle('hidden', !isAdmin);
     el('nav-content').classList.toggle('hidden', !isAdmin);          // Content (composer): admin/superuser
     el('nav-submit-photos').classList.remove('hidden');              // Submit Photos: all users
     // Flow Calendar admin editor: only admins/superusers see the Edit toggle.
@@ -35001,10 +34992,6 @@
         const scrollTop = window.scrollY ||
                          document.documentElement.scrollTop ||
                          document.body.scrollTop || 0;
-        // Don't engage PTR while the mobile "More" sheet is open (its
-        // swipe-down-to-dismiss must not trigger a page refresh).
-        var moreSheet = document.getElementById('more-sheet');
-        if (moreSheet && !moreSheet.classList.contains('translate-y-full')) return false;
         return scrollTop <= 2 && !appEl.classList.contains('hidden');
       }
 
@@ -35231,6 +35218,8 @@
           navigateToPage(prev.page, /*pushHistory=*/false);
         }
       }
+      // The Menu tab, tapped while you stand on the Menu, goes back the same way.
+      window.__navBack = goBack;
 
       function commit(el) {
         if (!el) { goBack(); return; }
@@ -35335,17 +35324,15 @@
   };
   </script>
   <script>
-  /* Mobile bottom navigation (lg:hidden). Desktop keeps the sidebar. */
+  /* Mobile bottom navigation (lg:hidden) and the Menu page. Desktop keeps the sidebar. */
   (function () {
     var nav = document.getElementById('bottom-nav');
-    var sheet = document.getElementById('more-sheet');
-    var scrim = document.getElementById('more-scrim');
     var scroller = document.getElementById('main-scroll');
     var ACTIVE = 'text-accent-green';
     var DIM = ['text-opl-inkDim', 'dark:text-op-inkDim'];
 
-    // Mirror sidebar role-gating: a tab/row is shown iff its sidebar
-    // counterpart exists and isn't .hidden.
+    // Mirror sidebar role-gating: a tab is shown iff its sidebar counterpart
+    // exists and isn't .hidden.
     function vis(navId) {
       var e = document.getElementById(navId);
       return !!e && !e.classList.contains('hidden');
@@ -35367,16 +35354,13 @@
 
     function syncBottomNav(page) {
       if (page) window.__bnPage = page; // remembered so applyRoleUI can re-sync
-      // 🛑 A call with NO page means "re-gate the rows, leave the active tab
-      // alone" — openMoreSheet and the two setTimeout(init) re-syncs below all do
-      // that. Until this line they instead computed `morePages[undefined]`, which
-      // is undefined, so `activeTab` came out undefined and EVERY tab went dim:
-      // ~800ms after any load the bar lost its highlight and did not get it back
-      // until the next tap. Found by driving the boot path in a real browser.
+      // 🛑 A call with NO page means "re-gate the tabs, leave the active tab
+      // alone" — the two setTimeout(init) re-syncs below both do that. Until this
+      // line they instead computed `morePages[undefined]`, which was undefined,
+      // so `activeTab` came out undefined and EVERY tab went dim: ~800ms after
+      // any load the bar lost its highlight and did not get it back until the
+      // next tap. Found by driving the boot path in a real browser.
       var cur = page || window.__bnPage || 'dashboard';
-      // role-gated tabs / rows
-      // Admins/superusers keep the flat 5-icon bar; everyone else gets the
-      // centered Submit button. (Inventory tab is the admin/superuser marker.)
       // BOOT RACE GUARD: until applyRoleUI has run (__bnRoleReady), every
       // role-gated sidebar item is hidden, which looks identical to a
       // non-admin — deciding then would flash the Submit button at admins.
@@ -35388,106 +35372,241 @@
       // an admin and cost them the centred Submit button. nav-inventory-add carries
       // the old audience: admins only.
       var isAdminBar = vis('nav-inventory-add');
-      var mgrBar = roleReady && !isAdminBar; // manager-style bar w/ center Submit
-      if (nav) nav.classList.toggle('bn-mgr', mgrBar);
-      // Bar tabs. Admin bar: Content + Flow Calendar (admin-only sidebar
-      // items) sit in the bar; Inventory + Supply move to the More sheet.
-      // Manager bar: Supply stays right of the centered Submit squircle.
+      var mgrBar = roleReady && !isAdminBar; // Supply + the Submit squircle
       var seesDash = visSel('#sidebar .nav-item[data-page="dashboard"]');
       // 🔑 Only once the role is known. Before that the sidebar is in its default
       // state, which for these two is VISIBLE — hiding them on a maybe would blink
       // the whole bar for everyone on every load.
       gate('bn-dashboard', !roleReady || seesDash, 'flex');
       gate('bn-retail', !roleReady || visSel('#sidebar .nav-item[data-page="weekly-summary"]'), 'flex');
-      // An account holding Bin Dump but NOT the dashboard is an associate: their
-      // whole app may be this one page, so it earns a slot in the bar rather than
-      // living two taps deep under More.
-      var binDumpInBar = roleReady && vis('nav-bin-dump') && !seesDash;
-      gate('bn-bin-dump', binDumpInBar, 'flex');
+      // An account holding Bin Dump or MOS but NOT the dashboard is an associate:
+      // their whole app may be that page, so it earns a slot in the bar rather
+      // than living two taps deep on the Menu.
+      gate('bn-bin-dump', roleReady && vis('nav-bin-dump') && !seesDash, 'flex');
+      gate('bn-mos', roleReady && vis('nav-mos') && !seesDash, 'flex');
+      // Admin bar: Content + Flow Calendar (admin-only sidebar items).
       gate('bn-content', vis('nav-content'), 'flex');
       gate('bn-flow', vis('nav-flow-calendar'), 'flex');
+      // E-Commerce's one page. Its sidebar item exists only inside that business.
+      gate('bn-ebay-cases', vis('nav-ebay-cases'), 'flex');
+      // Manager bar: Dashboard · Retail · Submit · Supply · Menu. Price Scan was a
+      // sixth tab here until Brian moved it to the Menu (2026-09-22); that is what
+      // puts two tabs either side of Submit, and so centres it.
       gate('bn-supply', mgrBar && vis('nav-supply-request'), 'flex');
-      // ...and only while you are in the business that owns it. The sidebar
+      // ...and Submit only while you are in the business that owns it. The sidebar
       // mirror is the source of truth for every other tab; this one alone read
       // the role without it, so a non-admin inside E-Commerce got a centred
       // Submit Photos button belonging to Bargain Lane.
-      gate('bn-submit-photos', mgrBar && vis('nav-submit-photos'), 'flex');   // center Submit: non-admins only
-      // Price Scan is a floor tool used dozens of times a shift, so it earns a bar slot on
-      // the MANAGER bar. The admin bar is already five wide; admins reach it through More,
-      // the same way they reach Inventory.
-      gate('bn-scan', mgrBar && vis('nav-merch-scan'), 'flex');
-      // More-sheet rows
-      gate('more-submit-photos', !mgrBar && vis('nav-submit-photos')); // admins reach it via More
-      gate('more-ebay-cases', vis('nav-ebay-cases'));                  // mirrors the sidebar item
-      gate('more-merch-scan', !mgrBar && vis('nav-merch-scan'));       // managers have the bar tab
-      gate('more-inventory', vis('nav-inventory-add'));                // admin-only
-      gate('more-inventory-viewer', vis('nav-inventory-viewer'));
-      gate('more-inventory-sale', vis('nav-inventory-sale'));
-      gate('more-bin-dump', vis('nav-bin-dump') && !binDumpInBar);      // managers too; an associate has the bar tab
-      gate('more-inventory-receiver', vis('nav-inventory-receiver'));   // the dock lives under More
-      gate('more-opportunity-buys', vis('nav-opportunity-buys'));
-      // Same rule as Bin Dump above: a page an associate holds while holding no
-      // dashboard is their whole app, so it belongs in the bar, not under More.
-      var mosInBar = roleReady && vis('nav-mos') && !seesDash;
-      gate('bn-mos', mosInBar, 'flex');
-      gate('more-mos', vis('nav-mos') && !mosInBar);
-      gate('more-supply', !mgrBar && vis('nav-supply-request'));       // admins: Supply lives here
-      gate('more-marketing', vis('nav-marketing-ads'));
-      gate('more-users', vis('nav-users'));
-      gate('more-admin', vis('nav-admin-settings'));
-      gate('more-switch-business', vis('nav-switch-business')); // mirrors the sidebar item
-      gate('more-settings', vis('nav-settings'));
-      // active tab
-      // 'ebay-cases' has no bar tab of its own, so without it here every tab
-      // sits dim while you are standing on the page.
-      var morePages = { 'marketing': 1, 'accessibility': 1, 'users': 1, 'admin-settings': 1, 'settings': 1, 'ebay-cases': 1, 'comments': 1, 'bin-dump': 1, 'mos': 1, 'inventory-receiver': 1, 'opportunity-buys': 1 };
-      // ...unless it has its own tab, in which case that tab is what should light
-      // up while you are standing on the page.
-      if (binDumpInBar) delete morePages['bin-dump'];
-      if (!mgrBar) morePages['submit-photos'] = 1; // no center button → page lives under More
-      if (isAdminBar) {                                        // admin: all of these under More
-        morePages['inventory-add'] = 1; morePages['inventory-viewer'] = 1;
-        morePages['inventory-sale'] = 1; morePages['supply-request'] = 1;
-      }
-      else { morePages['flow-calendar'] = 1; morePages['content'] = 1; }               // no bar tab for these
-      // Detail pages are sub-pages of Dashboard — keep that tab highlighted.
-      var detailPages = { 'store-detail': 1, 'all-stores-detail': 1 };
-      // 🔑 A BAR TAB WINS OVER `morePages`. Both Bin Dump and MOS appear in the More
-      // sheet for a manager AND as a bar tab for an associate who holds only that
-      // page — so membership of morePages cannot decide this on its own, or the
-      // associate stands on their one page watching More light up instead of it.
+      gate('bn-submit-photos', mgrBar && vis('nav-submit-photos'), 'flex');
+      // Active tab — DERIVED, never listed. A page with a visible tab of its own
+      // lights that tab; the two detail pages belong to Dashboard; everything else
+      // is reached from the Menu page, so Menu lights. This replaced `morePages`, a
+      // hand-kept list every new page had to join and several never did.
       var barTab = cur && nav && nav.querySelector('.bn-tab[data-tab="' + cur + '"]:not(.hidden)');
-      var activeTab = barTab ? cur : (morePages[cur] ? 'more' : (detailPages[cur] ? 'dashboard' : cur));
+      var detailPages = { 'store-detail': 1, 'all-stores-detail': 1 };
+      var activeTab = barTab ? cur : (detailPages[cur] ? 'dashboard' : 'menu');
       (nav ? nav.querySelectorAll('.bn-tab') : []).forEach(function (t) {
-        var on = (t.id === 'bn-more') ? (activeTab === 'more') : (t.getAttribute('data-tab') === activeTab);
+        var on = t.getAttribute('data-tab') === activeTab;
         t.classList.toggle(ACTIVE, on);
         DIM.forEach(function (c) { t.classList.toggle(c, !on); });
       });
+      // Keep the Menu in step with the sidebar while it is on screen — applyRoleUI
+      // re-syncs through here once the role lands.
+      if (menuShown()) renderMenuPage();
     }
     window.__syncBottomNav = syncBottomNav;
+
+    // ── Menu page (#page-menu) ─────────────────────────────────────────────
+    // Built from the sidebar on every visit, never from a list of its own. The
+    // sidebar is where applyRoleUI, applyAssociateNav and applyBusinessNav already
+    // decide what this account may open here; copying that decision into a second
+    // list is how the More sheet ran to 18 rows with eight pages missing from it.
+    var CHEV = '<svg class="w-4 h-4 flex-shrink-0 text-opl-inkDim dark:text-op-inkDim" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>';
+    var SIGN_OUT_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>';
+
+    function menuShown() {
+      var p = document.getElementById('page-menu');
+      return !!p && !p.classList.contains('hidden');
+    }
+    function esc(s) {
+      return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; });
+    }
+    // On the phone iff in the sidebar: the item, and the group wrapper around it.
+    // NOT the .nav-sub between them — that is only the dropdown being collapsed,
+    // which says nothing about access.
+    function sidebarShows(item) {
+      if (item.classList.contains('hidden')) return false;
+      var grp = item.closest('#sidebar [id$="-group"]');
+      return !grp || !grp.classList.contains('hidden');
+    }
+    function labelOf(item) {
+      var l = item.querySelector('.nav-label:not(.nav-chev)');
+      return l ? l.textContent.trim() : '';
+    }
+    function iconOf(item) {
+      var i = item.querySelector('.nav-icon');
+      return i ? i.innerHTML : '';
+    }
+    // Sections, in sidebar order. A group is a section titled by its header; a
+    // top-level item joins the section its data-menu-section names, in the order
+    // those names first appear. No name falls back to "More", so a page added to
+    // the sidebar without one still reaches the phone.
+    function menuSections() {
+      var list = document.querySelector('#sidebar nav');
+      var sections = [], byTitle = {};
+      function add(title, row) {
+        if (!byTitle[title]) { byTitle[title] = { title: title, rows: [] }; sections.push(byTitle[title]); }
+        byTitle[title].rows.push(row);
+      }
+      function row(item) {
+        return { page: item.getAttribute('data-page'), label: labelOf(item), icon: iconOf(item), hint: item.getAttribute('data-menu-hint') || '' };
+      }
+      if (list) Array.prototype.forEach.call(list.children, function (child) {
+        if (child.matches('.nav-item[data-page]')) {
+          if (sidebarShows(child)) add(child.getAttribute('data-menu-section') || 'More', row(child));
+          return;
+        }
+        var head = child.querySelector('.nav-item:not(.nav-subitem)');
+        if (!head) return;
+        child.querySelectorAll('.nav-subitem[data-page]').forEach(function (item) {
+          if (sidebarShows(item)) add(labelOf(head), row(item));
+        });
+      });
+      // Account mirrors the sidebar's bottom section. Sign out is everyone's.
+      var acct = [];
+      var sw = document.getElementById('nav-switch-business');
+      var st = document.getElementById('nav-settings');
+      if (sw && sidebarShows(sw)) acct.push({ act: 'switch', label: labelOf(sw), icon: iconOf(sw) });
+      if (st && sidebarShows(st)) acct.push({ page: 'settings', label: labelOf(st), icon: iconOf(st) });
+      acct.push({ act: 'signout', label: 'Sign out', icon: SIGN_OUT_ICON, bad: true });
+      sections.push({ title: 'Account', rows: acct });
+      return sections;
+    }
+    function menuRowHTML(r, section) {
+      var tone = r.bad ? 'text-opl-bad dark:text-[#f87171]' : 'text-opl-ink dark:text-op-ink';
+      return '<button type="button" class="menu-row w-full flex items-center gap-3 px-4 min-h-[48px] text-left text-[15px] font-medium ' + tone + ' active:bg-opl-panelHi dark:active:bg-op-panelHi"'
+        + (r.page ? ' data-page="' + esc(r.page) + '"' : '')
+        + (r.act ? ' data-act="' + r.act + '"' : '')
+        + ' data-find="' + esc((r.label + ' ' + section).toLowerCase()) + '">'
+        + '<span class="menu-ic w-5 h-5 flex-shrink-0' + (r.bad ? '' : ' text-opl-inkDim dark:text-op-inkDim') + '" aria-hidden="true">' + r.icon + '</span>'
+        + '<span class="flex-1 min-w-0 truncate">' + esc(r.label) + '</span>'
+        + (r.hint ? '<span class="flex-shrink-0 text-[10px] font-bold uppercase tracking-[0.06em] px-1.5 py-0.5 rounded-md border border-[rgba(20,16,8,0.18)] dark:border-op-borderHi text-opl-inkDim dark:text-op-inkDim">' + esc(r.hint) + '</span>' : '')
+        + (r.bad ? '' : CHEV)
+        + '</button>';
+    }
+    // Rebuilt only when the rows would differ. syncBottomNav calls this on every
+    // re-sync, including the two boot timers; replacing identical rows under a
+    // finger that is mid-tap swallows the tap.
+    var menuHTML = '';
+    function renderMenuPage() {
+      var list = document.getElementById('menu-list');
+      if (!list) return;
+      var html = menuSections().map(function (s) {
+        return '<section class="mt-5" data-menu-sec>'
+          + '<h2 class="px-1 pb-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">' + esc(s.title) + '</h2>'
+          + '<div class="rounded-card overflow-hidden border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-opl-panel dark:bg-op-panel divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border">'
+          + s.rows.map(function (r) { return menuRowHTML(r, s.title); }).join('')
+          + '</div></section>';
+      }).join('');
+      if (html !== menuHTML || !list.firstChild) { list.innerHTML = html; menuHTML = html; }
+      fillMenuAccount();
+      filterMenu();
+    }
+    window.renderMenuPage = renderMenuPage;
+
+    function setText(id, t) { var e = document.getElementById(id); if (e) e.textContent = t; }
+    // Name first, as applyAssociateNav does: on a shared phone the name is how the
+    // next person knows to sign out.
+    function fillMenuAccount() {
+      var u = (typeof currentUser !== 'undefined' && currentUser) || null;
+      var name = (u && (u.name || u.email)) || '';
+      var parts = name.replace(/@.*$/, '').split(/[\s._-]+/).filter(Boolean);
+      var initials = parts.length ? parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : '') : '';
+      var role = (document.getElementById('user-role-label') || {}).textContent || '';
+      var biz = '';
+      try {
+        var id = activeBusiness() || 'bl';
+        var b = userBusinesses(u).filter(function (x) { return x.id === id; })[0];
+        biz = b ? b.name : '';
+      } catch (e) {}
+      setText('menu-avatar', initials.toUpperCase());
+      setText('menu-name', name);
+      setText('menu-sub', [role, biz].filter(Boolean).join(' · '));
+      syncMenuDark();
+    }
+    function syncMenuDark() {
+      var b = document.getElementById('menu-dark');
+      if (b) b.setAttribute('aria-pressed', document.documentElement.classList.contains('dark') ? 'true' : 'false');
+    }
+    window.menuToggleDark = function () {
+      var t = document.getElementById('dark-toggle');
+      if (t) t.click();
+      syncMenuDark();
+    };
+    // Rows hide by the [hidden] attribute, so the card's divide-y skips them.
+    function filterMenu() {
+      var input = document.getElementById('menu-search');
+      var raw = input ? input.value.trim() : '';
+      var q = raw.toLowerCase();
+      var any = false;
+      document.querySelectorAll('#menu-list [data-menu-sec]').forEach(function (sec) {
+        var n = 0;
+        sec.querySelectorAll('.menu-row').forEach(function (r) {
+          var hit = !q || r.getAttribute('data-find').indexOf(q) !== -1;
+          r.hidden = !hit;
+          if (hit) n++;
+        });
+        sec.hidden = !n;
+        if (n) any = true;
+      });
+      var empty = document.getElementById('menu-empty');
+      if (empty) {
+        empty.hidden = any;
+        empty.textContent = any ? '' : 'Nothing matches “' + raw + '”.';
+      }
+    }
+    var menuList = document.getElementById('menu-list');
+    if (menuList) menuList.addEventListener('click', function (e) {
+      var b = e.target.closest('.menu-row');
+      if (!b) return;
+      var page = b.getAttribute('data-page'), act = b.getAttribute('data-act');
+      if (page) navigateToPage(page);
+      else if (act === 'switch') switchBusiness();
+      else if (act === 'signout') logout();
+    });
+    var menuSearch = document.getElementById('menu-search');
+    if (menuSearch) {
+      menuSearch.addEventListener('input', filterMenu);
+      // Go opens the first PAGE left in the list — never an action, so a search
+      // that happens to leave only "Sign out" cannot sign anyone out.
+      menuSearch.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        var first = document.querySelector('#menu-list .menu-row[data-page]:not([hidden])');
+        if (first) { menuSearch.blur(); first.click(); }
+      });
+    }
+    // The bar's Menu tab. On the Menu already, it goes back to where you were,
+    // the way the old sheet closed from the button that opened it.
+    window.toggleMenuPage = function () {
+      if (menuShown() && typeof window.__navBack === 'function') { window.__navBack(); return; }
+      navigateToPage('menu');
+    };
 
     // Wrap navigateToPage so the bar tracks the current page.
     var _np = window.navigateToPage;
     window.navigateToPage = function (p) {
+      var wasMenu = menuShown();
       var r = _np ? _np.apply(this, arguments) : undefined;
+      // A fresh visit to the Menu starts clean: no leftover search, at the top.
+      if (p === 'menu' && !wasMenu && menuShown()) {
+        if (menuSearch) menuSearch.value = '';
+        // The two-argument form: no scroll-behavior is set anywhere, so it is
+        // instant, and an older WebKit cannot throw on the options object.
+        window.scrollTo(0, 0);
+      }
       try { syncBottomNav(p); } catch (e) {}
       return r;
-    };
-
-    window.openMoreSheet = function () {
-      syncBottomNav(); // re-gate rows before showing
-      var em = document.getElementById('user-email-label');
-      var ro = document.getElementById('user-role-label');
-      if (em) document.getElementById('more-email').textContent = em.textContent || '';
-      if (ro) document.getElementById('more-role').textContent = ro.textContent || '';
-      scrim.classList.remove('opacity-0', 'pointer-events-none');
-      sheet.classList.remove('translate-y-full');
-      sheet.style.transform = '';
-    };
-    window.closeMoreSheet = function () {
-      scrim.classList.add('opacity-0', 'pointer-events-none');
-      sheet.classList.add('translate-y-full');
-      sheet.style.transform = '';
     };
 
     // Hide bar on scroll-down, reveal on scroll-up. The document scrolls
@@ -35504,27 +35623,6 @@
     }
     window.addEventListener('scroll', onScroll, { passive: true });
     if (scroller) scroller.addEventListener('scroll', onScroll, { passive: true });
-
-    // Swipe-down on the grab handle to dismiss the sheet.
-    var grab = document.getElementById('more-grab'), startY = null, dy = 0;
-    function ts(e) { startY = e.touches[0].clientY; dy = 0; sheet.style.transition = 'none'; }
-    function tm(e) {
-      if (startY == null) return;
-      dy = e.touches[0].clientY - startY;
-      // Consume the downward drag so it can't trigger page scroll / iOS
-      // pull-to-refresh underneath the sheet.
-      if (dy > 0) { e.preventDefault(); sheet.style.transform = 'translateY(' + dy + 'px)'; }
-    }
-    function te() {
-      sheet.style.transition = '';
-      if (dy > 90) closeMoreSheet(); else sheet.style.transform = '';
-      startY = null; dy = 0;
-    }
-    if (grab) {
-      grab.addEventListener('touchstart', ts, { passive: true });
-      grab.addEventListener('touchmove', tm, { passive: false });
-      grab.addEventListener('touchend', te);
-    }
 
     function init() { try { syncBottomNav(); } catch (e) {} }
     if (document.readyState !== 'loading') init();

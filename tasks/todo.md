@@ -1,3 +1,95 @@
+# Phone nav: the More sheet becomes a Menu page (2026-09-22)
+
+**Brian**, after reviewing four options (artifact "RETJG Mobile Nav Options"):
+*"C and move scan and yes have them on the phone"* — Option C (Menu page), Price Scan
+leaves the manager bar, and the six sidebar pages that never had a phone route go on it.
+
+## What is wrong today (measured by booting index.html per role in Chromium)
+
+- `#more-sheet` has no height cap and no overflow. Superuser: 17 rows, 973px + 34px
+  home-bar padding on a 956px phone — the grab handle and identity are off the top, and the
+  sheet covers the scrim, so it cannot be closed except by opening a page. SE: 5 rows unreachable.
+- Manager bar: six tabs in two uneven flex halves (45px vs 76px on a 393px phone).
+- Associates and E-Commerce: More alone in the right half (176px); in E-Commerce it is the
+  only tab and eBay Cases is inside it.
+- Eight sidebar pages have no phone route: Labor, Shelf Count, Comments, Coverage, Products,
+  Velocity, Manifests, Buy Criteria. Root cause: the sheet is a hand-kept copy of the sidebar.
+
+## Plan
+
+- [x] **`#page-menu`**, a real page (showOnlyPage finds it by prefix; swipe-back works off
+      navStack). App bar "MENU", a search box (16px, so iOS does not zoom), an account card
+      (initials, name, role · business, dark-mode toggle), then `#menu-list`, which holds
+      ONLY what the renderer owns (§4.8 trap 7).
+- [x] **Generated from the sidebar.** Walk `#sidebar nav` in order: a group wrapper becomes
+      a section titled by its header; a top-level item joins the section named by a new
+      `data-menu-section` attribute (Store / E-Commerce / Admin), falling back to "More" so
+      an unannotated future page still reaches the phone. An item shows iff it and its group
+      wrapper are not `.hidden` — `.nav-sub`'s collapsed state is ignored. Icons and labels
+      are cloned from the sidebar. Account: Switch business / Settings mirror their sidebar
+      items; Sign out always.
+- [x] **No dead rows.** The Menu inherits every sidebar gate, so the sidebar must equal the
+      router: gate `nav-comments` to admins (managers see a dead Comments item on desktop
+      today); make `nav-merch-group` the union of its children's audiences and gate
+      `nav-merch-shelf-count` itself, so an executive keeps Price Scan and is not offered
+      Shelf Count.
+- [x] **Bar.** More → Menu (☰, `bn-menu`, `data-tab="menu"`); tapping it on the Menu goes
+      back. Remove `bn-scan`. Add `bn-ebay-cases`. Drop the two flex halves: every tab takes
+      an equal share, so the manager's Submit lands dead centre (2 · Submit · 2) and no bar
+      is lopsided. Active tab is DERIVED — a visible bar tab for the page, Dashboard for the
+      two detail pages, otherwise Menu — replacing the hand-kept `morePages` map.
+- [x] Submit label in light mode: `#16a34a` (3.23:1) → `#166534` (7.00:1).
+- [x] Remove `#more-scrim`, `#more-sheet`, their JS and the PTR sheet check.
+- [x] `data-menu-hint="Desktop"` on the five Merchandising tables (dense §4.8 tables).
+- [x] Tests: replace the More-row assertions in test-inventory-receiver / test-opportunity-buys;
+      new `test-mobile-menu.mjs` (every top-level sidebar page is annotated, no `more-*` copy
+      survives); update browser-inventory-nav; new `browser-mobile-menu.mjs` driving each role.
+- [x] DESIGN.md §3.2 / §5 / §9, ORIENT.md, bump `CACHE_NAME`.
+
+## Verification
+
+- [x] `npm test` green.
+- [x] Real browser, per role (superuser 2-biz, admin, manager, executive, associate,
+      E-Commerce): bar tabs, equal widths, Submit centred, Menu rows == visible sidebar
+      items, EVERY row actually opens its page, search + Enter, back-toggle, geometry.
+- [x] Contrast ≥ 4.5:1 on every visible text node of the Menu and bar in light, dark and pure black.
+
+## Review — built
+
+| | before | after |
+|---|---|---|
+| superuser's phone surface | 1,007px sheet on a 956px screen, cut off, cannot close | a page: scrolls, swipe-back, search |
+| pages on the phone (superuser / manager) | 17 of 25 / 9 of 11 | 25 of 25 / 11 of 11 |
+| manager bar | 6 tabs, 45–76px | 5 tabs, all equal, Submit centred to 0.02px |
+| associate / E-Commerce bar | More alone in a 176px half | even thirds / eBay Cases · Menu |
+| places to register a new page for the phone | 3 (row, gate line, morePages) | 0 — the sidebar item is enough |
+
+**Found along the way, fixed because the Menu inherits the sidebar:**
+
+1. **Comments was a dead sidebar item for every manager** — on desktop too. `applyRoleUI`
+   never gated `nav-comments`, and the router's `adminOnly` refuses it. Generated into the
+   Menu it would have been a dead row on every manager's phone.
+2. **An executive can scan, but could not reach Price Scan.** The router admits them; the
+   Merchandising header was gated on `merchRoles` alone, which omits executives. The group
+   is now the union of its children's audiences (the Inventory rule), and Shelf Count
+   carries `merchRoles` itself so the executive is not offered it.
+3. **Submit was 8px wider than every other tab.** `padding: 0 4px` on a `flex-1` item is a
+   floor on its basis under border-box. Caught by the harness measuring widths, not by eye.
+4. **The Menu rebuilt itself on the boot re-sync timers**, replacing identical rows under a
+   finger mid-tap. The harness hit it as a detached element. It now rebuilds only when the
+   markup would differ.
+
+**Seen, not changed (out of scope):** Weekly Retail throws on a `weekly-summary` response
+without `stores` — surfaced only because the harness stubbed every endpoint with `{ok:true}`.
+The one-time "Swipe back" hint is a dark pill in light mode, as it was before.
+
+**Verified:** `npm test` 5603 assertions across 81 suites. `browser-mobile-menu.mjs` 136 checks
+over six accounts — including opening every Menu row for every role. The existing browser
+harnesses re-run green: inventory-nav 72, associate-reveal 42, inventory-receiver 154,
+opportunity-buys 118, approval-pin 36, holland-budget 30. **Mutation-checked:** five breakages of the static suite each
+caught by the assertion meant for them; removing the Comments gate from the built page makes
+the browser harness report `comments -> page-menu` for managers and executives.
+
 # The Repair console's BL12 roster (2026-09-22)
 
 **Brian:** *"fix the BL12 one in the repair console too"*
