@@ -77,13 +77,13 @@ migration and remove a whole class of confusion.
 Migration → worker → frontend, as before: the new worker writes columns the current database
 does not have.
 
-## Review — built, tested, not yet deployed
+## Review — built, tested, migration and worker deployed
 
 **Shipped:** `migration-073.sql`, ~490 lines of `worker.js`, ~260 of `index.html`,
 `scripts/test-migration-073.mjs` (29), `scripts/test-ob-manifest.mjs` (128), 56 new browser
 assertions in `scripts/browser-opportunity-buys.mjs`, `sw.js` v223 → v224.
 **5,504 source assertions across 79 suites pass; 118 browser assertions pass at 390px and
-1180px in both themes.** Nothing is deployed — the migration needs Brian's go-ahead.
+1180px in both themes.**
 
 ### Three things the plan did not foresee
 
@@ -155,11 +155,43 @@ against a database without them every OB upload and every scan carrying a PO thr
 the live worker never names are invisible to it, so the migration is safe to apply while the
 current worker runs.
 
-🛑 **The migration is not run.** Database mutations need Brian's explicit go-ahead. It is
-additive only — three nullable columns and three indexes, no existing row read, rewritten or
-deleted — and `scripts/test-migration-073.mjs` proves that against a scratch SQLite built
-from migration-043's own `CREATE TABLE`s plus every `ALTER` since, diffing each pre-existing
-row field by field.
+### Deployed 2026-09-22, on Brian's go-ahead
+
+**Migration-073 — staging (`b40982c2`) then production (`3fa911d7`).** All six objects landed
+on both; `rows_written: 6` is the six schema objects, not data. Production was unchanged
+across it, checked rather than assumed:
+
+| | before | after |
+|---|---|---|
+| `manifests` | 2 | 2 |
+| `manifest_lines` | 82 | 82 |
+| `SUM(cost × qty)` | $18,289.75 | $18,289.75 |
+| rows with `superseded_at` | — | 0 (every existing manifest stays live) |
+| lines with `ob_price`/`ob_upc` | — | 0 |
+
+🔑 **The UNIQUE guard was verified by READING its definition out of `sqlite_master`, never by
+probing it.** CLAUDE.md rule 3: had the index been missing, an insert-two-live-manifests probe
+would have left exactly the two junk rows the index exists to prevent. The enforcement
+behaviour itself is proven in `scripts/test-migration-073.mjs` against a scratch SQLite.
+
+**Worker `clover-sales-api`** — version `8fcf3440-5098-4001-8061-992c0414f596`. Confirmed over
+**three consecutive clean passes** 30 s apart against `api.retjghub.com` (rule 5: rollout is
+gradual and mid-rollout requests hit a mix of old and new).
+
+🛑 **The poller was proved able to FAIL before the deploy**, not after — all four markers were
+read as *absent* from the live bundle first, and the HTTP status is matched against
+`^[1-4][0-9][0-9]$` so a connection failure cannot pass as a response. That is the exact trap
+an earlier poller in this session fell into: wrong host, `000` from curl, `|| echo 000`
+appending a second, and `000000` satisfying both guards.
+
+**Cross-checked against D1 after deploying** (rule 4 — a write is never assumed to have
+landed): the 19 columns the worker `INSERT`s into `manifest_lines` and the 11 it `INSERT`s
+into `manifests` all exist in production, so the one failure this deploy order exists to
+prevent cannot occur.
+
+**Still outstanding:** the frontend. GitHub Pages builds `main`, so the CSV field on the
+Open-a-buy card and the scan's manifest strip reach www.retjghub.com only when #273 merges —
+auto-merge does not work on this repo, so that is Brian's click.
 
 
 # Opportunity Buys — the page on a phone (2026-09-21)
