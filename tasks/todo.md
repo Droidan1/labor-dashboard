@@ -1,3 +1,211 @@
+# The rest of the contrast failures (2026-09-22)
+
+**Brian:** *"fix the rest of the contrast ones too"*
+
+**Result: 0 failing text nodes across all 32 page sections, in both themes**, measured
+through `navigateToPage` so every page is initialised.
+
+## Where they were, and why a class sweep could not reach them
+
+| kind | n | fix |
+|---|---|---|
+| `text-white` on the brand green fill | 39 | ink → `#06210f`; **the green is untouched** |
+| red as text (`red-400/500/600`, `op-bad`) | 53 | → `text-opl-bad dark:text-[#f87171]` |
+| green as text (`[#3BB54A]`, `green-600`) | 16 | → `text-accent-green`, which already has a light override |
+| inverted grey pairs, bare `gray-600` | 6 | → the `inkDim` pair |
+| **CSS rules** — landing pills/tiles, eBay pill, `.mc-lvl`, manifest empty state | 7 rules | light overrides beside the existing rule |
+| **inline styles set from JS** — LIVE pill ×3, pace %, budget delta ×3 | 7 sites | a variable the theme re-points |
+
+The last two rows are the point: **a `class="…"` sweep sees none of them.** Roughly a
+third of the remaining failures lived in `<style>` rules and JS-built strings.
+
+🔑 `text-accent-green` needed no new colour at all — `index.html:150` has carried
+`html:not(.dark) .text-accent-green { color:#166534 }` all along. Reaching for the
+existing utility beat inventing a pair.
+
+## 🛑 I "fixed" 120 tokens that were never broken
+
+My static analyser mapped `text-opl-inkDimmer` to `#9c9484` and reported 66 failures.
+It is wrong: **`index.html:217` already remaps both inkDimmer utilities to inkDim's
+value**, and that block's comment explains it deliberately excludes `.mc-lvl` because
+the badge's BORDER carries the meaning. I rewrote 120 tokens to `inkDim`, which changed
+no rendered colour and would have orphaned a deliberate rule and its reasoning.
+
+Caught it by reading the CSS I was about to make dead. Reverted — `git checkout HEAD --
+index.html` and re-applied only the four real categories.
+
+<rules>
+A static contrast pass that resolves a utility to its token value is guessing. The
+cascade can remap that utility, and in this file it does — twice. Reconcile every static
+finding against the RENDERED colour before acting: the rendered survey never once
+flagged `text-opl-inkDimmer`, and that disagreement was the signal.
+</rules>
+
+## The one that needed a root cause, not a colour
+
+`.a11y-lab > span` measured 3.99:1 in dark. The colour was right (`op-inkDim`); the
+GROUND was wrong. Composited it came to `rgb(31,57,59)` — accent-green at .10 (the
+selected option) over **`dark:bg-gray-800`**, a pre-V1 Tailwind grey. On `op-panel` the
+same composite is 4.90:1. So the fix was to put that card on the panel token, not to
+invent a brighter grey. One more surface on the design system, no new colour.
+
+(Ten other cards still use `bg-white dark:bg-gray-800`. None of them fail, so none were
+touched.)
+
+## `.mc-lvl` — the one place I went against DESIGN.md
+
+§4.8 prescribes `inkDimmer` for the level badge, and `index.html:214` deliberately keeps
+it out of the global remap. Its **border** still carries the meaning and is untouched.
+Its **text** read 2.87:1 light / 2.71:1 dark, so that moved to `inkDim`. Recorded here
+because it is a deliberate divergence from the spec, not an oversight.
+
+## DESIGN.md
+
+§4.8 now documents that **an inline style cannot carry a `dark:` override**, gives the
+`--v1-good/bad/warn` variables for the JS-written colours, and states the split: **text
+takes the variable, fills keep the brand hex** — the pill dot, the pace bar and the
+sparkline should read as the brand, and are not held to 4.5:1.
+
+## Verified
+
+- [x] Survey through the real router: **0 failures, 32 page sections, both themes**.
+- [x] `npm test` 5586 assertions / 80 suites; `browser-inventory-nav.mjs` 72 checks.
+- [x] Looked at Content in both themes: the green primary button reads clearly with dark
+      ink and the brand green is unchanged.
+
+# The .ct-tab contrast finding was mine, and it was wrong (2026-09-22)
+
+**Brian:** *"fix the ct-tab one too"* — the 1.10:1 black-on-dark I reported on #276.
+
+## It does not reproduce, and the reason is my measurement
+
+`.ct-tab` has **no CSS rule at all**; it is a JS hook. `ctSetTab()` sets the whole
+className, including the colour, and its inactive branch was already
+`text-opl-inkDim dark:text-op-inkDim`. So the black is the state *before* `ctSetTab`
+has ever run — and `navigateToPage('content')` always calls it.
+
+Measured through real navigation instead of my survey's shortcut:
+
+| | Compose (active) | Thumbnails / Posts |
+|---|---|---|
+| dark | **8.41:1** | 6.18:1 |
+| light | **6.42:1** | 5.29:1 |
+
+All pass. The 1.10:1 was an artifact of **how my survey navigated**: it toggled `hidden`
+on each `#page-*` directly, so no page init ever ran and I measured a pre-init DOM no
+user sees. I reported it to Brian as "near invisible text" on two pages. It was not.
+
+🔑 **The survey was wrong about more than this one.** Re-run through `navigateToPage`,
+the "still failing" list I gave him changes in both directions:
+
+- **gone**: `.ct-tab` (5×, the artifact), and `ebay-cases` drops out of the accent-green
+  group — that group is 6× on dashboard + landing, not 9× on three pages.
+- **appeared**, because the pre-init pages had rendered nothing to measure:
+  `text-white` 2.28:1 on Marketing's "7d"; 3.03:1 on merch-manifests' "Nothing uploaded
+  yet."; 2.71 / 2.87:1 on merch-criteria's "Default"; `text-red-500` 3.39:1 on
+  flow-calendar; 2.54:1 on ebay-cases' "Mode unknown".
+
+<rules>
+A DOM survey that reaches a page by un-hiding it is measuring a page that never
+initialised. Drive the app's own router, or every finding is suspect in both directions —
+false alarms on what init would have fixed, and blind spots where init renders the
+content at all.
+</rules>
+
+## Fixed anyway, and it is worth the line
+
+The tabs still ship with no colour in the markup, so they are correct only *once JS has
+run*. Nobody sees it today; one refactor that renders the page without `ctSetTab` and
+they are black again. They now carry the same value `ctSetTab` gives an inactive tab, so
+the resting state is right before and after it fires — **1.10 → 6.18:1 dark, 5.29:1
+light** — and a comment at the override says why the duplication is deliberate.
+
+## Verified
+
+- [x] Resting state measured **before** any `ctSetTab` call and after navigation, both
+      themes — all four states pass.
+- [x] `npm test` 5586 assertions / 80 suites; `browser-inventory-nav.mjs` 72 checks.
+
+# Muted text across every page, and both findings into DESIGN.md (2026-09-22)
+
+**Brian:** *"yes add both to DESIGN.md and fix all the pages"* — answering the two things
+#276 flagged: the `op-bad` text/fill split, and the 2.54:1 app-bar subtitle.
+
+## The subtitle was backwards, not merely dim
+
+I reported it as "2.54:1 in light". That was true and incomplete: it fails in **both**
+themes, and the reason is worth more than the number.
+
+| | on light grounds | on dark grounds |
+|---|---|---|
+| `gray-400` `#9ca3af` | **2.29 – 2.54 ✗** | 6.35 – 7.80 ✓ |
+| `gray-500` `#6b7280` | 4.35 ✗ – 4.83 ✓ | **3.34 – 4.10 ✗** |
+
+Each grey works on exactly one side. `text-gray-400 dark:text-gray-500` puts **both
+halves on the wrong side** — 2.54:1 light, 3.68:1 dark. The pair that works is the
+reverse, `text-gray-500 dark:text-gray-400`, and it reads like a typo of the broken one.
+The file held **27 backwards and 58 correct**, which is exactly how it survived: half the
+codebase looked like a counter-example to the other half.
+
+## What changed
+
+Found by rendering **every** `#page-*` section in both themes and walking every visible
+text node, rather than grepping for a class name — which is how the scope turned out to
+be wider than the subtitle:
+
+| combo | n | why it failed |
+|---|---|---|
+| `text-gray-400` (bare) | 65 | 2.54:1 light, no dark override |
+| `text-gray-400 dark:text-gray-500` | 27 | both halves on the wrong side |
+| `text-gray-500 dark:text-op-inkDim` | 11 | 4.35:1 on `opl-bg` |
+| `text-gray-400 dark:text-op-inkDim` | 3 | light half fails |
+| `text-gray-400 dark:text-op-inkDimmer` | 3 | both fail; inkDimmer is 2.99:1 as text |
+| `text-gray-500` (bare) | 3 | 3.68:1 dark |
+
+**112 class attributes**, all to `text-opl-inkDim dark:text-op-inkDim` (5.88 / 5.74).
+Plus **3 JS-built class strings** a `class="…"` pass cannot see — two dashboard
+"no data" delta cells and one escaped `<span>` in a template literal. The 58 correct
+pairs were left alone: both halves pass, and rewriting them would be churn.
+
+🔑 **Zero background tokens changed** — verified on the diff, which is what makes a
+112-attribute sweep safe to read: every edit is a text colour.
+
+## Left failing, deliberately — a different family, and Brian has not ruled on it
+
+The sweep did not touch semantic/brand colours. What the survey still reports:
+
+| | n | ratio | where |
+|---|---|---|---|
+| `text-white` on `#3BB54A` | 17 | 2.66 both themes | "Save draft", "Submit photos" |
+| accent-green `#22c55e` as text | 9 | 2.15 light | "LIVE" pills — dashboard, ebay-cases, landing |
+| `text-green-600` | 2 | 3.30 light | dashboard delta cells |
+| `text-[#3BB54A]` | 1 | 2.39 light | Retail Summary "Summary" |
+| **`.ct-tab`, no colour class at all** | 5 | **1.10 dark** | Content / Marketing "Compose" tab |
+
+🛑 The last one is not a tint problem — it is **black text on the dark ground**, near
+invisible. The others are brand decisions (`#3BB54A` is the legacy green) or the known
+`#22c55e`-in-light problem DESIGN.md already records for the page `h1`. None are mine to
+decide, so none were touched.
+
+## DESIGN.md
+
+- **§3.3** now names the subtitle token and carries the grey table above, so the next
+  person reaches for the `inkDim` pair instead of guessing which grey goes where.
+- **§4.8's token table** gains `bad — fills and edges` vs `bad — text`, with the reason:
+  `#ef4444` is 4.73:1 on a bare panel and **4.25:1 on its own wash**, and every red badge
+  sits on the wash. It generalises to the light greens (`#22c55e` 2.28, `#f59e0b` 2.15)
+  under one rule: **measure against the composited background, not the panel.**
+
+## Verified
+
+- [x] Every figure written into DESIGN.md re-computed — **19/19 check out**. A number in a
+      spec is a claim; lessons.md is explicit that claims get run, not remembered.
+- [x] Survey re-run: the grey family is **gone from both themes**, nothing new appeared.
+- [x] No JS queries the changed classes (`querySelector`/`classList.contains` — 0 hits),
+      so a class rename cannot break behaviour.
+- [x] `npm test` — 5586 assertions, 80 suites. `browser-inventory-nav.mjs` — 72 checks.
+- [x] Looked at Supply Request in light: subtitle and empty state readable, layout intact.
+
 # Inventory, unbundled — preview for review (2026-09-22)
 
 **Brian:** *"I want Inventory not to be a page but like Marketing on the sidebar … and then
@@ -103,16 +311,75 @@ rule. The preview keeps `--bad` for fills and edges and adds `--badText` (#f8717
 5.78:1 on the wash; light needs no split at 4.69:1). **If the redesign ships, this belongs in
 DESIGN.md §4.8's token table**, because the next red badge will hit it too.
 
-## Next — on Brian's answer
+## Built — all seven in the dropdown (Brian, 2026-09-22)
 
-- [ ] Confirm the grouping (all seven in the group, or three top-level + four in the group)
-- [ ] Repair `scripts/test-nav-registry.mjs` (move the block above `process.exit`, fix `REPO`)
-- [ ] Nav: `#nav-inventory-group` + header + chev + sub, `NAV_BUSINESS` rows for every new id
-- [ ] Re-point `isAdminBar`; add the new page ids to `morePages`; keep every `gate()` on a child id
-- [ ] `applyRoleUI` / `applyAssociateNav` including the wrapper + sub-list un-hide
-- [ ] Three `#page-*` sections + init hooks + `navigateToPage` guards
-- [ ] Fix the BL12/BL16 delete list; drop the dead pagination; single store list
-- [ ] `npm test`, then a browser pass switching business and role without re-running `applyRoleUI`
+- [x] Repair `scripts/test-nav-registry.mjs` — move the block above `process.exit`, fix
+      `REPO` → `repo`. **17 → 23 assertions.** Proved the recovered guard is not merely
+      passing: injecting `data-page="bin-dump-typo"` makes it fail by name and exit 1.
+      It then caught the three missing page sections before I had written them.
+- [x] Nav: `#nav-inventory-group` + header + chev + sub, seven children, `NAV_BUSINESS`
+      rows for all of them. `toggleInventoryMenu` copies its two siblings verbatim.
+- [x] `isAdminBar` re-pointed from `nav-inventory` (now the group header, which a manager
+      sees) to `nav-inventory-add`, which keeps the old admin-only audience.
+- [x] `applyRoleUI`: group gated on the union of its children's audiences; the three
+      catalog pages stay admin-only. `applyAssociateNav`: wrapper added to the hide
+      selector, and the group chain re-opened when a granted child is inside it —
+      derived from what is visible, not from a second copy of the page list.
+- [x] Three `#page-*` sections, init hooks, guards, `morePages`, three More-sheet rows.
+- [x] BL12/BL16 delete list fixed; `INV_STORES` replaces four hardcoded copies.
+- [x] Dead pagination removed; five status helpers collapsed onto one `invStrip`.
+- [x] `npm test` — 5586 assertions across 80 suites.
+- [x] `scripts/browser-inventory-nav.mjs` — **72 checks in a real browser**, both themes.
+
+### Two things fixed that were NOT in the plan
+
+1. **Both group auto-opens were hardcoded page-id lists** — one per group, "the one spot
+   a new child page can be forgotten", and Inventory would have made a third. Replaced
+   with one DOM-derived block: find the sub-item carrying this `data-page`, open the
+   `.nav-sub` it sits in, rotate that group's chevron. Two lists deleted, none added.
+2. **`showStoreDetail` still held a hardcoded `_pages` array** that had already gone
+   stale twice — it never gained `comments`, any `merch-*`, `bin-dump` or `mos`, so
+   drilling into a store from one of those left both sections stacked. It now calls
+   `showOnlyPage('store-detail')`, which is what `showAllStoresDetail` already used.
+
+### Three bugs I introduced and the browser caught
+
+- **The selection bar rendered with an empty count.** `.invstatus{display:flex}` is
+  (0,1,0), exactly tying Tailwind's `.hidden`, and this `<style>` parses after
+  tailwind.css — so it won. The same trap this file already documents for
+  `.sidebar .nav-item`. Fixed with a (0,2,0) guard.
+- **Both modals would have opened as `display:block`**, losing their centring, because I
+  dropped `flex` from the class list to avoid that same conflict. They have their own
+  `.invmodal` class now.
+- **A regex replacement silently deleted `loadCategoriesForStore`.** `\) \{` matched a
+  one-liner I had just inserted and `.*?\n  \}\n` ate to the next top-level close. Caught
+  by diffing the function inventory against HEAD, which is now how every edit to this
+  file gets checked.
+
+### Contrast
+
+Measured from the colours the browser actually paints, against composited backgrounds,
+in both themes — every visible text node in the three pages clears its AA minimum. Two
+values had to move:
+
+- **The app-bar subtitle.** `text-gray-400` is **2.54:1** on `opl-panel`. It is the
+  pattern every page in this file uses, so it is not this change's to fix app-wide — but
+  these three headers are new, and they use `inkDim` (5.88 light / 5.74 dark). 🛑 **Every
+  other page still carries the 2.54:1 subtitle.**
+- **`.invbdg.r`.** `#c0392b` is 4.69:1 on its wash over `opl-panel` but **4.49:1** over
+  `opl-panelHi`, which is where the results tally sits. `#a93226` clears both.
+- **`op-bad` #ef4444 fails AA as text on its own wash** (4.25:1; it is 4.73:1 on bare
+  panel, which is why nobody has hit it). Dark red TEXT is `#f87171`; `#ef4444` keeps the
+  fills and borders. **This belongs in DESIGN.md §4.8's token table** — the next red badge
+  will hit it too.
+
+### Left alone, deliberately
+
+`index.html:15188` carries the **same BL12/BL16 store-list drift** in the Repair
+console's re-snapshot path. Changing which dates and stores get re-snapshotted is a
+destructive operation under CLAUDE.md's rules and has nothing to do with this redesign.
+Flagged, not touched.
+
 
 # The identity lookup on an OB scan (2026-09-22)
 
