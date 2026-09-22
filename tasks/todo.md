@@ -91,7 +91,7 @@ consumers, so the column is not another `load_id` sitting unread for months:
 Migration → worker → frontend. The new worker writes `title_source`, so against a database
 without it every scan that learns anything throws.
 
-## Review — built and tested; nothing deployed
+## Review — built, tested, migration and worker deployed
 
 **5,580 source assertions across 80 suites pass. 118 browser assertions pass.**
 `migration-074.sql`, ~90 lines of `worker.js`, ~15 of `index.html`,
@@ -147,13 +147,41 @@ its own change — folded into this PR it would be invisible. Filed as a separat
 suite passes under `TZ=America/New_York`; it only fails on a UTC runner between 20:00 and
 midnight Eastern, which is why it has never been seen. No workflow runs `npm test`.
 
-### Deploy order
+### Deployed 2026-09-22, on Brian's go-ahead
 
-Migration → worker → frontend. The new worker names `title_source` in the item_cache upsert,
-which runs on **every** scan that learns anything — so against a database without the column
-Price Scan breaks for every user, not one endpoint.
+**migration-074** — staging (`b40982c2`) then production (`3fa911d7`). One nullable column on
+`item_cache`. Production unchanged across it, checked rather than assumed:
 
-🛑 **Nothing is deployed.** The migration needs an explicit go-ahead.
+| | before | after |
+|---|---|---|
+| cached items | 511 | 511 |
+| named | 496 | 496 |
+| hand-set categories | 1 | 1 |
+| Σ street prices | $3,057.67 | $3,057.67 |
+| `title_source` set | — | 0 — every existing name still reads as the lookup it was |
+
+**Worker `clover-sales-api`** — version `dd98aa1e-133c-4ae7-83c4-f7440b253927`, three
+consecutive clean passes. 🛑 The poller was proved able to FAIL first: all four markers read
+as *absent* from the live bundle before deploying, and the HTTP status matched against
+`^[1-4][0-9][0-9]$` so a blocked tunnel cannot pass as a response.
+
+Cross-checked afterwards (rule 4): all 17 `item_cache` columns the upsert names exist in
+production — that upsert runs on every scan that learns anything, so a mismatch would break
+Price Scan for every user rather than one endpoint.
+
+**Frontend** — #274 merged; Pages run #413 published `bc642db`, whose tree carries
+`dashboard-cache-v225`, the identity line's `title_source === 'manifest'`, and `obSheetName`.
+
+⚠️ **Wider blast radius than the manifest work, and it is live.** That change only touched
+scans carrying a PO. This one also changes later scans *without* one, because a barcode first
+named from a sheet stays named — which is the whole saving, and why the overwrite guard
+shipped with it rather than after it.
+
+🛑 **www.retjghub.com could not be polled from this container**: the agent proxy answers 403
+to CONNECT for that host and for github.io (`api.retjghub.com` is allowed, which is why the
+worker poll worked). The proxy's README says to report a blocked host rather than route
+around it. So the chain verified is: GitHub published `bc642db` → `bc642db` carries the
+change. The CDN edge serving those bytes is the one hop not confirmed from here.
 
 
 # Opportunity buys — a CSV manifest per PO (2026-09-21)
