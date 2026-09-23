@@ -63,7 +63,20 @@ function pageMocks({ who, theme }) {
     localStorage.setItem('darkMode', String(theme !== 'light'));
     localStorage.setItem('darkFlavor', theme === 'oled' ? 'oled' : 'dark');
   } catch (e) {}
-  const M = window.__mos = { calls: [], lookupDelay: 0 };
+  const M = window.__mos = { calls: [], lookupDelay: 0, gumCalls: 0, gumDelay: 0, streams: [] };
+  // The camera: Chromium's fake device (see the launch flags), slowed to a phone's 300-500 ms
+  // and recorded, so a check can say how many cameras were opened and whether each still runs.
+  const md = navigator.mediaDevices;
+  if (md && md.getUserMedia) {
+    const gum = md.getUserMedia.bind(md);
+    md.getUserMedia = async (c) => {
+      M.gumCalls++;
+      await new Promise(r => setTimeout(r, M.gumDelay));
+      const s = await gum(c);
+      M.streams.push(s);
+      return s;
+    };
+  }
   const J = (x, st = 200) => new Response(JSON.stringify(x), { status: st, headers: { 'content-type': 'application/json' } });
   const API = 'https://api.retjghub.com/';
   const real = window.fetch;
@@ -93,7 +106,9 @@ function pageMocks({ who, theme }) {
   };
 }
 
-const b = await chromium.launch({ executablePath: CHROME });
+// A fake camera, accepted without a prompt: the scanner's start/stop races need a real stream.
+const b = await chromium.launch({ executablePath: CHROME,
+  args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
 // One section = one scenario. A wait that times out is a FAILED check, recorded, and the run
 // goes on — a crash would hide every check after it.
 const live = new Set();
@@ -264,6 +279,91 @@ for (const theme of ['light', 'dark', 'oled']) await section(`5. Battle Creek + 
   check(sr >= 4.5, `[${theme}] a pressed "Stolen" reads ${sr.toFixed(2)}:1`);
   measured.push(`${theme.padEnd(5)}  refusal ${rr.toFixed(2)}:1   Stolen pressed ${sr.toFixed(2)}:1`);
   check(!errs.length, `[${theme}] no page errors (${errs.slice(0, 2).join(' | ')})`);
+});
+
+// ── 6. One camera, and none left running (oppbuys-mos-2) ────────────────
+// A phone takes 300-500 ms to open the camera, with nothing on screen, so people tap again. The
+// second tap used to open a SECOND stream that no Stop ever reached — torch on, lens held — and
+// a stream that arrived after the page was left ran on, hidden. Every check below waits for the
+// camera to have been ASKED for, and for the stream to ARRIVE, before judging it; otherwise it
+// would pass by never opening a camera at all.
+await section('6. camera (oppbuys-mos-2)', async () => {
+  const { page, errs } = await open();
+  const states = n0 => page.evaluate(n => window.__mos.streams.slice(n).map(s => s.getTracks()[0].readyState), n0);
+  const count = () => page.evaluate(() => ({ gum: window.__mos.gumCalls, streams: window.__mos.streams.length }));
+  const scanLabel = () => text(page, '#mos-scan-lbl');
+  const live = () => page.waitForFunction(() => document.getElementById('mos-scan-lbl').textContent === 'Stop', null, { timeout: 8000 });
+  // Ends a scenario the way a person would find the page next: Scan goes live, Stop ends it.
+  const freshScan = async (what) => {
+    const n0 = (await count()).streams;
+    await page.click('#mos-scan-btn'); await live();
+    const ok1 = (await states(n0)).join() === 'live';
+    await page.click('#mos-scan-btn'); await page.waitForTimeout(150);
+    check(ok1 && (await states(n0)).join() === 'ended' && (await scanLabel()) === 'Scan QR', `...and the next Scan works as normal (${what})`);
+  };
+  await page.evaluate(() => { window.__mos.gumDelay = 500; });
+
+  // A real double tap: the second lands on a disabled button (Playwright's click would WAIT
+  // for it to be enabled, so the mouse is used directly).
+  let c0 = await count();
+  const bb = await page.locator('#mos-scan-btn').boundingBox();
+  await page.mouse.click(bb.x + bb.width / 2, bb.y + bb.height / 2);
+  await page.waitForTimeout(80);
+  const starting = await page.evaluate(() => ({ lbl: document.getElementById('mos-scan-lbl').textContent,
+    dis: document.getElementById('mos-scan-btn').disabled }));
+  check(starting.lbl === 'Starting…' && starting.dis, `the tap shows "Starting…" at once, and the button waits (${JSON.stringify(starting)})`);
+  await page.mouse.click(bb.x + bb.width / 2, bb.y + bb.height / 2);   // the impatient second tap
+  await live();
+  await page.waitForTimeout(800);                                      // a second camera would be here by now
+  check((await states(c0.streams)).join() === 'live', `🛑 a double tap opens ONE camera (${JSON.stringify(await states(c0.streams))})`);
+  await page.click('#mos-scan-btn'); await page.waitForTimeout(150);
+  check((await states(c0.streams)).every(s => s === 'ended') && (await scanLabel()) === 'Scan QR', '...and Stop leaves none running');
+
+  // The guard itself: a second call once the camera is being asked for (two calls before the QR
+  // reader answers would pass on the start generation alone).
+  c0 = await count();
+  await page.evaluate(() => { window.mosScan(); setTimeout(() => window.mosScan(), 150); });
+  await live(); await page.waitForTimeout(800);
+  check((await count()).gum - c0.gum === 1, '🛑 a second call while the camera opens asks for no second camera');
+  await page.click('#mos-scan-btn'); await page.waitForTimeout(150);
+
+  // Leaving the page, the Log tab, and the swipe-back path — each while the camera opens.
+  for (const [what, leave, back] of [
+    ['leaving the page', () => window.navigateToPage('dashboard'), () => window.navigateToPage('mos')],
+    ['the Log tab', () => window.mosSetTab('log'), () => window.mosSetTab('mark')],
+    ['swipe-back to store detail', () => window.showOnlyPage('store-detail'), () => window.navigateToPage('mos')],
+  ]) {
+    c0 = await count();
+    await page.evaluate(() => { window.__mos.gumDelay = 600; });
+    await page.click('#mos-scan-btn');
+    await page.waitForFunction(n => window.__mos.gumCalls > n, c0.gum, { timeout: 5000 });   // the camera is being opened
+    await page.evaluate(leave);
+    await page.waitForFunction(n => window.__mos.streams.length > n, c0.streams, { timeout: 5000 });   // …and arrives late
+    await page.waitForTimeout(200);
+    check((await states(c0.streams)).join() === 'ended', `🛑 ${what} while the camera opens: the late stream is closed on arrival (${JSON.stringify(await states(c0.streams))})`);
+    await page.evaluate(back); await settle(page);
+    await page.evaluate(() => { window.__mos.gumDelay = 0; });
+    await freshScan(what);
+  }
+
+  // A scan already running: swipe-back used to skip the camera cleanup entirely.
+  c0 = await count();
+  await page.click('#mos-scan-btn'); await live();
+  await page.evaluate(() => window.showOnlyPage('store-detail'));
+  await page.waitForTimeout(150);
+  check((await states(c0.streams)).join() === 'ended', '🛑 a RUNNING scan ends on swipe-back to store detail too');
+  await page.evaluate(() => window.navigateToPage('mos')); await settle(page);
+  await freshScan('after swipe-back');
+
+  // A remembered lens that is gone used to fail every scan after it.
+  await page.evaluate(() => { mosLensId = 'no-such-camera'; });
+  await page.click('#mos-scan-btn');
+  await page.waitForFunction(() => !document.getElementById('mos-status').hidden, null, { timeout: 5000 });
+  check(/No camera available/.test(await text(page, '#mos-status')) && (await scanLabel()) === 'Scan QR'
+        && !(await page.evaluate(() => document.getElementById('mos-scan-btn').disabled)),
+        'a camera that will not open says so, and gives the button back');
+  await freshScan('the failed lens is forgotten');
+  check(!errs.length, `no page errors — no uncaught "play() request was interrupted" (${errs.slice(0, 2).join(' | ')})`);
 });
 
 await b.close();

@@ -1,3 +1,73 @@
+# Mark Out of Stock: one camera, and none left running (oppbuys-mos-2, 2026-09-23)
+
+**Request:** *"Fix the MOS double-tap scan bug next."* `mosScan` set `mosScanning` only once the
+camera was open. That is 300-500 ms after the tap on a phone, with nothing on screen, so a
+second tap opened a second stream, and Stop ended only one: the torch stayed on and the lens was
+held.
+
+Leaving while the camera opened left a stream on the hidden page. **Swipe-back and the browser's
+back button skipped the camera cleanup entirely**: `showStoreDetail` goes straight to
+`showOnlyPage`.
+
+## Plan
+
+- [x] `mosScanGen` + `mosStarting`: a tap while opening is ignored; the button is disabled and
+      reads "Starting…"; a 20 s start timeout
+- [x] A generation check after every await and in every catch; a stale stream is stopped on
+      arrival; `mosScanning` is set only once `play()` resolves
+- [x] Failures go through `mosStopScan` and say what happened (blocked permission named); a failed
+      `getUserMedia` clears the saved lens
+- [x] `mosStopScan` bumps the generation, re-enables the button, resets the torch; `mosTorch` is
+      guarded
+- [x] The camera stop moves into `showOnlyPage`, the one function every page switch goes through
+- [x] `browser-mos.mjs` gets a fake-camera section, written first and run against `main` to watch
+      it fail
+- [x] `test-mos.mjs` §12: `mosScan`, `mosStopScan` and `mosTorch` executed with fakes;
+      `showOnlyPage`
+- [x] Mutation checks; `sw.js` v235 + shell-cache fixture; `npm test` green
+- [x] Docs: oppbuys-mos-2 marked fixed in the review
+
+## Review
+
+**Reproduced before fixing.** The new browser section ran against `main` first. A double tap
+opened two live cameras (`["live","live"]`), Stop left one running, and leaving the page while
+the camera opened left the late stream `live`, the same as the review's probe.
+
+**Fix:**
+- `mosScanGen` plus `mosStarting`: a tap while the camera opens is ignored, the button reads
+  "Starting…" and is disabled, and there is a 20 s start timeout, so it can never trap.
+- A generation check after every await and in every catch; a stale stream is stopped on arrival.
+- `mosScanning` is set only once `play()` resolves.
+- `mosStopScan` bumps the generation, re-enables the button and resets the torch.
+- The camera stop moved into `showOnlyPage`, which swipe-back and popstate also pass through.
+- Failures say what happened: a blocked permission is named, and a lens that is gone is forgotten.
+
+**Two guards were dropped after mutation testing showed they could never change an outcome:**
+- **A `gen` check in the `tick` loop:** `mosStopScan` always cancels the pending frame before a new
+  scan can start.
+- **One in `mosTorch`'s success path:** the lit look is drawn from the current `mosTorchOn`, which
+  the stop resets. The guard that matters is in its `catch`: a late failure from an ended scan
+  must not switch off a newer scan's torch. That one is tested.
+
+**Verified:**
+- **`npm test`:** 5787 across 81 suites, all pass (5753 before). `test-mos.mjs` went from 215 to
+  249: §12 runs the real `mosScan`, `mosStopScan`, `mosTorch` and `showOnlyPage` against a fake
+  camera.
+- **`browser-mos.mjs`:** 59 / 59, with Chromium's fake camera. It covers:
+  - a real double tap, and a second call once the camera is being asked for;
+  - leaving the page, the Log tab, and swipe-back, each while the camera opens;
+  - a running scan on swipe-back;
+  - a bad saved lens;
+  - each scenario ending with a fresh Scan going live.
+- **`browser-bin-dump.mjs`:** 113 / 113 on the final build (`showOnlyPage` now runs on every
+  switch).
+- **Mutations, Node suite:** 12 / 12 caught, each failing cleanly.
+  - The first version of §12 used fixed fake indexes, so one regression crashed the scenarios after
+    it. Each scenario now reads the fakes it created, and `done()` records a rejected scan instead
+    of throwing it. That is what the unguarded `play()` was: an uncaught rejection.
+
+---
+
 # Mark Out of Stock: never file an entry under a store nobody picked (oppbuys-mos-3, 2026-09-23)
 
 **Request:** MOS's `mosEntryStore()` fell back to the account's first store when the picker read

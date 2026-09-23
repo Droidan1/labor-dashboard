@@ -6,7 +6,7 @@
 > - **Not reviewed yet:** App shell / navigation / service worker / initial load, Labor, Inventory Receiver, Submit Photos + Marketing + Comments, Users & access.
 > - **Verified:** only *Worker crons* (all 15 findings confirmed by an independent verifier). **Every other finding below is one reviewer's claim.** The one verified unit came back 15/15, so the reviews look reliable, but re-check each finding against the code before fixing it.
 > - **The review itself changed no code.** Every finding is either **minor** (local, frontend-only or self-contained, no API/schema/deploy coupling) or **major** (needs a plan: cross-cutting, frontend+worker coordination, schema, or destructive-path work).
-> - **Fixed since (2026-09-23):** 14 Bin Dump findings — bin-dump-1, 2, 3, 4, 7, 10, 11, 12, 13, 14, 15, 20, 22, 23 — each checked against the code before fixing; marked in the Bin Dump table. Also oppbuys-mos-3 and oppbuys-mos-11, and the lookup half of oppbuys-mos-4, marked in the Opportunity Buys + MOS table. See `tasks/todo.md`.
+> - **Fixed since (2026-09-23):** 14 Bin Dump findings — bin-dump-1, 2, 3, 4, 7, 10, 11, 12, 13, 14, 15, 20, 22, 23 — each checked against the code before fixing; marked in the Bin Dump table. Also oppbuys-mos-2, oppbuys-mos-3 and oppbuys-mos-11, and the lookup half of oppbuys-mos-4, marked in the Opportunity Buys + MOS table. See `tasks/todo.md`.
 
 ## How to pick this up
 
@@ -2062,7 +2062,7 @@ Both pages are carefully built. Every Clover, manifest and user string is escape
 | ID | Sev | Size | Category | Finding | Where | Verified |
 |---|---|---|---|---|---|---|
 | [oppbuys-mos-1](#oppbuys-mos-1) | high | major | bug | Buy 'Sold' counts every sale of an ordinary (non-PO) code printed under the buy, across all stores | `worker.js:23840` | unverified |
-| [oppbuys-mos-2](#oppbuys-mos-2) | medium | minor | bug | MOS scanner: a double tap, or leaving while the camera opens, leaves a live camera stream | `index.html:29895` | unverified |
+| [oppbuys-mos-2](#oppbuys-mos-2) | medium | minor | bug | MOS scanner: a double tap, or leaving while the camera opens, leaves a live camera stream | `index.html:29895` | **fixed 2026-09-23** |
 | [oppbuys-mos-3](#oppbuys-mos-3) | medium | minor | bug | MOS entries silently land in the first store when 'All stores' is selected or after revisiting the page | `index.html:29753` | **fixed 2026-09-23** |
 | [oppbuys-mos-4](#oppbuys-mos-4) | medium | minor | bug | Out-of-order responses: a stale mos-lookup overwrites the sticker the user just entered, and mos-list races on store switches | `index.html:29811` | **lookup half fixed 2026-09-23**; mos-list race open |
 | [oppbuys-mos-5](#oppbuys-mos-5) | medium | minor | bug | Client parseInt gets around the worker's quantity shape check ('2,000' is logged as 2, '1.5' as 1) | `index.html:30074` | unverified |
@@ -2103,7 +2103,7 @@ Both pages are carefully built. Every Clover, manifest and user string is escape
 <a id="oppbuys-mos-2"></a>
 #### oppbuys-mos-2 — MOS scanner: a double tap, or leaving while the camera opens, leaves a live camera stream
 
-*medium · minor · bug · confidence high · `index.html:29895` · unverified*
+*medium · minor · bug · confidence high · `index.html:29895` · unverified · fixed 2026-09-23*
 
 **Evidence.** index.html:29895 `if (mosScanning) { mosStopScan(); return; }` is the only re-entry guard, but mosScanning is only set at 29916 (`mosStream = stream; mosScanning = true;`), after `await mosLoadDecoder()` and `await navigator.mediaDevices.getUserMedia(...)` (29911). The button gives no feedback until play() resolves (29921-29923). A second call overwrites mosStream, and mosStopScan (29991-29999) stops only the current one. The navigateToPage cleanup (12050, `if (page !== 'mos' ...) mosStopScan()`) runs before a pending getUserMedia resolves. Proven in headless Chromium with a fake camera (all network aborted, fetch stubbed). Two mosScan() calls 80 ms apart gave streams ['live','live']. After the Stop tap: ['live','ended']. After navigating to the dashboard: still ['live','ended']. It also raised an uncaught 'AbortError: The play() request was interrupted'. Calling mosScan() and then navigating away within 100 ms gave a live stream on a hidden #page-mos, which only the 40 s timeout at 29957 ends.
 
