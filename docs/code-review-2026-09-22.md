@@ -6,7 +6,7 @@
 > - **Not reviewed yet:** App shell / navigation / service worker / initial load, Labor, Inventory Receiver, Submit Photos + Marketing + Comments, Users & access.
 > - **Verified:** only *Worker crons* (all 15 findings confirmed by an independent verifier). **Every other finding below is one reviewer's claim.** The one verified unit came back 15/15, so the reviews look reliable, but re-check each finding against the code before fixing it.
 > - **The review itself changed no code.** Every finding is either **minor** (local, frontend-only or self-contained, no API/schema/deploy coupling) or **major** (needs a plan: cross-cutting, frontend+worker coordination, schema, or destructive-path work).
-> - **Fixed since (2026-09-23):** 13 Bin Dump findings — bin-dump-1, 2, 3, 4, 10, 11, 12, 13, 14, 15, 20, 22, 23 — each checked against the code before fixing; marked in the Bin Dump table. See `tasks/todo.md`.
+> - **Fixed since (2026-09-23):** 14 Bin Dump findings — bin-dump-1, 2, 3, 4, 7, 10, 11, 12, 13, 14, 15, 20, 22, 23 — each checked against the code before fixing; marked in the Bin Dump table. See `tasks/todo.md`.
 
 ## How to pick this up
 
@@ -1736,7 +1736,7 @@ Bin Dump is carefully built. The worker gates match the frontend exactly: bdCanD
 | [bin-dump-13](#bin-dump-13) | medium | minor | ui-ux | The tag read has no timeout or cancel, and 'Reading tag…' hides Enter Manually | `index.html:27570` | **fixed 2026-09-23** |
 | [bin-dump-17](#bin-dump-17) | medium | minor | security | The CSV export writes free text raw: formula injection, and \r is not quoted | `index.html:28206` | unverified |
 | [bin-dump-6](#bin-dump-6) | medium | major | security | Associates with an edit grant can approve their own duplicate pallet with a bare allow_duplicate boolean | `worker.js:24501` | unverified |
-| [bin-dump-7](#bin-dump-7) | low | minor | ui-ux | 'Changes saved.' and 'Deleted · …' are written into the hidden Scan pane | `index.html:27903` | unverified |
+| [bin-dump-7](#bin-dump-7) | low | minor | ui-ux | 'Changes saved.' and 'Deleted · …' are written into the hidden Scan pane | `index.html:27903` | **fixed 2026-09-23** |
 | [bin-dump-11](#bin-dump-11) | low | minor | ui-ux | The sticky 'When' column is see-through on edited rows, so scrolled cells show through it | `index.html:2845` | **fixed 2026-09-23** |
 | [bin-dump-12](#bin-dump-12) | low | minor | accessibility | The DUP badge measures 4.18:1 on an edited row in light mode | `index.html:2879` | **fixed 2026-09-23** |
 | [bin-dump-14](#bin-dump-14) | low | minor | ui-ux | Retake / Take Photo closes the form before the camera opens, so cancelling the camera loses everything typed | `index.html:27540` | **fixed 2026-09-23** |
@@ -1879,7 +1879,7 @@ Bin Dump is carefully built. The worker gates match the frontend exactly: bdCanD
 <a id="bin-dump-7"></a>
 #### bin-dump-7 — 'Changes saved.' and 'Deleted · …' are written into the hidden Scan pane
 
-*low · minor · ui-ux · confidence high · `index.html:27903` · unverified*
+*low · minor · ui-ux · confidence high · `index.html:27903` · unverified · fixed 2026-09-23*
 
 **Evidence.** The edit path calls `bdSetStatus('Changes saved.', 'ok')` (27903) and bdDelete calls `bdSetStatus(`Deleted${what ? ` · ${what}` : ''}.`, 'ok')` (27696). bdSetStatus writes #bd-status, which sits inside #bd-pane-scan (2970). Edit and delete can only be reached from Log rows, so that pane is hidden at the time. The file already documents this trap for export (28165-28167) and fixed it there with bdSetLogStatus.
 

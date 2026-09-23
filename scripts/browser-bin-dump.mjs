@@ -134,7 +134,11 @@ function pageMocks({ who, theme }) {
         if (M.updateDup && body.allow_duplicate !== true)
           return J({ error: 'This barcode has already been logged', code: 'DUPLICATE_BARCODE', matches: [] }, 409);
         return J({ ok: true });
-      case 'bin-dump-delete': return J({ ok: true });
+      case 'bin-dump-delete': {
+        const i = M.rows.findIndex(r => r.id === body.id);
+        if (i >= 0) M.rows.splice(i, 1);
+        return J({ ok: true });
+      }
       default: return J({ ok: false, error: 'not in this harness' }, 404);
     }
   };
@@ -257,13 +261,23 @@ for (const theme of ['light', 'dark', 'oled']) await section(`1-3. geometry + pa
   });
   const pr = ratio(rgba(plain.fg), over(rgba(plain.chip), over(rgba(plain.td), rgba(plain.panel))));
   check(pr >= 4.5, `[${theme}] the DUP chip reads ${pr.toFixed(2)}:1 on a plain row`);
-  measured.push(`${theme.padEnd(5)}  time on amber ${tr.toFixed(2)}:1   DUP on amber ${dr.toFixed(2)}:1   DUP plain ${pr.toFixed(2)}:1`);
+  const line = `${theme.padEnd(5)}  time on amber ${tr.toFixed(2)}:1   DUP on amber ${dr.toFixed(2)}:1   DUP plain ${pr.toFixed(2)}:1`;
   // Tapping the time opens the row.
   await btn.evaluate(e => e.closest('.bd-scroll').scrollLeft = 0);
   await btn.tap();
   await settle(page);
   check(await modalOpen(page) && /Edit logged pallet · Coliseum/.test(await page.textContent('#bd-m-title')),
         `[${theme}] tapping the time opens "Edit logged pallet · Coliseum"`);
+  // bin-dump-7: saving it is confirmed on the Log tab's own strip — measured as painted.
+  await page.click('#bd-m-submit');
+  await page.waitForFunction(() => !document.getElementById('bd-log-note').hidden, null, { timeout: 8000 });
+  const note = await page.evaluate(() => {
+    const n = document.getElementById('bd-log-note'), p = n.closest('.bd-panel');
+    return { fg: getComputedStyle(n).color, bg: getComputedStyle(n).backgroundColor, panel: getComputedStyle(p).backgroundColor };
+  });
+  const nr = ratio(rgba(note.fg), over(rgba(note.bg), rgba(note.panel)));
+  check(rgba(note.panel)[3] === 1 && nr >= 4.5, `[${theme}] the Log tab's "Changes saved." reads ${nr.toFixed(2)}:1 (bin-dump-7)`);
+  measured.push(`${line}   Log strip ${nr.toFixed(2)}:1`);
   check(!errs.length, `[${theme}] no page errors (${errs.slice(0, 2).join(' | ')})`);
   await ctx.close();
 });
@@ -478,6 +492,81 @@ await section('12. view-only (bin-dump-23)', async () => {
   await page.evaluate(() => { window.bdCloseModal(); window.__bd.rows = []; window.bdLoad(); }); await settle(page);
   check((await page.textContent('#bd-log-status')).trim() === 'No pallets logged yet.', 'an empty log does not tell them to press a Begin they lack');
   check(!errs.length, `no page errors (${errs.slice(0, 2).join(' | ')})`);
+  await ctx.close();
+});
+
+// ── 13. An edit or a delete is confirmed where the manager is (bin-dump-7) ──
+await section('13. confirmations (bin-dump-7)', async () => {
+  const { ctx, page, errs } = await open();
+  const strip = async sel => (await page.isVisible(sel) ? (await page.textContent(sel)).trim() : null);
+  // The element's OWN state, whether or not its pane is showing — "nothing written there".
+  const own = id => page.evaluate(i => { const e = document.getElementById(i); return e.hidden ? null : e.textContent.trim(); }, id);
+  const closed = () => page.waitForFunction(() => document.getElementById('bd-modal').style.display === 'none', null, { timeout: 8000 });
+  // A pallet scanned first: its green line under Begin is what used to outlive its deletion.
+  await page.click('#bd-manual'); await settle(page);
+  await page.fill('#bd-f-barcode', 'PRM-700-1');
+  await page.fill('#bd-f-pallet_name', 'MIS-SCAN');
+  await page.click('#bd-m-submit'); await closed();
+  check(/^Pallet logged at Coliseum · MIS-SCAN/.test(await strip('#bd-status') || ''), 'a new pallet is still confirmed under Begin');
+  await page.click('#bd-tab-log'); await settle(page);
+  check(await strip('#bd-log-note') === null, 'the Log strip is hidden until there is something to say');
+
+  // Edit, with the list reload held back: the confirmation must not wait for it.
+  await page.locator('#bd-weeks .bd-wk.open .bd-when-btn').first().tap(); await settle(page);
+  check(await page.inputValue('#bd-f-pallet_name') === 'MIS-SCAN', '(the newest row is the pallet just scanned)');
+  await page.fill('#bd-f-units', '12');
+  await page.evaluate(() => { window.__bd.listDelay.BL1 = 1500; });
+  await page.click('#bd-m-submit'); await closed();
+  const early = [await strip('#bd-log-note'), await page.textContent('#bd-log-status')];
+  check(early[0] === 'Changes saved.' && /Loading/.test(early[1]),
+        `🛑 an edit is confirmed on the Log tab at once, before the reload lands (${early.join(' | ')})`);
+  check(await own('bd-status') === null, '🛑 ...and nothing is under Begin — the old green line has gone too');
+  // A newer load overtakes the slow one, then the slow one lands and is ignored (bin-dump-2).
+  await page.evaluate(() => { window.__bd.listDelay.BL1 = 0; });
+  await page.click('#bd-pane-log button:has-text("Refresh")');
+  await page.waitForTimeout(1700);
+  check(await strip('#bd-log-note') === 'Changes saved.' && /pallets? across/.test(await page.textContent('#bd-log-status')),
+        '...and is still there, once, after both reloads have landed');
+  // The second render (DESIGN.md §4.8 trap 8): a week toggle redraws the list, not the strip.
+  await page.locator('#bd-weeks .bd-wk-head').first().click(); await settle(page);
+  check(await strip('#bd-log-note') === 'Changes saved.', 'a week toggle redraws the list and leaves the strip alone');
+  await page.locator('#bd-weeks .bd-wk-head').first().click(); await settle(page);
+
+  // Delete the same pallet — the usual mis-scan correction.
+  const before = await page.locator('#bd-weeks .bd-when-btn').count();
+  await page.locator('#bd-weeks .bd-wk.open .bd-when-btn').first().tap(); await settle(page);
+  const name = await page.inputValue('#bd-f-pallet_name');
+  await page.click('#bd-m-delete');
+  await waitDialog(page, 'Delete this pallet?');
+  await page.keyboard.press('Enter'); await closed();
+  const gone = await strip('#bd-log-note');
+  check(name === 'MIS-SCAN' && (gone || '').startsWith('Deleted · MIS-SCAN'), `🛑 a delete is confirmed on the Log tab, naming the pallet (${gone})`);
+  check(await own('bd-status') === null, '...and nothing is written under Begin');
+  await settle(page);
+  check(await page.locator('#bd-weeks .bd-when-btn').count() === before - 1, '(the reload drops the row)');
+
+  // Back on Scan: nothing stale. A new pallet then clears the Log strip — one at a time.
+  await page.click('#bd-tab-scan'); await settle(page);
+  check(!(await page.isVisible('#bd-status')), '🛑 the Scan tab has nothing stale waiting under Begin');
+  await page.click('#bd-manual'); await settle(page);
+  await page.fill('#bd-f-barcode', 'PRM-700-2');
+  await page.click('#bd-m-submit'); await closed();
+  check(/^Pallet logged at Coliseum/.test(await strip('#bd-status') || '') && await own('bd-log-note') === null,
+        'a new pallet is confirmed under Begin, and clears the Log strip');
+  check(!errs.length, `no page errors (${errs.slice(0, 2).join(' | ')})`);
+
+  // 🔑 By tab, not by action: the claim in bdSayDone's comment, proved rather than assumed.
+  await page.click('#bd-tab-log'); await settle(page);
+  await page.locator('#bd-weeks .bd-wk.open .bd-when-btn').first().tap(); await settle(page);
+  await page.evaluate(() => window.navigateToPage('dashboard')); await settle(page);
+  await page.evaluate(() => window.navigateToPage('bin-dump')); await settle(page);
+  const back = await page.evaluate(() => ({ modal: document.getElementById('bd-modal').style.display,
+    scan: !document.getElementById('bd-pane-scan').hidden, title: document.getElementById('bd-m-title').textContent.trim() }));
+  check(back.modal === 'flex' && back.scan && /^Edit logged pallet/.test(back.title),
+        `(an edit form left open across a visit comes back over the Scan tab: ${JSON.stringify(back)})`);
+  await page.click('#bd-m-submit'); await closed();
+  check(await strip('#bd-status') === 'Changes saved.' && await own('bd-log-note') === null,
+        '...so its confirmation goes under Begin, where it can be seen');
   await ctx.close();
 });
 

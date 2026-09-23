@@ -1,3 +1,78 @@
+# Bin Dump: confirm edits and deletes on the Log tab (bin-dump-7, 2026-09-23)
+
+**Request:** the queued follow-up from PR #280. After a correction or a delete, "Changes saved." /
+"Deleted · …" went to `#bd-status`, which is in the **Scan** pane — but Edit and Delete are only
+reachable from the **Log** tab. The manager saw nothing, and a stale green strip waited under Begin.
+
+**Design.** The Log panel gets its own strip (`#bd-log-note`, the same `.bd-status ok` component),
+and a new `bdSayDone(msg)` says a confirmation on the pane that is SHOWING and clears the other one.
+Not written into `#bd-log-status`: `bdLoad`, the week toggle and export all overwrite that line, and
+DESIGN.md §4.8 trap 7 says a render target holds only what its render owns. A first draft chained
+the note through `bdLoad`; a review found it waited on an untimed reload, could surface later on the
+wrong pane after a hung one, and was dim text a week tap erased — so `bdLoad` stays untouched.
+
+## Plan
+
+- [x] Markup: `#bd-log-note` in the Log pane, between `#bd-log-status` and `#bd-weeks`
+- [x] `bdSetStatus(msg, tone, id = 'bd-status')`; new `bdSayDone` (by tab; clears the other strip)
+- [x] `bdSubmit` / `bdDelete` confirm through `bdSayDone`; `bdLoad()` stays after `finally`, un-awaited
+- [x] `bdStoreChange` clears both strips
+- [x] `test-bin-dump.mjs` §32: `bdSayDone`/`bdSetStatus`/`bdStoreChange` executed; wiring + markup pins
+- [x] `browser-bin-dump.mjs`: §13 (edit with a slow reload, Refresh race, week toggle, delete, Scan
+      clean, form left open across a visit) + the strip's painted contrast in all three themes
+- [x] Mutation checks: revert each piece once, watch a check go red
+- [x] `sw.js` v233 + shell-cache fixture; `npm test` green
+- [x] Docs: bin-dump-7 marked fixed in the review; guard in `tasks/bin-dump.md`
+
+## Review
+
+**Root cause, confirmed in the code:** both confirmations went through `bdSetStatus`, which only
+knew `#bd-status`, the Scan pane's strip, and Edit and Delete are only reachable from the Log tab.
+Errors were never affected, because they go to `#bd-m-warn` inside the form.
+
+**Fix:** the Log panel gets its own `.bd-status ok` strip (`#bd-log-note`). `bdSetStatus` takes the
+strip's id, defaulting to the Scan one. The new `bdSayDone` writes whichever pane is showing and
+clears the other. `bdStoreChange` clears both. `bdLoad` is untouched, and `bdLoad()` still runs
+after the `finally`, un-awaited (bin-dump-15).
+
+**Verified:**
+- **`npm test`:** 5701 assertions across 81 suites, all pass (5688 before). `test-bin-dump.mjs` is
+  381, with §32 new.
+- **`browser-bin-dump.mjs`:** 113 / 113 (94 before). The new §13 covers, at 390px:
+  - an edit confirmed at once while a slow reload is still "Loading…";
+  - a Refresh overtaking that reload;
+  - a week toggle (the second render);
+  - the delete, with a clean Scan tab after it;
+  - a new pallet clearing the Log strip;
+  - an edit form left open across a visit, which comes back over Scan, so its confirmation goes
+    under Begin. That is the claim in `bdSayDone`'s comment, proved rather than assumed.
+- **Painted contrast** of the strip: 17.30 : 1 light, 12.80 : 1 dark, 15.66 : 1 pure black. The
+  screenshots at 390px show it aligned with the status line's text, above the week.
+- **`browser-inventory-receiver.mjs`:** 154 / 154 on the final build.
+- **Mutations, Node suite:** 8 / 8 caught. Each of these was reverted once:
+  - edit back to `bdSetStatus`;
+  - delete back to `bdSetStatus`;
+  - always Scan;
+  - other strip not cleared;
+  - route by action, which was the first draft;
+  - no clear on store change;
+  - `bdSetStatus` ignoring its id;
+  - the strip inside `#bd-log-status`.
+
+**Design note:** a first draft chained the note through `bdLoad`, in front of what the winning
+load wrote. The Plan-agent review found three problems with it:
+- the confirmation waited on an untimed reload;
+- after a hung one it could surface later, on the wrong pane;
+- it was dim text that a week tap erased.
+
+It also breaks DESIGN.md §4.8 trap 7. A strip of its own has none of these problems.
+
+**Known limit:** the strip is at the top of the Log panel. A row far down a long week is confirmed
+above the fold. The row itself changes in place (amber, or gone), and scrolling the page to the
+strip would pull the manager off the row, so this change leaves it.
+
+---
+
 # Bin Dump: fix the bugs the manager SOP works around (2026-09-23)
 
 **Request:** *"Fix the Bin Dump bugs from the suggested task"* — the store-manager SOP ("Bin Dump

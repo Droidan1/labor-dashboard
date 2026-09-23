@@ -3023,6 +3023,10 @@
                paint and every later refresh threw on it. A render target holds only
                what that render owns. -->
           <div class="bd-sub" id="bd-log-status">Loading…</div>
+          <!-- The Log tab's own strip, as #bd-status is the Scan tab's: an edit or a delete is
+               confirmed HERE (bin-dump-7). Never inside bd-log-status — bdLoad, a week toggle
+               and export all overwrite that line (DESIGN.md §4.8 trap 7). -->
+          <div id="bd-log-note" class="bd-status ok" style="margin:9px 15px 0" hidden></div>
           <div id="bd-weeks" class="mt-2"></div>
           <div class="bd-legend">
             <span><span class="bd-sw bd-sw-now"></span>Current week</span>
@@ -27518,13 +27522,26 @@
     return (j && j.error) || `HTTP ${r.status}`;
   }
 
-  function bdSetStatus(msg, tone) {
-    const s = el('bd-status');
+  // `id` is the strip: #bd-status under Begin, or #bd-log-note on the Log tab.
+  function bdSetStatus(msg, tone, id = 'bd-status') {
+    const s = el(id);
     if (!s) return;
     if (!msg) { s.hidden = true; return; }
     s.className = 'bd-status ' + (tone === 'err' ? 'err' : 'ok');
     s.textContent = msg;
     s.hidden = false;
+  }
+
+  // 🔑 A save or a delete is confirmed on the pane that is SHOWING (bin-dump-7). Edit and
+  // Delete are reached from the Log tab, and #bd-status is in the Scan pane — written there,
+  // a correction was confirmed to nobody and left a stale strip under Begin. By tab, not by
+  // action: navigating away does not close the form, and initBinDump reopens on Scan, so an
+  // edit can be saved over the Scan tab. One strip at a time — saying it on one pane clears
+  // the other, so neither keeps news about a pallet that has changed since.
+  function bdSayDone(msg) {
+    const onLog = bdState.tab === 'log';
+    bdSetStatus(onLog ? '' : msg, 'ok');
+    bdSetStatus(onLog ? msg : '', 'ok', 'bd-log-note');
   }
 
   function bdShow(which) {
@@ -27581,7 +27598,10 @@
   }
   window.initBinDump = initBinDump;
 
-  function bdStoreChange() { bdSetStatus(''); bdState.seeded = false; bdState.openWeeks.clear(); bdLoad(); }
+  function bdStoreChange() {
+    bdSetStatus(''); bdSetStatus('', 'ok', 'bd-log-note');   // neither strip is about this store
+    bdState.seeded = false; bdState.openWeeks.clear(); bdLoad();
+  }
   window.bdStoreChange = bdStoreChange;
 
   // The scan store is always a real one — "All stores" is a way of reading the log,
@@ -27850,7 +27870,7 @@
       bdState.busy = false; bdLockForm(false);
     }
     // Not awaited, and only after the page is free again: see bdSubmit.
-    if (gone) { bdSetStatus(`Deleted${what ? ` · ${what}` : ''}.`, 'ok'); bdLoad(); }
+    if (gone) { bdSayDone(`Deleted${what ? ` · ${what}` : ''}.`); bdLoad(); }
   }
   window.bdDelete = bdDelete;
 
@@ -28122,8 +28142,9 @@
     }
     // 🔑 The reload is NOT awaited, and only starts once the page is free: awaiting it kept
     // `busy` set, so a photo taken while the log reloaded was silently dropped
-    // (bin-dump-15). bdLoad's sequence guard keeps overlapping reloads in order.
-    if (saved) { bdSetStatus(saved, 'ok'); bdLoad(); }
+    // (bin-dump-15). bdLoad's sequence guard keeps overlapping reloads in order. The
+    // confirmation does not wait for the reload, and goes where the manager is: bdSayDone.
+    if (saved) { bdSayDone(saved); bdLoad(); }
   }
   window.bdSubmit = bdSubmit;
 
