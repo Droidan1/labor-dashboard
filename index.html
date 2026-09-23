@@ -3888,9 +3888,11 @@
           --minfo:#1d4ed8;--minfow:rgba(59,130,246,.10);--minfoe:rgba(29,78,216,.28)}
         .dark #page-mos{--mp:rgb(var(--op-panel));--mph:rgb(var(--op-panelHi));--mi:rgb(var(--op-ink));--md:rgb(var(--op-inkDim));--mdd:rgb(var(--op-inkDimmer));
           --mh:rgba(255,255,255,.09);--mb:rgba(255,255,255,.16);--mok:#22c55e;--mokw:rgba(34,197,94,.10);
-          --moke:rgba(34,197,94,.28);--mbad:#ef4444;--mbadw:rgba(239,68,68,.12);--mbade:rgba(239,68,68,.30);
+          --moke:rgba(34,197,94,.28);--mbad:#f87171;--mbadw:rgba(239,68,68,.12);--mbade:rgba(239,68,68,.30);
           --mwarn:#f59e0b;--mwarnw:rgba(245,158,11,.13);--mwarne:rgba(245,158,11,.30);
           --minfo:#60a5fa;--minfow:rgba(96,165,250,.12);--minfoe:rgba(96,165,250,.30)}
+        /* --mbad is red TEXT on its own wash (errors, Stolen), so dark takes #f87171: #ef4444
+           measured 4.25:1 there (DESIGN.md §4.8; oppbuys-mos-11). */
         #page-mos [hidden]{display:none !important}
         .mos-h1{color:#166534} .dark .mos-h1{color:#22c55e}
 
@@ -3977,7 +3979,9 @@
         .mos-commit .mos-btn{margin-left:auto}
 
         .mos-status{margin:0 16px 16px;font-size:12px;padding:9px 12px;border-radius:9px;
-          border:1px solid var(--moke);background:var(--mokw);color:var(--mok)}
+          border:1px solid var(--moke);background:var(--mokw);color:var(--mok);
+          /* Brought into view by mosClaimStore: clear #bottom-nav (fixed, ~80px with its offset). */
+          scroll-margin-bottom:calc(96px + env(safe-area-inset-bottom))}
         .mos-status.err{border-color:var(--mbade);background:var(--mbadw);color:var(--mbad)}
 
         /* Month accordions */
@@ -4071,7 +4075,7 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><line x1="14" y1="14" x2="14" y2="21"/><line x1="18" y1="14" x2="21" y2="14"/><line x1="21" y1="18" x2="21" y2="21"/><line x1="14" y1="18" x2="17" y2="18"/></svg>
                 <span id="mos-scan-lbl">Scan QR</span>
               </button>
-              <button class="mos-btn" type="button" onclick="document.getElementById('mos-photo').click()">
+              <button class="mos-btn" type="button" onclick="mosPhotoPick()">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
                 Photo
               </button>
@@ -29456,7 +29460,13 @@
   // buttons. Pinned by test-mos.mjs so the two lists cannot drift.
   const MOS_REASON_LIST = ['Stolen', 'Damaged', 'Expired', 'Store Use'];
   const mosState = { tab: 'mark', resolved: null, reason: null, rows: [], months: [],
-                     open: new Set(), busy: false, editing: null };
+                     open: new Set(), busy: false, editing: null,
+                     // The store the entry on screen goes into, claimed ONCE where it starts
+                     // (mosClaimStore) — the same rule as Bin Dump's bdState.store.
+                     store: '',
+                     // One number per lookup, bumped again by mosReset: an answer carrying an
+                     // older number is ignored, so a late one cannot refill a cleared form.
+                     lookupGen: 0 };
 
   const mosMoney = (cents) => (cents === null || cents === undefined)
     ? null : '$' + (cents / 100).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
@@ -29528,11 +29538,16 @@
 
   function initMos() {
     const sel = el('mos-store');
+    // 🔑 Read BEFORE the options are rebuilt, so the store picked on the last visit is still
+    // picked on this one (oppbuys-mos-3, as bin-dump-3). It used to snap back to the first
+    // store without firing onchange, so a sticker looked up at Dupont was saved to Coliseum
+    // after a round trip. Only a real store is kept — never "All stores".
+    const prev = sel.value;
     const stores = mosStores();
     sel.innerHTML = (stores.length > 1 ? ['<option value="ALL">All stores</option>'] : [])
       .concat(stores.map(s => `<option value="${s}">${escapeHtml(MOS_LABELS[s] || s)}</option>`)).join('');
     // Opens on ONE store, not "All": marking out happens where you are standing.
-    if (stores.length) sel.value = stores[0];
+    if (stores.length) sel.value = stores.includes(prev) ? prev : stores[0];
     if (!el('mos-reasons').children.length) {
       el('mos-reasons').innerHTML = MOS_REASON_LIST.map(r =>
         `<button type="button" class="mos-rz" data-r="${r}" aria-pressed="false"
@@ -29965,25 +29980,48 @@
   window.obSetClosed = obSetClosed;
 
 
-  function mosStoreChange() { mosReset(); mosState.open.clear(); mosLoad(); }
+  // Keeps the typed code: after "Pick the store…", picking one must not throw away what
+  // was typed or scanned. The entry itself belonged to the old store, so it goes.
+  function mosStoreChange() { mosReset(true); mosState.open.clear(); mosLoad(); }
   window.mosStoreChange = mosStoreChange;
 
-  // The store a NEW entry lands in. "All stores" is a way of reading the log, never
-  // a place a loss can be recorded — same rule as Bin Dump's scan store.
+  // The store a NEW entry lands in. "All stores" is a way of reading the log, never a place
+  // a loss can be recorded — the worker refuses it too (storeActionGuard: 400). 🛑 No
+  // fallback: this used to answer the first store on the account (oppbuys-mos-3).
   function mosEntryStore() {
     const v = el('mos-store').value;
-    if (v && v !== 'ALL') return v;
-    const s = mosStores();
-    return s.length ? s[0] : '';
+    return (v && v !== 'ALL') ? v : '';
   }
 
-  function mosReset() {
+  // Claims the entry's store where an entry starts — a lookup, the camera, a photo — or says
+  // why it cannot and points at the picker. Mirrors bdClaimStore.
+  function mosClaimStore() {
+    const s = mosEntryStore();
+    if (!s) {
+      mosSetStatus(mosStores().length ? 'Pick the store this is being marked out at first.'
+        : 'No store is assigned to your account, so there is nothing to mark out.', 'err');
+      // The strip sits low in the panel, and at 390px it landed under the floating nav — so it
+      // is scrolled just far enough to clear it (.mos-status scroll-margin), which keeps the
+      // picker above on screen too. Focus first: focusing scrolls, and would undo this.
+      try { el('mos-store').focus(); el('mos-status').scrollIntoView({ block: 'nearest' }); } catch (e) {}
+      return false;
+    }
+    mosState.store = s;
+    return true;
+  }
+
+  // Ends the entry on screen: its sticker, its claimed store, and any lookup still in flight.
+  // `keepCode` leaves the typed code in the box (mosStoreChange).
+  function mosReset(keepCode) {
     mosState.resolved = null;
+    mosState.store = '';
+    mosState.lookupGen++;
     el('mos-resolved').hidden = true;
     el('mos-teach').hidden = true;
     el('mos-teach-input').value = '';
-    el('mos-code').value = '';
+    if (!keepCode) el('mos-code').value = '';
     el('mos-qty').value = '1';
+    el('mos-save').textContent = 'Mark out of stock';
     mosSetStatus('');
     mosRecalc();
   }
@@ -30016,7 +30054,7 @@
     // Reason is required, so Save cannot be reached without one.
     const needsName = r && r.needs_description;
     const named = !needsName || el('mos-teach-input').value.trim().length >= 3;
-    el('mos-save').disabled = !(r && q >= 1 && mosState.reason && named);
+    el('mos-save').disabled = !(r && q >= 1 && mosState.reason && named && mosState.store);
   }
   window.mosRecalc = mosRecalc;
 
@@ -30026,14 +30064,20 @@
     if (!code) { el('mos-code').focus(); return; }
     el('mos-code').value = code;
     mosSetStatus('');
+    // 🔑 After the status is cleared, so a refusal stays on screen; after the code box is
+    // filled, so a scanned code is still there once a store is picked.
+    if (!mosClaimStore()) return;
+    const store = mosState.store, gen = ++mosState.lookupGen;
     try {
-      const store = mosEntryStore();
       const r = await fetch(`${WORKER_BASE}?action=mos-lookup&store=${encodeURIComponent(store)}`
         + `&code=${encodeURIComponent(code)}`, { credentials: 'include' });
       const j = await r.json().catch(() => ({}));
+      // A newer lookup, or a reset (a store change, a save), has moved on: this answer is late.
+      if (gen !== mosState.lookupGen) return;
       if (!r.ok) throw new Error(mosErr(j, r));
       mosApply(j);
     } catch (e) {
+      if (gen !== mosState.lookupGen) return;
       mosState.resolved = null;
       el('mos-resolved').hidden = true;
       el('mos-teach').hidden = true;
@@ -30066,6 +30110,8 @@
       + escapeHtml(now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })) + '</span>';
     el('mos-src').textContent = j.description_source === 'learned' ? 'Known code'
       : j.description_source === 'clover' ? 'Read from Clover' : '';
+    // The button says where this is going: the one value on screen the person chose.
+    el('mos-save').textContent = `Mark out at ${MOS_LABELS[mosState.store] || mosState.store}`;
     el('mos-resolved').hidden = false;
     el('mos-teach-no').textContent = j.item_no;
     el('mos-teach').hidden = !j.needs_description;
@@ -30113,6 +30159,9 @@
 
   async function mosScan() {
     if (mosScanning) { mosStopScan(); return; }
+    // After the stop toggle, so Stop always works; before the decoder and the camera, so
+    // "All stores" opens neither.
+    if (!mosClaimStore()) return;
     let decode;
     try { decode = await mosLoadDecoder(); }
     catch (e) { mosSetStatus('The QR reader could not load. Type the code, or use Photo.', 'err'); return; }
@@ -30252,6 +30301,10 @@
   // A still photo, decoded by the SAME reader — no model call and no endpoint. A
   // 12-megapixel still is sharper than any preview frame, so a creased or curled
   // label that the live loop keeps missing usually reads first time from a photo.
+  // The Photo button: the same refusal as Scan and Look it up, before the camera opens.
+  function mosPhotoPick() { if (mosClaimStore()) el('mos-photo').click(); }
+  window.mosPhotoPick = mosPhotoPick;
+
   async function mosPhoto(input) {
     const f = input.files && input.files[0];
     input.value = '';
@@ -30290,13 +30343,16 @@
   // ── Saving ───────────────────────────────────────────────────────────────
   async function mosSave() {
     const r = mosState.resolved;
-    if (!r || mosState.busy) return;
+    // 🛑 The store CLAIMED when this entry started, never a fresh read of the picker — and
+    // held here, because a store change mid-save resets the entry (oppbuys-mos-3).
+    const store = mosState.store;
+    if (!r || !store || mosState.busy) return;
     const qty = parseInt(el('mos-qty').value, 10) || 0;
     const btn = el('mos-save');
     mosState.busy = true; btn.disabled = true;
     mosSetStatus('');
     try {
-      const body = { store: mosEntryStore(), code: r.code, qty, reason: mosState.reason };
+      const body = { store, code: r.code, qty, reason: mosState.reason };
       if (r.needs_description) body.description = el('mos-teach-input').value.trim();
       const resp = await fetch(`${WORKER_BASE}?action=mos-log`, {
         method: 'POST', credentials: 'include',
@@ -30306,8 +30362,10 @@
       const j = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(mosErr(j, resp));
       const worth = mosMoney(j.unit_cost_cents === null ? null : qty * j.unit_cost_cents);
+      const where = j.store || store;             // the store the worker actually filed it under
       mosReset();
-      mosSetStatus(`Marked out · ${qty} × ${escapeHtml(j.description)}`
+      // Plain text: mosSetStatus writes textContent, so escaping here printed "&amp;".
+      mosSetStatus(`Marked out at ${MOS_LABELS[where] || where} · ${qty} × ${j.description}`
         + (worth ? ` · ${worth} cost` : ' · no cost on file'));
       el('mos-code').focus();
       await mosLoad();
@@ -30324,7 +30382,7 @@
   async function mosLoad() {
     mosSetLogStatus('Loading…');
     try {
-      const store = el('mos-store').value || mosEntryStore();
+      const store = el('mos-store').value;
       const r = await fetch(`${WORKER_BASE}?action=mos-list&store=${encodeURIComponent(store)}&months=6`,
         { credentials: 'include' });
       const j = await r.json().catch(() => ({}));
@@ -30514,7 +30572,7 @@
     if (!pick) return;
     const range = MOS_RANGES.find(r => r.value === pick);
     try {
-      const store = el('mos-store').value || mosEntryStore();
+      const store = el('mos-store').value;
       const r = await fetch(`${WORKER_BASE}?action=mos-list&store=${encodeURIComponent(store)}`
         + `&months=${range.months}&limit=${MOS_CSV_LIMIT}`, { credentials: 'include' });
       const j = await r.json().catch(() => ({}));
