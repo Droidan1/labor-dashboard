@@ -82,7 +82,7 @@ function pageMocks({ who, theme }) {
     item_no: '50201', pallet_name: 'FG BL CONSUMABLES - FOOD - SNACKS', sup_ref: 'mix', po: 'RM1 - TJX', units: 40 + id,
     created_by_tag: 'Sam R', truck_no: null, logged_by: 'Alex M', edited_by: null, edited_at: null, has_photo: true, ...extra });
   const M = window.__bd = {
-    calls: [], listDelay: {}, scanDelay: 0, scanHang: false, logDelay: 0, updateDup: false,
+    calls: [], listDelay: {}, scanDelay: 0, scanHang: false, scanIgnoresAbort: false, logDelay: 0, updateDup: false,
     scan: { barcode: 'PRM-10490-31', item_no: '50201', pallet_name: 'PALLET AMAZON IND8', sup_ref: null,
             po: '5036', units: 48, created_by_tag: 'Sam R', truck_no: '10490' },
     rows: [
@@ -114,7 +114,9 @@ function pageMocks({ who, theme }) {
         return J({ ok: true, truncated: false, rows: M.rows.filter(r => store === 'ALL' ? mine.includes(r.store) : r.store === store) });
       }
       case 'bin-dump-scan':
-        await wait(M.scanHang ? Infinity : M.scanDelay, o.signal);
+        // scanIgnoresAbort: the answer lands anyway, late — how a read cancelled mid-decode
+        // (psShrink cannot be aborted) comes back. The generation number must ignore it.
+        await wait(M.scanHang ? Infinity : M.scanDelay, M.scanIgnoresAbort ? null : o.signal);
         return J({ ok: true, fields: M.scan, read: Object.values(M.scan).filter(v => v != null).length, of: 8, truck_hint: null });
       case 'bin-dump-recent': {
         const bc = url.searchParams.get('barcode');
@@ -246,7 +248,16 @@ for (const theme of ['light', 'dark', 'oled']) await section(`1-3. geometry + pa
   });
   const dr = ratio(rgba(dup.fg), over(rgba(dup.chip), over(rgba(dup.td), rgba(dup.panel))));
   check(dr >= 4.5, `[${theme}] 🛑 the DUP chip reads ${dr.toFixed(2)}:1 on an amber row (bin-dump-12)`);
-  measured.push(`${theme.padEnd(5)}  time on amber ${tr.toFixed(2)}:1   DUP on amber ${dr.toFixed(2)}:1`);
+  // ...and on a plain row, where the same chip sits over no wash at all.
+  const plain = await page.evaluate(() => {
+    const chip = document.querySelector('#bd-weeks .bd-wk.open tr:not(.edited) .bd-dup');
+    const td = chip.closest('td'), sc = chip.closest('.bd-scroll');
+    return { fg: getComputedStyle(chip).color, chip: getComputedStyle(chip).backgroundColor,
+             td: getComputedStyle(td).backgroundColor, panel: getComputedStyle(sc).backgroundColor };
+  });
+  const pr = ratio(rgba(plain.fg), over(rgba(plain.chip), over(rgba(plain.td), rgba(plain.panel))));
+  check(pr >= 4.5, `[${theme}] the DUP chip reads ${pr.toFixed(2)}:1 on a plain row`);
+  measured.push(`${theme.padEnd(5)}  time on amber ${tr.toFixed(2)}:1   DUP on amber ${dr.toFixed(2)}:1   DUP plain ${pr.toFixed(2)}:1`);
   // Tapping the time opens the row.
   await btn.evaluate(e => e.closest('.bd-scroll').scrollLeft = 0);
   await btn.tap();
@@ -328,7 +339,7 @@ await section('6. stale photo + Cancel (bin-dump-4, -13)', async () => {
   check(log && !('image_b64' in log.body), '🛑 ...and uploads no photo with it');
 
   // Cancel, then a late answer to the cancelled read.
-  await page.evaluate(() => { window.__bd.scanDelay = 1500; });
+  await page.evaluate(() => { window.__bd.scanDelay = 1500; window.__bd.scanIgnoresAbort = true; });
   await pickPhoto(page, PHOTO);
   await page.waitForTimeout(300);
   const cb = await page.locator('#bd-read-cancel').evaluate(e => { const r = e.getBoundingClientRect();
@@ -472,7 +483,7 @@ await section('12. view-only (bin-dump-23)', async () => {
 
 await b.close();
 srv.close();
-if (measured.length) console.log('Painted contrast, edited (amber) row:\n  ' + measured.join('\n  '));
+if (measured.length) console.log('Painted contrast:\n  ' + measured.join('\n  '));
 const bad = results.filter(r => !r[0]);
 for (const [okk, m] of results) if (!okk) console.log('  FAIL ' + m);
 console.log(`\n${results.length - bad.length} passed, ${bad.length} failed`);
