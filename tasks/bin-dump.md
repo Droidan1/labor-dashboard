@@ -425,6 +425,13 @@ pair still shows.
   `escapeHtml`. `TV 55" LED` was cut at the quote, and a value could add attributes.
 - **Phones:** the sticky time cell is the row's opener (EDIT is ~440px off-screen at 390px);
   on an edited row that cell is opaque amber (§4.8 trap 2); the DUP chip is `#a93226` in light.
+- 🛑 **An edit or a delete is confirmed where the manager is** (bin-dump-7, a same-day
+  follow-up). `#bd-status` is in the Scan pane, and Edit and Delete are reached from the Log
+  tab, so both confirmations went to a hidden element and then waited under Begin. The Log
+  panel now has its own strip, `#bd-log-note`. `bdSayDone` writes whichever pane is showing,
+  by tab rather than by action, because a form left open across a visit comes back over Scan.
+  It clears the other pane's strip. Never write it into `#bd-log-status`: `bdLoad`, a week
+  toggle and export all overwrite that line.
 
-Verified: `scripts/test-bin-dump.mjs` §24-31, and `scripts/browser-bin-dump.mjs` in light,
+Verified: `scripts/test-bin-dump.mjs` §24-32, and `scripts/browser-bin-dump.mjs` in light,
 dark and pure black; each fix reverted once to watch a check go red.

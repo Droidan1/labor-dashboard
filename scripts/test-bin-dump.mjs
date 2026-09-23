@@ -1307,6 +1307,46 @@ function attrsOf(html, tag) {
   ok(/\(canEdit \? 'correct it\.' : 'see it\.'\)/.test(log), '...and "correct" only to one that can');
 }
 
+// ── 32. An edit or a delete is confirmed where the manager is (bin-dump-7) ──
+// 🛑 #bd-status sits in the Scan pane, and Edit and Delete are only reachable from the Log tab:
+// "Changes saved." and "Deleted · …" went into a hidden element, then waited under Begin.
+{
+  const setSrc = fnSrc('bdSetStatus'), saySrc = fnSrc('bdSayDone'), storeSrc = fnSrc('bdStoreChange');
+  ok(setSrc && saySrc && storeSrc, 'bdSetStatus, bdSayDone and bdStoreChange are found');
+  const strip = () => ({ className: 'bd-status ok', textContent: '', hidden: true });
+  const els = { 'bd-status': strip(), 'bd-log-note': strip() };
+  const bdState = { tab: 'log', seeded: true, openWeeks: new Set(['2026-09-06']) };
+  let loads = 0;
+  const { bdSayDone, bdStoreChange } = new Function('el', 'bdState', 'bdLoad',
+    `${setSrc}\n${saySrc}\n${storeSrc}; return { bdSayDone, bdStoreChange };`)(id => els[id], bdState, () => { loads++; });
+  const shown = id => (els[id].hidden ? null : els[id].textContent);
+  // Under Begin: the green line for a pallet just scanned — which used to outlive its deletion.
+  Object.assign(els['bd-status'], { hidden: false, textContent: 'Pallet logged at Coliseum · MIS-SCAN.' });
+  bdSayDone('Deleted · MIS-SCAN.');
+  eq(shown('bd-log-note'), 'Deleted · MIS-SCAN.', '🛑 on the Log tab, a delete is confirmed on the Log tab');
+  eq(els['bd-log-note'].className, 'bd-status ok', '...in the same green strip as under Begin');
+  eq(shown('bd-status'), null, '🛑 ...and nothing waits under Begin — not even the line about the pallet just deleted');
+  bdState.tab = 'scan';
+  bdSayDone('Changes saved.');
+  eq(shown('bd-status'), 'Changes saved.', 'on the Scan tab (a form left open across a visit) it goes under Begin');
+  eq(shown('bd-log-note'), null, '...and the Log strip is cleared: one confirmation at a time');
+  bdState.tab = 'log';
+  bdSayDone('Changes saved.');
+  bdStoreChange();
+  ok(shown('bd-status') === null && shown('bd-log-note') === null, 'a store change clears both strips — neither is about the new store');
+  ok(loads === 1 && bdState.openWeeks.size === 0, '...and still reloads the log');
+  const submit = fnSrc('bdSubmit'), del = fnSrc('bdDelete');
+  ok(/if \(saved\) \{ bdSayDone\(saved\); bdLoad\(\); \}/.test(submit), 'bdSubmit confirms through bdSayDone, then reloads');
+  ok(/if \(gone\) \{ bdSayDone\(`Deleted/.test(del), '...and so does bdDelete');
+  ok(!/bdSetStatus\(/.test(submit) && !/bdSetStatus\(/.test(del), '🛑 neither writes #bd-status itself');
+  const pane = HTML.slice(HTML.indexOf('<div id="bd-pane-log"'), HTML.indexOf('<!-- /#bd-pane-log -->'));
+  ok(/<div class="bd-sub" id="bd-log-status">[^<]*<\/div>/.test(pane)
+     && /<div id="bd-log-note" class="bd-status ok"[^>]*hidden><\/div>/.test(pane),
+     'the Log pane has its own strip, hidden until used, beside bd-log-status and not inside it');
+  ok(!/bd-log-note/.test(['bdLoad', 'bdRenderLog', 'bdToggleWeek', 'bdExportCsv'].map(fnSrc).join('')),
+     '🛑 ...and no load, render, week toggle or export writes it (DESIGN.md §4.8 trap 7)');
+}
+
 // Tally in the shape scripts/test.sh counts: "<n> passed, <m> failed".
 console.log(`\n${assertions - failures} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
