@@ -1,3 +1,73 @@
+# Mark Out of Stock: never file an entry under a store nobody picked (oppbuys-mos-3, 2026-09-23)
+
+**Request:** MOS's `mosEntryStore()` fell back to the account's first store when the picker read
+"All stores", so a loss recorded there was silently filed under whichever store came first. The
+picker also reset to that store on every visit, without firing `onchange`, so a sticker looked up
+at Dupont, a round trip away from the page, and a Save wrote Coliseum. It is the same bug as
+bin-dump-3 (#280); follow that pattern.
+
+The worker already refuses it: `mos-lookup` and `mos-log` go through `storeActionGuard`, which
+returns 400 for `'ALL'` and `''`. The page never sent "ALL"; it substituted a store.
+
+## Plan
+
+- [x] `mosEntryStore` without the fallback; `mosClaimStore` (refuse and focus the picker, or claim)
+- [x] Claim where an entry starts: `mosLookup` (after the status clear), `mosScan` (after its stop
+      toggle), and the Photo button through `mosPhotoPick`
+- [x] `mosSave` posts the claim, held in a local; the Save gate requires a claim
+- [x] `mosState.lookupGen`: a lookup answer that is late after a reset or a newer lookup is dropped
+- [x] `mosReset` ends the entry; `mosStoreChange` keeps the typed code
+- [x] The Save button says "Mark out at Dupont"; the green line says "Marked out at Dupont · …"
+      (from `j.store`), with no double-escaped `&amp;`
+- [x] `initMos` keeps the pick across visits, never "All stores"; `mosLoad` and `mosExport` read
+      the picker as they are
+- [x] Dark `--mbad` `#ef4444` → `#f87171` (oppbuys-mos-11: the refusal renders in it, 4.25:1)
+- [x] `test-mos.mjs`: executed resolver, claim, reset and lookup-order checks; pins; worker ALL/'' → 400
+- [x] `scripts/browser-mos.mjs` (new): 390px refusal, a pick that survives leaving the page, the
+      claimed POST, a late lookup, the longest store name, and painted contrast in three themes
+- [x] Mutation checks; `sw.js` v234 + shell-cache fixture; `npm test` green
+- [x] Docs: oppbuys-mos-3 and -11 fixed, and -4's lookup half, in the review
+
+## Review
+
+**Root cause, confirmed in the code:** the fallback in `mosEntryStore`. There was also the revisit
+path: `initMos` set `sel.value = stores[0]` in code, which fires no `onchange`, so nothing reset
+the sticker on screen. The worker was never the problem; `storeActionGuard` has always refused
+`'ALL'`, and `test-mos` §11 now pins that.
+
+**Fix:**
+- `mosClaimStore` claims the store where an entry starts: lookup, Scan and Photo.
+- The lookup and the POST use the claim, and Save is gated on it.
+- `lookupGen` drops an answer that is late after a reset or a newer lookup.
+- `mosStoreChange` keeps the typed code.
+- The button and the green line name the store.
+- `initMos` keeps the pick, and never "All stores".
+
+**Found while verifying:** at 390px the refusal landed under the floating bottom nav. The
+strip's rectangle was inside the viewport, and a check that only compared rectangles passed. It
+is now scrolled just clear (`scroll-margin-bottom`), and the check asks `elementFromPoint`. The
+header is `sticky` but scrolls with the page here, so a `block: 'center'` scroll pushed the picker
+off the top; `nearest` plus the margin keeps both on screen.
+
+**Verified:**
+- **`npm test`:** 5753 across 81 suites, all pass (5701 before). `test-mos.mjs` went from 163 to
+  215.
+- **`browser-mos.mjs`** (new): 43 / 43 at 390×844 touch, in light, dark and pure black.
+- **Painted contrast:** the refusal and the pressed "Stolen" read 4.69 : 1 light, 5.78 : 1 dark
+  and 6.50 : 1 pure black. The dark reading was 4.25 : 1 with `#ef4444`.
+- **Screenshots:** "Mark out at Battle Creek", the longest name, wraps onto its own row in the
+  commit bar and fits.
+- **`browser-bin-dump.mjs`:** 113 / 113, no crossover.
+- **Mutations, Node suite:** 14 / 14 caught. One test is now shaped so a regression fails
+  instead of hanging: the "All stores" lookup resolves any request it did not expect.
+- **Mutations, browser check:** 12 / 14 of the same caught. The two survivors are second guards
+  that no reachable state can separate from the first. `mosSave` re-reading the picker is
+  equivalent because the kept pick and the store-change reset make the picker and the claim
+  agree everywhere. The Save gate's claim term is equivalent because the lookup counter means no
+  sticker is ever on screen without a claim. The Node suite catches both from source.
+
+---
+
 # Bin Dump: confirm edits and deletes on the Log tab (bin-dump-7, 2026-09-23)
 
 **Request:** the queued follow-up from PR #280. After a correction or a delete, "Changes saved." /

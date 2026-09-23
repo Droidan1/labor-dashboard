@@ -472,5 +472,153 @@ console.log('\n── 10. The decoder ships, and the build will carry it ──'
   }
 }
 
+console.log('\n── 11. The store an entry goes into (oppbuys-mos-3) ──');
+{
+  // 🛑 "All stores" used to fall back to the account's FIRST store, so a loss recorded while
+  // reading the whole log was filed under whichever store came first, and a round trip away
+  // from the page did the same. The page now refuses, as the worker does, and claims the
+  // store once, where an entry starts — Bin Dump's bin-dump-3 pattern.
+  const client = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  // A function's own source, cut at its closing brace (braces counted).
+  const fnSrc = (name) => {
+    const at = client.search(new RegExp(`(?:async )?function ${name}\\(`));
+    if (at < 0) return '';
+    let i = client.indexOf('{', client.indexOf(')', at)), depth = 0;
+    for (; i < client.length; i++) {
+      if (client[i] === '{') depth++;
+      else if (client[i] === '}' && --depth === 0) return client.slice(at, i + 1);
+    }
+    return '';
+  };
+  const src = (n) => { const s = fnSrc(n); ok(s, `${n} is found`); return s; };
+  const at = (s, x) => s.indexOf(x);
+
+  // The resolver and the claim, executed.
+  const sel = { value: 'ALL', focused: 0, focus() { this.focused++; } };
+  let status = null, held = ['BL1', 'BL4'];
+  const st = { store: '' };
+  const { mosEntryStore, mosClaimStore } = new Function('el', 'mosSetStatus', 'mosState', 'mosStores',
+    `${src('mosEntryStore')}\n${src('mosClaimStore')}; return { mosEntryStore, mosClaimStore };`)(
+    () => sel, (m, t) => { status = [m, t]; }, st, () => held);
+  eq(mosEntryStore(), '', '🛑 "All stores" is no store — it no longer falls back to the first one');
+  sel.value = ''; eq(mosEntryStore(), '', 'an empty picker is no store either');
+  sel.value = 'BL4'; eq(mosEntryStore(), 'BL4', 'a real store is itself');
+  sel.value = 'ALL';
+  eq(mosClaimStore(), false, 'so an entry cannot start on "All stores"');
+  ok(status && status[1] === 'err' && /Pick the store/.test(status[0]) && sel.focused === 1 && st.store === '',
+     '...it says why, points at the picker, and claims nothing');
+  sel.value = 'BL4';
+  ok(mosClaimStore() === true && st.store === 'BL4', 'a real store is claimed');
+  sel.value = 'BL1';
+  eq(st.store, 'BL4', '🔑 ...and stays claimed if the picker changes afterwards');
+  held = []; sel.value = ''; status = null;
+  ok(mosClaimStore() === false && status && /No store is assigned/.test(status[0]),
+     'an account holding no store is told so, not asked to pick one');
+  // At 390px the strip landed under the floating nav: it is scrolled clear of it, and focus
+  // goes first because focusing scrolls too and would undo that.
+  const claimSrc = src('mosClaimStore');
+  ok(at(claimSrc, "el('mos-store').focus()") > 0
+     && at(claimSrc, "el('mos-store').focus()") < at(claimSrc, "el('mos-status').scrollIntoView({ block: 'nearest' })"),
+     'the refusal focuses the picker, THEN brings the strip into view');
+  ok(/\.mos-status\{[^}]*scroll-margin-bottom:calc\(96px \+ env\(safe-area-inset-bottom\)\)\}/.test(client),
+     '...clear of the floating nav, not under it');
+
+  // mosReset ends the entry; a store change keeps the typed code.
+  const box = (v = '') => ({ value: v, hidden: false, textContent: '' });
+  const E = { 'mos-resolved': box(), 'mos-teach': box(), 'mos-teach-input': box('x'),
+              'mos-code': box('BL-50038-1_5'), 'mos-qty': box('3'), 'mos-save': box() };
+  E['mos-save'].textContent = 'Mark out at Dupont';
+  const rs = { resolved: {}, store: 'BL4', lookupGen: 7 };
+  const mosReset = new Function('el', 'mosState', 'mosSetStatus', 'mosRecalc',
+    `${src('mosReset')}; return mosReset;`)(id => E[id], rs, () => {}, () => {});
+  mosReset(true);
+  ok(rs.store === '' && rs.resolved === null && rs.lookupGen === 8,
+     'a reset ends the entry: no sticker, no claimed store, and a lookup still out is now late');
+  eq(E['mos-code'].value, 'BL-50038-1_5', '🔑 mosReset(true) keeps the typed code');
+  eq(E['mos-save'].textContent, 'Mark out of stock', '...and the button stops naming a store');
+  mosReset();
+  eq(E['mos-code'].value, '', 'a full reset (after a save) clears it');
+  ok(/function mosStoreChange\(\) \{ mosReset\(true\);/.test(client),
+     'a store change is the reset that keeps it — "Pick the store…", pick one, and the code is still there');
+
+  // mosLookup with the fetch held open: a late answer never fills the form.
+  const pend = [], applied = [];
+  const L = { store: '', lookupGen: 0, resolved: null };
+  const code = box(), lsel = { value: 'BL4', focus() {} };
+  const Ls = { 'mos-code': code, 'mos-store': lsel, 'mos-resolved': box(), 'mos-teach': box() };
+  let lstatus = null;
+  const lookSrc = src('mosLookup');
+  const mosLookup = new Function('el', 'fetch', 'WORKER_BASE', 'mosErr', 'mosState', 'mosApply',
+    'mosSetStatus', 'mosRecalc', 'mosStores',
+    `${src('mosEntryStore')}\n${src('mosClaimStore')}\n${lookSrc}; return mosLookup;`)(
+    id => Ls[id], (u) => new Promise((resolve, reject) => pend.push({ u, resolve, reject })), '/',
+    () => 'refused', L, j => { applied.push(j.code); L.resolved = j; },
+    (m, t) => { lstatus = m ? [m, t] : null; }, () => {}, () => ['BL1', 'BL4']);
+  const answer = c => ({ ok: true, json: async () => ({ ok: true, code: c }) });
+  const p1 = mosLookup('BL-11111-1');
+  ok(/store=BL4/.test(pend[0].u), 'a lookup asks as the claimed store');
+  L.lookupGen++; L.store = '';                        // what mosReset does — a store change
+  pend[0].resolve(answer('BL-11111-1')); await p1;
+  eq(applied.length, 0, '🛑 an answer landing after a reset fills nothing in');
+  const p2 = mosLookup('BL-22222-2'), p3 = mosLookup('BL-33333-3');
+  pend[2].resolve(answer('BL-33333-3')); await p3;
+  pend[1].resolve(answer('BL-22222-2')); await p2;
+  eq(applied.join(), 'BL-33333-3', '🛑 an older lookup answering last does not replace the newer sticker');
+  const p4 = mosLookup('BL-44444-4'), p5 = mosLookup('BL-55555-5');
+  pend[4].resolve(answer('BL-55555-5')); await p5;
+  pend[3].reject(new Error('network')); await p4;
+  ok(L.resolved && L.resolved.code === 'BL-55555-5' && lstatus === null, '...nor does its late failure hide it');
+  lsel.value = 'ALL';
+  const sent = pend.length;
+  const p6 = mosLookup('BL-66666-6');                 // the fetch, if any, is issued synchronously
+  const asked = pend.length > sent;
+  if (asked) pend[sent].resolve(answer('BL-66666-6'));   // a regression must FAIL here, not hang
+  await p6;
+  ok(!asked && code.value === 'BL-66666-6' && lstatus && /Pick the store/.test(lstatus[0]),
+     '🛑 on "All stores" nothing is asked, the refusal stays on screen, and the code stays in the box');
+
+  // Where the claim sits in each path, and what the save sends.
+  ok(at(lookSrc, "mosSetStatus('')") > 0 && at(lookSrc, "mosSetStatus('')") < at(lookSrc, 'mosClaimStore()')
+     && at(lookSrc, 'mosClaimStore()') < at(lookSrc, 'fetch('),
+     '🔑 mosLookup clears the status, THEN claims (so a refusal stays), then asks');
+  ok(!/mosEntryStore\(/.test(lookSrc), '...and never reads the picker itself');
+  const scan = src('mosScan');
+  ok(at(scan, 'if (mosScanning)') >= 0 && at(scan, 'if (mosScanning)') < at(scan, 'mosClaimStore()')
+     && at(scan, 'mosClaimStore()') < at(scan, 'mosLoadDecoder('),
+     'Scan claims after its stop toggle (Stop always works) and before the decoder or camera');
+  ok(/if \(mosClaimStore\(\)\) el\('mos-photo'\)\.click\(\);/.test(src('mosPhotoPick'))
+     && /onclick="mosPhotoPick\(\)"/.test(client) && !/getElementById\('mos-photo'\)\.click\(\)/.test(client),
+     'the Photo button claims before the camera opens, and nothing else opens it');
+  const save = src('mosSave');
+  ok(/const store = mosState\.store;/.test(save) && /const body = \{ store, code: r\.code/.test(save)
+     && !/mosEntryStore\(|mosClaimStore\(|el\('mos-store'\)/.test(save),
+     '🛑 mosSave posts the claimed store, never a fresh read of the picker');
+  ok(at(save, 'const store = mosState.store;') < at(save, 'await fetch('),
+     '...held before the await, so a reset mid-save cannot blank it');
+  ok(/Marked out at \$\{MOS_LABELS\[where\] \|\| where\}/.test(save), 'the green line names the store it was filed under');
+  ok(!/escapeHtml\(j\.description\)/.test(save), '...in plain text — mosSetStatus writes textContent, so escaping printed "&amp;"');
+  ok(/el\('mos-save'\)\.textContent = `Mark out at \$\{MOS_LABELS\[mosState\.store\] \|\| mosState\.store\}`/.test(src('mosApply')),
+     'the Save button names the store once a sticker is looked up');
+  ok(/&& mosState\.store\);/.test(src('mosRecalc')), '...and cannot be pressed without one');
+  const init = src('initMos');
+  ok(at(init, 'const prev = sel.value') > 0 && at(init, 'const prev = sel.value') < at(init, 'sel.innerHTML ='),
+     'initMos reads the last pick before rebuilding the picker');
+  ok(/sel\.value = stores\.includes\(prev\) \? prev : stores\[0\]/.test(init),
+     '...and keeps it when it is still a store held — never "All stores"');
+  ok(!/\|\| mosEntryStore\(\)/.test(client), 'the log and export read the picker as it is ("All stores" is a real reading scope)');
+  ok(/\.dark #page-mos\{[^}]*--mbad:#f87171;/.test(client), 'dark red text is #f87171, not #ef4444 (oppbuys-mos-11)');
+
+  // The worker has always refused both — the page now agrees instead of substituting a store.
+  const { env, db } = env0();
+  for (const store of ['ALL', '']) {
+    eq((await call(`/?action=mos-lookup&store=${store}&code=BL-50038-1_5`, { user: 'u-admin', env })).status, 400,
+       `the worker refuses a lookup at ${JSON.stringify(store)}`);
+    eq((await call('/?action=mos-log', { user: 'u-admin', method: 'POST', env,
+      body: { store, code: 'BL-50038-1_5', qty: 1, reason: 'Expired' } })).status, 400,
+       `...and a log at ${JSON.stringify(store)}`);
+  }
+  eq(db.prepare('SELECT COUNT(*) n FROM mos_entries').get().n, 0, 'and neither wrote a row');
+}
+
 console.log(failures ? `\n${failures} FAILED of ${assertions}` : `\n${assertions} passed`);
 process.exit(failures ? 1 : 0);
