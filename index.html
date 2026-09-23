@@ -11861,6 +11861,11 @@
     document.querySelectorAll('[id^="page-"]').forEach(elm => {
       elm.classList.toggle('hidden', elm.id !== 'page-' + name);
     });
+    // Leaving the page must kill the camera — a torch left on in a pocket is the failure
+    // people notice, and the stream holds the lens against Price Scan. HERE, the one place
+    // every page switch passes: swipe-back and the browser's back button reach store detail
+    // through showStoreDetail, which never went through navigateToPage (oppbuys-mos-2).
+    if (name !== 'mos' && typeof mosStopScan === 'function') mosStopScan();
   }
   window.showOnlyPage = showOnlyPage;
 
@@ -12093,9 +12098,7 @@
       if (typeof invLoadSaleComposer === 'function') invLoadSaleComposer(null);
       if (typeof loadSaleSchedules === 'function') loadSaleSchedules();
     }
-    // Leaving the page must kill the camera — a torch left on in a pocket is the
-    // failure people notice, and the stream holds the lens against Price Scan.
-    if (page !== 'mos' && typeof mosStopScan === 'function') mosStopScan();
+    // (The MOS camera is stopped in showOnlyPage, which every page switch passes.)
 
     // Close mobile sidebar
     const sidebar = el('sidebar');
@@ -30156,15 +30159,42 @@
 
   let mosStream = null, mosScanning = false, mosTorchOn = false;
   let mosLenses = [], mosLensId = null, mosRaf = 0;
+  // 🛑 ONE START AT A TIME (oppbuys-mos-2). mosScanning was only set once the camera was
+  // OPEN — 300-500 ms after the tap on a phone, with nothing on screen — so a second tap
+  // opened a second stream, and Stop stopped only one: the other kept the torch on and the
+  // lens held. mosScanGen numbers each start and mosStopScan bumps it, so a start that was
+  // stopped (Stop, the Log tab, leaving the page) touches nothing when its awaits return,
+  // and a camera that opens late is closed the moment it arrives.
+  let mosScanGen = 0, mosStarting = false;
+  // A start that never settles — a permission prompt left unanswered on a desktop, a QR
+  // reader that never loads — must not hold the button on "Starting…" for good.
+  const MOS_START_TIMEOUT_MS = 20000;
 
   async function mosScan() {
     if (mosScanning) { mosStopScan(); return; }
+    // A tap while the camera is still opening is IGNORED: it is someone who saw nothing
+    // happen, not someone asking to stop. The button says "Starting…" and waits.
+    if (mosStarting) return;
     // After the stop toggle, so Stop always works; before the decoder and the camera, so
     // "All stores" opens neither.
     if (!mosClaimStore()) return;
+    const gen = ++mosScanGen;
+    mosStarting = true;
+    el('mos-scan-btn').disabled = true;
+    el('mos-scan-lbl').textContent = 'Starting…';
+    const slow = setTimeout(() => {
+      if (gen !== mosScanGen || !mosStarting) return;
+      mosStopScan();
+      mosSetStatus('The camera did not open. Try again, or type the code.', 'err');
+    }, MOS_START_TIMEOUT_MS);
+
     let decode;
     try { decode = await mosLoadDecoder(); }
-    catch (e) { mosSetStatus('The QR reader could not load. Type the code, or use Photo.', 'err'); return; }
+    catch (e) {
+      if (gen !== mosScanGen) return;
+      mosStopScan(); mosSetStatus('The QR reader could not load. Type the code, or use Photo.', 'err'); return;
+    }
+    if (gen !== mosScanGen) return;                    // stopped while the reader loaded
 
     let stream;
     try {
@@ -30179,20 +30209,38 @@
       else video0.facingMode = { ideal: 'environment' };
       stream = await navigator.mediaDevices.getUserMedia({ video: video0 });
     } catch (e) {
-      mosSetStatus('No camera available. Type the code, or use the Photo button.', 'err');
+      if (gen !== mosScanGen) return;
+      // A remembered lens that is gone (OverconstrainedError) failed every scan after it.
+      mosLensId = null;
+      mosStopScan();
+      mosSetStatus(e && e.name === 'NotAllowedError'
+        ? 'The camera is blocked for this page. Allow it in the browser settings, or use Photo.'
+        : 'No camera available. Type the code, or use the Photo button.', 'err');
       return;
     }
-    mosStream = stream; mosScanning = true;
+    // 🛑 Stopped while the camera opened: nothing else will ever stop this stream.
+    if (gen !== mosScanGen) { stream.getTracks().forEach(t => t.stop()); return; }
+    mosStream = stream;                // before play(), so a stop during it ends this stream
     const video = el('mos-video');
     video.srcObject = stream;
     video.setAttribute('playsinline', '');
     video.muted = true;
-    await video.play();
+    try { await video.play(); }
+    catch (e) {
+      // A stop that landed mid-play ("the play() request was interrupted") has already done
+      // the cleaning up; anything else is a camera that will not show.
+      if (gen !== mosScanGen) return;
+      mosStopScan(); mosSetStatus('The camera would not start. Try again, or use Photo.', 'err'); return;
+    }
+    if (gen !== mosScanGen) return;
+    clearTimeout(slow);
+    mosStarting = false; mosScanning = true;
     el('mos-scanbox').hidden = false;
+    el('mos-scan-btn').disabled = false;
     el('mos-scan-lbl').textContent = 'Stop';
     mosSetStatus('');
 
-    const track = mosStream.getVideoTracks()[0];
+    const track = stream.getVideoTracks()[0];
     let caps = null;
     try { caps = track?.getCapabilities?.() || null; } catch (e) { caps = null; }
     mosTorchOn = false;
@@ -30206,14 +30254,17 @@
       zoomEl.value = Math.min(2, Number(caps.zoom.max));
       zoomEl.classList.remove('hidden');
       try { await track.applyConstraints({ advanced: [{ zoom: Number(zoomEl.value) }] }); } catch (e) {}
+      if (gen !== mosScanGen) return;
     } else { zoomEl.classList.add('hidden'); }
 
+    let lenses = null;
     try {
-      const devs = (await navigator.mediaDevices.enumerateDevices())
-        .filter(d => d.kind === 'videoinput');
-      mosLenses = devs.map(d => d.deviceId);
-      el('mos-lens').hidden = mosLenses.length < 2;
-    } catch (e) { el('mos-lens').hidden = true; }
+      lenses = (await navigator.mediaDevices.enumerateDevices())
+        .filter(d => d.kind === 'videoinput').map(d => d.deviceId);
+    } catch (e) { lenses = null; }
+    if (gen !== mosScanGen) return;
+    if (lenses) mosLenses = lenses;
+    el('mos-lens').hidden = !lenses || lenses.length < 2;
 
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -30258,11 +30309,17 @@
   window.mosScan = mosScan;
 
   function mosStopScan() {
+    mosScanGen++;                      // a start still in flight is now stale (see mosScanGen)
+    mosStarting = false;
     mosScanning = false;
     if (mosRaf) { cancelAnimationFrame(mosRaf); mosRaf = 0; }
     try { mosStream && mosStream.getTracks().forEach(t => t.stop()); } catch (e) {}
     mosStream = null;
+    // The torch went out with the stream, so its button stops looking lit (as psStopScan).
+    mosTorchOn = false;
+    const t = el('mos-torch'); if (t) { t.style.background = 'rgba(0,0,0,.45)'; t.style.color = '#fff'; }
     const box = el('mos-scanbox'); if (box) box.hidden = true;
+    const btn = el('mos-scan-btn'); if (btn) btn.disabled = false;
     const lbl = el('mos-scan-lbl'); if (lbl) lbl.textContent = 'Scan QR';
     const hint = el('mos-scanhint'); if (hint) hint.textContent = 'Fill the square with the QR code';
   }
@@ -30287,14 +30344,18 @@
 
   async function mosTorch() {
     if (!mosStream) return;
-    const track = mosStream.getVideoTracks()[0];
+    const gen = mosScanGen, track = mosStream.getVideoTracks()[0];
     mosTorchOn = !mosTorchOn;
     try {
       await track.applyConstraints({ advanced: [{ torch: mosTorchOn }] });
       const b = el('mos-torch');
       b.style.background = mosTorchOn ? 'rgba(255,255,255,.85)' : 'rgba(0,0,0,.45)';
       b.style.color = mosTorchOn ? '#111' : '#fff';
-    } catch (e) { mosTorchOn = false; }
+    } catch (e) {
+      // A failure that lands after its scan ended is not this scan's: it must not switch off
+      // a newer scan's torch.
+      if (gen === mosScanGen) mosTorchOn = false;
+    }
   }
   window.mosTorch = mosTorch;
 

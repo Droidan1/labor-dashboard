@@ -472,26 +472,28 @@ console.log('\n── 10. The decoder ships, and the build will carry it ──'
   }
 }
 
+// ── Helpers for §11-12: the page's own functions, executed ──
+const client = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+// A function's own source, cut at its closing brace (braces counted).
+const fnSrc = (name) => {
+  const at = client.search(new RegExp(`(?:async )?function ${name}\\(`));
+  if (at < 0) return '';
+  let i = client.indexOf('{', client.indexOf(')', at)), depth = 0;
+  for (; i < client.length; i++) {
+    if (client[i] === '{') depth++;
+    else if (client[i] === '}' && --depth === 0) return client.slice(at, i + 1);
+  }
+  return '';
+};
+const src = (n) => { const s = fnSrc(n); ok(s, `${n} is found`); return s; };
+const at = (s, x) => s.indexOf(x);
+
 console.log('\n── 11. The store an entry goes into (oppbuys-mos-3) ──');
 {
   // 🛑 "All stores" used to fall back to the account's FIRST store, so a loss recorded while
   // reading the whole log was filed under whichever store came first, and a round trip away
   // from the page did the same. The page now refuses, as the worker does, and claims the
   // store once, where an entry starts — Bin Dump's bin-dump-3 pattern.
-  const client = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
-  // A function's own source, cut at its closing brace (braces counted).
-  const fnSrc = (name) => {
-    const at = client.search(new RegExp(`(?:async )?function ${name}\\(`));
-    if (at < 0) return '';
-    let i = client.indexOf('{', client.indexOf(')', at)), depth = 0;
-    for (; i < client.length; i++) {
-      if (client[i] === '{') depth++;
-      else if (client[i] === '}' && --depth === 0) return client.slice(at, i + 1);
-    }
-    return '';
-  };
-  const src = (n) => { const s = fnSrc(n); ok(s, `${n} is found`); return s; };
-  const at = (s, x) => s.indexOf(x);
 
   // The resolver and the claim, executed.
   const sel = { value: 'ALL', focused: 0, focus() { this.focused++; } };
@@ -618,6 +620,197 @@ console.log('\n── 11. The store an entry goes into (oppbuys-mos-3) ──');
        `...and a log at ${JSON.stringify(store)}`);
   }
   eq(db.prepare('SELECT COUNT(*) n FROM mos_entries').get().n, 0, 'and neither wrote a row');
+}
+
+console.log('\n── 12. One camera, and none left running (oppbuys-mos-2) ──');
+{
+  // 🛑 mosScanning was only set once the camera was OPEN, so a second tap in the 300-500 ms a
+  // phone takes opened a second stream that no Stop reached, and a stream arriving after the
+  // page was left ran on, hidden. The scanner's own code runs here against a fake camera; its
+  // module lets are sliced from index.html, not retyped — a retyped one would hide a
+  // declaration missing from the page.
+  const lets = client.slice(client.indexOf('let mosStream = null'), client.indexOf('async function mosScan()'));
+  ok(/let mosScanGen = 0, mosStarting = false;/.test(lets) && /const MOS_START_TIMEOUT_MS = 20000;/.test(lets),
+     'the start generation and the start timeout sit beside the stream');
+  const unhandled = [];
+  const onUnhandled = (e) => unhandled.push(String((e && e.message) || e));
+  process.on('unhandledRejection', onUnhandled);
+  const mk = () => ({ hidden: false, disabled: false, textContent: '', style: {}, value: 0, min: 0, max: 0, step: 0,
+                      classList: { add() {}, remove() {} }, setAttribute() {} });
+  const E = {};
+  for (const id of ['mos-scan-btn', 'mos-scan-lbl', 'mos-scanbox', 'mos-torch', 'mos-zoom', 'mos-lens', 'mos-scanhint']) E[id] = mk();
+  let playMode = 'ok';
+  const plays = [];
+  E['mos-video'] = Object.assign(mk(), { srcObject: null, muted: false, videoWidth: 0, videoHeight: 0,
+    play: () => (playMode === 'ok' ? Promise.resolve() : new Promise((res, rej) => plays.push({ res, rej }))) });
+  const tracks = [];
+  const stream = () => {
+    const t = { readyState: 'live', stop() { this.readyState = 'ended'; }, getCapabilities: () => ({}), applyConstraints: async () => {} };
+    tracks.push(t);
+    return { getTracks: () => [t], getVideoTracks: () => [t] };
+  };
+  const gum = [];
+  const nav = { mediaDevices: {
+    getUserMedia: (c) => new Promise((res, rej) => gum.push({ c, res, rej })),
+    enumerateDevices: async () => [{ kind: 'videoinput', deviceId: 'cam-1' }] } };
+  let decoder = null;                                  // null: the QR reader is ready at once
+  const timers = [];
+  let status = null;
+  const S = new Function('el', 'mosClaimStore', 'mosLoadDecoder', 'navigator', 'mosSetStatus', 'requestAnimationFrame',
+    'cancelAnimationFrame', 'document', 'mosLooksLikeSticker', 'mosLookup', 'setTimeout', 'clearTimeout',
+    `${lets}\n${src('mosScan')}\n${src('mosStopScan')}\n${src('mosTorch')}\n`
+    + 'return { mosScan, mosStopScan, mosTorch, setLens: (v) => { mosLensId = v; }, '
+    + 'st: () => ({ starting: mosStarting, scanning: mosScanning, stream: mosStream, torchOn: mosTorchOn, lensId: mosLensId }) };')(
+    id => E[id], () => true, () => (decoder ? decoder.promise : Promise.resolve(() => null)), nav,
+    (m, t) => { status = m ? [m, t] : null; }, () => 1, () => {},
+    { createElement: () => ({ getContext: () => ({ drawImage() {}, getImageData: () => ({ data: [] }) }) }) },
+    () => false, () => {}, (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, () => {});
+  const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+  // Every scan is awaited with a bound, and a scan that REJECTS is recorded rather than
+  // thrown: in the page `onclick="mosScan()"` awaits nothing, so a rejection there is the
+  // uncaught "play() request was interrupted" this finding named. A regression that leaves a
+  // fake camera or video unanswered must FAIL the check after it, not hang the suite.
+  const rejected = [];
+  const done = (...ps) => Promise.race([
+    Promise.all(ps.map(p => p.catch(e => { rejected.push(String((e && e.message) || e)); }))),
+    new Promise(r => setTimeout(r, 100))]);
+  const btn = () => [E['mos-scan-lbl'].textContent, E['mos-scan-btn'].disabled];
+
+  // Each scenario reads the fakes IT created (indexes taken at its start), with optional
+  // chaining: a regression that makes an extra camera request fails the check that names it,
+  // and can neither shift nor crash the scenarios after it.
+  const mark = () => ({ g: gum.length, t: tracks.length, pl: plays.length, tm: timers.length });
+  const answer = (i) => gum[i]?.res(stream());
+
+  // A double tap while the camera opens. The second tap comes once the camera is being asked
+  // for — two taps before the QR reader loads would pass on the generation alone.
+  let m = mark();
+  const p1 = S.mosScan();
+  await flush();
+  eq(gum.length - m.g, 1, '(the camera is being opened)');
+  ok(btn()[0] === 'Starting…' && btn()[1] === true, 'the tap shows "Starting…" and the button waits');
+  const p2 = S.mosScan();
+  await flush();
+  eq(gum.length - m.g, 1, '🛑 a second tap while the camera opens asks for no second camera');
+  for (let i = m.g; i < gum.length; i++) answer(i);   // answer all that was asked
+  await done(p1, p2);
+  ok(S.st().scanning && btn()[0] === 'Stop' && btn()[1] === false && tracks[m.t]?.readyState === 'live',
+     'once the video plays: "Stop", the button back, one live track');
+  S.mosStopScan();
+  ok(tracks.slice(m.t).every(t => t.readyState === 'ended') && btn()[0] === 'Scan QR' && S.st().stream === null,
+     'Stop ends it');
+
+  // A stop while the camera opens — what leaving the page, the Log tab and swipe-back do.
+  m = mark();
+  const pb = S.mosScan(); await flush();
+  eq(gum.length - m.g, 1, '(the camera is being opened)');
+  S.mosStopScan();
+  answer(m.g); await done(pb);
+  ok(tracks[m.t]?.readyState === 'ended' && S.st().stream === null && !S.st().scanning,
+     '🛑 a stop while the camera opens: the stream that arrives late is closed on arrival');
+  ok(btn()[0] === 'Scan QR' && btn()[1] === false, '...and the button is back');
+
+  // A stop while the QR reader loads: the camera is never asked for.
+  m = mark();
+  let release;
+  decoder = { promise: new Promise(r => { release = r; }) };
+  const pc = S.mosScan(); await flush();
+  S.mosStopScan(); release(() => null); await done(pc);
+  eq(gum.length - m.g, 0, 'a stop while the QR reader loads: the camera is never asked for');
+  decoder = null;
+
+  // play() interrupted by a stop: no unhandled rejection, nothing left running.
+  playMode = 'hold';
+  m = mark();
+  const pd = S.mosScan(); await flush();
+  answer(m.g); await flush();
+  eq(plays.length - m.pl, 1, '(the video is starting)');
+  S.mosScan();                                         // a tap while the video starts
+  await flush();
+  ok(tracks[m.t]?.readyState === 'live' && btn()[0] === 'Starting…' && gum.length - m.g === 1,
+     'a tap while the video is still starting is ignored too — not a Stop, not a second camera');
+  S.mosStopScan();
+  plays[m.pl]?.rej(Object.assign(new Error('The play() request was interrupted'), { name: 'AbortError' }));
+  await done(pd);
+  ok(tracks.slice(m.t).every(t => t.readyState === 'ended') && status === null,
+     '🛑 a stop mid-play: the track is ended and nothing is said');
+  // play() failing on its own: stopped, and said.
+  m = mark();
+  const pe = S.mosScan(); await flush();
+  answer(m.g); await flush();
+  plays[m.pl]?.rej(new Error('NotSupportedError'));
+  await done(pe);
+  ok(tracks[m.t]?.readyState === 'ended' && status && /would not start/.test(status[0]) && btn()[0] === 'Scan QR' && !btn()[1],
+     'a video that will not play: stopped, said, and the button is back');
+  playMode = 'ok'; status = null;
+
+  // A refused permission, and a remembered lens that is gone.
+  S.setLens('cam-9');
+  m = mark();
+  const pf = S.mosScan(); await flush();
+  ok(gum[m.g]?.c.video.deviceId?.exact === 'cam-9', '(it asked for the remembered lens)');
+  gum[m.g]?.rej(Object.assign(new Error('Permission denied'), { name: 'NotAllowedError' }));
+  await done(pf);
+  ok(status && /blocked/.test(status[0]) && !/No camera/.test(status[0]) && btn()[0] === 'Scan QR' && !btn()[1],
+     'a refused permission is named as such, not "No camera available"');
+  eq(S.st().lensId, null, '...and a remembered lens is forgotten, so the next scan asks for any back camera');
+  status = null;
+
+  // A start that never settles.
+  m = mark();
+  const pg = S.mosScan(); await flush();
+  ok(timers[m.tm]?.ms === 20000, 'a start has a 20 s limit');
+  timers[m.tm]?.fn();                                  // twenty seconds, and the camera never came
+  ok(status && /did not open/.test(status[0]) && btn()[0] === 'Scan QR' && !btn()[1] && !S.st().starting,
+     '🔑 a start that never settles gives the button back and says so — "Starting…" is never a trap');
+  answer(m.g); await done(pg);
+  eq(tracks[m.t]?.readyState, 'ended', '...and a camera that opens after that is closed on arrival');
+  status = null;
+
+  // The torch.
+  m = mark();
+  const ph = S.mosScan(); await flush();
+  answer(m.g); await done(ph);
+  timers[m.tm]?.fn();                                  // this start's own limit, after it went live
+  ok(S.st().scanning && status === null, 'the time limit of a start that went live does nothing');
+  await S.mosTorch();
+  ok(E['mos-torch'].style.background === 'rgba(255,255,255,.85)' && S.st().torchOn, '(the torch is lit)');
+  S.mosStopScan();
+  ok(E['mos-torch'].style.background === 'rgba(0,0,0,.45)' && E['mos-torch'].style.color === '#fff' && !S.st().torchOn,
+     'stopping resets the torch button — the next scan no longer shows a lit torch that is off');
+  // A torch change that FAILS after its scan ended must not switch off a newer scan's torch.
+  m = mark();
+  const pi = S.mosScan(); await flush();
+  answer(m.g); await done(pi);                         // scan A
+  let failA = () => {};
+  if (tracks[m.t]) tracks[m.t].applyConstraints = () => new Promise((_, rej) => { failA = rej; });
+  const pt = S.mosTorch();                             // A's torch change, still out
+  S.mosStopScan();
+  const m2 = mark();
+  const pj = S.mosScan(); await flush();
+  answer(m2.g); await done(pj);                        // scan B
+  await S.mosTorch();                                  // B lights its torch
+  failA(new Error('OverconstrainedError')); await done(pt);   // A's change fails, late
+  ok(S.st().torchOn === true && E['mos-torch'].style.background === 'rgba(255,255,255,.85)',
+     "🛑 a late torch failure from an ended scan does not switch off the newer scan's torch");
+  S.mosStopScan();
+
+  await new Promise(r => setTimeout(r, 0));            // an unhandled rejection is reported after the microtasks
+  process.off('unhandledRejection', onUnhandled);
+  eq(rejected.length, 0, `🛑 no scan ever rejects — the page would show it as an uncaught error (${rejected.join(' | ')})`);
+  eq(unhandled.length, 0, `...and nothing else goes unhandled (${unhandled.join(' | ')})`);
+
+  // Every page switch but MOS stops the camera — including store detail, where swipe-back lands.
+  let stops = 0;
+  const showOnlyPage = new Function('document', 'mosStopScan', `${src('showOnlyPage')}; return showOnlyPage;`)(
+    { querySelectorAll: () => [] }, () => { stops++; });
+  showOnlyPage('store-detail'); showOnlyPage('dashboard');
+  eq(stops, 2, '🛑 showOnlyPage stops the camera for any page but MOS — swipe-back and popstate pass through it');
+  showOnlyPage('mos');
+  eq(stops, 2, '...and showing MOS itself does not');
+  const navSrc = src('navigateToPage');
+  ok(/showOnlyPage\(page\)/.test(navSrc) && !/mosStopScan\(\)/.test(navSrc),
+     'navigateToPage reaches it through showOnlyPage, with no copy of its own');
 }
 
 console.log(failures ? `\n${failures} FAILED of ${assertions}` : `\n${assertions} passed`);

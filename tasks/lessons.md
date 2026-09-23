@@ -1,3 +1,23 @@
+## Two mutation runners shared `dist/`, and one quietly un-mutated the other (2026-09-23)
+
+The MOS scanner fix (oppbuys-mos-2) was mutation-tested twice: the Node suite in the
+foreground, the browser check in the background. Both runners wrote their mutated copy to the
+same tree, and **both `finally` blocks restored `index.html` AND `dist/index.html`**. I re-ran the
+Node pass three times while the browser pass was working. Each restore swapped the good build
+in under whatever mutation the browser pass was checking, so that iteration tested the fix and
+reported **MISSED**. One of those was a guard the browser check does catch ("`mosStopScan`
+does not bump the generation"), and an isolated rerun proved it: 48 passed, 2 failed.
+
+**A false MISSED is the dangerous direction.** It points at a hole in the tests that is not there,
+and invites "fixing" a test that was right. It also sits beside real misses (paths a fake
+camera cannot produce) that look identical.
+
+### The rule
+
+**A mutation run owns its files for its whole duration. Run each one in its own copy (a scratch
+dir with its own `dist/`), never two against one tree, and never let one runner's cleanup
+restore a file it did not write.** Before trusting a MISSED, reproduce it alone.
+
 ## The rationale in the comment was a factual claim, and it was false (2026-09-21)
 
 Building the OB manifest, I wrote a comment explaining why `ob_price` lives in an OB-only
