@@ -58,6 +58,9 @@ after the `finally`, un-awaited (bin-dump-15).
   - no clear on store change;
   - `bdSetStatus` ignoring its id;
   - the strip inside `#bd-log-status`.
+- **Mutations, browser check:** 7 / 8 of the same caught. The survivor is "no clear on store
+  change". It is pure logic, and the browser check has no store-change scenario. The Node suite's
+  executed `bdStoreChange` check catches it, so it is covered, not a hole.
 
 **Design note:** a first draft chained the note through `bdLoad`, in front of what the winning
 load wrote. The Plan-agent review found three problems with it:
