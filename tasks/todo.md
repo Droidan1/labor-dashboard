@@ -65,6 +65,13 @@ the camera opened left the late stream `live`, the same as the review's probe.
   - The first version of §12 used fixed fake indexes, so one regression crashed the scenarios after
     it. Each scenario now reads the fakes it created, and `done()` records a rejected scan instead
     of throwing it. That is what the unguarded `play()` was: an uncaught rejection.
+- **Mutations, browser check:** 7 / 12 caught, in a run isolated in a scratch copy of `dist/`.
+  - **The five misses** are exactly the paths Chromium's fake camera cannot produce: a `play()`
+    that rejects, a slow `play()` for a tap to land in, a torch, a 20 s hung start, and a late
+    torch failure. The Node suite catches all five.
+  - **A first, shared run reported 6 misses, and one was false.** My Node mutation runner's
+    `finally` restored `dist/index.html` too, and running it alongside the browser pass swapped
+    the good build back in under three of its mutations. See lessons.md.
 
 ---
 
