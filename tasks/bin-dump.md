@@ -385,6 +385,46 @@ later confirmed the viewer's pinch, pan, clamp and anchor behaviour — includin
 where the *test* was wrong, not the code: at fit an image shorter than the stage has no
 vertical overhang, so the clamp correctly pins it centred and overrides the anchor.
 
-⚠️ **The browser runs are not committed.** Playwright is not a dependency of this repo and
-adding one would break `scripts/test.sh`. They are a verification tool, not a regression
-net; the committed protection is the Node-level suite.
+⚠️ **The browser runs of 2026-09-08 were not committed.** Playwright is not a dependency of
+this repo and adding one would break `scripts/test.sh`. Since 2026-09-23 there is one:
+`scripts/browser-bin-dump.mjs`, run by hand like the other `browser-*.mjs` (it installs
+nothing; `npm install --no-save playwright-core` first). Still a verification tool, not a
+regression net — the committed protection is the Node-level suite.
+
+## 2026-09-23 — what the manager SOP had to work around
+
+Writing the store-manager SOP meant teaching workarounds for thirteen open findings from
+`docs/code-review-2026-09-22.md`. All fixed in one frontend-only change; no worker, no migration.
+
+**Decision (owner):** a barcode is **saved in capitals** — on the page, not in the worker. A
+phone capitalised only the first letter ("Prm-10490-30") and the duplicate check matches
+character for character, so a typed repeat got through. `bdReadFields` upper-cases it, so the
+pre-flight, the save and an edit agree; the keyboard gets `autocapitalize` hints too. Rows
+typed before this keep their case; the DUP eye in the log compares upper-cased, so such a
+pair still shows.
+
+- 🛑 **The store is claimed once.** `bdClaimStore()` runs when a scan or a typed entry starts;
+  on "All stores" it refuses and points at the picker (it used to log into the first store
+  silently). The form's title and the green line name the store, and the POST uses the
+  claimed one even if the picker changes mid-read. The pick survives leaving the page.
+- 🛑 **A read cannot hang, and cannot come back late.** 45 s timeout (`BD_READ_TIMEOUT_MS`) and
+  a Cancel on "Reading tag…"; every read carries a generation number, and an old one writes
+  nothing — not the photo, not the spinner, not the form.
+- 🛑 **The last pallet's photo is forgotten before the next is decoded** — a file that would
+  not decode used to open the form with, and upload, the previous tag.
+- **Retake / Take Photo keep the form open behind the camera**; only an arriving photo
+  closes it, so a dismissed camera loses nothing typed.
+- 🛑 **While a save or delete posts, the form's other exits are locked**, and the log reload
+  is not awaited, so a photo taken while it reloads is read, not dropped. `bdLoad` is
+  sequence-guarded on success and failure; the log draws as the rows' own store.
+- 🛑 **The duplicate prompt defaults to backing out**: Cancel ("Don't log it" / "Don't save")
+  has focus and takes Enter; the override is red. `_uiDialog` gained `defaultCancel`, and —
+  for every dialog — Enter on a focused dialog button is now that button's click. It used
+  to confirm regardless, so Shift+Tab to Cancel then Enter on "Delete this pallet?" deleted.
+- **Escaping:** values in `value="…"` / `title="…"` use `escHtml` (quotes too), never
+  `escapeHtml`. `TV 55" LED` was cut at the quote, and a value could add attributes.
+- **Phones:** the sticky time cell is the row's opener (EDIT is ~440px off-screen at 390px);
+  on an edited row that cell is opaque amber (§4.8 trap 2); the DUP chip is `#a93226` in light.
+
+Verified: `scripts/test-bin-dump.mjs` §24-31, and `scripts/browser-bin-dump.mjs` in light,
+dark and pure black; each fix reverted once to watch a check go red.

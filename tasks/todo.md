@@ -1,3 +1,32 @@
+# Bin Dump: fix the bugs the manager SOP works around (2026-09-23)
+
+**Request:** *"Fix the Bin Dump bugs from the suggested task"* — the store-manager SOP ("Bin Dump
+SOP for Store Managers") had to teach workarounds for open findings from the 2026-09-22 review.
+**Owner decision:** barcode case → *save barcodes in capitals* on the page (no worker change).
+
+Scope (review ids): **1, 3, 4, 10, 11, 13, 14, 15, 20, 22**, plus **12**, **2** and the copy half of
+**23**, which touch the same lines — and a latent `_uiDialog` bug found on the way: Enter confirmed
+even with Cancel focused. Frontend only; merging deploys via Pages.
+
+## Plan
+
+- [x] `_uiDialog`: `defaultCancel` option; Enter defers to a focused dialog button (#22, Enter bug)
+- [x] Escaping: `escHtml` in `value=`/`title=`; pure `bdDupBadge` (#1)
+- [x] Inputs: autocapitalize/autocorrect/spellcheck flags; barcode saved in capitals (#20)
+- [x] `bdLoad` sequence guard in try + catch; render against the rows' own store (#2, needed by #15)
+- [x] Lock Cancel / × / Retake while posting; unlock in `finally`; reload not awaited (#15)
+- [x] Store: `bdClaimStore()` refuses "All stores"; store captured once, named in title + status;
+      selection kept across visits (#3)
+- [x] Tag read: stale photo cleared, Retake keeps the form, generation guard, 45 s timeout,
+      Cancel while reading, `!j.ok` (#4, #13, #14)
+- [x] Duplicate prompt: red override, Cancel focused, "Don't log it" / "Don't save" (#22)
+- [x] When cell opens the row on phones; role-aware hint copy (#10, #23)
+- [x] Opaque sticky cell on edited rows; DUP chip #a93226 in light (#11, #12)
+- [x] `test-bin-dump.mjs`: update the two moved pins, add §24-31
+- [ ] `scripts/browser-bin-dump.mjs`: 390px geometry + behaviour, three themes; mutation checks
+- [ ] `sw.js` v232 + shell-cache fixture; `npm test` green
+- [ ] Docs: findings marked fixed in the review; guards in `tasks/bin-dump.md`; DESIGN.md line
+
 # Full code review, page by page (2026-09-22)
 
 **Brian:** *"complete code review … improve performance, speed, look for bugs, give me
