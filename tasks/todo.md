@@ -60,6 +60,11 @@ off the top; `nearest` plus the margin keeps both on screen.
 - **`browser-bin-dump.mjs`:** 113 / 113, no crossover.
 - **Mutations, Node suite:** 14 / 14 caught. One test is now shaped so a regression fails
   instead of hanging: the "All stores" lookup resolves any request it did not expect.
+- **Mutations, browser check:** 12 / 14 of the same caught. The two survivors are second guards
+  that no reachable state can separate from the first. `mosSave` re-reading the picker is
+  equivalent because the kept pick and the store-change reset make the picker and the claim
+  agree everywhere. The Save gate's claim term is equivalent because the lookup counter means no
+  sticker is ever on screen without a claim. The Node suite catches both from source.
 
 ---
 
