@@ -2842,8 +2842,27 @@
         .dark table.bd-tbl .stick{background:rgb(var(--op-panel))}
         table.bd-tbl th.stick{background:#fafaf6;z-index:2}
         .dark table.bd-tbl th.stick{background:rgb(var(--op-panelHi))}
-        table.bd-tbl tr.edited td,table.bd-tbl tr.edited .stick{background:rgba(245,158,11,.16)}
-        .dark table.bd-tbl tr.edited td,.dark table.bd-tbl tr.edited .stick{background:rgba(245,158,11,.14)}
+        table.bd-tbl tr.edited td{background:rgba(245,158,11,.16)}
+        .dark table.bd-tbl tr.edited td{background:rgba(245,158,11,.14)}
+        /* 🛑 …but never a see-through wash on the sticky cell: on a phone the row scrolls
+           under it, and the Item # and Pallet text printed over the time (bin-dump-11,
+           §4.8 trap 2). The same amber, made opaque by laying it over the panel — the
+           token, not its value, so pure black follows. */
+        table.bd-tbl tr.edited .stick{background:linear-gradient(rgba(245,158,11,.16),rgba(245,158,11,.16)),#fff}
+        .dark table.bd-tbl tr.edited .stick{background:linear-gradient(rgba(245,158,11,.14),rgba(245,158,11,.14)),rgb(var(--op-panel))}
+        /* The time is the row's opener (bin-dump-10): on a phone EDIT sits ~440px
+           off-screen at the end of a 780px table, while the sticky time cell never
+           scrolls away. It must look like the text it replaces — no background of its
+           own (the cell's opaque amber shows through), the cell's colour and font. Tailwind's
+           preflight already does that for a <button>; it is restated so this cell does not
+           silently depend on the base layer. */
+        table.bd-tbl td.stick{padding:0}
+        .bd-when-btn{display:block;width:100%;height:40px;padding:0 10px;margin:0;border:0;border-radius:0;
+          background:transparent;color:inherit;font:inherit;text-align:left;white-space:nowrap;cursor:pointer;
+          text-decoration:underline;text-decoration-color:rgba(20,16,8,.28);text-underline-offset:3px}
+        .dark .bd-when-btn{text-decoration-color:rgba(255,255,255,.28)}
+        .bd-when-btn:focus-visible{outline:2px solid #166534;outline-offset:-2px}
+        .dark .bd-when-btn:focus-visible{outline-color:#22c55e}
         .bd-row-btn{background:transparent;border:1px solid rgba(20,16,8,.18);border-radius:6px;
           color:#6b6453;font:inherit;font-size:10.5px;font-weight:700;padding:3px 8px;
           cursor:pointer;letter-spacing:.05em}
@@ -2871,12 +2890,14 @@
         .bd-fld.miss .bd-in{background:rgba(192,57,43,.10);border-color:rgba(192,57,43,.40)}
         .dark .bd-fld.miss .bd-in{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.42)}
         .bd-tag{font-size:9px;font-weight:700;letter-spacing:.06em;padding:1px 5px;border-radius:4px;border:1px solid}
-        /* Same red as the "not on the tag" state, and the same measured colours:
-           #c0392b on the light row, #f87171 on the dark one. */
+        /* The "not on the tag" red family, but a shade darker in light: a DUP chip made
+           through "Save anyway" always sits on an amber (edited) row, where #c0392b is
+           4.18:1. #a93226 measures 5.09:1 there and 5.71:1 on a plain row; dark keeps
+           #f87171 (4.51:1 amber, 5.78:1 plain; pure black 5.11 / 6.50) — bin-dump-12. */
         .bd-dup{display:inline-block;font-size:9px;font-weight:700;letter-spacing:.06em;
           padding:1px 5px;border-radius:4px;margin-left:6px;vertical-align:middle;
           white-space:nowrap;background:rgba(192,57,43,.10);
-          border:1px solid rgba(192,57,43,.40);color:#c0392b}
+          border:1px solid rgba(192,57,43,.40);color:#a93226}
         .dark .bd-dup{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.42);color:#f87171}
         .bd-fld.warn .bd-tag{background:rgba(245,158,11,.16);border-color:rgba(180,83,9,.45);color:#92400e}
         .dark .bd-fld.warn .bd-tag{border-color:rgba(245,158,11,.45);color:#f59e0b}
@@ -2966,6 +2987,10 @@
             <div class="bd-spin"></div>
             <div class="bd-cap-t">Reading tag…</div>
             <div class="bd-cap-d" id="bd-reading-sub">Sending the photo to Claude</div>
+            <!-- A read that stalls must not trap the page: Cancel abandons it and puts
+                 Begin and Enter Manually back (bin-dump-13). 44px — it is thumbed. -->
+            <button type="button" class="bd-btn bd-ghost bd-sm" id="bd-read-cancel"
+                    onclick="bdCancelRead()" style="margin-top:14px;min-height:44px;min-width:120px">Cancel</button>
           </div>
           <div id="bd-status" class="bd-status ok" hidden></div>
         </div>
@@ -3017,7 +3042,7 @@
           <div class="bd-bar" style="position:sticky;top:0;z-index:2">
             <span class="bd-lbl" id="bd-m-title" style="font-size:12px">Verify pallet tag</span>
             <span class="bd-bar-right">
-              <button type="button" class="bd-btn bd-ghost bd-sm" onclick="bdCloseModal()" aria-label="Close">&times;</button>
+              <button type="button" class="bd-btn bd-ghost bd-sm" id="bd-m-close" onclick="bdCloseModal()" aria-label="Close">&times;</button>
             </span>
           </div>
           <div style="padding:14px 15px">
@@ -3041,7 +3066,7 @@
             <button type="button" class="bd-btn bd-ghost bd-sm" id="bd-m-retake" onclick="bdBegin()">Retake</button>
             <button type="button" class="bd-btn bd-danger bd-sm" id="bd-m-delete" onclick="bdDelete()" hidden>Delete</button>
             <span class="bd-bar-right">
-              <button type="button" class="bd-btn bd-ghost bd-sm" onclick="bdCloseModal()">Cancel</button>
+              <button type="button" class="bd-btn bd-ghost bd-sm" id="bd-m-cancel" onclick="bdCloseModal()">Cancel</button>
               <button type="button" class="bd-btn bd-primary bd-sm" id="bd-m-submit" onclick="bdSubmit()">Submit</button>
             </span>
           </div>
@@ -7760,7 +7785,11 @@
   // installed standalone PWA (iOS) — they freeze the whole app. These
   // Promise-based, in-app replacements never block. uiConfirm → Promise<bool>,
   // uiAlert → Promise<void>. Text is set via textContent (no HTML injection).
-  function _uiDialog({ message, title, okText = 'OK', cancelText = null, danger = false, prompt = null, choices = null }) {
+  // `defaultCancel` makes Cancel the button with focus and the answer a bare Enter gives. For a
+  // question where backing out is the expected answer (a duplicate pallet), so the override is
+  // never the thing a hurried thumb or an Enter lands on. Ignored without a Cancel button, and
+  // for prompts and choosers, which have their own defaults.
+  function _uiDialog({ message, title, okText = 'OK', cancelText = null, danger = false, prompt = null, choices = null, defaultCancel = false }) {
     return new Promise(resolve => {
       const _tc = window.themeColors();
       const bg = _tc.dialogBg, fg = _tc.dialogFg;
@@ -7795,9 +7824,18 @@
       // reusing it would make "they picked the falsy option" indistinguishable from "they
       // backed out". Enter picks nothing here — with three options there is no default.
       const cancelValue = choices ? null : false;
+      const cancelFirst = defaultCancel && !!cancelText && prompt === null && !choices;
       const onKey = (e) => {
         if (e.key === 'Escape') finish(cancelText ? cancelValue : true);
-        else if (e.key === 'Enter' && !choices) finish(true);
+        else if (e.key === 'Enter' && !choices) {
+          // 🛑 A focused dialog button decides for itself: Enter's default action clicks it
+          // straight after this handler. Resolving here first is how Enter on a focused
+          // Cancel used to CONFIRM — Shift+Tab to Cancel, Enter, and "Delete this pallet?"
+          // deleted the pallet.
+          if (rowEl.contains(e.target)) return;
+          e.preventDefault();
+          finish(cancelFirst ? cancelValue : true);
+        }
       };
       function finish(val) {
         if (done) return; done = true;
@@ -7819,14 +7857,16 @@
           if (i === 0) okEl = b;
         });
       }
-      if (cancelText) { const c = document.createElement('button'); c.textContent = cancelText; c.style.cssText = `padding:${choices ? '11px' : '9px'} 16px;font-size:14px;font-weight:600;border-radius:10px;border:1px solid ${border};background:transparent;color:${fg};cursor:pointer;${choices ? 'width:100%;' : ''}`; c.onclick = () => finish(cancelValue); rowEl.appendChild(c); }
+      let cancelEl = null;
+      if (cancelText) { const c = document.createElement('button'); c.textContent = cancelText; c.style.cssText = `padding:${choices ? '11px' : '9px'} 16px;font-size:14px;font-weight:600;border-radius:10px;border:1px solid ${border};background:transparent;color:${fg};cursor:pointer;${choices ? 'width:100%;' : ''}`; c.onclick = () => finish(cancelValue); rowEl.appendChild(c); cancelEl = c; }
       if (!choices) { okEl = document.createElement('button'); okEl.textContent = okText; okEl.style.cssText = `padding:9px 16px;font-size:14px;font-weight:700;border-radius:10px;border:none;background:${okBg};color:${okFg};cursor:pointer;`; okEl.onclick = () => finish(true); rowEl.appendChild(okEl); }
       box.appendChild(rowEl); overlay.appendChild(box);
       overlay.addEventListener('click', e => { if (e.target === overlay) finish(cancelText ? cancelValue : true); });
-      document.addEventListener('keydown', onKey); document.body.appendChild(overlay); (input || okEl).focus();
+      document.addEventListener('keydown', onKey); document.body.appendChild(overlay);
+      (input || (cancelFirst ? cancelEl : okEl)).focus();
     });
   }
-  function uiConfirm(message, opts = {}) { return _uiDialog({ message, cancelText: opts.cancelText || 'Cancel', okText: opts.okText || 'OK', title: opts.title, danger: opts.danger }); }
+  function uiConfirm(message, opts = {}) { return _uiDialog({ message, cancelText: opts.cancelText || 'Cancel', okText: opts.okText || 'OK', title: opts.title, danger: opts.danger, defaultCancel: opts.defaultCancel }); }
   function uiAlert(message, opts = {}) { return _uiDialog({ message, okText: opts.okText || 'OK', title: opts.title }); }
   // uiPrompt → Promise<string|null>. null means cancelled.
   function uiPrompt(title, message, opts = {}) {
@@ -27404,22 +27444,35 @@
   // the same thing (Brian, 2026-09-08), so they share a column rather than becoming
   // two mostly-empty ones. Sup. Ref and Truck # each appear on only one format so
   // far, which is why every field here is optional.
+  // `cap` is the phone keyboard's capitalisation hint. Codes print in capitals, so the
+  // keyboard should type them that way instead of capitalising only the first letter
+  // ("Prm-10490-30"). A hint only: bdReadFields is what guarantees a barcode is saved in
+  // capitals. Sup. Ref has none — tag B prints it in lower case ("mix").
   const BD_FIELDS = [
-    { k: 'barcode',        label: 'Barcode' },
-    { k: 'item_no',        label: 'Item #' },
+    { k: 'barcode',        label: 'Barcode',     cap: 'characters' },
+    { k: 'item_no',        label: 'Item #',      cap: 'characters' },
     { k: 'pallet_name',    label: 'Pallet name' },
     { k: 'sup_ref',        label: 'Sup. Ref' },
-    { k: 'po',             label: 'PO / WO' },
+    { k: 'po',             label: 'PO / WO',     cap: 'characters' },
     { k: 'units',          label: '# of units', numeric: true },
-    { k: 'created_by_tag', label: 'Created by' },
-    { k: 'truck_no',       label: 'Truck #' },
+    { k: 'created_by_tag', label: 'Created by',  cap: 'words' },
+    { k: 'truck_no',       label: 'Truck #',     cap: 'characters' },
   ];
   const bdState = { rows: [], openWeeks: new Set(), seeded: false, photo: null,
                     photoType: 'image/jpeg', editingId: null, busy: false, tab: 'scan',
                     // Typed by hand: no camera, no scan, no photo. Explicit rather than
                     // inferred from `photo`, because a FAILED read also lands on an empty
                     // form and leaves the last photo behind it.
-                    manual: false };
+                    manual: false,
+                    // The store a pallet goes into, claimed ONCE when a scan or a typed entry
+                    // starts (bdClaimStore) — so the form's title and the POST cannot disagree.
+                    store: '',
+                    // bdLoad's sequence number and the store of the rows it last rendered: the
+                    // newest request wins, and a row list is always drawn as the store it is.
+                    loadSeq: 0, rowsStore: '',
+                    // One number per tag read. A cancelled or timed-out read may still come
+                    // back; anything carrying an older number is ignored.
+                    readGen: 0, reading: null };
 
   // Mirrors canSeeFinancials on the worker, which admits the same roles as every
   // other bin-dump action. A manager mis-scans a pallet and should not need an admin
@@ -27498,6 +27551,11 @@
 
   function initBinDump() {
     const sel = el('bd-store');
+    // 🔑 Read BEFORE the options are rebuilt, so the store picked on the last visit is
+    // still picked on this one (bin-dump-3) — it used to snap back to the first store on
+    // every visit. Only a real store is kept; logout reloads the page, so a kept choice
+    // cannot follow one account into another.
+    const prev = sel.value;
     const stores = bdStores();
     const isAdmin = currentUser && (currentUser.role === 'superuser' || currentUser.role === 'admin');
     sel.innerHTML = (stores.length > 1 ? ['<option value="ALL">All stores</option>'] : [])
@@ -27505,7 +27563,7 @@
     // 🔑 An entry surface opens on the thing you are about to DO. A manager
     // scanning a tag is standing in one store, so default to a single store even
     // when they hold several; "All stores" is a reporting view and is one click away.
-    if (stores.length) sel.value = stores[0];
+    if (stores.length) sel.value = stores.includes(prev) ? prev : stores[0];
     if (!stores.length) {
       el('bd-log-status').textContent = 'No store is assigned to your account, so there is nothing to log.';
       el('bd-weeks').innerHTML = '';
@@ -27527,17 +27585,33 @@
   window.bdStoreChange = bdStoreChange;
 
   // The scan store is always a real one — "All stores" is a way of reading the log,
-  // never a place a pallet can be dumped into.
+  // never a place a pallet can be dumped into. 🛑 No fallback: this used to answer the
+  // first store on the account, which logged a pallet into a store nobody picked.
   function bdScanStore() {
     const v = el('bd-store').value;
-    if (v && v !== 'ALL') return v;
-    const s = bdStores();
-    return s.length ? s[0] : '';
+    return (v && v !== 'ALL') ? v : '';
   }
 
+  // Claim the store a new pallet goes into, once, as the scan or the typed entry starts —
+  // or refuse, on "All stores", and point at the picker (bin-dump-3).
+  function bdClaimStore() {
+    const s = bdScanStore();
+    if (!s) {
+      bdSetStatus('Pick the store this pallet is going into first.', 'err');
+      try { el('bd-store').focus(); } catch (e) { /* not focusable yet */ }
+      return false;
+    }
+    bdState.store = s;
+    return true;
+  }
+
+  // Begin (Scan tab) claims a store; Retake / Take Photo, inside the form, keep the one it
+  // already has. 🔑 The form stays open behind the camera — bdPhoto closes it only once a
+  // photo arrives — so a camera that is dismissed loses nothing typed (bin-dump-14).
   function bdBegin() {
-    bdState.manual = false;
-    bdCloseModal(); (syncCameraCapture(el('bd-photo')), el('bd-photo').click());
+    const inForm = el('bd-modal').style.display === 'flex';
+    if (!inForm && !bdClaimStore()) return;
+    (syncCameraCapture(el('bd-photo')), el('bd-photo').click());
   }
   window.bdBegin = bdBegin;
 
@@ -27545,6 +27619,7 @@
   // the tag says. A tag too torn, faded or shrink-wrapped to photograph is still a pallet
   // that went into the bins, and until now the only way in started with a picture of it.
   function bdManual() {
+    if (!bdClaimStore()) return;
     bdState.manual = true;
     bdState.photo = null;
     bdState.editingId = null;
@@ -27553,47 +27628,109 @@
   }
   window.bdManual = bdManual;
 
+  // No read may hang the page (bin-dump-13): the request is abandoned after this long, and
+  // the form opens empty so the tag can be typed in.
+  const BD_READ_TIMEOUT_MS = 45000;
+
   async function bdPhoto(input) {
     const f = input.files && input.files[0];
     input.value = '';                 // so the same file can be picked again
-    if (!f || bdState.busy) return;
+    if (!f) return;
+    if (bdState.busy) {
+      bdSetStatus('Still saving the last pallet — try again in a moment.', 'err');
+      return;
+    }
+    // A photo has arrived, so the form it replaces can close — and not before.
+    bdCloseModal();
+    bdState.manual = false;
+    // 🛑 Forget the last pallet's photo BEFORE decoding this one. psShrink rejects a file
+    // it cannot decode, and the empty form that follows must not show — or upload — the
+    // previous tag (bin-dump-4).
+    bdState.photo = null;
+    const gen = ++bdState.readGen;
+    const read = bdState.reading = { ctl: null, why: '' };
     bdState.busy = true;
     bdSetStatus('');
+    el('bd-reading-sub').textContent = 'Sending the photo to Claude';
     bdShow('reading');
+    let timer = null;
     try {
       // Shared with Price Scan: one downscaler, so EXIF orientation and the API's
       // size cap are handled the same way on both surfaces.
       const b64 = await psShrink(f);
+      if (gen !== bdState.readGen) return;          // cancelled while it decoded
       bdState.photo = b64;
       bdState.photoType = 'image/jpeg';
       el('bd-reading-sub').textContent = 'Pulling the seven fields';
+      // 🔑 The clock starts at the request, and `why` records whether the timer or Cancel
+      // aborted it: an abort that lands while the body downloads comes back as an empty
+      // `j`, not as a named error, so the error's name cannot be trusted to say which.
+      read.ctl = (typeof AbortController === 'function') ? new AbortController() : null;
+      if (read.ctl) timer = setTimeout(() => { read.why = 'timeout'; read.ctl.abort(); }, BD_READ_TIMEOUT_MS);
       const r = await fetch(`${WORKER_BASE}?action=bin-dump-scan`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image_b64: b64, media_type: 'image/jpeg' }),
+        signal: read.ctl ? read.ctl.signal : undefined,
       });
       const j = await r.json().catch(() => ({}));
+      if (gen !== bdState.readGen) return;
+      if (read.why) throw new Error(read.why);
       if (!r.ok) throw new Error(bdErr(j, r));
+      // Every answer the reader gives carries ok:true, "could not read it" included, so a
+      // 200 without it is a body that never arrived — not "Everything came through".
+      if (!j.ok) throw new Error('the answer from the reader was cut off');
       bdOpenVerify(j);
     } catch (e) {
+      if (gen !== bdState.readGen) return;          // cancelled: there is nothing to report
       // ⚠️ A failed read must not cost the pallet. Open the form empty so a torn
       // or unreadable tag can still be keyed in by hand, and say what went wrong.
       bdOpenVerify({ fields: {}, read: 0, of: BD_FIELDS.length },
-                   `Couldn't read the tag — ${(e && e.message) || e}. Type it in, or retake the photo.`);
+        read.why === 'timeout'
+          ? 'The tag reader took too long — type it in, or retake the photo.'
+          : `Couldn't read the tag — ${(e && e.message) || e}. Type it in, or retake the photo.`);
     } finally {
-      bdState.busy = false;
-      bdShow('begin');
+      clearTimeout(timer);
+      // Only the read that is still current may put the page back: a cancelled one that
+      // finishes late must not hide the spinner of the read that replaced it.
+      if (gen === bdState.readGen) {
+        bdState.reading = null;
+        bdState.busy = false;
+        bdShow('begin');
+      }
     }
   }
   window.bdPhoto = bdPhoto;
 
+  // Cancel on the "Reading tag…" panel (bin-dump-13). The read is abandoned, not paused:
+  // whatever it sends back later is ignored, and the page returns to Begin — where Enter
+  // Manually is — with nothing logged and no photo kept.
+  function bdCancelRead() {
+    const read = bdState.reading;
+    if (!read) return;
+    bdState.readGen++;
+    read.why = 'cancel';
+    if (read.ctl) read.ctl.abort();
+    bdState.reading = null;
+    bdState.photo = null;
+    bdState.busy = false;
+    bdShow('begin');
+    bdSetStatus('');
+    try { document.querySelector('#bd-begin .bd-primary').focus(); } catch (e) { /* hidden */ }
+  }
+  window.bdCancelRead = bdCancelRead;
+
   function bdFieldRow(f, val, state, note) {
     const tag = state === 'miss' ? '<span class="bd-tag">NOT FOUND</span>'
               : state === 'warn' ? '<span class="bd-tag">CHECK</span>' : '';
+    // 🛑 escHtml, not escapeHtml, inside value="…": escapeHtml leaves `"` alone, so a tag
+    // reading `TV 55" LED` closed the attribute at the quote — the form showed `TV 55`,
+    // Save stored that, and the rest of the value became markup (bin-dump-1).
     return `<div class="bd-fld ${state || ''}">
       <label class="bd-fld-l" for="bd-f-${f.k}">${escapeHtml(f.label)}${tag}</label>
       <input class="bd-in" type="text" id="bd-f-${f.k}" data-k="${f.k}"
-             value="${escapeHtml(val == null ? '' : String(val))}"
+             value="${escHtml(val == null ? '' : String(val))}"
+             autocomplete="off" autocorrect="off" spellcheck="false"${f.cap ? ` autocapitalize="${f.cap}"` : ''}
              ${f.numeric ? 'inputmode="numeric"' : ''}
              placeholder="${state === 'miss' ? 'not on the tag' : ''}">
       ${note ? `<div class="bd-note">${escapeHtml(note)}</div>` : ''}
@@ -27602,9 +27739,13 @@
 
   function bdOpenVerify(j, problem) {
     bdState.editingId = null;
+    bdLockForm(false);
     const manual = !!bdState.manual;
     const fields = j.fields || {};
-    el('bd-m-title').textContent = manual ? 'Log pallet by hand' : 'Verify pallet tag';
+    // The form names the store the pallet is going into — the one claimed when it opened,
+    // which is also the one the POST uses (bin-dump-3).
+    const where = BD_LABELS[bdState.store] || bdState.store;
+    el('bd-m-title').textContent = (manual ? 'Log pallet by hand' : 'Verify pallet tag') + (where ? ` · ${where}` : '');
     // 🛑 There is no photo to show on a typed entry, and an unhidden .bd-shot renders an
     // empty image box where the tag should be.
     el('bd-m-shot').hidden = manual;
@@ -27614,7 +27755,12 @@
     el('bd-m-retake').textContent = manual ? 'Take Photo' : 'Retake';
     el('bd-m-delete').hidden = true;   // nothing is logged yet — Cancel is the way out
     el('bd-m-submit').textContent = 'Submit';
-    el('bd-m-photo').src = bdState.photo ? `data:${bdState.photoType};base64,${bdState.photo}` : '';
+    // No photo — typed in, or a file that would not decode — means no image box at all, not
+    // an empty one (bin-dump-4). #bd-m-shot itself stays: it carries the read line.
+    const ph = el('bd-m-photo');
+    ph.hidden = !bdState.photo;
+    if (bdState.photo) ph.src = `data:${bdState.photoType};base64,${bdState.photo}`;
+    else ph.removeAttribute('src');
     el('bd-m-read').textContent = problem ? "Couldn't read the tag" : `Read ${j.read} of ${j.of} fields`;
     el('bd-m-readsub').textContent = problem
       ? 'Nothing was logged. Type what you can see, or retake the photo.'
@@ -27647,13 +27793,16 @@
     // Read-only for a view-only account: they open a row to check what was logged
     // and to look at the tag, which is exactly what "view" is for.
     const ro = !bdCanEdit();
-    el('bd-m-title').textContent = ro ? 'Logged pallet' : 'Edit logged pallet';
+    const where = BD_LABELS[row.store] || row.store;
+    el('bd-m-title').textContent = (ro ? 'Logged pallet' : 'Edit logged pallet') + (where ? ` · ${where}` : '');
     el('bd-m-retake').hidden = true;
     el('bd-m-delete').hidden = ro || !bdCanDelete();
     el('bd-m-submit').hidden = ro;
     el('bd-m-submit').textContent = 'Save changes';
+    bdLockForm(false);
     if (row.has_photo) {
       el('bd-m-shot').hidden = false;
+      el('bd-m-photo').hidden = false;
       el('bd-m-photo').src = `${WORKER_BASE}?action=bin-dump-photo&id=${row.id}`;
       el('bd-m-read').textContent = 'The tag as photographed';
       el('bd-m-readsub').textContent = `Logged ${bdWhen(row.logged_at)} by ${row.logged_by || 'unknown'}.`
@@ -27688,21 +27837,32 @@
       { title: 'Delete this pallet?', okText: 'Delete', danger: true });
     if (!go) return;
 
-    const btn = el('bd-m-delete');
-    bdState.busy = true; btn.disabled = true;
+    bdState.busy = true; bdLockForm(true);
+    let gone = false;
     try {
       await bdPost('bin-dump-delete', { id });
       bdCloseModal();
-      bdSetStatus(`Deleted${what ? ` · ${what}` : ''}.`, 'ok');
-      await bdLoad();
+      gone = true;
     } catch (e) {
       el('bd-m-warn').textContent = (e && e.message) || String(e);
       el('bd-m-warn').hidden = false;
     } finally {
-      bdState.busy = false; btn.disabled = false;
+      bdState.busy = false; bdLockForm(false);
     }
+    // Not awaited, and only after the page is free again: see bdSubmit.
+    if (gone) { bdSetStatus(`Deleted${what ? ` · ${what}` : ''}.`, 'ok'); bdLoad(); }
   }
   window.bdDelete = bdDelete;
+
+  // While a save or a delete is in flight, the form's other ways out are shut. Closing it
+  // mid-request hid the answer — and an error then landed in a form nobody could see, with
+  // the pallet not logged (bin-dump-15).
+  function bdLockForm(on) {
+    for (const id of ['bd-m-close', 'bd-m-cancel', 'bd-m-retake', 'bd-m-submit', 'bd-m-delete']) {
+      const b = el(id);
+      if (b) b.disabled = on;
+    }
+  }
 
   function bdOpenModal() { el('bd-modal').style.display = 'flex'; }
   function bdCloseModal() { bdLbClose(); el('bd-modal').style.display = 'none'; }
@@ -27882,6 +28042,11 @@
   function bdReadFields() {
     const out = {};
     document.querySelectorAll('#bd-m-fields input[data-k]').forEach(i => { out[i.dataset.k] = i.value.trim(); });
+    // 🔑 A barcode is saved in capitals (owner's call, 2026-09-23 — bin-dump-20). Every tag
+    // prints it that way and the duplicate check matches it character for character, so a
+    // phone that capitalised only the first letter ("Prm-10490-30") let a repeat through.
+    // Done HERE, so the pre-flight, the save and an edit all see the same value.
+    if (out.barcode) out.barcode = out.barcode.toUpperCase();
     return out;
   }
 
@@ -27893,16 +28058,23 @@
       el('bd-m-warn').hidden = false;
       return;
     }
-    const btn = el('bd-m-submit');
-    bdState.busy = true; btn.disabled = true;
+    const editing = bdState.editingId != null;
+    // A new pallet goes into the store claimed when its form opened — never a guess.
+    if (!editing && !bdState.store) {
+      el('bd-m-warn').textContent = 'Pick the store this pallet is going into first.';
+      el('bd-m-warn').hidden = false;
+      return;
+    }
+    bdState.busy = true; bdLockForm(true);
+    let saved = '';
     try {
-      if (bdState.editingId != null) {
+      if (editing) {
         const res = await bdPostAllowingDuplicate('bin-dump-update',
           { id: bdState.editingId, ...v }, true);
-        if (!res) { bdState.busy = false; btn.disabled = false; return; }
-        bdSetStatus('Changes saved.', 'ok');
+        if (!res) return;
+        saved = 'Changes saved.';
       } else {
-        const store = bdScanStore();
+        const store = bdState.store;
         const dup = await bdRecent(store, v.barcode);
 
         // 🛑 THE BARCODE IS THE ONLY THING THAT MAKES A PALLET A DUPLICATE. Brian,
@@ -27923,9 +28095,7 @@
         // not an oversight: there is nothing else on a pallet tag that identifies a pallet.
         let allowDup = false;
         if (dup.barcode_matches.length) {
-          if (!await bdConfirmDuplicate(dup.barcode_matches, false)) {
-            bdState.busy = false; btn.disabled = false; return;
-          }
+          if (!await bdConfirmDuplicate(dup.barcode_matches, false)) return;
           allowDup = true;
         }
 
@@ -27934,21 +28104,26 @@
           ...(allowDup ? { allow_duplicate: true } : {}),
           ...(bdState.photo ? { image_b64: bdState.photo, media_type: bdState.photoType } : {}),
         }, false);
-        if (!res) { bdState.busy = false; btn.disabled = false; return; }
+        if (!res) return;
         const n = parseInt(String(v.units).replace(/[^\d]/g, ''), 10);
-        bdSetStatus(`Pallet logged${v.pallet_name ? ` · ${v.pallet_name}` : ''}`
-          + (Number.isInteger(n) ? ` · ${n} unit${n === 1 ? '' : 's'}` : '') + '.', 'ok');
+        saved = `Pallet logged at ${BD_LABELS[store] || store}${v.pallet_name ? ` · ${v.pallet_name}` : ''}`
+          + (Number.isInteger(n) ? ` · ${n} unit${n === 1 ? '' : 's'}` : '') + '.';
       }
       bdState.photo = null;
       bdState.manual = false;
       bdCloseModal();
-      await bdLoad();
     } catch (e) {
       el('bd-m-warn').textContent = (e && e.message) || String(e);
       el('bd-m-warn').hidden = false;
     } finally {
-      bdState.busy = false; btn.disabled = false;
+      // Every way out — a save, a refusal, backing out of the duplicate question — frees
+      // the page here, once.
+      bdState.busy = false; bdLockForm(false);
     }
+    // 🔑 The reload is NOT awaited, and only starts once the page is free: awaiting it kept
+    // `busy` set, so a photo taken while the log reloaded was silently dropped
+    // (bin-dump-15). bdLoad's sequence guard keeps overlapping reloads in order.
+    if (saved) { bdSetStatus(saved, 'ok'); bdLoad(); }
   }
   window.bdSubmit = bdSubmit;
 
@@ -28020,27 +28195,39 @@
 
   // The barcode is one physical pallet, so this is worded as a mistake being made rather
   // than a question being asked — and the button says what it costs.
+  // 🔑 Backing out is the expected answer, so it is the DEFAULT (bin-dump-22): Cancel has
+  // focus and takes a bare Enter, and the override is red rather than the page's green
+  // primary — it costs the bins a double count.
   async function bdConfirmDuplicate(matches, isEdit) {
     return uiConfirm(
       bdDupText(matches && matches[0])
       + '\n\nA barcode identifies ONE pallet, so this looks like the same pallet twice —'
       + ' which would count its units into the bins twice.'
       + `\n\n${isEdit ? 'Save this correction anyway?' : 'Log it anyway?'}`,
-      { title: 'Duplicate pallet', okText: isEdit ? 'Save anyway' : 'Log it anyway' });
+      { title: 'Duplicate pallet', okText: isEdit ? 'Save anyway' : 'Log it anyway',
+        cancelText: isEdit ? "Don't save" : "Don't log it", danger: true, defaultCancel: true });
   }
 
   async function bdLoad() {
     const sel = el('bd-store');
     if (!sel || !sel.value) return;
+    // 🔑 The newest request wins (bin-dump-2). Reloads after a save or a delete are not
+    // awaited, and the store can change while one is in flight, so an older answer that
+    // arrives last must not replace a newer one — whether it succeeded or failed.
+    const seq = ++bdState.loadSeq;
+    const store = sel.value;
     el('bd-log-status').textContent = 'Loading…';
     try {
-      const r = await fetch(`${WORKER_BASE}?action=bin-dump-list&store=${encodeURIComponent(sel.value)}`,
+      const r = await fetch(`${WORKER_BASE}?action=bin-dump-list&store=${encodeURIComponent(store)}`,
         { credentials: 'include' });
       const j = await r.json().catch(() => ({}));
+      if (seq !== bdState.loadSeq) return;
       if (!r.ok || !j.ok) throw new Error(bdErr(j, r));
       bdState.rows = j.rows || [];
+      bdState.rowsStore = store;
       bdRenderLog();
     } catch (e) {
+      if (seq !== bdState.loadSeq) return;
       bdState.rows = [];
       el('bd-weeks').innerHTML = '';
       el('bd-tab-log-n').textContent = '—';
@@ -28073,6 +28260,12 @@
     return `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}-${String(s.getDate()).padStart(2, '0')}`;
   }
 
+  // The DUP chip. Its barcode sits in an attribute, so it is escaped with escHtml — quotes
+  // included — never escapeHtml (bin-dump-1). Pure, so the tests can run it.
+  function bdDupBadge(code) {
+    return `<span class="bd-dup" title="Barcode ${escHtml(code)} is on more than one logged pallet">DUP</span>`;
+  }
+
   function bdRenderLog() {
     const groups = new Map();
     for (const r of bdState.rows) {
@@ -28095,10 +28288,12 @@
     el('bd-wk-units').textContent = cur.reduce((s, r) => s + (Number(r.units) || 0), 0).toLocaleString();
 
     el('bd-tab-log-n').textContent = bdState.rows.length;
+    // Worded for what this account can do: a view-only account has no Begin and no Edit.
     el('bd-log-status').textContent = keys.length
       ? `${bdState.rows.length} pallet${bdState.rows.length === 1 ? '' : 's'} across `
-        + `${keys.length} week${keys.length === 1 ? '' : 's'}. Tap a week to open it; tap Edit on a row to correct it.`
-      : 'No pallets logged yet. Press Begin to scan the first tag.';
+        + `${keys.length} week${keys.length === 1 ? '' : 's'}. Tap a week to open it; tap a pallet's time to `
+        + (canEdit ? 'correct it.' : 'see it.')
+      : (canEdit ? 'No pallets logged yet. Press Begin to scan the first tag.' : 'No pallets logged yet.');
 
     // 🔑 The worker's 409 is what stops a duplicate being CREATED. This is the other half:
     // showing the ones that exist anyway — logged through a deliberate override, or before
@@ -28108,13 +28303,17 @@
     {
       const seen = new Set();
       for (const r of bdState.rows) {
-        const c = String(r.barcode || '').trim();
+        // Upper-cased, like a barcode is now saved, so a pair logged before that — one of
+        // them typed "Prm-…" — still shows as the pair it is.
+        const c = String(r.barcode || '').trim().toUpperCase();
         if (!c) continue;                    // blanks are not duplicates of one another
         if (seen.has(c)) dupCodes.add(c); else seen.add(c);
       }
     }
 
-    const multi = el('bd-store').value === 'ALL';
+    // The rows' own store, not the picker's: the picker can change while a load is in
+    // flight, and a Store column must match the rows it is drawn beside.
+    const multi = bdState.rowsStore === 'ALL';
     el('bd-weeks').innerHTML = keys.map(k => {
       const rows = groups.get(k);
       const units = rows.reduce((s, r) => s + (Number(r.units) || 0), 0);
@@ -28133,19 +28332,19 @@
           </tr></thead>
           <tbody>${rows.map(r => `
             <tr class="${r.edited_at ? 'edited' : ''}">
-              <td class="stick">${escapeHtml(bdWhen(r.logged_at))}</td>
+              <td class="stick"><button type="button" class="bd-when-btn" onclick="bdOpenEdit(${r.id})"
+                aria-label="${escHtml(bdWhen(r.logged_at))}: ${canEdit ? 'edit' : 'view'} this pallet">${
+                escapeHtml(bdWhen(r.logged_at))}</button></td>
               ${multi ? `<td class="dim">${escapeHtml(BD_LABELS[r.store] || r.store)}</td>` : ''}
               <td>${escapeHtml(r.item_no || '—')}</td>
               <td style="font-weight:600">${escapeHtml(r.pallet_name || '—')}${
-                dupCodes.has(String(r.barcode || '').trim())
-                  ? `<span class="bd-dup" title="Barcode ${escapeHtml(r.barcode)} is on more than one logged pallet">DUP</span>`
-                  : ''}</td>
+                dupCodes.has(String(r.barcode || '').trim().toUpperCase()) ? bdDupBadge(r.barcode) : ''}</td>
               <td class="dim">${escapeHtml(r.sup_ref || '—')}</td>
               <td class="num">${r.units == null ? '—' : Number(r.units).toLocaleString()}</td>
               <td class="dim">${escapeHtml(r.po || '—')}</td>
               <td class="dim">${escapeHtml(r.truck_no || '—')}</td>
               <td class="dim">${escapeHtml(r.created_by_tag || '—')}</td>
-              <td><button type="button" class="bd-row-btn" onclick="bdOpenEdit(${r.id})">${
+              <td><button type="button" class="bd-row-btn" tabindex="-1" onclick="bdOpenEdit(${r.id})">${
                 canEdit ? 'EDIT' : 'VIEW'}</button></td>
             </tr>`).join('')}</tbody>
         </table></div></div></div>

@@ -5,7 +5,8 @@
 > - **Reviewed (15 of 20 units):** Dashboard, Store Detail + All Stores Detail, Retail Summary, Inventory (Add / Viewer / Sale), Bin Dump, Opportunity Buys + MOS, Supply Request, Content + Flow Calendar, Merchandising tables (Manifests, Coverage, Products, Velocity, Buy Criteria, Shelf Count), Price Scan, eBay Cases, Login, Settings, Accessibility, Landing, No-access, Admin Settings (Repair console, costs, overrides), Worker core (Clover fetching, snapshots, rollups), Worker crons, briefings, push, sale scheduler.
 > - **Not reviewed yet:** App shell / navigation / service worker / initial load, Labor, Inventory Receiver, Submit Photos + Marketing + Comments, Users & access.
 > - **Verified:** only *Worker crons* (all 15 findings confirmed by an independent verifier). **Every other finding below is one reviewer's claim.** The one verified unit came back 15/15, so the reviews look reliable, but re-check each finding against the code before fixing it.
-> - **No code has been changed.** Every finding is either **minor** (local, frontend-only or self-contained, no API/schema/deploy coupling) or **major** (needs a plan: cross-cutting, frontend+worker coordination, schema, or destructive-path work).
+> - **The review itself changed no code.** Every finding is either **minor** (local, frontend-only or self-contained, no API/schema/deploy coupling) or **major** (needs a plan: cross-cutting, frontend+worker coordination, schema, or destructive-path work).
+> - **Fixed since (2026-09-23):** 13 Bin Dump findings — bin-dump-1, 2, 3, 4, 10, 11, 12, 13, 14, 15, 20, 22, 23 — each checked against the code before fixing; marked in the Bin Dump table. See `tasks/todo.md`.
 
 ## How to pick this up
 
@@ -61,7 +62,7 @@
 | Inventory | [inventory-4](#inventory-4) | minor | bug | Saving the Edit modal overwrites the item's `sku` with `code`, and wipes both when the code is empty |
 | Inventory | [inventory-5](#inventory-5) | minor | bug | Delete is unreachable: the redesign dropped the row's Del button, so openDeleteModal has no caller |
 | Inventory | [inventory-6](#inventory-6) | minor | bug | Schedule Sale offers six locations but sends one store's Clover item ids; every other store's rows fail at activation |
-| Bin Dump | [bin-dump-1](#bin-dump-1) | minor | security | escapeHtml inside value="" / title="" attributes: values with a double quote are cut short on save, and attributes can be injected (stored XSS) |
+| Bin Dump | [bin-dump-1](#bin-dump-1) | minor | security | escapeHtml inside value="" / title="" attributes: values with a double quote are cut short on save, and attributes can be injected (stored XSS) **Fixed 2026-09-23.** |
 | Opportunity Buys + MOS | [oppbuys-mos-1](#oppbuys-mos-1) | major | bug | Buy 'Sold' counts every sale of an ordinary (non-PO) code printed under the buy, across all stores |
 | Supply Request | [supply-request-1](#supply-request-1) | minor | security | Stored XSS: item quantity/unit are rendered raw in request detail (any manager → superuser session) |
 | Supply Request | [supply-request-3](#supply-request-3) | minor | bug | Deleting a user cascades away every supply request they submitted, including the spend the Budget and Reports tabs sum |
@@ -1724,29 +1725,29 @@ Bin Dump is carefully built. The worker gates match the frontend exactly: bdCanD
 
 | ID | Sev | Size | Category | Finding | Where | Verified |
 |---|---|---|---|---|---|---|
-| [bin-dump-1](#bin-dump-1) | high | minor | security | escapeHtml inside value="" / title="" attributes: values with a double quote are cut short on save, and attributes can be injected (stored XSS) | `index.html:27596` | unverified |
-| [bin-dump-2](#bin-dump-2) | medium | minor | bug | bdLoad has no request ordering: a slow earlier response overwrites the store now selected | `index.html:28032` | unverified |
-| [bin-dump-3](#bin-dump-3) | medium | minor | bug | The pallet's store is never shown: "All stores" silently logs into stores[0], and the select resets to stores[0] on every visit | `index.html:27531` | unverified |
-| [bin-dump-4](#bin-dump-4) | medium | minor | bug | If a photo fails to decode, the verify form shows and uploads the PREVIOUS pallet's photo | `index.html:27566` | unverified |
+| [bin-dump-1](#bin-dump-1) | high | minor | security | escapeHtml inside value="" / title="" attributes: values with a double quote are cut short on save, and attributes can be injected (stored XSS) | `index.html:27596` | **fixed 2026-09-23** |
+| [bin-dump-2](#bin-dump-2) | medium | minor | bug | bdLoad has no request ordering: a slow earlier response overwrites the store now selected | `index.html:28032` | **fixed 2026-09-23** |
+| [bin-dump-3](#bin-dump-3) | medium | minor | bug | The pallet's store is never shown: "All stores" silently logs into stores[0], and the select resets to stores[0] on every visit | `index.html:27531` | **fixed 2026-09-23** |
+| [bin-dump-4](#bin-dump-4) | medium | minor | bug | If a photo fails to decode, the verify form shows and uploads the PREVIOUS pallet's photo | `index.html:27566` | **fixed 2026-09-23** |
 | [bin-dump-5](#bin-dump-5) | medium | minor | bug | The log's oldest week is always partial, and the 500-row cap is dropped silently | `index.html:28037` | unverified |
 | [bin-dump-8](#bin-dump-8) | medium | minor | ui-ux | Verify and edit inputs and the store select are 14px, so iOS zooms the page on every field | `index.html:2861` | unverified |
 | [bin-dump-9](#bin-dump-9) | medium | minor | accessibility | The modal's action buttons are 31px tall and row buttons 24px, below 44px | `index.html:2766` | unverified |
-| [bin-dump-10](#bin-dump-10) | medium | minor | ui-ux | On a phone the EDIT/VIEW button is about 440px off-screen at the end of every row | `index.html:28148` | unverified |
-| [bin-dump-13](#bin-dump-13) | medium | minor | ui-ux | The tag read has no timeout or cancel, and 'Reading tag…' hides Enter Manually | `index.html:27570` | unverified |
+| [bin-dump-10](#bin-dump-10) | medium | minor | ui-ux | On a phone the EDIT/VIEW button is about 440px off-screen at the end of every row | `index.html:28148` | **fixed 2026-09-23** |
+| [bin-dump-13](#bin-dump-13) | medium | minor | ui-ux | The tag read has no timeout or cancel, and 'Reading tag…' hides Enter Manually | `index.html:27570` | **fixed 2026-09-23** |
 | [bin-dump-17](#bin-dump-17) | medium | minor | security | The CSV export writes free text raw: formula injection, and \r is not quoted | `index.html:28206` | unverified |
 | [bin-dump-6](#bin-dump-6) | medium | major | security | Associates with an edit grant can approve their own duplicate pallet with a bare allow_duplicate boolean | `worker.js:24501` | unverified |
 | [bin-dump-7](#bin-dump-7) | low | minor | ui-ux | 'Changes saved.' and 'Deleted · …' are written into the hidden Scan pane | `index.html:27903` | unverified |
-| [bin-dump-11](#bin-dump-11) | low | minor | ui-ux | The sticky 'When' column is see-through on edited rows, so scrolled cells show through it | `index.html:2845` | unverified |
-| [bin-dump-12](#bin-dump-12) | low | minor | accessibility | The DUP badge measures 4.18:1 on an edited row in light mode | `index.html:2879` | unverified |
-| [bin-dump-14](#bin-dump-14) | low | minor | ui-ux | Retake / Take Photo closes the form before the camera opens, so cancelling the camera loses everything typed | `index.html:27540` | unverified |
-| [bin-dump-15](#bin-dump-15) | low | minor | bug | The busy flag stays set through the post-submit list reload: a photo taken then is silently dropped, and Cancel stays live during Submit | `index.html:27559` | unverified |
+| [bin-dump-11](#bin-dump-11) | low | minor | ui-ux | The sticky 'When' column is see-through on edited rows, so scrolled cells show through it | `index.html:2845` | **fixed 2026-09-23** |
+| [bin-dump-12](#bin-dump-12) | low | minor | accessibility | The DUP badge measures 4.18:1 on an edited row in light mode | `index.html:2879` | **fixed 2026-09-23** |
+| [bin-dump-14](#bin-dump-14) | low | minor | ui-ux | Retake / Take Photo closes the form before the camera opens, so cancelling the camera loses everything typed | `index.html:27540` | **fixed 2026-09-23** |
+| [bin-dump-15](#bin-dump-15) | low | minor | bug | The busy flag stays set through the post-submit list reload: a photo taken then is silently dropped, and Cancel stays live during Submit | `index.html:27559` | **fixed 2026-09-23** |
 | [bin-dump-16](#bin-dump-16) | low | minor | performance | Every submit makes three serial round trips, including a duplicate pre-check that is pointless without a barcode or photo | `index.html:27906` | unverified |
 | [bin-dump-18](#bin-dump-18) | low | minor | bug | bdThisWeek uses the device's time zone while the worker files weeks in Eastern | `index.html:28070` | unverified |
 | [bin-dump-19](#bin-dump-19) | low | minor | accessibility | Keyboard and focus: the modal takes no focus and has no Escape, the store select is unlabelled, and toggling a week loses focus | `index.html:27707` | unverified |
-| [bin-dump-20](#bin-dump-20) | low | minor | bug | Identifier inputs allow autocapitalise and autocorrect, and the exact-match barcode check then misses a typed duplicate | `index.html:27595` | unverified |
+| [bin-dump-20](#bin-dump-20) | low | minor | bug | Identifier inputs allow autocapitalise and autocorrect, and the exact-match barcode check then misses a typed duplicate | `index.html:27595` | **fixed 2026-09-23** |
 | [bin-dump-21](#bin-dump-21) | low | minor | bug | Editing any field of a row that already shares a barcode raises the duplicate prompt on every save | `worker.js:24650` | unverified |
-| [bin-dump-22](#bin-dump-22) | low | minor | ui-ux | The duplicate prompt makes the override the green, focused default | `index.html:28029` | unverified |
-| [bin-dump-23](#bin-dump-23) | low | minor | ui-ux | View-only accounts are told to 'tap Edit' and 'Press Begin' | `index.html:28100` | unverified |
+| [bin-dump-22](#bin-dump-22) | low | minor | ui-ux | The duplicate prompt makes the override the green, focused default | `index.html:28029` | **fixed 2026-09-23** |
+| [bin-dump-23](#bin-dump-23) | low | minor | ui-ux | View-only accounts are told to 'tap Edit' and 'Press Begin' | `index.html:28100` | **fixed 2026-09-23** |
 | [bin-dump-24](#bin-dump-24) | low | minor | ui-ux | Opening a photoless (typed) row hides who logged it and when | `index.html:27655` | unverified |
 | [bin-dump-25](#bin-dump-25) | low | minor | ui-ux | In the installed PWA, the verify modal's header and × sit under the status bar / Dynamic Island | `index.html:3015` | unverified |
 | [bin-dump-26](#bin-dump-26) | low | minor | performance | binDumpWeekOf builds a new Intl.DateTimeFormat for every row | `worker.js:7688` | unverified |
@@ -1757,7 +1758,7 @@ Bin Dump is carefully built. The worker gates match the frontend exactly: bdCanD
 <a id="bin-dump-1"></a>
 #### bin-dump-1 — escapeHtml inside value="" / title="" attributes: values with a double quote are cut short on save, and attributes can be injected (stored XSS)
 
-*high · minor · security · confidence high · `index.html:27596` · unverified*
+*high · minor · security · confidence high · `index.html:27596` · unverified · fixed 2026-09-23*
 
 **Evidence.** escapeHtml (index.html:7753-7757) serialises a text node, so it escapes & < > but never the double quote. This page uses it inside double-quoted attributes: 27596 `value="${escapeHtml(val == null ? '' : String(val))}"` (bdFieldRow, used by both the verify form and the edit form) and 28141 `title="Barcode ${escapeHtml(r.barcode)} is on more than one logged pallet"`. There is no CSP (dist/_headers only sets Cache-Control). Browser probe (Chromium, list stubbed): the barcode `x" data-pwned="1` rendered `<span class="bd-dup" title="Barcode x" data-pwned="1 is on …">`, and 2 injected attributes were found in #bd-weeks. Opening EDIT on a row with pallet_name `TV 55" LED` showed the input value `TV 55`. Pressing Save posted `{pallet_name:"TV 55", barcode:"x"}` to bin-dump-update.
 
@@ -1768,7 +1769,7 @@ Bin Dump is carefully built. The worker gates match the frontend exactly: bdCanD
 <a id="bin-dump-2"></a>
 #### bin-dump-2 — bdLoad has no request ordering: a slow earlier response overwrites the store now selected
 
-*medium · minor · bug · confidence high · `index.html:28032` · unverified*
+*medium · minor · bug · confidence high · `index.html:28032` · unverified · fixed 2026-09-23*
 
 **Evidence.** bdLoad (28032-28051) reads sel.value, awaits the fetch, then assigns `bdState.rows = j.rows` and calls bdRenderLog with no sequence check. bdRenderLog decides whether to show the Store column from the CURRENT select, `const multi = el('bd-store').value === 'ALL'` (28117). bdLoad is called from bdStoreChange (27526), Refresh (2993), after every submit and delete, and from initBinDump. Probe: ALL delayed 700 ms, then BL1 selected immediately. Result: the select read BL1, but rows were [BL1 TV…, BL1 SNACKS, BL4 DUPONT PALLET], the units tile read 1,041 (BL1 alone is 42), and there was no Store column.
 
@@ -1779,7 +1780,7 @@ Bin Dump is carefully built. The worker gates match the frontend exactly: bdCanD
 <a id="bin-dump-3"></a>
 #### bin-dump-3 — The pallet's store is never shown: "All stores" silently logs into stores[0], and the select resets to stores[0] on every visit
 
-*medium · minor · bug · confidence high · `index.html:27531` · unverified*
+*medium · minor · bug · confidence high · `index.html:27531` · unverified · fixed 2026-09-23*
 
 **Evidence.** bdScanStore: `if (v && v !== 'ALL') return v; const s = bdStores(); return s.length ? s[0] : '';`. initBinDump runs on every navigateToPage('bin-dump') (12024) and does `if (stores.length) sel.value = stores[0];` (27508), dropping the previous choice. The Scan tab stays usable under All stores. Neither the modal title ('Verify pallet tag' / 'Log pallet by hand', 27607) nor the success line (`Pallet logged · ${pallet_name} · n units.`, 27939) names the store. Probe: select ALL, then Enter Manually, then Submit. bin-dump-log received store "BL1", and the status read "Pallet logged · BL4 PALLET."
 
@@ -1790,7 +1791,7 @@ Bin Dump is carefully built. The worker gates match the frontend exactly: bdCanD
 <a id="bin-dump-4"></a>
 #### bin-dump-4 — If a photo fails to decode, the verify form shows and uploads the PREVIOUS pallet's photo
 
-*medium · minor · bug · confidence high · `index.html:27566` · unverified*
+*medium · minor · bug · confidence high · `index.html:27566` · unverified · fixed 2026-09-23*
 
 **Evidence.** bdPhoto: `const b64 = await psShrink(f); bdState.photo = b64;`. When psShrink rejects ('that image could not be opened'), bdState.photo keeps its old value. The catch then calls bdOpenVerify, which sets `el('bd-m-photo').src = bdState.photo ? `data:…${bdState.photo}` : ''` (27617), and bdSubmit sends `image_b64: bdState.photo` (27935). bdState.photo is cleared only after a successful submit (27942) and in bdManual. Cancel and backing out at the duplicate prompt both leave it set. Probe: with bdState.photo='AAAA', bdPhoto on an undecodable .heic left #bd-m-photo src = data:image/jpeg;base64,AAAA, kept #bd-m-shot visible, and showed "Couldn't read the tag — that image could not be opened".
 
@@ -1834,7 +1835,7 @@ Bin Dump is carefully built. The worker gates match the frontend exactly: bdCanD
 <a id="bin-dump-10"></a>
 #### bin-dump-10 — On a phone the EDIT/VIEW button is about 440px off-screen at the end of every row
 
-*medium · minor · ui-ux · confidence high · `index.html:28148` · unverified*
+*medium · minor · ui-ux · confidence high · `index.html:28148` · unverified · fixed 2026-09-23*
 
 **Evidence.** The only way to open a row is `<td><button class="bd-row-btn" onclick="bdOpenEdit(${r.id})">…` in the last column. The table has `table.bd-tbl{…min-width:780px}` (2827). Probe at 393px: the .bd-scroll client width is 343 and its scroll width is 787.
 
@@ -1845,7 +1846,7 @@ Bin Dump is carefully built. The worker gates match the frontend exactly: bdCanD
 <a id="bin-dump-13"></a>
 #### bin-dump-13 — The tag read has no timeout or cancel, and 'Reading tag…' hides Enter Manually
 
-*medium · minor · ui-ux · confidence high · `index.html:27570` · unverified*
+*medium · minor · ui-ux · confidence high · `index.html:27570` · unverified · fixed 2026-09-23*
 
 **Evidence.** `const r = await fetch(`${WORKER_BASE}?action=bin-dump-scan`, { method:'POST', … body: JSON.stringify({ image_b64: b64, … }) })` has no signal, and the worker's Anthropic fetch (worker.js:24418) has no timeout either. bdShow('reading') hides #bd-begin, which contains both Begin and #bd-manual (2957-2962). #bd-reading has no cancel control.
 
@@ -1889,7 +1890,7 @@ Bin Dump is carefully built. The worker gates match the frontend exactly: bdCanD
 <a id="bin-dump-11"></a>
 #### bin-dump-11 — The sticky 'When' column is see-through on edited rows, so scrolled cells show through it
 
-*low · minor · ui-ux · confidence high · `index.html:2845` · unverified*
+*low · minor · ui-ux · confidence high · `index.html:2845` · unverified · fixed 2026-09-23*
 
 **Evidence.** `table.bd-tbl tr.edited td,table.bd-tbl tr.edited .stick{background:rgba(245,158,11,.16)}` (specificity 0,3,2) beats `table.bd-tbl .stick{background:#fff}` (0,2,1). The probe's computed .stick background on an edited row was `rgba(245, 158, 11, 0.16)`. This is DESIGN.md §4.8 trap 2 ("A position: sticky column needs its own opaque background").
 
@@ -1900,7 +1901,7 @@ Bin Dump is carefully built. The worker gates match the frontend exactly: bdCanD
 <a id="bin-dump-12"></a>
 #### bin-dump-12 — The DUP badge measures 4.18:1 on an edited row in light mode
 
-*low · minor · accessibility · confidence high · `index.html:2879` · unverified*
+*low · minor · accessibility · confidence high · `index.html:2879` · unverified · fixed 2026-09-23*
 
 **Evidence.** `.bd-dup{…background:rgba(192,57,43,.10);…color:#c0392b}` is layered over the amber `tr.edited td` wash rgba(245,158,11,.16) on #fff. Computed: #c0392b on that composite is 4.18:1 (4.69 on a plain row); dark is 4.51:1 and OLED 5.11:1. A duplicate created through edit ("Save anyway") always sets edited_at, so those DUP chips are always on amber rows. The text is 9px bold, so the 4.5:1 threshold applies.
 
@@ -1911,7 +1912,7 @@ Bin Dump is carefully built. The worker gates match the frontend exactly: bdCanD
 <a id="bin-dump-14"></a>
 #### bin-dump-14 — Retake / Take Photo closes the form before the camera opens, so cancelling the camera loses everything typed
 
-*low · minor · ui-ux · confidence high · `index.html:27540` · unverified*
+*low · minor · ui-ux · confidence high · `index.html:27540` · unverified · fixed 2026-09-23*
 
 **Evidence.** `function bdBegin() { bdState.manual = false; bdCloseModal(); (syncCameraCapture(el('bd-photo')), el('bd-photo').click()); }`. The modal's Retake button calls bdBegin (3041). If the picker is cancelled, no change event fires, so bdPhoto never runs.
 
@@ -1922,7 +1923,7 @@ Bin Dump is carefully built. The worker gates match the frontend exactly: bdCanD
 <a id="bin-dump-15"></a>
 #### bin-dump-15 — The busy flag stays set through the post-submit list reload: a photo taken then is silently dropped, and Cancel stays live during Submit
 
-*low · minor · bug · confidence high · `index.html:27559` · unverified*
+*low · minor · bug · confidence high · `index.html:27559` · unverified · fixed 2026-09-23*
 
 **Evidence.** bdSubmit keeps `bdState.busy = true` until `await bdLoad()` (27945) resolves, releasing it only in finally. bdPhoto clears `input.value` and then `if (!f || bdState.busy) return;` with no message. During a submit the footer Cancel and × stay enabled, and the success path's `bdCloseModal()` (27944) closes whatever form is open at that moment.
 
@@ -1966,7 +1967,7 @@ Bin Dump is carefully built. The worker gates match the frontend exactly: bdCanD
 <a id="bin-dump-20"></a>
 #### bin-dump-20 — Identifier inputs allow autocapitalise and autocorrect, and the exact-match barcode check then misses a typed duplicate
 
-*low · minor · bug · confidence medium · `index.html:27595` · unverified*
+*low · minor · bug · confidence medium · `index.html:27595` · unverified · fixed 2026-09-23*
 
 **Evidence.** `<input class="bd-in" type="text" id="bd-f-${f.k}" data-k="${f.k}" …>` has no autocapitalize, autocorrect, spellcheck or autocomplete attributes. The worker compares `WHERE barcode = ?` (binary, case-sensitive) after tagText, which trims but does not normalise case (worker.js:7591-7599, 7694-7699).
 
@@ -1988,7 +1989,7 @@ Bin Dump is carefully built. The worker gates match the frontend exactly: bdCanD
 <a id="bin-dump-22"></a>
 #### bin-dump-22 — The duplicate prompt makes the override the green, focused default
 
-*low · minor · ui-ux · confidence high · `index.html:28029` · unverified*
+*low · minor · ui-ux · confidence high · `index.html:28029` · unverified · fixed 2026-09-23*
 
 **Evidence.** bdConfirmDuplicate calls `uiConfirm(…, { title: 'Duplicate pallet', okText: isEdit ? 'Save anyway' : 'Log it anyway' })` without `danger`. _uiDialog paints OK in the primary green, focuses it, and resolves true on Enter (7799-7800, 7825). The code says "Backing out here is the expected answer" (27911-27912).
 
@@ -1999,7 +2000,7 @@ Bin Dump is carefully built. The worker gates match the frontend exactly: bdCanD
 <a id="bin-dump-23"></a>
 #### bin-dump-23 — View-only accounts are told to 'tap Edit' and 'Press Begin'
 
-*low · minor · ui-ux · confidence high · `index.html:28100` · unverified*
+*low · minor · ui-ux · confidence high · `index.html:28100` · unverified · fixed 2026-09-23*
 
 **Evidence.** `… Tap a week to open it; tap Edit on a row to correct it.` and `'No pallets logged yet. Press Begin to scan the first tag.'` are shown regardless of `canEdit`. For view-only users the row button reads VIEW (28148-28149) and the Scan tab is hidden (27520).
 

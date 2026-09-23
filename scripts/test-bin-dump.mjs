@@ -1029,10 +1029,13 @@ const IMG = { image_b64: 'aGVsbG8=', media_type: 'image/jpeg' };
      '🛑 the typed form carries its own note — #bd-m-read lives inside the hidden photo block');
   ok(/el\('bd-m-retake'\)\.textContent = manual \? 'Take Photo' : 'Retake';/.test(html),
      '"Retake" becomes "Take Photo" on a form that never had one');
-  // Every entry point states which it is, so the flag cannot be left over.
-  for (const fn of ['bdBegin', 'bdOpenEdit']) {
+  // Every entry point states which it is, so the flag cannot be left over. bdPhoto rather
+  // than bdBegin since bin-dump-14: Begin/Retake no longer close the form, the arriving
+  // photo does — so that is where a typed entry ends.
+  for (const fn of ['bdPhoto', 'bdOpenEdit']) {
     const at = html.indexOf(`function ${fn}(`);
-    ok(at > 0 && /bdState\.manual = false/.test(html.slice(at, at + 400)),
+    const body = html.slice(at, html.indexOf(`window.${fn} = ${fn}`, at));
+    ok(at > 0 && body.length > 0 && /bdState\.manual = false/.test(body),
        `${fn} clears manual, so a typed entry cannot leak into the next operation`);
   }
 }
@@ -1056,6 +1059,252 @@ const IMG = { image_b64: 'aGVsbG8=', media_type: 'image/jpeg' };
      '...and the modal still derives read-only from that same gate');
   ok(/el\('bd-m-delete'\)\.hidden = ro \|\| !bdCanDelete\(\);/.test(edit.slice(0, 1200)),
      '...with Delete withheld from anyone read-only, whatever the button said');
+}
+
+// ── Helpers for §24-31: a function's own source, cut at its closing brace ──
+// Braces are counted, so a slice cannot silently run into the next function; every slice is
+// asserted non-empty before it is used (a missing anchor must fail loudly, not pass).
+const HTML = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+function fnSrc(name) {
+  const at = HTML.search(new RegExp(`(?:async )?function ${name}\\(`));
+  if (at < 0) return '';
+  let i = HTML.indexOf('{', HTML.indexOf(')', at)), depth = 0;
+  for (; i < HTML.length; i++) {
+    if (HTML[i] === '{') depth++;
+    else if (HTML[i] === '}' && --depth === 0) return HTML.slice(at, i + 1);
+  }
+  return '';
+}
+// The DOM escapeHtml, as the page has it: & < > only — quotes pass through untouched.
+const domEscape = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const decode = s => s.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+// The attributes of the first `<tag …>` in `html`, parsed the way a browser would: an
+// attribute value ends at the first unescaped quote.
+function attrsOf(html, tag) {
+  const m = new RegExp(`<${tag}\\b([^>]*)>`).exec(html);
+  if (!m) return null;
+  const out = {};
+  for (const a of m[1].matchAll(/([^\s="]+)(?:="([^"]*)")?/g)) out[a[1]] = a[2] == null ? '' : decode(a[2]);
+  return out;
+}
+
+// ── 24. A quote in a value survives the form and the DUP chip (bin-dump-1) ──
+// 🛑 escapeHtml leaves `"` alone, so `TV 55" LED` closed value="…" at the quote: the form
+// showed `TV 55`, Save stored that, and the rest became markup. The stub above behaves like
+// the DOM version on purpose — a stub that escaped quotes would pass against the bug.
+{
+  const escSrc = fnSrc('escHtml'), rowSrc = fnSrc('bdFieldRow'), dupSrc = fnSrc('bdDupBadge');
+  ok(escSrc && rowSrc && dupSrc, 'escHtml, bdFieldRow and bdDupBadge are all found');
+  const escHtml = new Function(`${escSrc}; return escHtml;`)();
+  const fieldsSrc = HTML.slice(HTML.indexOf('const BD_FIELDS = ['), HTML.indexOf('];', HTML.indexOf('const BD_FIELDS = [')) + 2);
+  const BD_FIELDS = new Function(`${fieldsSrc}; return BD_FIELDS;`)();
+  const bdFieldRow = new Function('escapeHtml', 'escHtml', `${rowSrc}; return bdFieldRow;`)(domEscape, escHtml);
+  // escapeHtml is in scope too, as it is on the page, so a regression to it FAILS here
+  // rather than throwing a ReferenceError that only looks like a failure.
+  const bdDupBadge = new Function('escHtml', 'escapeHtml', `${dupSrc}; return bdDupBadge;`)(escHtml, domEscape);
+  const pallet = BD_FIELDS.find(f => f.k === 'pallet_name');
+  for (const v of ['TV 55" LED', 'A & B <C>', "O'Brien \"mix\""]) {
+    eq(attrsOf(bdFieldRow(pallet, v, ''), 'input').value, v, `🛑 ${JSON.stringify(v)} comes back out of the form unchanged`);
+  }
+  const hostile = attrsOf(bdFieldRow(pallet, 'x" data-pwned="1', ''), 'input');
+  ok(hostile && !('data-pwned' in hostile) && hostile.value === 'x" data-pwned="1',
+     '🛑 a tag value cannot add an attribute to the input');
+  const dup = attrsOf(bdDupBadge('P-1" onmouseover="alert(1)'), 'span');
+  ok(dup && !('onmouseover' in dup) && dup.title === 'Barcode P-1" onmouseover="alert(1) is on more than one logged pallet',
+     '🛑 ...nor a barcode to the DUP chip');
+  ok(/class="bd-dup"/.test(bdDupBadge('X')), 'the chip keeps its class');
+  ok(!/="\$\{escapeHtml\(/.test(rowSrc) && !/="[^"]*\$\{escapeHtml\(/.test(dupSrc),
+     'no escapeHtml(...) left inside an attribute of either');
+  ok(/bdDupBadge\(r\.barcode\)/.test(fnSrc('bdRenderLog')), 'the log draws the chip through bdDupBadge');
+}
+
+// ── 25. Inputs: keyboard hints, and a barcode saved in capitals (bin-dump-20) ──
+// Owner's call, 2026-09-23: save barcodes in capitals. A phone capitalises only the first
+// letter ("Prm-10490-30"), and the duplicate check matches character for character.
+{
+  const escHtml = new Function(`${fnSrc('escHtml')}; return escHtml;`)();
+  const fieldsSrc = HTML.slice(HTML.indexOf('const BD_FIELDS = ['), HTML.indexOf('];', HTML.indexOf('const BD_FIELDS = [')) + 2);
+  const BD_FIELDS = new Function(`${fieldsSrc}; return BD_FIELDS;`)();
+  const bdFieldRow = new Function('escapeHtml', 'escHtml', `${fnSrc('bdFieldRow')}; return bdFieldRow;`)(domEscape, escHtml);
+  const input = k => attrsOf(bdFieldRow(BD_FIELDS.find(f => f.k === k), '', ''), 'input');
+  const bc = input('barcode');
+  eq(bc.autocapitalize, 'characters', 'the barcode keyboard types capitals');
+  ok(bc.autocorrect === 'off' && bc.spellcheck === 'false' && bc.autocomplete === 'off',
+     '...and does not autocorrect, spellcheck or autofill a code');
+  eq(input('created_by_tag').autocapitalize, 'words', 'Created by is a name: words');
+  ok(!('autocapitalize' in input('sup_ref')), 'Sup. Ref has no hint — tag B prints it in lower case ("mix")');
+  const readSrc = fnSrc('bdReadFields');
+  ok(readSrc && /toUpperCase\(\)/.test(readSrc) && !/toLocaleUpperCase/.test(readSrc),
+     'bdReadFields upper-cases with toUpperCase — never a locale-dependent one');
+  const fake = { querySelectorAll: () => [
+    { dataset: { k: 'barcode' }, value: ' prm-10490-30 ' },
+    { dataset: { k: 'sup_ref' }, value: ' mix ' },
+    { dataset: { k: 'pallet_name' }, value: 'Pallet Amazon' },
+  ] };
+  const out = new Function('document', `${readSrc}; return bdReadFields;`)(fake)();
+  eq(out.barcode, 'PRM-10490-30', '🔑 a typed barcode is trimmed and saved in capitals');
+  ok(out.sup_ref === 'mix' && out.pallet_name === 'Pallet Amazon', '...and nothing else changes case');
+  eq(new Function('document', `${readSrc}; return bdReadFields;`)({ querySelectorAll: () => [
+    { dataset: { k: 'barcode' }, value: '' }] })().barcode, '', 'a blank barcode stays blank');
+}
+
+// ── 26. The newest log load wins, on success and on failure (bin-dump-2) ──
+// Reloads after a save or delete are no longer awaited (bin-dump-15), and the store can
+// change mid-load, so an older answer landing last must not replace a newer one.
+{
+  const src = fnSrc('bdLoad');
+  ok(src, 'bdLoad is found');
+  const box = () => ({ textContent: '', innerHTML: '' });
+  const els = { 'bd-store': { value: 'ALL' }, 'bd-log-status': box(), 'bd-weeks': box(),
+    'bd-tab-log-n': box(), 'bd-wk-pallets': box(), 'bd-wk-units': box() };
+  const pend = [];
+  const fetchStub = () => new Promise((resolve, reject) => pend.push({ resolve, reject }));
+  const bdState = { loadSeq: 0, rows: [], rowsStore: '' };
+  let renders = 0;
+  const bdLoad = new Function('el', 'fetch', 'WORKER_BASE', 'bdErr', 'bdState', 'bdRenderLog',
+    `${src}; return bdLoad;`)(id => els[id], fetchStub, '/', () => 'refused', bdState, () => { renders++; });
+  const answer = rows => ({ ok: true, json: async () => ({ ok: true, rows }) });
+  const pAll = bdLoad();                          // "All stores" — slow
+  els['bd-store'].value = 'BL1';
+  const pBl1 = bdLoad();                          // then BL1 — answers first
+  pend[1].resolve(answer([{ id: 1, store: 'BL1' }])); await pBl1;
+  pend[0].resolve(answer([{ id: 2, store: 'BL4' }, { id: 3, store: 'BL1' }])); await pAll;
+  ok(bdState.rows.length === 1 && bdState.rows[0].id === 1, '🛑 an older answer arriving last does not replace the newer rows');
+  eq(bdState.rowsStore, 'BL1', '...and the rows are drawn as the store they are');
+  eq(renders, 1, '...drawn once, not twice');
+  const pOld = bdLoad(), pNew = bdLoad();
+  pend[3].resolve(answer([{ id: 9, store: 'BL1' }])); await pNew;
+  pend[2].reject(new Error('network')); await pOld;
+  ok(bdState.rows.length === 1 && bdState.rows[0].id === 9 && !/Couldn't load/.test(els['bd-log-status'].textContent),
+     '🛑 ...and a stale FAILURE cannot wipe a newer success');
+  ok(!/el\('bd-store'\)/.test(fnSrc('bdRenderLog')), 'bdRenderLog never reads the live picker — only the rows\' store');
+}
+
+// ── 27. The store is picked, claimed once, named and kept (bin-dump-3) ──
+{
+  const scanSrc = fnSrc('bdScanStore'), claimSrc = fnSrc('bdClaimStore');
+  ok(scanSrc && claimSrc, 'bdScanStore and bdClaimStore are found');
+  const sel = { value: 'ALL', focused: 0, focus() { this.focused++; } };
+  let status = null;
+  const bdState = { store: '' };
+  const { bdScanStore, bdClaimStore } = new Function('el', 'bdSetStatus', 'bdState', 'bdStores',
+    `${scanSrc}\n${claimSrc}; return { bdScanStore, bdClaimStore };`)(
+    () => sel, (m, t) => { status = [m, t]; }, bdState, () => ['BL1', 'BL4']);
+  eq(bdScanStore(), '', '🛑 "All stores" is no store — it no longer falls back to the first one');
+  eq(bdClaimStore(), false, 'so a scan or a typed entry cannot start on it');
+  ok(status && status[1] === 'err' && /Pick the store/.test(status[0]) && sel.focused === 1,
+     '...it says why and points at the picker');
+  sel.value = 'BL4';
+  ok(bdClaimStore() === true && bdState.store === 'BL4', 'a real store is claimed');
+  sel.value = 'BL1';
+  eq(bdState.store, 'BL4', '🔑 ...and stays claimed if the picker changes afterwards');
+  const submit = fnSrc('bdSubmit');
+  ok(/const store = bdState\.store;/.test(submit) && !/bdScanStore\(/.test(submit),
+     '🛑 bdSubmit posts the claimed store, never a fresh read of the picker');
+  ok(/if \(!editing && !bdState\.store\)/.test(submit), '...and refuses a new pallet with no store claimed');
+  const begin = fnSrc('bdBegin'), manual = fnSrc('bdManual');
+  ok(/bdClaimStore\(\)/.test(begin), 'Begin claims a store');
+  ok(manual.indexOf('bdClaimStore()') > 0 && manual.indexOf('bdClaimStore()') < manual.indexOf("bdSetStatus('')"),
+     '🔑 Enter Manually claims before clearing the status, so the refusal is not wiped');
+  const init = fnSrc('initBinDump');
+  ok(init.indexOf('const prev = sel.value') > 0 && init.indexOf('const prev = sel.value') < init.indexOf('sel.innerHTML ='),
+     'initBinDump reads the last pick before rebuilding the picker');
+  ok(/sel\.value = stores\.includes\(prev\) \? prev : stores\[0\]/.test(init), '...and keeps it when it is still a store held');
+  ok(/\(where \? ` · \$\{where\}` : ''\)/.test(fnSrc('bdOpenVerify')), 'the verify form names the store');
+  ok(/Pallet logged at \$\{BD_LABELS\[store\] \|\| store\}/.test(submit), '...and so does the green line');
+}
+
+// ── 28. The tag read: no stale photo, no hang, no lost form (bin-dump-4, -13, -14) ──
+{
+  const ph = fnSrc('bdPhoto');
+  ok(ph, 'bdPhoto is found');
+  const at = s => ph.indexOf(s);
+  ok(at('bdState.photo = null') > 0 && at('bdState.photo = null') < at('psShrink('),
+     '🛑 the last photo is forgotten BEFORE this one is decoded (bin-dump-4)');
+  ok(at('bdCloseModal();') > 0 && at('bdCloseModal();') < at('psShrink('),
+     'the form closes only once a photo has arrived (bin-dump-14)');
+  const guard = 'if (gen !== bdState.readGen) return;';
+  ok(at(guard) > at('psShrink(') && at(guard) < at('bdState.photo = b64'),
+     '🛑 a read cancelled while decoding writes nothing and sends nothing');
+  ok(/signal: read\.ctl \? read\.ctl\.signal : undefined/.test(ph), 'the request can be aborted');
+  ok(at('BD_READ_TIMEOUT_MS') > at('psShrink('), 'the timeout clock starts at the request, not at the decode');
+  ok(/finally \{\s*clearTimeout\(timer\);/.test(ph), 'the timer is always cleared');
+  ok(/finally \{[\s\S]*if \(gen === bdState\.readGen\) \{[\s\S]*bdState\.busy = false;/.test(ph),
+     '🛑 only the current read may free the page — a late one must not hide the next spinner');
+  ok(/if \(!j\.ok\) throw/.test(ph), 'a 200 without ok:true is not "Everything came through"');
+  ok(/read\.why === 'timeout'/.test(ph) && /took too long/.test(ph), 'a timeout says so, and still opens the form');
+  const begin = fnSrc('bdBegin');
+  ok(!/bdCloseModal\(\)/.test(begin) && !/bdState\.manual/.test(begin),
+     '🛑 Begin/Retake no longer close the form first — a dismissed camera keeps what was typed');
+  const cancel = fnSrc('bdCancelRead');
+  ok(/bdState\.readGen\+\+/.test(cancel) && /read\.ctl\.abort\(\)/.test(cancel) && /bdShow\('begin'\)/.test(cancel),
+     'Cancel abandons the read and puts Begin back');
+  ok(/id="bd-read-cancel"\s+onclick="bdCancelRead\(\)"/.test(HTML), '...and is on the reading panel');
+  const verify = fnSrc('bdOpenVerify'), edit = fnSrc('bdOpenEdit');
+  ok(/ph\.hidden = !bdState\.photo;/.test(verify) && /ph\.removeAttribute\('src'\)/.test(verify),
+     'no photo means no image box, not an empty one');
+  ok(/el\('bd-m-photo'\)\.hidden = false;/.test(edit), '...and a row that has a photo shows it again');
+}
+
+// ── 29. Busy: locked while posting, free before the reload (bin-dump-15) ──
+{
+  for (const fn of ['bdSubmit', 'bdDelete']) {
+    const src = fnSrc(fn);
+    ok(src && !/await bdLoad\(\)/.test(src), `🛑 ${fn} does not hold the page while the log reloads`);
+    ok(/bdLockForm\(true\)/.test(src) && /finally \{[\s\S]*bdLockForm\(false\)/.test(src),
+       `${fn} locks the form while posting and always unlocks it`);
+    ok(src.lastIndexOf('bdLoad()') > src.indexOf('finally'), `${fn} reloads only after the page is free`);
+  }
+  const lock = fnSrc('bdLockForm');
+  for (const id of ['bd-m-close', 'bd-m-cancel', 'bd-m-retake', 'bd-m-submit', 'bd-m-delete']) {
+    ok(lock.includes(`'${id}'`) && HTML.includes(`id="${id}"`), `#${id} exists and is locked while posting`);
+  }
+  ok(/Still saving the last pallet/.test(fnSrc('bdPhoto')), 'a photo taken mid-save says so instead of vanishing');
+  ok(/bdLockForm\(false\)/.test(fnSrc('bdOpenVerify')) && /bdLockForm\(false\)/.test(fnSrc('bdOpenEdit')),
+     'a freshly opened form is never left locked');
+}
+
+// ── 30. The duplicate prompt defaults to backing out (bin-dump-22) ──
+{
+  const dlg = fnSrc('_uiDialog');
+  ok(/defaultCancel = false \}\)/.test(dlg), '_uiDialog takes defaultCancel, off by default');
+  ok(/defaultCancel: opts\.defaultCancel/.test(HTML), 'uiConfirm passes it through');
+  ok(/if \(rowEl\.contains\(e\.target\)\) return;/.test(dlg),
+     '🛑 Enter on a focused dialog button is that button\'s click — Enter on Cancel no longer confirms');
+  ok(/e\.preventDefault\(\);\s*finish\(cancelFirst \? cancelValue : true\);/.test(dlg), 'a bare Enter gives the default');
+  ok(/\(input \|\| \(cancelFirst \? cancelEl : okEl\)\)\.focus\(\);/.test(dlg), 'focus starts on the default');
+  ok(/defaultCancel && !!cancelText && prompt === null && !choices/.test(dlg),
+     '...ignored without a Cancel button, and for prompts and choosers');
+  const dup = fnSrc('bdConfirmDuplicate');
+  ok(/danger: true/.test(dup) && /defaultCancel: true/.test(dup), 'the duplicate prompt: red override, Cancel first');
+  ok(/"Don't save"/.test(dup) && /"Don't log it"/.test(dup), '...and Cancel says what backing out does');
+}
+
+// ── 31. CSS and copy (bin-dump-10, -11, -12, -23) ──
+{
+  const css = HTML.slice(HTML.indexOf('<div id="page-bin-dump"'), HTML.indexOf('</style>', HTML.indexOf('<div id="page-bin-dump"')));
+  ok(css.length > 1000, 'the Bin Dump style block is found');
+  ok(css.includes('table.bd-tbl tr.edited .stick{background:linear-gradient(rgba(245,158,11,.16),rgba(245,158,11,.16)),#fff}'),
+     '🛑 the sticky cell of an edited row is opaque in light (bin-dump-11)');
+  ok(css.includes('.dark table.bd-tbl tr.edited .stick{background:linear-gradient(rgba(245,158,11,.14),rgba(245,158,11,.14)),rgb(var(--op-panel))}'),
+     '🛑 ...and in dark, over the token so pure black follows');
+  ok(!/tr\.edited \.stick\{background:rgba\(/.test(css) && !/tr\.edited td,[^{]*\.stick\{/.test(css),
+     'the see-through combined rule is gone');
+  // Declarations only: the block's comments quote #101826 as what a contrast was measured on.
+  ok(!/16 24 38|#101826|16,\s*24,\s*38/.test(css.replace(/\/\*[\s\S]*?\*\//g, '')),
+     'no op-* token value pasted into a declaration');
+  ok(/\.bd-dup\{[^}]*color:#a93226\}/.test(css) && /\.dark \.bd-dup\{[^}]*color:#f87171\}/.test(css),
+     'the DUP chip is #a93226 in light, #f87171 in dark (bin-dump-12)');
+  ok(/\.bd-when-btn\{[^}]*border:0[^}]*background:transparent;color:inherit;font:inherit/.test(css),
+     'the time button states its own transparent background and inherited colour and font');
+  const log = fnSrc('bdRenderLog');
+  ok(/<td class="stick"><button type="button" class="bd-when-btn" onclick="bdOpenEdit\(\$\{r\.id\}\)"/.test(log),
+     '🔑 the always-visible time cell opens the row on a phone (bin-dump-10)');
+  ok(/aria-label="\$\{escHtml\(bdWhen\(r\.logged_at\)\)\}/.test(log), '...labelled with its own visible text first');
+  ok(/class="bd-row-btn" tabindex="-1"/.test(log), 'the trailing EDIT/VIEW is not a second tab stop per row');
+  ok(/\(canEdit \? 'No pallets logged yet\. Press Begin to scan the first tag\.' : 'No pallets logged yet\.'\)/.test(log),
+     '"Press Begin" is said only to an account that has a Begin (bin-dump-23)');
+  ok(/\(canEdit \? 'correct it\.' : 'see it\.'\)/.test(log), '...and "correct" only to one that can');
 }
 
 // Tally in the shape scripts/test.sh counts: "<n> passed, <m> failed".

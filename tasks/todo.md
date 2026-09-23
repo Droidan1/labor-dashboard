@@ -1,3 +1,64 @@
+# Bin Dump: fix the bugs the manager SOP works around (2026-09-23)
+
+**Request:** *"Fix the Bin Dump bugs from the suggested task"* — the store-manager SOP ("Bin Dump
+SOP for Store Managers") had to teach workarounds for open findings from the 2026-09-22 review.
+**Owner decision:** barcode case → *save barcodes in capitals* on the page (no worker change).
+
+Scope (review ids): **1, 3, 4, 10, 11, 13, 14, 15, 20, 22**, plus **12**, **2** and the copy half of
+**23**, which touch the same lines — and a latent `_uiDialog` bug found on the way: Enter confirmed
+even with Cancel focused. Frontend only; merging deploys via Pages.
+
+## Plan
+
+- [x] `_uiDialog`: `defaultCancel` option; Enter defers to a focused dialog button (#22, Enter bug)
+- [x] Escaping: `escHtml` in `value=`/`title=`; pure `bdDupBadge` (#1)
+- [x] Inputs: autocapitalize/autocorrect/spellcheck flags; barcode saved in capitals (#20)
+- [x] `bdLoad` sequence guard in try + catch; render against the rows' own store (#2, needed by #15)
+- [x] Lock Cancel / × / Retake while posting; unlock in `finally`; reload not awaited (#15)
+- [x] Store: `bdClaimStore()` refuses "All stores"; store captured once, named in title + status;
+      selection kept across visits (#3)
+- [x] Tag read: stale photo cleared, Retake keeps the form, generation guard, 45 s timeout,
+      Cancel while reading, `!j.ok` (#4, #13, #14)
+- [x] Duplicate prompt: red override, Cancel focused, "Don't log it" / "Don't save" (#22)
+- [x] When cell opens the row on phones; role-aware hint copy (#10, #23)
+- [x] Opaque sticky cell on edited rows; DUP chip #a93226 in light (#11, #12)
+- [x] `test-bin-dump.mjs`: update the two moved pins, add §24-31
+- [x] `scripts/browser-bin-dump.mjs`: 390px geometry + behaviour, three themes; mutation checks
+- [x] `sw.js` v232 + shell-cache fixture; `npm test` green
+- [x] Docs: findings marked fixed in the review; guards in `tasks/bin-dump.md`; DESIGN.md line
+
+## Review
+
+Thirteen findings fixed, frontend only (`index.html`, `sw.js` v232). Checked against the code
+before fixing — the review's citations still matched HEAD, three off by a few lines.
+
+- **Tests:** `test-bin-dump.mjs` 283 → 368 (§24-31: executed slices for escaping, keyboard
+  hints, `bdReadFields`, `bdLoad` ordering and the store claim; source order for the read,
+  busy and dialog; CSS). Two pins moved with the code: manual reset now in `bdPhoto`, the
+  `bdManual` guard before `bdOpenVerify`. `npm test`: 5688 assertions / 81 suites, green.
+- **Browser:** new `scripts/browser-bin-dump.mjs`, 94 checks — 390×844 touch, light / dark / pure black:
+  geometry + `elementFromPoint` for the time button at max scroll, painted contrast,
+  injection, store claim, stale photo, Cancel / late answer / 46 s timeout (`page.clock`),
+  Retake dismissed, locks, load order, dialog focus and Enter, Delete unchanged, view-only.
+  Painted contrast (amber row / plain row): DUP 5.09 / 5.71 light, 4.51 / 5.78 dark, 5.11 / 6.50
+  pure black; the time on amber 16.68 / 11.86 / 14.43. `browser-inventory-receiver.mjs`
+  (drives Bin Dump's Begin and Enter Manually): 154 / 154.
+- **Mutations:** each fix reverted once. Node suite: 21 of 21 caught. Browser check: every
+  revert caught except dropping the time button's `background:transparent` — correctly:
+  Tailwind's preflight already makes a `<button>` transparent, so the rule restates it (the
+  comment that said otherwise was wrong and now says so). Two gaps the mutations exposed in
+  the check itself, both fixed: the dialog reverts crashed the script at its first wait,
+  hiding later checks (sections now record a timeout as a failure and go on); and an
+  ungated `finally` passed because the mock honoured the abort, so no answer was ever late
+  (it can now deliver one late, as a read cancelled mid-decode does).
+- **Found on the way:** `_uiDialog` resolved Enter as OK even with Cancel focused (Delete
+  included). Fixed for every dialog; defaults unchanged.
+- **Not done / follow-ups:** 39 other `escapeHtml(...)` uses inside attributes app-wide; Mark
+  Out of Stock's identical store fallback; Inventory Receiver's identical Retake /
+  stale-photo / no-timeout bugs; bin-dump-6 (associates override duplicates — owner's call);
+  bin-dump-7 (save/delete messages written to the Scan tab). The SOP's workaround lines can
+  be dropped once this is merged.
+
 # Full code review, page by page (2026-09-22)
 
 **Brian:** *"complete code review … improve performance, speed, look for bugs, give me
