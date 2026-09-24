@@ -4914,6 +4914,38 @@ console.log('Price Scan');
   const navSrc = src('navigateToPage');
   ok(/showOnlyPage\(page\)/.test(navSrc) && !/psStopScan\(\)/.test(navSrc),
      'navigateToPage reaches it through showOnlyPage, with no copy of its own');
+
+  // 🛑 Going to the background (merch-price-scan-20). Switching apps hides the page without
+  // leaving it, so no page switch runs, and the scan loop's time limit rides
+  // requestAnimationFrame, which a hidden page does not get. Both scanners' cameras stop when
+  // running OR still opening, and say why; an idle scanner, and a page coming back, are left
+  // alone — nothing turns a camera back on by itself.
+  const bgSrc = src('stopCamerasWhenHidden');
+  const background = ({ hidden, ps, mos }) => {
+    const calls = [];
+    new Function('document', 'psStopScan', 'psStatus', 'mosStopScan', 'mosSetStatus',
+      'psScanning', 'psStarting', 'mosScanning', 'mosStarting', `${bgSrc}; return stopCamerasWhenHidden;`)(
+      { hidden }, () => calls.push('ps-stop'), (msg) => calls.push('ps: ' + msg),
+      () => calls.push('mos-stop'), (msg) => calls.push('mos: ' + msg),
+      ps === 'running', ps === 'opening', mos === 'running', mos === 'opening')();
+    return calls;
+  };
+  let bgc = background({ hidden: true, ps: 'running' });
+  ok(bgc.length === 2 && bgc[0] === 'ps-stop'
+     && bgc[1] === 'ps: The camera stopped while the app was in the background. Tap Scan to start again.',
+     '🛑 going to the background stops a running Price Scan camera, and says why');
+  bgc = background({ hidden: true, ps: 'opening' });
+  ok(bgc.length === 2 && bgc[0] === 'ps-stop', '...and one still opening, whose late camera the generation then closes');
+  bgc = background({ hidden: true, mos: 'running' });
+  ok(bgc.length === 2 && bgc[0] === 'mos-stop' && /Tap Scan QR to start again\.$/.test(bgc[1]),
+     "🛑 ...and MOS's camera the same way");
+  bgc = background({ hidden: true, mos: 'opening' });
+  ok(bgc.length === 2 && bgc[0] === 'mos-stop', "...MOS's still opening too");
+  eq(background({ hidden: true }).length, 0, 'an idle scanner is left alone: no stop, and no message over whatever the line says');
+  eq(background({ hidden: false, ps: 'running', mos: 'running' }).length, 0,
+     'coming back stops nothing and starts nothing — a camera never turns itself back on');
+  ok(/document\.addEventListener\('visibilitychange', stopCamerasWhenHidden\)/.test(html),
+     'it is registered for visibilitychange');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

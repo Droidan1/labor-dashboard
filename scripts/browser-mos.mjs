@@ -366,6 +366,69 @@ await section('6. camera (oppbuys-mos-2)', async () => {
   check(!errs.length, `no page errors — no uncaught "play() request was interrupted" (${errs.slice(0, 2).join(' | ')})`);
 });
 
+// ── 7. Backgrounding the app stops the camera (as merch-price-scan-20 on Price Scan) ──
+// Switching apps or tabs hides the page without leaving it, so no page switch stops the
+// camera, and the scan loop's 40 s stop rides requestAnimationFrame, which browsers pause for
+// a hidden page. Headless Chromium keeps every page visible, so this does what the browser
+// does: it sets document.hidden and dispatches the event (see browser-price-scan.mjs §4).
+const setHidden = (page, hidden) => page.evaluate(h => {
+  Object.defineProperty(document, 'hidden', { configurable: true, get: () => h });
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => (h ? 'hidden' : 'visible') });
+  document.dispatchEvent(new Event('visibilitychange'));
+}, hidden);
+for (const theme of ['light', 'dark', 'oled']) await section(`7. background [${theme}]`, async () => {
+  const { page, errs } = await open({ theme });
+  const states = n0 => page.evaluate(n => window.__mos.streams.slice(n).map(s => s.getTracks()[0].readyState), n0);
+  const count = () => page.evaluate(() => ({ gum: window.__mos.gumCalls, streams: window.__mos.streams.length }));
+  const lbl = () => text(page, '#mos-scan-lbl');
+  const status = () => page.evaluate(() => { const s = document.getElementById('mos-status'); return s.hidden ? '' : s.textContent.trim(); });
+  const whenLive = () => page.waitForFunction(() => document.getElementById('mos-scan-lbl').textContent === 'Stop', null, { timeout: 8000 });
+  const BG = /stopped while the app was in the background/;
+
+  // A running scan.
+  let c0 = await count();
+  await page.click('#mos-scan-btn'); await whenLive();
+  await setHidden(page, true); await page.waitForTimeout(200);
+  check((await states(c0.streams)).join() === 'ended' && (await lbl()) === 'Scan QR' && BG.test(await status()),
+        `🛑 [${theme}] a running scan stops when the app goes to the background, and says why (${JSON.stringify({ st: await states(c0.streams), status: await status() })})`);
+  const p = await page.evaluate(() => {
+    const n = document.getElementById('mos-status'), panel = n.closest('.mos-panel');
+    return { fg: getComputedStyle(n).color, bg: getComputedStyle(n).backgroundColor, panel: getComputedStyle(panel).backgroundColor };
+  });
+  const r = ratio(rgba(p.fg), over(rgba(p.bg), rgba(p.panel)));
+  check(rgba(p.panel)[3] === 1 && r >= 4.5, `[${theme}] the background message reads ${r.toFixed(2)}:1`);
+  measured.push(`${theme.padEnd(5)}  background message ${r.toFixed(2)}:1`);
+  await setHidden(page, false); await page.waitForTimeout(600);
+  check((await count()).gum === c0.gum + 1 && (await lbl()) === 'Scan QR', `[${theme}] coming back does not turn the camera back on`);
+
+  // A scan still opening when the app goes to the background.
+  c0 = await count();
+  await page.evaluate(() => { window.__mos.gumDelay = 600; });
+  await page.click('#mos-scan-btn');
+  await page.waitForFunction(n => window.__mos.gumCalls > n, c0.gum, { timeout: 5000 });
+  await setHidden(page, true);
+  await page.waitForFunction(n => window.__mos.streams.length > n, c0.streams, { timeout: 5000 });
+  await page.waitForTimeout(200);
+  check((await states(c0.streams)).join() === 'ended' && (await lbl()) === 'Scan QR',
+        `🛑 [${theme}] a scan still opening when the app goes to the background: the late camera is closed on arrival`);
+  await setHidden(page, false);
+  await page.evaluate(() => { window.__mos.gumDelay = 0; });
+
+  // No scan: going to the background leaves the page alone.
+  await page.evaluate(() => { document.getElementById('mos-status').hidden = true; });
+  await setHidden(page, true); await page.waitForTimeout(150);
+  check((await status()) === '' && (await lbl()) === 'Scan QR', `[${theme}] with no scan, going to the background changes nothing`);
+  await setHidden(page, false);
+
+  // And the next Scan works as normal.
+  c0 = await count();
+  await page.click('#mos-scan-btn'); await whenLive();
+  const ok1 = (await states(c0.streams)).join() === 'live';
+  await page.click('#mos-scan-btn'); await page.waitForTimeout(150);
+  check(ok1 && (await states(c0.streams)).join() === 'ended', `[${theme}] ...and the next Scan works as normal`);
+  check(!errs.length, `[${theme}] no page errors (${errs.slice(0, 2).join(' | ')})`);
+});
+
 await b.close();
 srv.close();
 if (measured.length) console.log('Painted contrast:\n  ' + measured.join('\n  '));
