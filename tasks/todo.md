@@ -1,3 +1,121 @@
+# Sign Studio: design picked, and a "% Off" sign type (2026-09-24)
+
+**Request (Brian):** *"Layout C, Typeface use the Bargain Lane fonts: Poppins for text and
+Luckiest Guy for Numbers, italic, deep green, raised cents. Also add option for no price but %
+off. (20% off for example)"*
+
+## Decisions (Brian, 24 Sep)
+
+| | Picked |
+|---|---|
+| Page layout | **C · Three steps** |
+| Typeface | **Poppins** for words (names, labels, notes, YOU PAY, OFF) and **Luckiest Guy** for numbers (prices, $, ¢, %) |
+| Sale label | **Italic** (Poppins Black Italic). Luckiest Guy has no italic, so numbers stay upright |
+| Green | **Deep #20792B** (the logo keeps its own #3BB54A) |
+| Cents | **Raised**: $2⁵⁰, and 99¢ under a dollar |
+| New | A **% Off** sign: a percentage instead of a price |
+
+Both fonts are the app's own legacy Bargain Lane stack (`index.html:22`, DESIGN.md §2.2: "the
+original Poppins / Luckiest Guy stack is still loaded"), so no new face comes in. **Checked:**
+Luckiest Guy has every glyph a price needs (`0-9 $ % ¢ . , -`); Poppins covers A–Z, 0–9 and
+the symbols.
+
+## What Poppins costs (measured in the renderer, not assumed)
+
+Poppins has no narrow widths, which is how Archivo kept long names tall. I ran 18 sample product
+names through the real layout, in the committed Archivo preview and in this one:
+
+| Sign | Names that fit at ≥ 0.6 in, Archivo → Poppins | Newly blocked |
+|---|---|---|
+| One price, landscape | 18 → 18 | none |
+| One price, portrait | 18 → 16 | PREMIUM LEATHER WORK BOOTS (0.53 in), OUTDOOR PATIO FURNITURE CUSHIONS (0.45 in) |
+| Two prices, landscape | 13 → **7** | MATTRESSES, SECTIONAL, COMFORTERS, PATIO CUSHIONS, LT. BLUE END TABLE, WOMENS DENIM JEANS |
+| Two prices, portrait | 18 → 16 | the same two long names |
+
+Half of a two-price landscape sign holds about 7 capitals a line at 0.6 in, and a word cannot
+wrap, so one 9-letter word fails. The PRD blocks the whole sign when either orientation fails, so
+those signs cannot print in portrait either, although portrait fits. This is built as decided. The
+choices go to Brian: let an orientation that fits print on its own; and, for long names, a third
+portrait line or a 22-character cap.
+
+## % Off: taken as defaults
+
+- A third **sign type**, "% Off", beside Price sign and Us vs Them. One or two groups, like a
+  price sign: e.g. Shoes 20% / Premium shoes 40%.
+- The percent is a whole number from 1 to 99. "20", "20%" and "20 % off" are accepted; 0, 100,
+  12.5 and text are refused with a field message.
+- The hero is **20** in Luckiest Guy with **%** raised and **OFF** stacked under it, the same
+  grammar as raised cents. The hero is still 2× the name's capitals.
+- No unit (EACH has nothing to count). Note and yellow dot stay. The reminder becomes "check the
+  register takes 20% off".
+
+## Plan
+
+- [x] Preview: fonts and design fixed to the picks; section 2 becomes "Decided", keeping the
+      black-and-white view and the Print test. Layout C is the default and marked picked; A and B
+      stay viewable. Name hint and gallery copy lose the "narrower first" claim.
+- [x] Renderer: `fontOf` gets word / label / small / num faces. Prices in Luckiest Guy, with
+      metrics from the ~~digit "0"~~ **tallest digit**: the "0" assumption proved wrong, because
+      Luckiest Guy's digits bounce (0 is 0.71 em, 3 is 0.75). The discount row splits into "70%"
+      (Luckiest) and "OFF" (Poppins). Add the % hero: `parsePct`, the % Off template, form fields
+      in A/B/C, gallery, Try chip.
+- [x] Checks: fonts served locally; the old design toggles leave the suite; % Off behaviour,
+      parser, two groups, geometry, print text; the Poppins long-name behaviour pinned; mutations.
+- [x] PRD v1.3 as tracked changes on the v1.2 clean copy. Then `npm test`, commit, push to
+      #291, PR body.
+
+## Review
+
+**Built:** layout C by default (A and B stay in the bar), the design fixed to the picks, and
+section 2 now reads "Decided" (the black-and-white view stays). Plus the % Off type in all three
+layouts: parser, field messages, readout ("percent"), reminder ("check the register takes 20%
+off"), two gallery cards and two Try chips. The two font questions sit at the top of the page, and
+two gallery cards show them.
+
+**Found and fixed on the way:**
+1. `charsToCut` dropped the sign type, so on Us vs Them it measured a price sign and said "cut
+   about 11" where 15 is needed. It now copies the whole model. A check cuts exactly N and N − 1.
+2. The font check (`document.fonts.check`) passes when the stylesheet never arrives. The committed
+   preview then drew every sign in a fallback font with Print enabled (reproduced by blocking
+   Google Fonts). Now every face must really load, and a check opens the page with the stylesheet
+   blocked.
+3. The "Too long for landscape" example (PREMIUM LEATHER WORK BOOTS) now fails both orientations.
+   It is PREMIUM WORK BOOTS now, which still fails landscape only. "The biggest price" pairs SOFA
+   with LOVESEAT, since SECTIONAL no longer fits half a landscape sign. SECTIONAL has its own card
+   instead.
+4. I wrote code to keep THEIR PRICE and OUR DISCOUNT at one size. Its mutant survived: OUR
+   DISCOUNT fits its column even at the largest row. Removed as dead code; the invariant stays a
+   check.
+
+**Verified:**
+- verify.mjs: **245 pass**, up from 160. New checks cover:
+  - the faces and colours;
+  - % Off: 18 parser cases; % and OFF placed from real ink; fonts; fields and messages;
+    switching types; two groups at one size; print text;
+  - "cut about N" is exact for a price sign (11) and for Us vs Them (15);
+  - fonts really blocked;
+  - the "% off" suffix contrast;
+  - % Off in all six layout × device views;
+  - a price's letter height equals the ink of its tallest digit.
+- Geometry: 2,496 renders, 768 of them % Off, with no printable sign having ink near the border
+  or overlapping.
+- Contrast: 6,552 measurements ≥ 4.5:1. Minimums: dark 5.16, light 4.8, pure black 5.82.
+- Mutations: **7 of 7 caught**, each by its intended check:
+  - cut suggestion;
+  - % on the baseline;
+  - unit drawn on % Off;
+  - old font check;
+  - OFF in Luckiest Guy;
+  - decimal percent accepted;
+  - cap from "0".
+  (One run's print check failed only because parallel runs shared PDF filenames. Each run now
+  writes to its own folder.)
+- PRD v1.3: redline and clean both pass `validate.py` (160 → 170 paragraphs). Both were rendered
+  with LibreOffice and inspected.
+- `npm test`: 5,996 assertions across 83 suites pass.
+
+---
+
 # Sign Studio: "Us vs Them" template (2026-09-24)
 
 **Request (Brian):** *"Add a 'Us vs Them' Sign template, use the attached image as
