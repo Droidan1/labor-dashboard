@@ -1,3 +1,77 @@
+# Price Scan: let Android's barcode detector confirm a read (2026-09-24)
+
+**Request:** *"Fix the Android barcode detector bug next."* This is the follow-up found while
+reviewing merch-price-scan-8.
+
+`psBarcode`'s scan loop runs the native `BarcodeDetector` (Android Chrome), then always runs our
+own row decoder, and ends each frame with `if (!code) lastCode = null`. So when the detector
+reads X and our decoder misses on the same frame, the run resets, and the detector's next read
+of X is a *first* read again. **A code that only the native detector can read (at an angle, in
+shadow, slightly out of focus) is never accepted**, which is the case the detector exists for.
+
+It was meant to join #284 on the same branch, but #284 merged (13:13 UTC) before this was pushed.
+So it was replayed onto the new `main` as its own PR.
+
+## Plan
+
+- [x] **The fix.** One `read` flag per frame, set by either reader. The run breaks only on a frame
+      where **neither** reads a code. `accept` and "twice running" are unchanged.
+  - Same-frame agreement (the detector and our decoder both reading X) already counted as two
+    reads. It is kept as is, and pinned by a test.
+- [x] **Node** (`test-price-scan.mjs`, the scanner block):
+  - native-only reads on two adjacent frames are accepted;
+  - a frame where both readers miss, between two reads, breaks the run;
+  - two different codes on adjacent frames are not accepted;
+  - a single read is never enough;
+  - same-frame agreement is pinned;
+  - the `psBarcode` extraction is bounded on both sides (lessons: brace extractors).
+- [x] **Browser** (`browser-price-scan.mjs`):
+  - a stand-in `BarcodeDetector` that reads what the fake camera's picture cannot be decoded as;
+  - a steady read must be accepted: the camera stops, `#ps-input` holds the code, and a
+    `merch-scan` lookup is sent;
+  - two codes alternating must never be;
+  - **run it first against the build without the fix, and watch it fail.**
+- [x] **Mutations**, each runner isolated. Targets: the old reset, the detector not setting
+      `read`, and our decoder not setting `read`.
+- [x] `sw.js` v237 + the shell-cache fixture; `npm test`; the Price Scan browser check.
+- [x] Open it as its own PR, since #284 had merged, and add the review here.
+
+## Review
+
+**Reproduced before fixing.** The new browser section ran against the build without the fix:
+- **The control passed:** the stand-in detector ran more than 5 times, and nothing was accepted.
+- **Alternating codes were refused**, as they should be.
+- **A steady read that only the detector makes was never accepted:**
+  `{"took":false,"lookups":[],"st":["live"]}`. The camera stayed live and nothing was looked up.
+
+**Fix:** a per-frame `read` flag, set by either reader. Only a frame that **neither** reader reads
+resets the run. "Twice running" is otherwise unchanged:
+- a single read is never enough;
+- two different codes on adjacent frames never count;
+- both readers agreeing on one frame counted twice before and still does, and this is now pinned
+  by a test.
+
+**Verified:**
+- **`npm test`:** 5844 across 81 suites, all pass (5835 before). `test-price-scan.mjs` went from
+  1021 to 1030:
+  - native-only reads are accepted on the second frame;
+  - a frame neither reader reads breaks the run;
+  - alternating codes are refused;
+  - same-frame agreement still counts twice;
+  - **the iPhone path** (no detector) still accepts;
+  - the `psBarcode` slice is bounded on both sides.
+- **`browser-price-scan.mjs`:** 35 / 35 (34 passed and 1 failed without the fix). The stand-in
+  detector is needed because Linux Chromium has none. The control proves the fake camera's
+  picture gives our own decoder nothing, so the accepted read came from the detector alone.
+- **Mutations, Node suite:** 3 / 3 caught, in its own copy of the repo.
+- **Mutations, browser check:** 2 / 3 caught, in its own copy of `dist/`.
+  - **Caught:** the old reset, and a detector read not counting.
+  - **The miss:** our own decoder's read not counting. The fake camera's picture gives our decoder
+    nothing to read (section 3's control asserts it), so that path exists only in Node, where the
+    iPhone test and the positive control catch it.
+- **Not re-run:** `browser-mos` and `browser-bin-dump`. This change is confined to Price Scan's
+  scan loop, and neither check exercises it.
+
 # Price Scan: one camera, and none left running (merch-price-scan-8, 2026-09-24)
 
 **Request:** *"Fix the Price Scan double-tap bug next."* This is the same race oppbuys-mos-2 fixed

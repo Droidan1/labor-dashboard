@@ -142,6 +142,17 @@ own attention around the merge, which is the one moment I do not control.
    the probe fails is worse than no check, and a check pointed at a host nobody uses is
    this morning's Pages mistake wearing a different hat.** Assert the shape of a success
    (`^[1-4][0-9][0-9]$`), never the absence of one known failure string.
+6. **Re-read a PR's state right before any write that depends on it (2026-09-24).**
+   - **What happened:** I read #284 as open at the start of a ten-minute task. I then pushed a
+     new commit to its branch and rewrote its title and description to include that commit.
+   - **The problem:** #284 had merged at 13:13, before my push. The commit was on no PR, and the
+     merged PR's description claimed code it never shipped.
+   - **Why:** state read at the start of a task is stale by its end. The merge click is rule 3's
+     moment I do not control.
+   - **The rule:** fetch `merged`/`state` immediately before pushing to a PR's branch or editing
+     its description.
+   - **If it merged:** replay the work onto the new `main` as a new PR, and put the merged PR's
+     description back to what it merged.
 </rules>
 
 ## Five copies in one store: I wrote the note the lesson says does not work (2026-09-21)
