@@ -260,7 +260,14 @@ html.light .nav-item.active{background:rgba(34,197,94,.10);color:var(--accent);}
 .fld-msg:empty{display:none;}
 .fld-hint{font-size:11.5px;color:var(--inkDim);line-height:1.45;}
 .row2{display:grid;grid-template-columns:1fr 150px;gap:12px;}
+.row2.even{grid-template-columns:1fr 1fr;}
+/* The worked-out discount (Us vs Them): read-only, so it reads as a result, not a field. */
+.calc{font-size:12.5px;line-height:1.5;padding:9px 11px;border-radius:9px;margin:-2px 0 14px;
+  background:var(--panelHi);border:1px dashed var(--border);color:var(--ink);}
+.calc b{color:var(--accent);font-weight:700;}
+.calc-d{color:var(--inkDim);}
 .app.mobile .row2{grid-template-columns:1fr 118px;gap:10px;}
+.app.mobile .row2.even{grid-template-columns:1fr 1fr;}
 .grp{border:1px solid var(--hairline);border-radius:12px;padding:12px 12px 0;margin-bottom:12px;
   background:var(--panel);color:var(--ink);}
 .grp-h{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
@@ -344,6 +351,7 @@ html.light .nav-item.active{background:rgba(34,197,94,.10);color:var(--accent);}
 .b-other{cursor:pointer;background:transparent;border:0;text-align:left;color:var(--ink);}
 .b-other .cap{display:block;margin-top:6px;}
 .b-strip{display:grid;grid-template-columns:2fr 150px 1.6fr 1fr;gap:12px;align-items:start;}
+.b-strip.uvt{grid-template-columns:2fr 130px 130px 1.4fr 1fr;}
 .b-strip .fld{margin-bottom:10px;}
 .app.mobile .b-pin{position:sticky;top:0;z-index:6;background:var(--bg);padding:10px 12px 8px;
   border-bottom:1px solid var(--hairline);}
@@ -437,7 +445,7 @@ html.light .nav-item.active{background:rgba(34,197,94,.10);color:var(--accent);}
   <h1 class="doc-title">Sign Studio</h1>
   <p class="doc-sub">Type a product and a price, pick the sale, print. Every sign comes out of <b>one template</b>, so every sign in every store looks like one family. This page is a review copy: nothing on it is wired to the app, and <code style="font-size:12px">docs/</code> never reaches production. The signs, though, are real: the same drawing the build will print, laid out in print points on US Letter.</p>
   <div class="doc-notes">
-    <div class="doc-note"><b>Decided on 24 Sep.</b> US Letter. Labels: None, Sale, Flash Sale, Manager Special, Blow Out, and custom text up to 12 characters. Product names up to 32 characters, never below 0.6-inch letters. Managers (district managers included), admins, superusers. Print first; saving comes in the second release.</div>
+    <div class="doc-note"><b>Decided on 24 Sep.</b> US Letter. Labels: None, Sale, Flash Sale, Manager Special, Blow Out, and custom text up to 12 characters. Product names up to 32 characters, never below 0.6-inch letters. Managers (district managers included), admins, superusers. Print first; saving comes in the second release. <b>Added:</b> an Us vs Them sign type (their price, our discount, you pay).</div>
     <div class="doc-note ask"><b>Your picks.</b><ol><li>The page layout: A, B or C in the bar below.</li><li>The sign design in section 2: typeface, label style, green, cents.</li><li>Optional: print any sign from here and hang it on a store shelf.</li></ol></div>
   </div>
 
@@ -462,6 +470,7 @@ html.light .nav-item.active{background:rgba(34,197,94,.10);color:var(--accent);}
       <button type="button" data-ex="shoes">Shoes $10 / Premium $15 · dot</button>
       <button type="button" data-ex="towels">Towels $4.99 each</button>
       <button type="button" data-ex="candy">Candy 99¢</button>
+      <button type="button" data-ex="uvt">Us vs Them · end table</button>
       <button type="button" data-ex="custom">Custom label</button>
       <button type="button" data-ex="long">32-character name</button>
       <button type="button" data-ex="boots" class="warn">Too long for landscape</button>
@@ -505,7 +514,7 @@ html.light .nav-item.active{background:rgba(34,197,94,.10);color:var(--accent);}
   <!-- 3 ─ gallery -->
   <section class="sect" id="s-gallery">
     <div class="sect-h"><span class="sect-n">3</span><h2 class="sect-t">One system, every label</h2></div>
-    <p class="sect-d">Every label choice, and the awkward cases, from the same template. Same logo, same corner, same letter size for every preset label; only the words and the price change. The long names show the fit rule working: narrower first, then smaller, <b>never under 0.6 in</b>.</p>
+    <p class="sect-d">Every label choice, and the awkward cases, from the same template. Same logo, same corner, same letter size for every preset label; only the words and the price change. The long names show the fit rule working: narrower first, then smaller, <b>never under 0.6 in</b>. The last two are the <b>Us vs Them</b> sign: the discount is worked out from the two prices and rounded down, and their price prints at most 40% the size of YOU PAY, so a glance lands on what the customer pays.</p>
     <div class="gallery" id="gallery"></div>
   </section>
 
@@ -516,6 +525,7 @@ html.light .nav-item.active{background:rgba(34,197,94,.10);color:var(--accent);}
     <div class="plan">
       <div class="panel"><div class="panel-bar"><span class="lbl">First release · frontend only</span><span class="right"><span class="pill ok"><i></i>Live when merged</span></span></div>
         <div class="panel-body"><ul>
+          <li>Two sign types: <b>Price</b> (one or two prices) and <b>Us vs Them</b> (their price, the worked-out discount, you pay).</li>
           <li><b>Marketing ▸ Sign Studio</b> for managers, admins and superusers. Its own guard in the router, equal to its sidebar gate, so the phone Menu can't show a dead row.</li>
           <li>The renderer as its own module: one layout model feeds the preview, Print and the PDF, so they cannot disagree.</li>
           <li>Real-text PDF: jsPDF with the sign font embedded as static TrueType files, one per width. Logo, fonts and jsPDF self-hosted and precached, so it keeps working if the store Wi-Fi drops.</li>
@@ -552,6 +562,7 @@ const SALE_LABELS = [
   { id: 'blowout', name: 'Blow Out',        lines: ['BLOW', 'OUT'] },
   { id: 'custom',  name: 'Custom',          lines: null },
 ];
+const TEMPLATES = [{ id: 'price', name: 'Price sign' }, { id: 'uvt', name: 'Us vs Them' }];
 const UNITS = [{ id: '', name: 'None' }, { id: 'each', name: 'Each' }, { id: 'pair', name: 'Per pair' }];
 const UNIT_TEXT = { each: 'EACH', pair: 'PER PAIR' };
 const LIMIT = { name: 32, qual: 32, custom: 12 };
@@ -560,7 +571,7 @@ const blankGroup = () => ({ name: '', price: '', unit: '', qual: '', dot: false 
 const S = {
   view: { layout: 'A', device: 'desktop', theme: 'dark', orient: 'landscape', step: 1 },
   design: { type: 'archivo', label: 'italic', green: 'brand', cents: 'raised', bw: false },
-  sign: { sale: 'flash', custom: '', two: false, groups: [
+  sign: { template: 'price', sale: 'flash', custom: '', two: false, them: '', groups: [
     { name: 'All cereal', price: '2', unit: '', qual: '', dot: false }, blankGroup() ] },
   assets: 'loading',   // loading | ready | failed
 };
@@ -576,6 +587,7 @@ const EXAMPLES = {
   boots:    { sale: 'blowout', two: true, g: [{ name: 'Work boots', price: '20', unit: 'pair' },
               { name: 'Premium leather work boots', price: '35', unit: 'pair' }] },
   badprice: { sale: 'sale', two: false, g: [{ name: 'Bath towels', price: '4.995' }] },
+  uvt:      { template: 'uvt', sale: 'none', them: '100', g: [{ name: 'Lt. blue end table', price: '30' }] },
 };
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -761,9 +773,16 @@ const G = { safe: 18, border: 13, pad: 20, gapHead: 28,
             minCap: 0.6 * PT, labelMin: 0.3 * PT, qualCap: 17, qualMin: 0.2 * PT, unitCap: 18,
             priceOverName: 2.0,     // target: price capitals ≥ 2× the name's (name shrinks, not below 0.6 in)
             priceFloorRatio: 1.1 }; // hard rule: below this the price is not "the largest text" → blocked
+/* Us vs Them. THEIR PRICE is drawn no bigger than 40% of YOU PAY's capitals, so a
+   three-second glance lands on what the customer pays, not on the other price. */
+G.uvt = { nameMax: { landscape: 60, portrait: 68 }, nameShare: 0.22,
+          rowCap: { landscape: 30, portrait: 30 }, rowMin: 18, labelR: 0.72, rowGapR: 0.5,
+          axisGap: 14, gapRows: 14, divider: 24, themRatio: 0.40, labelGap: 26,
+          youLabel: { landscape: 0.42, portrait: 0.30 }, youLabelMin: 0.3 * PT,
+          youLabelMax: { landscape: 60, portrait: 44 }, youGapR: 0.38 };
 
 function signModel() {
-  const sg = S.sign, n = sg.two ? 2 : 1;
+  const sg = S.sign, uvt = sg.template === 'uvt', n = !uvt && sg.two ? 2 : 1;
   const groups = sg.groups.slice(0, n).map((g, i) => {
     const name = g.name.trim().replace(/\s+/g, ' ');
     const p = parsePrice(g.price);
@@ -778,7 +797,7 @@ function signModel() {
     const L = SALE_LABELS.find(x => x.id === sg.sale);
     if (L && L.lines.length) label = { custom: false, lines: L.lines };
   }
-  return { groups, label };
+  return { template: uvt ? 'uvt' : 'price', groups, label, them: uvt ? parsePrice(sg.them) : null };
 }
 
 function layoutSign(model, orient) {
@@ -818,27 +837,70 @@ function layoutSign(model, orient) {
 
   // Body.
   const y0 = box.y + headH + G.gapHead, y1 = box.y + box.h;
-  if (model.groups.length === 1) layoutSingle(out, model.groups[0], { x: box.x, y: y0, w: box.w, h: y1 - y0 }, orient, fBig, fSmall);
+  if (model.template === 'uvt') layoutUvT(out, model, { x: box.x, y: y0, w: box.w, h: y1 - y0 }, orient, fBig, fLabel, fSmall);
+  else if (model.groups.length === 1) layoutSingle(out, model.groups[0], { x: box.x, y: y0, w: box.w, h: y1 - y0 }, orient, fBig, fSmall);
   else layoutTwo(out, model.groups, { x: box.x, y: y0, w: box.w, h: y1 - y0 }, orient, fBig, fSmall);
   return out;
 }
 
-/* One group's column: name → price → unit → qualifier. Fits inside `area`.
-   `forced` (optional) = { nameCap, priceCap } so two groups can match.     */
-function planGroup(g, area, orient, fBig, fSmall, { maxName, forced, two }) {
+/* Unit and note, under a price. Shared by every template. */
+function planExtras(g, width, fSmall) {
   const extras = [];
   if (g.unit) extras.push({ kind: 'unit', h: G.unitCap });
   let qfit = null;
   if (g.qual) {
     const dotW = g.dot ? G.qualCap * 1.5 + 8 : 0;
-    const qo = { font: fSmall, boxW: area.w - dotW, boxH: G.qualCap * 2.3, maxCap: G.qualCap,
+    const qo = { font: fSmall, boxW: width - dotW, boxH: G.qualCap * 2.3, maxCap: G.qualCap,
                  minCap: G.qualMin, maxLines: 2, gap: 0.3, weights: WEIGHTS.small };
     qfit = fitText(g.qual, qo); qfit.dotW = dotW;
     extras.push({ kind: 'qual', h: qfit.h });
   }
   const gapE = 12;
-  const extrasH = extras.reduce((a, e) => a + e.h + gapE, 0);
-  const avail = area.h - extrasH;
+  return { extras, qfit, gapE, h: extras.reduce((a, e) => a + e.h + gapE, 0) };
+}
+function drawExtras(out, g, X, cx, y, fSmall) {
+  for (const e of X.extras) {
+    y += X.gapE;
+    if (e.kind === 'unit') {
+      const size = G.unitCap / metricsOf(fSmall).cap;
+      out.items.push({ t: 'text', role: 'unit', group: g.i, text: UNIT_TEXT[g.unit], anchor: 'middle',
+        x: cx, y: y + G.unitCap, size, stretch: 100, font: fSmall, fill: 'ink', spacing: 0.08 });
+    } else {
+      const q = X.qfit, widest = Math.max(...q.lines.map(l => w100(l, fSmall, q.stretch))) * q.size / 100;
+      const groupW = widest + q.dotW, left = cx - groupW / 2;
+      if (g.dot) out.items.push({ t: 'dot', cx: left + G.qualCap * 0.75, cy: y + q.h / 2, r: G.qualCap * 0.75 });
+      q.lines.forEach((ln, k) => out.items.push({ t: 'text', role: 'qual', group: g.i, text: ln, anchor: 'middle',
+        x: left + q.dotW + widest / 2, y: y + q.cap + k * q.cap * 1.3, size: q.size, stretch: q.stretch, font: fSmall, fill: 'ink' }));
+    }
+    y += e.h;
+  }
+  return y;
+}
+/* A price at a fitted size F, drawn from its left edge x on baseline `base`:
+   '$' + dollars, then raised cents or a raised ¢. The gaps match fitPrice's
+   measurement (0.06 em before cents, 0.04 em before ¢).                    */
+function drawPrice(out, parts, F, x, base, font, roles, gi, fill) {
+  const m = metricsOf(font);
+  out.items.push({ t: 'text', role: roles[0], group: gi, text: parts.lead + parts.dollars, anchor: 'start',
+    x, y: base, size: F.size, stretch: F.stretch, font, fill });
+  const x2 = x + F.wMain;
+  if (parts.cents) {
+    const cs = F.size * 0.5;
+    out.items.push({ t: 'text', role: roles[1], group: gi, text: parts.cents, anchor: 'start',
+      x: x2 + F.size * 0.06, y: base - F.cap + cs * m.cap, size: cs, stretch: F.stretch, font, fill });
+  }
+  if (parts.tail) {
+    const ts = F.size * 0.6;
+    out.items.push({ t: 'text', role: roles[1], group: gi, text: parts.tail, anchor: 'start',
+      x: x2 + F.size * 0.04, y: base - F.cap + ts * m.cap, size: ts, stretch: F.stretch, font, fill });
+  }
+}
+
+/* One group's column: name → price → unit → qualifier. Fits inside `area`.
+   `forced` (optional) = { nameCap, priceCap } so two groups can match.     */
+function planGroup(g, area, orient, fBig, fSmall, { maxName, forced, two }) {
+  const X = planExtras(g, area.w, fSmall);
+  const avail = area.h - X.h;
   const nameO = { font: fBig, boxW: area.w, boxH: avail * (two ? G.nameShareTwo : G.nameShare)[orient],
                   maxCap: maxName, minCap: G.minCap, maxLines: 2, gap: G.lineGap, weights: WEIGHTS.name };
   let name = g.name ? (forced && forced.nameCap ? atCap(g.name, forced.nameCap, nameO) : fitText(g.name, nameO)) : null;
@@ -853,13 +915,12 @@ function planGroup(g, area, orient, fBig, fSmall, { maxName, forced, two }) {
       price = fitPrice(parts, priceBox());
     }
   }
-  return { g, name, price, parts, qfit, extras, gapE, nameO };
+  return { g, name, price, parts, qfit: X.qfit, extras: X.extras, gapE: X.gapE, X, nameO };
 }
 function placeGroup(out, P, area, fBig, fSmall, alignTop) {
   const cx = area.x + area.w / 2;
   const nameGap = P.name ? P.name.cap * 0.45 : 0;
-  const stackH = (P.name ? P.name.h + nameGap : 0) + (P.price ? P.price.up + P.price.down : 0) +
-                 P.extras.reduce((a, e) => a + e.h + P.gapE, 0);
+  const stackH = (P.name ? P.name.h + nameGap : 0) + (P.price ? P.price.up + P.price.down : 0) + P.X.h;
   let y = alignTop != null ? alignTop : area.y + Math.max(0, (area.h - stackH) * 0.46);
   if (P.name) {
     P.name.lines.forEach((ln, k) => out.items.push({ t: 'text', role: 'name', group: P.g.i, text: ln, anchor: 'middle',
@@ -868,38 +929,10 @@ function placeGroup(out, P, area, fBig, fSmall, alignTop) {
   }
   if (P.price) {
     const base = y + P.price.up;
-    let x = cx - P.price.w / 2;
-    out.items.push({ t: 'text', role: 'price', group: P.g.i, text: P.parts.lead + P.parts.dollars, anchor: 'start',
-      x, y: base, size: P.price.size, stretch: P.price.stretch, font: fBig, fill: 'ink' });
-    x += P.price.wMain;
-    const m = metricsOf(fBig);
-    if (P.parts.cents) {
-      const cs = P.price.size * 0.5;
-      out.items.push({ t: 'text', role: 'cents', group: P.g.i, text: P.parts.cents, anchor: 'start',
-        x: x + 6, y: base - P.price.cap + cs * m.cap, size: cs, stretch: P.price.stretch, font: fBig, fill: 'ink' });
-    }
-    if (P.parts.tail) {
-      const ts = P.price.size * 0.6;
-      out.items.push({ t: 'text', role: 'cents', group: P.g.i, text: P.parts.tail, anchor: 'start',
-        x: x + 4, y: base - P.price.cap + ts * m.cap, size: ts, stretch: P.price.stretch, font: fBig, fill: 'ink' });
-    }
+    drawPrice(out, P.parts, P.price, cx - P.price.w / 2, base, fBig, ['price', 'cents'], P.g.i, 'ink');
     y = base + P.price.down;
   }
-  for (const e of P.extras) {
-    y += P.gapE;
-    if (e.kind === 'unit') {
-      const size = G.unitCap / metricsOf(fSmall).cap;
-      out.items.push({ t: 'text', role: 'unit', group: P.g.i, text: UNIT_TEXT[P.g.unit], anchor: 'middle',
-        x: cx, y: y + G.unitCap, size, stretch: 100, font: fSmall, fill: 'ink', spacing: 0.08 });
-    } else {
-      const q = P.qfit, widest = Math.max(...q.lines.map(l => w100(l, fSmall, q.stretch))) * q.size / 100;
-      const groupW = widest + q.dotW, left = cx - groupW / 2;
-      if (P.g.dot) out.items.push({ t: 'dot', cx: left + G.qualCap * 0.75, cy: y + q.h / 2, r: G.qualCap * 0.75 });
-      q.lines.forEach((ln, k) => out.items.push({ t: 'text', role: 'qual', group: P.g.i, text: ln, anchor: 'middle',
-        x: left + q.dotW + widest / 2, y: y + q.cap + k * q.cap * 1.3, size: q.size, stretch: q.stretch, font: fSmall, fill: 'ink' }));
-    }
-    y += e.h;
-  }
+  drawExtras(out, P.g, P.X, cx, y, fSmall);
 }
 /* nameOk comes from the group's OWN fit (freeP): in a two-price sign the shorter
    name is only small because it matches the longer one, and shortening it
@@ -943,11 +976,124 @@ function layoutTwo(out, groups, area, orient, fBig, fSmall) {
   plans.forEach((P, k) => reportGroup(out, P, free[k]));
 }
 
+/* ── Us vs Them ─────────────────────────────────────────────────────────
+   Name; THEIR PRICE and OUR DISCOUNT as two small rows about a centre line;
+   a green rule; then YOU PAY with the price as the hero. The discount is
+   WORKED OUT, never typed, and rounded DOWN, so it can neither disagree
+   with the prices nor overstate the saving. Their price is another seller's,
+   not our old one, so it is never struck through.                          */
+function discountPct(themC, ourC) {
+  return themC > 0 && ourC > 0 && ourC < themC ? Math.floor((themC - ourC) * 100 / themC) : null;
+}
+function layoutUvT(out, model, area, orient, fBig, fLabel, fSmall) {
+  const U = G.uvt, land = orient === 'landscape', cx = area.x + area.w / 2;
+  const g = model.groups[0], X = planExtras(g, area.w, fSmall), avail = area.h - X.h;
+  const ml = metricsOf(fLabel);
+  // 1. Name.
+  const nameO = { font: fBig, boxW: area.w, boxH: avail * U.nameShare, maxCap: U.nameMax[orient],
+                  minCap: G.minCap, maxLines: 2, gap: G.lineGap, weights: WEIGHTS.name };
+  let name = g.name ? fitText(g.name, nameO) : null;
+  // 2. The comparison rows, at one shared cap (labels at 72% of it).
+  const themParts = model.them && model.them.cents ? priceParts(model.them.cents, S.design.cents) : null;
+  const pct = model.them && model.them.cents && g.price.cents ? discountPct(model.them.cents, g.price.cents) : null;
+  const colW = area.w / 2 - U.axisGap;
+  const one = (t, font, cap) => atCap(null, cap, { font, boxW: colW, boxH: 1000, maxLines: 1, gap: 0, lines: [t], minCap: 0 });
+  const rowsAt = cap => {
+    const rows = [];
+    if (themParts) rows.push({ kind: 'them', label: one('THEIR PRICE', fSmall, cap * U.labelR),
+                               value: priceAtCap(themParts, cap, { font: fBig, boxW: colW, boxH: 1000 }) });
+    if (pct != null && pct >= 1) rows.push({ kind: 'disc', label: one('OUR DISCOUNT', fSmall, cap * U.labelR),
+                                             value: one(pct + '% OFF', fBig, cap) });
+    return { rows, cap, h: rows.length ? rows.length * cap + (rows.length - 1) * cap * U.rowGapR : 0 };
+  };
+  let R = rowsAt(U.rowCap[orient]);
+  const fitted = R.rows.length ? Math.min(...R.rows.map(r => r.value.cap)) : R.cap;
+  if (fitted < R.cap - 0.01) R = rowsAt(fitted);
+  // 3. YOU PAY and the price.
+  const parts = g.price.cents ? priceParts(g.price.cents, S.design.cents) : null;
+  const nameBlock = () => name ? name.h + name.cap * 0.5 : 0;
+  const rowsBlock = () => R.rows.length ? R.h + U.gapRows : 0;
+  const hero = () => {
+    const H = avail - nameBlock() - rowsBlock() - U.divider;
+    if (land) {            // YOU / PAY beside the price, like the store's sign
+      let P = parts ? fitPrice(parts, { font: fBig, boxW: area.w * 0.66, boxH: H, maxCap: 400 }) : null, Lc = 0, lw = 0;
+      for (let k = 0; k < 3; k++) {
+        Lc = Math.min(Math.max((P ? P.cap : 80) * U.youLabel.landscape, U.youLabelMin), U.youLabelMax.landscape, H / (2 + G.lineGap));
+        lw = Math.max(w100('YOU', fLabel, 100), w100('PAY', fLabel, 100)) * (Lc / ml.cap) / 100;
+        if (!parts) break;
+        P = fitPrice(parts, { font: fBig, boxW: area.w - lw - U.labelGap, boxH: H, maxCap: 400 });
+      }
+      return { P, Lc, lw, h: Math.max(P ? P.up + P.down : 0, Lc * (2 + G.lineGap)) };
+    }
+    let Lc = U.youLabelMax.portrait, P = null;   // portrait: YOU PAY over the price
+    for (let k = 0; k < 2; k++) {
+      P = parts ? fitPrice(parts, { font: fBig, boxW: area.w, boxH: H - Lc * (1 + U.youGapR), maxCap: 400 }) : null;
+      Lc = Math.min(Math.max((P ? P.cap : 80) * U.youLabel.portrait, U.youLabelMin), U.youLabelMax.portrait);
+    }
+    const lwp = w100('YOU PAY', fLabel, 100) * (Lc / ml.cap) / 100;
+    if (lwp > area.w) Lc *= area.w / lwp;
+    return { P, Lc, h: Lc * (1 + U.youGapR) + (P ? P.up + P.down : 0) };
+  };
+  let HR = hero();
+  // The price is the hero: 2× the name (never below 0.6 in), and their price ≤ 40% of it.
+  for (let k = 0; k < 4 && HR.P; k++) {
+    let changed = false;
+    if (name && HR.P.cap < name.cap * G.priceOverName && name.cap > G.minCap + 0.5) {
+      name = atCap(g.name, Math.max(HR.P.cap / G.priceOverName, G.minCap), nameO); changed = true;
+    }
+    if (R.rows.length && R.cap > HR.P.cap * U.themRatio + 0.01 && R.cap > U.rowMin + 0.01) {
+      R = rowsAt(Math.max(HR.P.cap * U.themRatio, U.rowMin)); changed = true;
+    }
+    if (!changed) break;
+    HR = hero();
+  }
+  // 4. Place, top to bottom, the stack centred a little high.
+  const total = nameBlock() + rowsBlock() + U.divider + HR.h + X.h;
+  let y = area.y + Math.max(0, (area.h - total) * 0.46);
+  if (name) {
+    name.lines.forEach((ln, k) => out.items.push({ t: 'text', role: 'name', group: 0, text: ln, anchor: 'middle',
+      x: cx, y: y + name.cap + k * name.cap * (1 + G.lineGap), size: name.size, stretch: name.stretch, font: fBig, fill: 'ink' }));
+    y += nameBlock();
+  }
+  R.rows.forEach((r, k) => {
+    const base = y + R.cap + k * R.cap * (1 + U.rowGapR), them = r.kind === 'them';
+    out.items.push({ t: 'text', role: them ? 'them-label' : 'disc-label', text: r.label.lines[0], anchor: 'end',
+      x: cx - U.axisGap, y: base, size: r.label.size, stretch: r.label.stretch, font: fSmall, fill: them ? 'dim' : 'ink' });
+    if (them) drawPrice(out, themParts, r.value, cx + U.axisGap, base, fBig, ['them', 'them-cents'], 0, 'dim');
+    else out.items.push({ t: 'text', role: 'disc', text: r.value.lines[0], anchor: 'start',
+      x: cx + U.axisGap, y: base, size: r.value.size, stretch: r.value.stretch, font: fBig, fill: 'ink' });
+  });
+  y += rowsBlock();
+  out.items.push({ t: 'rule', green: true, sw: 3, x1: area.x + area.w * 0.12, y1: y + U.divider / 2 - 4, x2: area.x + area.w * 0.88, y2: y + U.divider / 2 - 4 });
+  y += U.divider;
+  const P = HR.P;
+  if (land) {
+    const blockW = HR.lw + U.labelGap + (P ? P.w : 0), x0 = cx - blockW / 2;
+    const base = y + Math.max(0, (HR.h - (P ? P.up + P.down : 0)) / 2) + (P ? P.up : 0);
+    const mid = P ? base - P.cap / 2 : y + HR.h / 2, top = mid - HR.Lc * (2 + G.lineGap) / 2;
+    ['YOU', 'PAY'].forEach((t, k) => out.items.push({ t: 'text', role: 'youpay', text: t, anchor: 'start',
+      x: x0, y: top + HR.Lc + k * HR.Lc * (1 + G.lineGap), size: HR.Lc / ml.cap, stretch: 100, font: fLabel, fill: 'green' }));
+    if (P) drawPrice(out, parts, P, x0 + HR.lw + U.labelGap, base, fBig, ['price', 'cents'], 0, 'ink');
+    y += HR.h;
+  } else {
+    out.items.push({ t: 'text', role: 'youpay', text: 'YOU PAY', anchor: 'middle', x: cx, y: y + HR.Lc,
+      size: HR.Lc / ml.cap, stretch: 100, font: fLabel, fill: 'green' });
+    y += HR.Lc * (1 + U.youGapR);
+    if (P) { const base = y + P.up; drawPrice(out, parts, P, cx - P.w / 2, base, fBig, ['price', 'cents'], 0, 'ink'); y = base + P.down; }
+  }
+  drawExtras(out, g, X, cx, y, fSmall);
+  out.report.groups[0] = { nameCap: name ? name.cap : null, nameOk: name ? name.ok : true, name: g.name,
+    priceCap: P ? P.cap : null, qualOk: X.qfit ? X.qfit.ok : true,
+    priceOk: !(name && P) || P.cap >= name.cap * G.priceFloorRatio };
+  out.report.uvt = { pct, rowCap: R.rows.length ? R.cap : null,
+    themOk: !R.rows.length || !P || R.cap <= P.cap * U.themRatio + 0.01 };
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
    6. RENDER — SVG, built node by node. User text only ever reaches the
    page through textContent: no markup, no attributes, nothing to inject.
    ═══════════════════════════════════════════════════════════════════════ */
-const COLORS = { ink: '#111111', brand: '#3BB54A', deep: '#20792B' };
+const COLORS = { ink: '#111111', dim: '#4a4a4a', brand: '#3BB54A', deep: '#20792B' };   // dim: THEIR PRICE row, 9.1:1 on white
 function el(tag, attrs, text) {
   const n = document.createElementNS(SVGNS, tag);
   for (const k in attrs) n.setAttribute(k, attrs[k]);
@@ -964,12 +1110,12 @@ function renderSign(model, orient, opts = {}) {
   for (const it of L.items) {
     if (it.t === 'border') svg.appendChild(el('rect', { x: it.x, y: it.y, width: it.w, height: it.h, fill: 'none', stroke: green, 'stroke-width': it.sw }));
     else if (it.t === 'logo') svg.appendChild(el('image', { href: LOGO_SRC, x: it.x, y: it.y, width: it.w, height: it.h, preserveAspectRatio: 'xMinYMin meet' }));
-    else if (it.t === 'rule') svg.appendChild(el('line', { x1: it.x1, y1: it.y1, x2: it.x2, y2: it.y2, stroke: '#c9c9c9', 'stroke-width': 2, 'stroke-linecap': 'round' }));
+    else if (it.t === 'rule') svg.appendChild(el('line', { x1: it.x1, y1: it.y1, x2: it.x2, y2: it.y2, stroke: it.green ? green : '#c9c9c9', 'stroke-width': it.sw || 2, 'stroke-linecap': 'round' }));
     else if (it.t === 'dot') svg.appendChild(el('circle', { cx: it.cx, cy: it.cy, r: it.r, fill: '#FFD200', stroke: '#111111', 'stroke-width': 2.2 }));
     else if (it.t === 'text') {
       const n = el('text', { x: it.x, y: it.y, 'font-family': it.font.fam, 'font-weight': it.font.weight,
         'font-style': it.font.style, 'font-size': it.size.toFixed(2), 'text-anchor': it.anchor,
-        fill: it.fill === 'green' ? green : COLORS.ink, 'data-role': it.role }, it.text);
+        fill: it.fill === 'green' ? green : (COLORS[it.fill] || COLORS.ink), 'data-role': it.role }, it.text);
       n.style.fontStretch = it.stretch + '%';
       if (it.spacing) n.setAttribute('letter-spacing', (it.size * it.spacing).toFixed(2));
       svg.appendChild(n);
@@ -979,6 +1125,10 @@ function renderSign(model, orient, opts = {}) {
   return svg;
 }
 function describe(model) {
+  if (model.template === 'uvt') {
+    const g0 = model.groups[0];
+    return `Us vs Them sign: ${g0.rawName || 'no name'}, their price ${model.them.cents ? priceText(model.them.cents) : 'missing'}, you pay ${g0.price.cents ? priceText(g0.price.cents) : 'missing'}`;
+  }
   const g = model.groups.map(x => `${x.rawName || 'no name'} ${x.price.cents ? priceText(x.price.cents) : 'no price'}`).join(' and ');
   const lab = model.label ? (model.label.custom ? model.label.text : model.label.lines.join(' ')) : 'no label';
   return `Sign: ${g}, ${lab}`;
@@ -998,6 +1148,14 @@ function validate(model) {
     if (g.dot && !g.qual) add(`qual-${g.i}`, 'Say what the dot means, for example: Yellow dot on bottom.');
   });
   if (S.sign.sale === 'custom' && !model.label.text) add('custom', 'Type the label, or pick another one.');
+  if (model.template === 'uvt') {
+    const t = model.them, g0 = model.groups[0];
+    if (t.err) add('them', t.err === 'Enter a price.' ? 'Enter their price: what it sells for elsewhere.' : t.err);
+    else if (g0.price.cents) {
+      if (g0.price.cents >= t.cents) add('price-0', 'Has to be lower than their price, or there is no saving to show.');
+      else if (discountPct(t.cents, g0.price.cents) < 1) add('price-0', 'The saving is under 1%. Use a price sign instead.');
+    }
+  }
   if (S.assets !== 'ready') return errs;
   // Fit, per orientation.
   const fails = {};
@@ -1010,6 +1168,7 @@ function validate(model) {
       if (!r.qualOk) (fails[`qual-${i}`] ||= []).push({ o });
     });
     if (L.report.label && !L.report.label.ok) (fails.custom ||= []).push({ o });
+    if (L.report.uvt && !L.report.uvt.themOk) (fails.them ||= []).push({ o });
   }
   for (const [k, list] of Object.entries(fails)) {
     const where = list.length === 2 ? 'both signs' : `the ${list[0].o} sign`;
@@ -1019,6 +1178,7 @@ function validate(model) {
       add(k, `Too long for ${where}: letters would be ${inches(worst)} tall, and the minimum is 0.6 in.` + (cut ? ` Cut about ${cut} character${cut > 1 ? 's' : ''}.` : ''));
     } else if (k === 'custom') add(k, `Too long for the corner of ${where}. Shorten the label.`);
     else if (k.startsWith('price')) add(k, `Too wide to stay the biggest text on ${where}. Use the other orientation, or one price per sign.`);
+    else if (k === 'them') add(k, `Their price would crowd what they pay on ${where}. Shorten the product name.`);
     else add(k, `The note doesn't fit ${where} legibly. Shorten it.`);
   }
   return errs;
@@ -1045,7 +1205,7 @@ function h(tag, attrs, ...kids) {
     else if (attrs[k] === true) n.setAttribute(k, '');
     else if (attrs[k] !== false && attrs[k] != null) n.setAttribute(k, attrs[k]);
   }
-  for (const c of kids.flat()) if (c != null && c !== false) n.append(c.nodeType ? c : String(c));
+  for (const c of kids.flat(Infinity)) if (c != null && c !== false) n.append(c.nodeType ? c : String(c));   // any nesting depth
   return n;
 }
 const ICON = {
@@ -1074,9 +1234,26 @@ function priceField(gi) {
     placeholder: '2.50', 'aria-describedby': `m-price-${gi}`, oninput: e => { S.sign.groups[gi].price = e.target.value; refresh(); } });
   inp.value = S.sign.groups[gi].price;
   return h('div', { class: 'fld' },
-    h('div', { class: 'fld-top' }, h('label', { class: 'fld-l', for: inp.id }, 'Price', h('span', { class: 'req' }, ' · required'))),
+    h('div', { class: 'fld-top' }, h('label', { class: 'fld-l', for: inp.id }, S.sign.template === 'uvt' ? 'You pay' : 'Price', h('span', { class: 'req' }, ' · required'))),
     h('div', { class: 'money' }, inp),
     h('div', { class: 'fld-msg', id: `m-price-${gi}`, 'data-msg': `price-${gi}`, 'aria-live': 'polite' }));
+}
+/* Us vs Them: the other seller's price, and the discount worked out from it. */
+function themField(compact) {
+  const inp = h('input', { type: 'text', class: 'inp', id: 'f-them', inputmode: 'decimal', autocomplete: 'off',
+    placeholder: '100', 'aria-describedby': 'm-them', oninput: e => { S.sign.them = e.target.value; refresh(); } });
+  inp.value = S.sign.them;
+  return h('div', { class: 'fld' },
+    h('div', { class: 'fld-top' }, h('label', { class: 'fld-l', for: inp.id }, 'Their price', h('span', { class: 'req' }, ' · required'))),
+    h('div', { class: 'money' }, inp),
+    h('div', { class: 'fld-msg', id: 'm-them', 'data-msg': 'them', 'aria-live': 'polite' }),
+    compact ? null : h('div', { class: 'fld-hint' }, "What it sells for elsewhere. Price Scan's retail price is a good source."));
+}
+function discountLine() { return h('div', { class: 'calc', 'data-discount': '', 'aria-live': 'polite' }); }
+function templateField() {
+  return chipGroup('Sign type', TEMPLATES, S.sign.template, v => {
+    if (v === S.sign.template) return;
+    S.sign.template = v; if (v === 'uvt') S.sign.two = false; renderPage(); }, 'template');
 }
 function chipGroup(label, items, current, onPick, key) {
   return h('div', { class: 'fld', role: 'group', 'aria-label': label },
@@ -1151,8 +1328,11 @@ function groupBlock(gi, compact) {
 /* Order follows the request: what it is, what it costs, what kind of sale.
    Unit, note and dot are details; the second price is the rare case.      */
 function formFields(compact) {
-  if (S.sign.two) return [groupBlock(0, compact), groupBlock(1, compact), secondToggle(), saleField(false)];
-  return [nameField(0, compact), priceField(0), saleField(false), unitField(0), extrasField(0), secondToggle()];
+  if (S.sign.template === 'uvt')
+    return [templateField(), nameField(0, compact), h('div', { class: 'row2 even' }, themField(compact), priceField(0)),
+            discountLine(), saleField(false), unitField(0), extrasField(0)];
+  if (S.sign.two) return [templateField(), groupBlock(0, compact), groupBlock(1, compact), secondToggle(), saleField(false)];
+  return [templateField(), nameField(0, compact), priceField(0), saleField(false), unitField(0), extrasField(0), secondToggle()];
 }
 
 function sheet(orient, key) { return h('div', { class: 'sheet ' + (orient === 'landscape' ? 'land' : 'port'), 'data-preview': key || orient }); }
@@ -1206,10 +1386,14 @@ function layoutB(mobile) {
       sheet(other, 'other'), h('span', { class: 'cap' }, h('b', null, other === 'landscape' ? 'Landscape' : 'Portrait'), ' · tap to swap')));
   const g0 = S.sign.groups[0];
   const strip = h('section', { class: 'panel' },
-    h('div', { class: 'panel-bar' }, h('span', { class: 'lbl' }, 'Sign details'),
+    h('div', { class: 'panel-bar' }, h('span', { class: 'lbl' }, 'Sign details'), templateSeg(),
       h('span', { class: 'right' }, h('span', { class: 'pill wait', 'data-status': '' }))),
     h('div', { class: 'panel-body' },
-      S.sign.two ? h('div', null, groupBlock(0, true), groupBlock(1, true), secondToggle(), saleField(true))
+      S.sign.template === 'uvt'
+        ? h('div', null,
+            h('div', { class: 'b-strip uvt' }, nameField(0, true), themField(true), priceField(0), saleField(true), unitSelect(0)),
+            discountLine(), extrasField(0))
+      : S.sign.two ? h('div', null, groupBlock(0, true), groupBlock(1, true), secondToggle(), saleField(true))
         : h('div', null,
             h('div', { class: 'b-strip' }, nameField(0, true), priceField(0), saleField(true), unitSelect(0)),
             extrasField(0), secondToggle())),
@@ -1219,6 +1403,11 @@ function layoutB(mobile) {
   return [appbar('The sign is the page. Fields underneath.', [mobile ? null : orientSeg(), ...printBtns(cur, 'sm')]),
           mobile ? pinned : null,
           h('div', { class: 'page-body' }, mobile ? null : pinned, strip)];
+}
+function templateSeg() {
+  return h('div', { class: 'seg', role: 'group', 'aria-label': 'Sign type' },
+    TEMPLATES.map(t => h('button', { type: 'button', 'data-template': t.id, 'aria-pressed': String(S.sign.template === t.id),
+      onclick: () => { if (S.sign.template === t.id) return; S.sign.template = t.id; if (t.id === 'uvt') S.sign.two = false; renderPage(); } }, t.name)));
 }
 function unitSelect(gi) {
   const sel = h('select', { class: 'inp sel', id: `f-unit-${gi}`, onchange: e => { S.sign.groups[gi].unit = e.target.value; refresh(); } },
@@ -1235,7 +1424,10 @@ function layoutC(mobile) {
         onclick: () => { S.view.step = n; renderPage(); } }, h('span', { class: 'n' }, n < st ? '✓' : String(n)), t)));
   let card;
   if (st === 1) card = h('section', { class: 'panel c-card' }, h('div', { class: 'panel-bar' }, h('span', { class: 'lbl' }, "1 · What's on sale")),
-    h('div', { class: 'panel-body' }, S.sign.two ? [groupBlock(0), groupBlock(1)] : groupBlock(0), secondToggle(),
+    h('div', { class: 'panel-body' }, templateField(),
+      S.sign.template === 'uvt'
+        ? [nameField(0), h('div', { class: 'row2 even' }, themField(), priceField(0)), discountLine(), unitField(0), extrasField(0)]
+        : [S.sign.two ? [groupBlock(0), groupBlock(1)] : groupBlock(0), secondToggle()],
       h('div', { class: 'c-nav' }, h('span'), h('button', { type: 'button', class: 'btn btn-primary', 'data-next': '', onclick: () => { S.view.step = 2; renderPage(); } }, 'Next: pick the sale →'))));
   else if (st === 2) card = h('section', { class: 'panel c-card' }, h('div', { class: 'panel-bar' }, h('span', { class: 'lbl' }, '2 · Which sale')),
     h('div', { class: 'panel-body' }, labelTiles(), S.sign.sale === 'custom' ? customField() : null,
@@ -1271,7 +1463,7 @@ function appbar(sub, acts) {
     h('div', { class: 'acts' }, acts));
 }
 function clearBtn() { return h('button', { type: 'button', class: 'btn btn-ghost btn-sm', onclick: () => { clearSign(); renderPage(); } }, 'Clear'); }
-function clearSign() { S.sign = { sale: 'none', custom: '', two: false, groups: [blankGroup(), blankGroup()] }; openDisclose.clear(); }
+function clearSign() { S.sign = { template: S.sign.template, sale: 'none', custom: '', two: false, them: '', groups: [blankGroup(), blankGroup()] }; openDisclose.clear(); }
 
 /* ── Shell ─────────────────────────────────────────────────────────────── */
 const NAVI = {
@@ -1338,7 +1530,7 @@ function renderPage() {
 function syncChips() {
   document.querySelectorAll('[data-chips]').forEach(g => {
     const key = g.getAttribute('data-chips');
-    const cur = key === 'sale' ? S.sign.sale : S.sign.groups[+key.split('-')[1]].unit;
+    const cur = key === 'sale' ? S.sign.sale : key === 'template' ? S.sign.template : S.sign.groups[+key.split('-')[1]].unit;
     g.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', String(c.getAttribute('data-v') === cur)));
   });
 }
@@ -1411,6 +1603,15 @@ function refresh() {
       h('div', null, h('b', null, `Fix ${nErr === 1 ? 'this' : 'these'} to print:`),
         h('ul', { class: 'errlist' }, Object.values(errs).map(m => h('li', null, m))))));
   });
+  document.querySelectorAll('[data-discount]').forEach(n => {
+    const t = model.them, g0 = model.groups[0];
+    const pct = t && t.cents && g0.price.cents ? discountPct(t.cents, g0.price.cents) : null;
+    n.replaceChildren();
+    if (pct != null && pct >= 1)
+      n.append('Our discount: ', h('b', null, `${pct}% off`), `, saving ${priceText(t.cents - g0.price.cents)}. `,
+        h('span', { class: 'calc-d' }, 'Worked out from the two prices and rounded down, so the sign can never disagree with itself.'));
+    else n.append(h('span', { class: 'calc-d' }, 'Our discount is worked out from the two prices once both are in.'));
+  });
   const prices = model.groups.filter(g => g.price.cents).map(g => priceText(g.price.cents));
   document.querySelectorAll('[data-reminder-text]').forEach(n => {
     n.replaceChildren('Before you hang it, check the register rings up ',
@@ -1467,6 +1668,9 @@ const GALLERY = [
   ['No label · under a dollar', 'The corner stays empty.', { sale: 'none', two: false, g: [{ name: 'All candy', price: '0.99' }] }],
   ['32 characters (the limit)', 'Narrower lettering first, so it stays above 0.6 in.', EXAMPLES.long],
   ['The biggest price', '$9,999.99 in two groups: the worst case for width.', { sale: 'sale', two: true, g: [{ name: 'Sofa', price: '9999.99' }, { name: 'Sectional', price: '9999.99' }] }],
+  ['Us vs Them', 'The store’s hand-lettered sign, rebuilt. 70% is worked out from $100 and $30, never typed.', EXAMPLES.uvt],
+  ['Us vs Them · cents · label', 'Their $59.99, you pay $19.99: 66.7% rounds DOWN to 66%, so the saving is never overstated.',
+    { template: 'uvt', sale: 'flash', them: '59.99', g: [{ name: 'Stand mixer', price: '19.99', unit: 'each' }] }],
 ];
 function withSign(tmp, fn) {
   const saved = S.sign;
@@ -1475,7 +1679,8 @@ function withSign(tmp, fn) {
 }
 function loadEx(ex) {
   const groups = [0, 1].map(k => Object.assign(blankGroup(), (ex.g || [])[k] || {}));
-  return { sale: ex.sale || 'none', custom: ex.custom || '', two: !!ex.two, groups };
+  const template = ex.template === 'uvt' ? 'uvt' : 'price';
+  return { template, sale: ex.sale || 'none', custom: ex.custom || '', two: template === 'price' && !!ex.two, them: ex.them || '', groups };
 }
 function renderGallery() {
   const g = document.getElementById('gallery');

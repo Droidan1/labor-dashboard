@@ -1,3 +1,85 @@
+# Sign Studio: "Us vs Them" template (2026-09-24)
+
+**Request (Brian):** *"Add a 'Us vs Them' Sign template, use the attached image as
+inspiration."* The image is a store's hand-lettered comparison sign: "Lt. Blue end table",
+**Their Price** $100.00, **Our Discount** 50% off, **YOU PAY** in big red letters, a dollar-sign
+mascot, and a marker-corrected price: $50.00 crossed out to $30.00. Fine print holds an item code
+(`S02251-50`) and two dates (7/26 struck through, 8/15).
+
+**What the photo shows us to design out:** after the correction the sign says *50% off* above
+*$30*. That is a 70% saving, so the sign disagrees with itself. So the template **works the
+discount out** from the two prices; a manager never types it.
+
+## Decisions taken as defaults (each named in the report, none blocking)
+
+| | Default | Why |
+|---|---|---|
+| Discount | Calculated `floor((their − ours) × 100 / their)`, printed as `NN% OFF` | Rounding down can never overstate the saving |
+| Guard | YOU PAY must be lower than THEIR PRICE; a saving under 1% is refused | A comparison sign with no saving is a mistake |
+| Hierarchy | YOU PAY price is the largest text; THEIR PRICE at most 40% of its letter height, in dark grey | A 3-second glance must land on $30, not $100 |
+| Their price | Not struck through | It is another seller's price, not our former one. A strike would claim a markdown |
+| Style | The template's own style: logo, corner label, green border, YOU PAY in the sign green (not the marker red) | "All signs follow a common design style" |
+| Mascot | Left out | Not in the repo and probably clip art. The logo holds the brand spot |
+| Scope | One product per sign: no second price group | The comparison is per item |
+
+**Asked in the report, not built:** a fine-print line for the item code and date, like the
+photo's corner.
+
+## Plan
+
+- [x] Preview: a Sign type choice (Price sign / Us vs Them) in all three layouts. Their price
+      field. A calculated discount line in the form. `layoutUvT` in the one renderer: landscape
+      puts YOU / PAY beside the price, portrait stacks it. The gallery gets two cards and the
+      Try chips get one.
+- [x] Extend the browser checks: the discount maths, rounding down and both guards; their price
+      stays smaller than YOU PAY. Us vs Them joins the geometry stress, contrast and print runs.
+      Mutations must be caught.
+- [x] PRD v1.2 as tracked changes on the v1.1 clean copy: first-release scope, a "Us vs Them
+      layout" section, the Their price input, the discount rule, an acceptance row, the
+      decision. Validate and render.
+- [x] `npm test`, commit, push to #291, update the PR body.
+
+## Review
+
+**Refactor first, proved neutral.** Price drawing and the unit/note block moved into
+`drawPrice` / `planExtras` / `drawExtras`, shared by both sign types. The existing 107 checks
+passed before any new code. The move also made the cents gap consistent: it was measured as
+0.06 em but drawn as a fixed 6 pt.
+
+**Verified: 160 checks, all green** (107 before):
+- 25 Us vs Them behaviour checks. $100 → $30 prints 70% OFF, and $50 prints 50%. **66.68% and
+  66.67% both print 66%.** You pay equal to or above their price is blocked with a message on
+  the field. A 0.5% saving is blocked and drops the discount row. Their price empty or malformed
+  is blocked. Switching sign type keeps every value, and a two-price sign switched over drops to
+  one product.
+- Their price stays at or under 40% of YOU PAY's size: in both orientations, and across **2,304**
+  Us vs Them renders in the geometry stress, now 6,912 renders in all. No printable sign has ink
+  within 6 pt of the border, overlapping ink, a name under 0.6 in, or a price under 1.1× its name.
+- All six layout × device views: the Their price field, the discount line and a drawn sign; no
+  sideways overflow; no element stringified into the page.
+- Print: one page each orientation, with THEIR PRICE, $100, 70% OFF, YOU, PAY and $30 all real text.
+- Contrast: 4,572 measurements, now including the Us vs Them form in every theme. Minimums
+  unchanged: dark 5.16, light 4.80, pure black 5.82.
+- **Four mutations, each caught:** `Math.round` for the discount (4 fails, 67% shown), no "lower
+  than their price" guard (2), THEIR PRICE allowed past 40% (2), and the flatten bug below (4).
+- `npm test`: 5996 assertions, unchanged.
+
+**A bug the checks caught in my own change.** Layout C's step 1 for a plain Price sign printed
+`[object HTMLDivElement]` instead of its fields. I had nested the field list two levels deep,
+and the element helper flattened only one. `h()` now flattens fully, and every layout pass
+asserts that no element is ever stringified into the page.
+
+**PRD v1.2** (files, not committed): 22 tracked marks and 2 comments on the v1.1 clean copy,
+so the redline shows only this change. Additions: a "Us vs Them layout" section, the Their
+price input, the discount rule, an acceptance row, the decision, a Price Scan prefill as a
+later enhancement, and the fine-print question as still open. Both copies pass validation.
+Rendered: 10 pages, no blank page. The accept script now also drops a tracked-row mark.
+
+**Open for Brian:** fine-print item code and date line, yes or no. The template itself needs
+no pick beyond the design options already open.
+
+---
+
 # Sign Studio: PRD review, decisions, page preview (2026-09-24)
 
 **Request (Brian):** *"I want to build a sign maker studio page so managers can type in the
