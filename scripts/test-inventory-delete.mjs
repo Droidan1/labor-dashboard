@@ -8,6 +8,9 @@
 //
 // The browser half (the buttons, the modal, which store it sends, Stop) is
 // scripts/browser-inventory-delete.mjs. It is not in this runner: it needs Chromium.
+//
+// The last block pins what the handler REFUSES: the cross-store `stores[]` form, a method
+// or body it cannot read, and an item id that is not just an item id.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -90,24 +93,39 @@ const worker = await loadWorker(repo);
 const { env } = makeEnv(repo);
 Object.assign(env, { BL1_MERCHANT_ID: 'M-BL1', BL1_API_TOKEN: 't1', BL2_MERCHANT_ID: 'M-BL2', BL2_API_TOKEN: 't2' });
 const held = { 'M-BL1': new Set(['X1', 'X2']), 'M-BL2': new Set(['Y1']) };
-let asked = [], answer = null;
+let asked = [], outbound = [], answer = null;
 globalThis.fetch = async (u, init = {}) => {
-  const m = String(u).match(/^https:\/\/api\.clover\.com\/v3\/merchants\/([^/]+)\/items\/([^/?]+)$/);
-  if (!m || init.method !== 'DELETE') throw new Error('unexpected outbound fetch: ' + (init.method || 'GET') + ' ' + u);
+  // What the runtime's fetch would actually send: the URL as PARSED, so dot segments are
+  // already resolved. Every call is recorded; anything that is not a DELETE of one item
+  // is answered 200, the way Clover would answer a delete of whatever it now points at.
+  const url = new URL(String(u));
+  const method = init.method || 'GET';
+  outbound.push(`${method} ${url.pathname}${url.search}`);
+  const m = url.pathname.match(/^\/v3\/merchants\/([^/]+)\/items\/([^/]+)$/);
+  if (!m || method !== 'DELETE' || url.search) return new Response('', { status: 200 });
   asked.push(`${m[1]}/${m[2]}`);
   if (answer) return answer();
   if (!held[m[1]] || !held[m[1]].has(m[2])) return new Response('{"message":"Not Found"}', { status: 404 });
   held[m[1]].delete(m[2]);
   return new Response('', { status: 200 });
 };
-// The Viewer's own reading of the response: status, then JSON if there is any.
-const del = async (user, body, store = body && body.store) => {
-  const r = await worker.fetch(req('/?action=delete-clover-item', { user, method: 'POST', body }), env, ctx);
-  const text = await r.text();
-  let data = null;
-  try { data = JSON.parse(text); } catch (_) {}
-  return { status: r.status, data, o: invDelOutcome(store, r.status, data) };
+// The Viewer's own reading of the response: status, then JSON if there is any. A handler
+// that THROWS is Cloudflare's 1101 page in production; here it is a status of 'threw',
+// which every assertion below reads as the failure it is rather than crashing the suite.
+const send = async (request, store) => {
+  let status, data = null;
+  try {
+    const r = await worker.fetch(request, env, ctx);
+    status = r.status;
+    try { data = JSON.parse(await r.text()); } catch (_) {}
+  } catch (e) { status = 'threw: ' + ((e && e.message) || e); }
+  return { status, data, o: invDelOutcome(store, typeof status === 'number' ? status : 500, data) };
 };
+const del = (user, body, store = body && body.store) =>
+  send(req('/?action=delete-clover-item', { user, method: 'POST', body }), store);
+const raw = (user, method, bodyText) => send(new Request('https://api.retjghub.com/?action=delete-clover-item', {
+  method, headers: { 'Content-Type': 'application/json', ...(user ? { Cookie: `session=sess-${user}` } : {}) },
+  body: bodyText }), 'BL1');
 
 {
   asked = [];
@@ -150,6 +168,53 @@ for (const [user, name] of [['u-mgr1', 'a manager'], ['u-staff', 'staff'], [unde
 {
   const r = await del('u-su', { store: 'BL1' }, 'BL1');
   ok(r.status === 400 && r.o.ok === false && /HTTP 400/.test(r.o.why), `no itemId is a 400, read as a failure (${JSON.stringify(r.o.why)})`);
+}
+
+// ── What the handler refuses ─────────────────────────────────────────────────
+// 🛑 { stores: [...], itemId } deleted ONE merchant's id in every store listed. Each other
+// store answered not-found, which counts as done, so it reported deletes that never
+// happened. Its only caller is gone (inventory-24); it is refused out loud, so a stale
+// client is told instead of silently deleting nothing.
+console.log('What the handler refuses');
+for (const [name, body] of [
+  ['stores[] alone', { stores: ['BL1', 'BL2'], itemId: 'X2' }],
+  ['stores[] beside a store', { store: 'BL1', stores: ['BL2'], itemId: 'X2' }],
+  ['an empty stores[]', { stores: [], itemId: 'X2' }],
+]) {
+  outbound = [];
+  const r = await del('u-su', body, 'BL1');
+  ok(r.status === 400 && r.data && r.data.code === 'ONE_STORE_PER_DELETE',
+     `${name}: refused, 400 ONE_STORE_PER_DELETE (got ${r.status} ${JSON.stringify(r.data)})`);
+  ok(r.o.ok === false && /one store/i.test(r.o.why), `${name}: the Viewer reads it as a failure that says why — ${JSON.stringify(r.o.why)}`);
+  ok(outbound.length === 0 && held['M-BL1'].has('X2'), `${name}: Clover is never asked (${outbound})`);
+}
+// A request it cannot read is refused as JSON — not left to throw into Cloudflare's 1101.
+{
+  outbound = [];
+  const g = await raw('u-su', 'GET');
+  ok(g.status === 405, `GET is a 405 (got ${g.status})`);
+  const j = await raw('u-su', 'POST', '{"store": "BL1", "itemId": ');
+  ok(j.status === 400 && /JSON/.test((j.data && j.data.error) || ''), `a body that is not JSON is a 400 (got ${j.status} ${JSON.stringify(j.data)})`);
+  const n = await raw('u-su', 'POST', 'null');
+  ok(n.status === 400, `a JSON null body is a 400 (got ${n.status})`);
+  ok(outbound.length === 0, `none of them reaches Clover (${outbound})`);
+}
+// 🛑 The id goes into Clover's URL, and the URL parser resolves dot segments — even
+// percent-encoded ones — so items/../categories/C1 is a DELETE on a category. A Clover id
+// is alphanumeric; anything else is refused before a URL is built.
+for (const itemId of ['../categories/C1', '%2e%2e/categories/C1', 'X2/..', 'X2?expand=categories', 'X2#x', 'X 2', '']) {
+  outbound = [];
+  const r = await del('u-su', { store: 'BL1', itemId }, 'BL1');
+  ok(r.status === 400 && r.o.ok === false, `itemId ${JSON.stringify(itemId)} is refused (got ${r.status})`);
+  ok(outbound.length === 0 && held['M-BL1'].has('X2'), `…and Clover is never asked (${outbound})`);
+}
+{
+  // The refusals must not have taken the ordinary path with them.
+  outbound = [];
+  const r = await del('u-su', { store: 'BL1', itemId: 'X2' });
+  ok(r.status === 200 && JSON.stringify(r.data) === JSON.stringify({ results: [{ store: 'BL1', ok: true }] }),
+     `an ordinary delete still answers { results: [{ store, ok }] } (got ${r.status} ${JSON.stringify(r.data)})`);
+  ok(outbound.join() === 'DELETE /v3/merchants/M-BL1/items/X2' && !held['M-BL1'].has('X2'), `…having asked for exactly that item (${outbound})`);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

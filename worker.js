@@ -20202,32 +20202,54 @@ export default {
     }
 
     // ── Admin: Delete Clover Item
-    //    POST ?action=delete-clover-item  body: { store, itemId } OR { stores: ["BL1","BL2"], itemId }
+    //    POST ?action=delete-clover-item  body: { store, itemId }
+    //
+    // 🛑 ONE STORE PER REQUEST. This also took { stores: [...], itemId } and deleted that
+    // one id in every store listed. A Clover item id belongs to ONE merchant, and each
+    // store is its own, so in every other store the id is simply not there. Not-found
+    // counts as done below, so that form reported deletes that never happened. Its only
+    // caller, the Viewer's "Also delete from every other location", is gone (code review
+    // inventory-24). The form is refused out loud, so a stale client is told rather than
+    // silently deleting nothing.
+    //
+    // 🛑 AND AN ITEM ID IS ONLY AN ITEM ID. It is pasted into Clover's URL, and the URL
+    // parser resolves dot segments, percent-encoded ones included: "../categories/C1"
+    // made this a DELETE on a category. Clover ids are alphanumeric; nothing else passes.
     if (url.searchParams.get("action") === "delete-clover-item") {
       const unauth = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
-      const body = await request.json();
-      const { itemId } = body;
-      const storesToDelete = body.stores
-        ? body.stores.filter(s => ALL_STORES.includes(s))
-        : (ALL_STORES.includes(body.store) ? [body.store] : []);
-      if (!itemId || storesToDelete.length === 0) {
+      // Refused as JSON. A GET or a body that is not JSON used to throw in request.json(),
+      // which reaches the caller as Cloudflare's 1101 page.
+      if (request.method !== "POST") {
+        return new Response(JSON.stringify({ ok: false, error: "Method not allowed" }), { status: 405, headers: corsJson });
+      }
+      const body = await request.json().catch(() => null);
+      if (!body || typeof body !== "object") {
+        return new Response(JSON.stringify({ ok: false, error: "Invalid JSON" }), { status: 400, headers: corsJson });
+      }
+      if (body.stores !== undefined) {
+        return new Response(JSON.stringify({ ok: false, code: "ONE_STORE_PER_DELETE",
+          error: "Delete takes one store per request: { store, itemId }. An item id belongs to one store's "
+               + "Clover merchant, so it cannot be deleted across stores." }), { status: 400, headers: corsJson });
+      }
+      const { store, itemId } = body;
+      if (!ALL_STORES.includes(store) || typeof itemId !== "string" || !/^[A-Za-z0-9]+$/.test(itemId)) {
         return new Response(JSON.stringify({ ok: false, error: "Invalid itemId or store(s)" }), { status: 400, headers: corsJson });
       }
-      const results = await Promise.all(storesToDelete.map(async s => {
-        const mId = env[`${s}_MERCHANT_ID`];
-        const tok = env[`${s}_API_TOKEN`];
-        const delResp = await cloverFetch(
-          `https://api.clover.com/v3/merchants/${mId}/items/${itemId}`,
-          { method: "DELETE", headers: { "Authorization": `Bearer ${tok}` } }
-        );
-        if (delResp.ok || delResp.status === 404) {
-          return { store: s, ok: true };
-        }
-        const txt = await delResp.text();
-        return { store: s, ok: false, error: txt };
-      }));
-      return new Response(JSON.stringify({ results }), { headers: corsJson });
+      const mId = env[`${store}_MERCHANT_ID`];
+      const tok = env[`${store}_API_TOKEN`];
+      const delResp = await cloverFetch(
+        `https://api.clover.com/v3/merchants/${mId}/items/${itemId}`,
+        { method: "DELETE", headers: { "Authorization": `Bearer ${tok}` } }
+      );
+      // Not-found is "already gone": right for a stale list, and only honest because the
+      // store is always the one the item came from. The shape stays { results: [...] }:
+      // the Viewer's invDelOutcome reads the row for the store it asked about.
+      if (delResp.ok || delResp.status === 404) {
+        return new Response(JSON.stringify({ results: [{ store, ok: true }] }), { headers: corsJson });
+      }
+      const txt = await delResp.text();
+      return new Response(JSON.stringify({ results: [{ store, ok: false, error: txt }] }), { headers: corsJson });
     }
 
     // ── Public: Weekly Retail Summary feed
