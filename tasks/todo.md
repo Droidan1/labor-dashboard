@@ -1,3 +1,99 @@
+# Worker: delete-clover-item takes one store, and only an item id (inventory-24, 2026-09-24)
+
+**Request:** *"Fix the worker's cross-store delete next."*
+`worker.js` `?action=delete-clover-item` accepts `{ stores: [...], itemId }` and deletes that
+one id in every listed store.
+
+**Why that form cannot work:**
+- Each Inventory store is its own Clover merchant, and an item id exists in one of them.
+- In the other stores the id is not there, and the handler counts a 404 as done.
+- So the form reports success for deletes that never happened.
+
+Its only caller was the Viewer's "Also delete from every other location", which #287 removed
+(code review inventory-24). A grep of the repo finds no other caller: the one left is the
+Viewer's runner, which sends `{store, itemId}`.
+
+**Found on the way, in the same validation line: `itemId` is pasted into the Clover URL.**
+- The standard URL parser, the same one `fetch` uses, resolves `../categories/C1`, and
+  `%2e%2e/categories/C1`, to `/v3/merchants/M/categories/C1`. So a crafted id turns this
+  DELETE into a delete of something other than an item.
+- The endpoint needs an admin session. The old secret that sat in page source is stale and
+  rejected (todo, 2026-09-15). So this is defense in depth, not an open hole.
+- Clover ids are alphanumeric, so requiring that cannot refuse a real one.
+
+## Plan
+
+- [x] **Harness tests first**, in `scripts/test-inventory-delete.mjs` against the real handler,
+      and watch them fail on the current worker:
+  - `stores` is refused (400, with a code), with or without `store`, and even when empty.
+    Clover is never asked.
+  - GET gives 405, and a body that is not JSON gives 400 rather than a thrown handler.
+  - An `itemId` holding `/`, `.`, `%`, `?` or `#` is refused, and Clover is never asked.
+  - The single-store path keeps its exact shape, `{ results: [{ store, ok, error? }] }`,
+    which `invDelOutcome` reads.
+  - A thrown `worker.fetch` must count as a failure in the helper, not crash the suite.
+- [x] **Worker:**
+  - check the method, then the JSON, then refuse `stores`, then check the store and the
+    id's shape;
+  - one store, no `Promise.all` over a list of one.
+- [x] **Mutations:** remove each guard in its own copy of the repo, and watch it fail.
+- [x] **Deploy order:** no current frontend sends `stores` (grep), so the worker can ship on
+      its own. Ask for the deploy at push time (CLAUDE.md). The post-deploy probe is harmless
+      even on the old worker (see Review).
+- [x] Marked in the review doc (inventory-24's worker half), with plan and review here.
+
+## Review
+
+**Reproduced before fixing.** The new block ran against the current worker: 59 passed, 25
+failed.
+- `{stores:["BL1","BL2"]}` sent a DELETE to both merchants and answered ok for both.
+- GET, a truncated body and a JSON `null` each threw. In production that is Cloudflare's 1101
+  page.
+- `itemId: "../categories/C1"` went out as `DELETE /v3/merchants/M-BL1/categories/C1`. The
+  harness's Clover stub resolves the URL the way `fetch` does, so it records the call instead
+  of crashing on it.
+
+**Verified:**
+- **`test-inventory-delete.mjs`:** 84 / 84 (55 before).
+- **`npm test`:** 5936 assertions across 82 suites.
+- **Mutations: 7 / 7 caught**, in a separate repo copy:
+  - no `stores` refusal;
+  - no method check;
+  - a JSON parse that can throw;
+  - a null body let through;
+  - no id-shape check;
+  - an empty `stores[]` let through;
+  - a changed response shape.
+- `index.html` is untouched, so no `CACHE_NAME` bump is needed, and merging deploys nothing.
+
+**What production is running.** Deploying this branch must not also ship some other undeployed
+worker change.
+- The last `worker.js` commit on `main` is `4b3785d` (00:25:16 UTC, 09-22). Production
+  `clover-sales-api` was modified at 00:28:16 (Cloudflare API, read-only).
+- That commit needed migration-074. Production's `item_cache` has `title_source`, read with
+  `PRAGMA table_info`, which changed nothing.
+- So production runs `main`'s worker, and this branch adds only the handler change.
+
+**The post-deploy probe cannot delete anything, even on the old worker** (lessons: a probe
+must not be able to do the harm it checks for):
+
+| probe | new worker | old worker |
+|---|---|---|
+| POST `{"stores":["BL1"]}`, no itemId | 400 `ONE_STORE_PER_DELETE` | 400 "Invalid itemId or store(s)" |
+| GET | 405 | thrown handler, 1101 |
+| control: POST `{"store":"BL1"}`, no itemId | 400 "Invalid itemId…" | the same |
+
+The control proves the session reaches the handler. Three consecutive passes cover the
+~180 s rollout.
+
+**Left, not in scope:**
+- A `cloverFetch` that throws (Clover unreachable) still escapes the handler as 1101. The
+  Viewer reads that as "The server failed (HTTP 500)".
+- A store with no merchant id configured would build `merchants/undefined/…`.
+  `create-clover-item` guards that case and this handler doesn't. Every current store is
+  configured.
+- `update-clover-item` pastes `itemId` into Clover's URL the same way, without a shape check.
+
 # Inventory: escape what Add Item and Edit put on the page (inventory-1, 2026-09-24)
 
 **Request:** *"Fix the escaping in Add Item and Edit next."* This is the rest of code review

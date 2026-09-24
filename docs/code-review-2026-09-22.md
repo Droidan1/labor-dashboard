@@ -1638,6 +1638,12 @@ The three Inventory pages follow DESIGN.md §4.8 closely: panel, bar, legend, st
 
 *medium · minor · bug · confidence high · `index.html:31244` · unverified · fixed 2026-09-24 — the checkbox is gone; the worker still reports a 404 as ok, which, sent to the right store, now means already gone*
 
+**Worker half (2026-09-24).**
+- `delete-clover-item` now refuses the `{ stores: [...] }` form with 400 `ONE_STORE_PER_DELETE`, so nothing can reach it any more. It also answers a GET with 405, and a body that isn't JSON with 400, where both used to throw.
+- **Found on the way:** the item id was pasted into Clover's URL, and the URL parser resolves `../categories/C1`, even written as `%2e%2e/`. So a crafted id made this a DELETE on a category. Ids must now be alphanumeric.
+- `scripts/test-inventory-delete.mjs` pins all of this against the real handler.
+- **This takes effect only after a `wrangler deploy`.**
+
 **Evidence.** index.html:31244 `? { stores: INV_STORES.filter(st => st !== invViewStore), itemId: item.id }`. This sends one merchant's item id to the other five merchants (ids are per merchant, index.html:17174) and leaves out the store being viewed. Worker delete-clover-item treats `delResp.status === 404` as `{ ok: true }` (worker.js:20224). The client then removes the row locally and prints `Deleted "${item.name}".` (31261-31265), with the name unescaped into innerHTML.
 
 **Failure scenario.** Once Delete is reachable again, Brian ticks 'Also delete from every other location' to remove a duplicate chain-wide. Every other store answers 404, which counts as 'ok'; the current store is never sent. The page says Deleted and hides the row, but the item still exists in all six stores.
