@@ -4531,6 +4531,11 @@ console.log('Price Scan');
   const lets = html.slice(html.indexOf('let psStream = null'), html.indexOf('async function psBarcode()'));
   ok(/let psScanGen = 0, psStarting = false;/.test(lets) && /const PS_START_TIMEOUT_MS = 20000;/.test(lets),
      'the start generation and the start timeout sit beside the stream');
+  // The slicer counts braces and nothing else (tasks/lessons.md: bound an extraction on BOTH
+  // sides), so the slice must end at psBarcode's own close and take nothing after it.
+  const barcodeSrc = src('psBarcode');
+  ok(/tick\(\);\s*\}$/.test(barcodeSrc) && !/function psZoom|function psStopScan/.test(barcodeSrc),
+     '(the psBarcode slice ends at its own closing brace, and takes nothing after it)');
   const unhandled = [];
   const onUnhandled = (e) => unhandled.push(String((e && e.message) || e));
   process.on('unhandledRejection', onUnhandled);
@@ -4788,7 +4793,60 @@ console.log('Price Scan');
   S.psStopScan();                                       // Stop, while frame 2 is being read
   detects[m.d + 1]?.res([{ rawValue: X, format: 'upc_a' }]); await flush();
   eq(scans, 1, "🛑 a frame read across a Stop looks nothing up — it is not the scan's any more");
+
+  // 🛑 A code only the native detector can read. Our decoder used to reset "twice running" on
+  // every frame IT missed, even one the detector had read, so each detector read was a first
+  // read and such a code — at an angle, in shadow, a little out of focus — was never accepted.
+  // Frame i of scan m: the detector answers `found`, our decoder reads `dec`, the next frame
+  // starts with its detector read held.
+  const frameOf = async (mm, i, found, dec = null) => {
+    decodes = dec;
+    detects[mm.d + i]?.res(found); await flush();
+    decodes = null;
+    await runFrames();
+  };
+  const reads = (code) => [{ rawValue: code, format: 'upc_a' }];
+  const Y = '012345678905';
+  const scanFrom = async () => { const mm = mark(); const p = S.psBarcode(); await flush(); answer(mm.g); await done(p); await flush(); return mm; };
+  let s0 = scans;
+  m = await scanFrom();
+  await frameOf(m, 0, reads(X));                       // frame 1: the detector reads X, ours misses
+  ok(scans === s0 && S.st().scanning, "one read is never enough — not even the native detector's");
+  await frameOf(m, 1, reads(X));                       // frame 2: the same again
+  ok(scans === s0 + 1 && E['ps-input'].value === X && !S.st().scanning,
+     '🛑 a code only the native detector reads is accepted on its second frame running — our decoder missing it is not a miss');
+  // A frame NEITHER reader read still breaks the run.
+  s0 = scans;
+  m = await scanFrom();
+  await frameOf(m, 0, reads(X));
+  await frameOf(m, 1, []);                             // nothing, from either reader
+  await frameOf(m, 2, reads(X));                       // X again: a first read, not a second
+  ok(scans === s0 && S.st().scanning, 'a frame neither reader read breaks the run — two reads must be adjacent');
+  await frameOf(m, 3, reads(X));
+  ok(scans === s0 + 1, '...and the next adjacent read completes it');
+  // Two different codes on adjacent frames are not two reads of either.
+  s0 = scans;
+  m = await scanFrom();
+  await frameOf(m, 0, reads(X));
+  await frameOf(m, 1, reads(Y));
+  ok(scans === s0 && S.st().scanning, 'two different codes on adjacent frames are not two reads of either');
+  S.psStopScan();
+  // Both readers reading the same code on ONE frame counted twice before this change, and
+  // still does: two different decoders agreeing.
+  s0 = scans;
+  m = await scanFrom();
+  await frameOf(m, 0, reads(X), X);
+  ok(scans === s0 + 1 && E['ps-input'].value === X,
+     'both readers reading the same code on one frame count as two reads, as before');
   detectorOn(false);
+  // And the iPhone path, with no native detector: our own decoder, on two frames running.
+  s0 = scans;
+  decodes = X;
+  m = await scanFrom();                                // frame 1 runs as the scan goes live
+  await runFrames();                                   // frame 2
+  decodes = null;
+  ok(scans === s0 + 1 && E['ps-input'].value === X && !S.st().scanning,
+     '🔑 with no native detector (an iPhone), our own decoder reading a code twice running still has it looked up');
   E['ps-video'].videoWidth = 0; E['ps-video'].videoHeight = 0;
 
   // A loop ends with its own start. Stop, then a fresh Scan that goes live before the old

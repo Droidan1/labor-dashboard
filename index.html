@@ -26739,6 +26739,8 @@
         const bandH = Math.max(80, Math.round(h * 0.45));
         const top = Math.round((h - bandH) / 2);
 
+        // Whether EITHER reader read a code on this frame (see the end of the frame).
+        let read = false;
         if (detector) {
           let found = null;
           try { found = await detector.detect(video); }
@@ -26748,7 +26750,9 @@
           if (gen !== psScanGen) return;
           for (const b of found || []) {
             const code = psNormalizeCode(b.rawValue, b.format);
-            if (code && code.length >= 12 && accept(code)) return;
+            if (!code || code.length < 12) continue;
+            read = true;
+            if (accept(code)) return;
           }
         }
 
@@ -26794,8 +26798,13 @@
             code = decodeEanRow(col);
           }
         }
-        if (code && accept(code)) return;
-        if (!code) lastCode = null;   // a miss breaks the run; two reads must be adjacent
+        if (code) { read = true; if (accept(code)) return; }
+        // 🛑 A MISS BREAKS THE RUN — two reads must be adjacent — but a miss is a frame that
+        // NEITHER reader read. Our decoder missing on a frame the native detector read is not
+        // one: resetting there made every detector read a first read, so a code only the
+        // detector could read (the case it is here for) was never accepted. Both readers
+        // reading the same code on one frame still counts twice, as it always did.
+        if (!read) lastCode = null;
       }
       requestAnimationFrame(tick);
     };

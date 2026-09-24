@@ -60,12 +60,24 @@ const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
 
 // ── the fake worker, run inside the page ───────────────────────────────
 // Everything the page asks is answered here and recorded. Nothing reaches the network.
-function pageMocks({ who, theme }) {
+function pageMocks({ who, theme, detector }) {
   try {
     localStorage.setItem('darkMode', String(theme !== 'light'));
     localStorage.setItem('darkFlavor', theme === 'oled' ? 'oled' : 'dark');
   } catch (e) {}
-  const M = window.__ps = { calls: [], gumCalls: 0, gumDelay: 0, streams: [] };
+  const M = window.__ps = { calls: [], gumCalls: 0, gumDelay: 0, streams: [], reads: [], detects: 0 };
+  // A stand-in for Android's native BarcodeDetector, which Chromium on Linux does not have.
+  // Each call "reads" the next of M.reads in turn — [] reads nothing, ['X'] reads X every
+  // frame, ['X', 'Y'] alternates — so a check can make reads only the native detector gets.
+  if (detector) {
+    window.BarcodeDetector = class {
+      static async getSupportedFormats() { return ['ean_13', 'upc_a', 'upc_e']; }
+      async detect() {
+        M.detects++;
+        return M.reads.length ? [{ rawValue: M.reads[(M.detects - 1) % M.reads.length], format: 'upc_a' }] : [];
+      }
+    };
+  }
   // The camera: Chromium's fake device (see the launch flags), slowed to a phone's 300-500 ms
   // and recorded, so a check can say how many cameras were opened and whether each still runs.
   const md = navigator.mediaDevices;
@@ -86,7 +98,8 @@ function pageMocks({ who, theme }) {
     const s = String(u && u.url ? u.url : u);
     if (!s.startsWith(API)) return real(u, o);
     const url = new URL(s), action = url.searchParams.get('action');
-    M.calls.push({ action, url: s });
+    let body = {}; try { body = o.body ? JSON.parse(o.body) : {}; } catch (e) {}
+    M.calls.push({ action, url: s, body });
     switch (action) {
       case 'auth-me': return J(who);
       case 'sticker-template': return J({ ok: true, template: null, markImage: null });
@@ -111,7 +124,7 @@ async function section(name, fn) {
 // A store manager: Price Scan is a manager page, and the Reprint tab is offered to them.
 const MANAGER = { authenticated: true, email: 'alex@example.com', name: 'Alex M', role: 'manager', stores: ['BL1', 'BL4'], pages: {}, businesses: ['bl'] };
 
-async function open({ who = MANAGER, theme = 'light' } = {}) {
+async function open({ who = MANAGER, theme = 'light', detector = false } = {}) {
   const ctx = await b.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true,
     deviceScaleFactor: 2, timezoneId: 'America/New_York', locale: 'en-US', serviceWorkers: 'block' });
   live.add(ctx);
@@ -120,7 +133,7 @@ async function open({ who = MANAGER, theme = 'light' } = {}) {
   page.on('pageerror', e => errs.push(String(e)));
   // 🛑 Every request that is not this server is refused, so nothing can reach production.
   await page.route(u => !u.href.startsWith(`http://127.0.0.1:${PORT}`), r => r.abort());
-  await page.addInitScript(pageMocks, { who, theme });
+  await page.addInitScript(pageMocks, { who, theme, detector });
   await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => typeof window.navigateToPage === 'function' && window.__ps.calls.some(c => c.action === 'auth-me'), null, { timeout: 10000 });
   await page.waitForTimeout(400);
@@ -259,6 +272,52 @@ for (const theme of ['light', 'dark', 'oled']) await section(`2. paint [${theme}
   await page.waitForFunction(() => document.getElementById('ps-barcode').textContent === 'Stop', null, { timeout: 8000 });
   await page.click('#ps-barcode'); await page.waitForTimeout(150);
   check(!errs.length, `[${theme}] no page errors (${errs.slice(0, 2).join(' | ')})`);
+});
+
+// ── 3. Android's native detector confirms a read on its own ─────────────
+// On Android the scan loop asks the native detector first, then always runs our own row
+// decoder. A frame where our decoder missed used to reset "twice running" even when the
+// detector had read the code — so a code only the detector could read (at an angle, in
+// shadow, a little out of focus) was never accepted.
+await section('3. native detector (Android)', async () => {
+  const { page, errs } = await open({ detector: true });
+  const X = '036000291452', Y = '012345678905';
+  const lookups = () => page.evaluate(() => window.__ps.calls.filter(c => c.action === 'merch-scan').map(c => c.body.identifier));
+  const label = () => text(page, '#ps-barcode');
+  const whenLive = () => page.waitForFunction(() => document.getElementById('ps-barcode').textContent === 'Stop', null, { timeout: 8000 });
+  const detects = () => page.evaluate(() => window.__ps.detects);
+
+  // The control: nothing for the detector to read. Our own decoder finds no barcode in the fake
+  // camera's picture either, so whatever is accepted below was read by the detector alone.
+  await page.evaluate(() => { window.__ps.reads = []; });
+  let d0 = await detects();
+  await page.click('#ps-barcode'); await whenLive();
+  await page.waitForTimeout(1500);
+  const ran = (await detects()) - d0;
+  check(ran > 5 && (await label()) === 'Stop' && !(await lookups()).length,
+        `(control) with nothing to read, the scan keeps looking and looks nothing up — the detector ran ${ran} times`);
+  await page.click('#ps-barcode'); await page.waitForTimeout(150);
+
+  // Two different codes, alternating: never the same code twice running.
+  await page.evaluate(([x, y]) => { window.__ps.reads = [x, y]; }, [X, Y]);
+  d0 = await detects();
+  await page.click('#ps-barcode'); await whenLive();
+  await page.waitForTimeout(1500);
+  check((await detects()) - d0 > 5 && (await label()) === 'Stop' && !(await lookups()).length,
+        'two different codes on alternating frames are never accepted — a wrong read cannot sneak through');
+  await page.click('#ps-barcode'); await page.waitForTimeout(150);
+
+  // A steady read the detector alone makes: accepted, the camera stops, and it is looked up.
+  const n0 = await page.evaluate(() => window.__ps.streams.length);
+  await page.evaluate((x) => { window.__ps.reads = [x]; }, X);
+  await page.click('#ps-barcode'); await whenLive();
+  const took = await page.waitForFunction(() => window.__ps.calls.some(c => c.action === 'merch-scan'), null, { timeout: 4000 })
+    .then(() => true, () => false);
+  const st = await page.evaluate(n => window.__ps.streams.slice(n).map(s => s.getTracks()[0].readyState), n0);
+  check(took && (await lookups()).join() === X && (await page.inputValue('#ps-input')) === X
+        && st.join() === 'ended' && (await label()) === 'Scan',
+        `🛑 a code only the native detector reads is accepted on its second frame: looked up, and the camera stops (${JSON.stringify({ took, lookups: await lookups(), st })})`);
+  check(!errs.length, `no page errors (${errs.slice(0, 2).join(' | ')})`);
 });
 
 await b.close();
