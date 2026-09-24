@@ -6,7 +6,7 @@
 > - **Not reviewed yet:** App shell / navigation / service worker / initial load, Labor, Inventory Receiver, Submit Photos + Marketing + Comments, Users & access.
 > - **Verified:** only *Worker crons* (all 15 findings confirmed by an independent verifier). **Every other finding below is one reviewer's claim.** The one verified unit came back 15/15, so the reviews look reliable, but re-check each finding against the code before fixing it.
 > - **The review itself changed no code.** Every finding is either **minor** (local, frontend-only or self-contained, no API/schema/deploy coupling) or **major** (needs a plan: cross-cutting, frontend+worker coordination, schema, or destructive-path work).
-> - **Fixed since (2026-09-23):** 14 Bin Dump findings — bin-dump-1, 2, 3, 4, 7, 10, 11, 12, 13, 14, 15, 20, 22, 23 — each checked against the code before fixing; marked in the Bin Dump table. Also oppbuys-mos-2, oppbuys-mos-3 and oppbuys-mos-11, and the lookup half of oppbuys-mos-4, marked in the Opportunity Buys + MOS table. See `tasks/todo.md`.
+> - **Fixed since (2026-09-23):** 14 Bin Dump findings — bin-dump-1, 2, 3, 4, 7, 10, 11, 12, 13, 14, 15, 20, 22, 23 — each checked against the code before fixing; marked in the Bin Dump table. Also oppbuys-mos-2, oppbuys-mos-3 and oppbuys-mos-11, and the lookup half of oppbuys-mos-4, marked in the Opportunity Buys + MOS table. On 2026-09-24, merch-price-scan-8 (Price Scan's copy of the oppbuys-mos-2 race), marked in the Price Scan table. See `tasks/todo.md`.
 
 ## How to pick this up
 
@@ -3539,7 +3539,7 @@ Performance: the camera loop decodes every animation frame on a 4K request, whic
 | [merch-price-scan-3](#merch-price-scan-3) | medium | minor | bug | psPrint reads psLast after the printer probe, so a scan that lands mid-print puts the new price next to the old QR | `index.html:25837` | unverified |
 | [merch-price-scan-5](#merch-price-scan-5) | medium | minor | bug | Hardware-scanner Enter re-fires a focused Print, Reprint or Add button, and the next scan's digits are lost | `index.html:25858` | unverified |
 | [merch-price-scan-6](#merch-price-scan-6) | medium | minor | bug | Price-point confirm dialog autofocuses its write button, and a double tap opens two dialogs | `index.html:24041` | unverified |
-| [merch-price-scan-8](#merch-price-scan-8) | medium | minor | bug | Double-tapping Scan starts two camera streams, and only one is ever stopped | `index.html:26519` | unverified |
+| [merch-price-scan-8](#merch-price-scan-8) | medium | minor | bug | Double-tapping Scan starts two camera streams, and only one is ever stopped | `index.html:26519` | **fixed 2026-09-24** |
 | [merch-price-scan-9](#merch-price-scan-9) | medium | minor | bug | Picking or clearing a buy after a scan leaves the card priced without it, yet the print is recorded against the new buy | `index.html:25856` | unverified |
 | [merch-price-scan-10](#merch-price-scan-10) | medium | minor | bug | Furniture 'Set the ranges' is shown to managers and executives, but the worker lets only admins save | `index.html:24422` | unverified |
 | [merch-price-scan-11](#merch-price-scan-11) | medium | minor | bug | A partial Clover sweep is cached for 24 h as the category map, making whole categories unprintable | `worker.js:13461` | unverified |
@@ -3633,7 +3633,7 @@ Retry then goes through runStores(failed), which sends one store alone again. Ad
 <a id="merch-price-scan-8"></a>
 #### merch-price-scan-8 — Double-tapping Scan starts two camera streams, and only one is ever stopped
 
-*medium · minor · bug · confidence high · `index.html:26519` · unverified*
+*medium · minor · bug · confidence high · `index.html:26519` · unverified · fixed 2026-09-24*
 
 **Evidence.** index.html:26519 `if (psScanning) { psStopScan(); return; }`, but psScanning is only set at 26542, after `stream = await navigator.mediaDevices.getUserMedia(...)` (26537). The button shows 'Scan' and stays clickable the whole time. A second tap starts a second getUserMedia; both resolve, `psStream = stream` overwrites the first, and two `tick` loops run. psStopScan (26765) stops only `psStream`. Also, `await video.play();` (26548) is not in a try: if it rejects, psScanning is true and the stream runs while #ps-scanbox is still hidden and the button still reads 'Scan'. The catch at 26538-26540 shows 'No camera available' for every error, including a denied permission and a busy camera.
 

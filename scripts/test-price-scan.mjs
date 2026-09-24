@@ -4504,5 +4504,359 @@ console.log('Price Scan');
      '🛑 a PO changes NOTHING on a default template');
 }
 
+// ── 🛑 One camera, and none left running (merch-price-scan-8) ─────────────────
+//
+// psScanning was only set once the camera was OPEN, so a second tap in the 300-500 ms a
+// phone takes opened a second stream that no Stop reached, and a stream that arrived after
+// the page, the Reprint tab or a full-body mode was left ran on, hidden (oppbuys-mos-2 was
+// the same race on MOS). The scanner's own code runs here against a fake camera, including
+// what Chromium's fake device cannot produce: a play() that rejects or hangs, a torch, a
+// start that never settles, the native detector. scripts/browser-price-scan.mjs covers the
+// rest with a real stream. The module lets are sliced from index.html, not retyped — a
+// retyped one would hide a declaration missing from the page.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  // A function's own source, cut at its closing brace (braces counted), as in test-mos.mjs.
+  const fnSrc = (name) => {
+    const at = html.search(new RegExp(`(?:async )?function ${name}\\(`));
+    if (at < 0) return '';
+    let i = html.indexOf('{', html.indexOf(')', at)), depth = 0;
+    for (; i < html.length; i++) {
+      if (html[i] === '{') depth++;
+      else if (html[i] === '}' && --depth === 0) return html.slice(at, i + 1);
+    }
+    return '';
+  };
+  const src = (n) => { const s = fnSrc(n); ok(s, `${n} is found`); return s; };
+  const lets = html.slice(html.indexOf('let psStream = null'), html.indexOf('async function psBarcode()'));
+  ok(/let psScanGen = 0, psStarting = false;/.test(lets) && /const PS_START_TIMEOUT_MS = 20000;/.test(lets),
+     'the start generation and the start timeout sit beside the stream');
+  const unhandled = [];
+  const onUnhandled = (e) => unhandled.push(String((e && e.message) || e));
+  process.on('unhandledRejection', onUnhandled);
+
+  // The page shows and hides these with the `hidden` CLASS (the Lens button with
+  // classList.toggle), so the fake classList is a real set.
+  const mk = (...cls) => {
+    const set = new Set(cls);
+    return { disabled: false, textContent: '', value: '', style: {}, min: 0, max: 0, step: 0,
+      classList: { add: (c) => { set.add(c); }, remove: (c) => { set.delete(c); }, contains: (c) => set.has(c),
+        toggle: (c, on) => { const v = on === undefined ? !set.has(c) : !!on; if (v) set.add(c); else set.delete(c); return v; } },
+      setAttribute() {} };
+  };
+  const E = { 'ps-barcode': Object.assign(mk(), { textContent: 'Scan' }), 'ps-input': mk(),
+    'ps-scanbox': mk('hidden'), 'ps-torch': mk('hidden'), 'ps-zoom': mk('hidden'), 'ps-lens': mk('hidden'),
+    'ps-diag': mk(), 'ps-scanhint': mk() };
+  let playMode = 'ok';
+  const plays = [];
+  E['ps-video'] = Object.assign(mk(), { srcObject: null, muted: false, videoWidth: 0, videoHeight: 0,
+    play: () => (playMode === 'ok' ? Promise.resolve() : new Promise((res, rej) => plays.push({ res, rej }))) });
+  // The camera. Each stream's one track records stop() and says which camera it is.
+  const tracks = [];
+  let caps = {};
+  const stream = (label) => {
+    const t = { label, readyState: 'live', stop() { this.readyState = 'ended'; },
+      getCapabilities: () => caps, getSettings: () => ({ width: 1920, height: 1080 }),
+      applyConstraints: async () => {} };
+    tracks.push(t);
+    return { getTracks: () => [t], getVideoTracks: () => [t] };
+  };
+  const gum = [], enumHeld = [];
+  let enumMode = 'now', enumCalls = 0;
+  const nav = { vibrate() {}, mediaDevices: {
+    getUserMedia: (c) => new Promise((res, rej) => gum.push({ c, res, rej })),
+    enumerateDevices: () => {
+      enumCalls++;
+      return enumMode === 'now'
+        ? Promise.resolve([{ kind: 'videoinput', deviceId: 'cam-1' }, { kind: 'videoinput', deviceId: 'cam-2' }])
+        : new Promise(r => enumHeld.push(r));
+    } } };
+  // No BarcodeDetector, as on an iPhone, except where a scenario switches Android's on.
+  const W = {}, detects = [];
+  const detectorOn = (on) => {
+    if (!on) { delete W.BarcodeDetector; return; }
+    W.BarcodeDetector = class {
+      static async getSupportedFormats() { return ['ean_13', 'upc_a', 'upc_e']; }
+      detect() { return new Promise((res, rej) => detects.push({ res, rej })); }
+    };
+  };
+  const frames = [], timers = [], said = [], alerts = [];
+  let clock = 1000, decodes = null, scans = 0;
+  const S = new Function('el', 'navigator', 'window', 'document', 'psStatus', 'uiAlert', 'psScan', 'decodeEanRow',
+    'upcaFromUpce', 'requestAnimationFrame', 'setTimeout', 'clearTimeout', 'Date',
+    `${lets}\n${src('psBarcode')}\n${src('psStopScan')}\n${src('psTorch')}\n${src('psZoom')}\n${src('psDiag')}\n`
+    + 'return { psBarcode, psStopScan, psTorch, psZoom, setLens: (v) => { psLensId = v; }, '
+    + 'st: () => ({ starting: psStarting, scanning: psScanning, stream: psStream, torchOn: psTorchOn, lensId: psLensId, lenses: psLenses }) };')(
+    id => E[id], nav, W,
+    { createElement: () => ({ width: 0, height: 0,
+        getContext: () => ({ drawImage() {}, getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(Math.max(4, w * h * 4)) }) }) }) },
+    (t) => { said.push(t || ''); }, (msg) => { alerts.push(msg); return Promise.resolve(true); }, () => { scans++; },
+    () => decodes, () => null, (fn) => { frames.push(fn); return frames.length; },
+    (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, () => {}, { now: () => clock });
+  const flush = async () => { for (let i = 0; i < 50; i++) await Promise.resolve(); };
+  // Every scan is awaited with a bound, and a scan that REJECTS is recorded rather than
+  // thrown: in the page `onclick="psBarcode()"` awaits nothing, so a rejection there is an
+  // uncaught error. A regression that leaves a fake unanswered must FAIL the check after it,
+  // not hang the suite.
+  const rejected = [];
+  const done = (...ps) => Promise.race([
+    Promise.all(ps.map(p => p.catch(e => { rejected.push(String((e && e.message) || e)); }))),
+    new Promise(r => setTimeout(r, 100))]);
+  const btn = () => [E['ps-barcode'].textContent, E['ps-barcode'].disabled];
+  const hidden = (id) => E[id].classList.contains('hidden');
+  // Each scenario reads the fakes IT created (indexes taken at its start), so a regression
+  // that makes an extra request fails the check that names it, and cannot shift the rest.
+  const mark = () => ({ g: gum.length, t: tracks.length, pl: plays.length, tm: timers.length, s: said.length,
+                        a: alerts.length, e: enumCalls, h: enumHeld.length, d: detects.length });
+  const answer = (i, label = 'Lens') => { if (!gum[i]) return null; const s = stream(label); gum[i].res(s); return s.getTracks()[0]; };
+  const runFrames = async () => { const q = frames.splice(0); q.forEach(f => f()); await flush(); };
+
+  // A double tap. The second comes once the camera is being asked for.
+  let m = mark();
+  const p1 = S.psBarcode(); await flush();
+  eq(gum.length - m.g, 1, '(the camera is being opened)');
+  ok(btn()[0] === 'Starting…' && btn()[1] === true, 'the tap shows "Starting…" and the button waits');
+  const p2 = S.psBarcode(); await flush();
+  eq(gum.length - m.g, 1, '🛑 a second tap while the camera opens asks for no second camera');
+  for (let i = m.g; i < gum.length; i++) answer(i);
+  await done(p1, p2);
+  ok(S.st().scanning && btn()[0] === 'Stop' && btn()[1] === false && !hidden('ps-scanbox') && tracks[m.t]?.readyState === 'live',
+     'once the video plays: "Stop", the button back, the box shown, one live track');
+  S.psStopScan();
+  ok(tracks.slice(m.t).every(t => t.readyState === 'ended') && btn()[0] === 'Scan' && btn()[1] === false
+     && hidden('ps-scanbox') && S.st().stream === null, 'Stop ends it, and gives the button back');
+
+  // A stop while the camera opens — what leaving the page, the Reprint tab, a full-body mode
+  // and swipe-back all do.
+  m = mark();
+  const pb = S.psBarcode(); await flush();
+  S.psStopScan();
+  ok(btn()[0] === 'Scan' && btn()[1] === false, 'a stop while the camera opens gives the button back at once');
+  const tb = answer(m.g); await done(pb);
+  ok(tb?.readyState === 'ended' && S.st().stream === null && !S.st().scanning && hidden('ps-scanbox'),
+     '🛑 ...and the stream that arrives late is closed on arrival');
+
+  // …and a camera REFUSED after the start was stopped: the person has moved on.
+  S.setLens('cam-2');
+  m = mark();
+  const pc = S.psBarcode(); await flush();
+  S.psStopScan();
+  gum[m.g]?.rej(Object.assign(new Error('Permission denied'), { name: 'NotAllowedError' }));
+  await done(pc);
+  ok(alerts.length === m.a && S.st().lensId === 'cam-2',
+     'a camera refused after its start was stopped says nothing, and forgets nothing');
+  S.setLens(null);
+
+  // play() held: a tap while it starts, then a stop that interrupts it.
+  playMode = 'hold';
+  m = mark();
+  const pd = S.psBarcode(); await flush();
+  answer(m.g); await flush();
+  eq(plays.length - m.pl, 1, '(the video is starting)');
+  S.psBarcode(); await flush();                        // a tap while the video starts
+  ok(tracks[m.t]?.readyState === 'live' && btn()[0] === 'Starting…' && gum.length - m.g === 1,
+     'a tap while the video is still starting is ignored too — not a Stop, not a second camera');
+  S.psStopScan();
+  plays[m.pl]?.rej(Object.assign(new Error('The play() request was interrupted'), { name: 'AbortError' }));
+  await done(pd);
+  ok(tracks.slice(m.t).every(t => t.readyState === 'ended') && said.length === m.s && hidden('ps-scanbox') && btn()[0] === 'Scan',
+     '🛑 a stop mid-play: the track is ended, the box stays hidden, and nothing is said');
+  // A stop mid-play, and then the video plays anyway.
+  m = mark();
+  const pe = S.psBarcode(); await flush();
+  answer(m.g); await flush();
+  S.psStopScan();
+  plays[m.pl]?.res();
+  await done(pe);
+  ok(hidden('ps-scanbox') && btn()[0] === 'Scan' && !S.st().scanning && !S.st().starting && enumCalls === m.e,
+     '🛑 a stop mid-play, then the video plays anyway: no dead box, no "Stop", and the start goes no further');
+  // play() failing on its own: stopped, and said.
+  m = mark();
+  const pf = S.psBarcode(); await flush();
+  answer(m.g); await flush();
+  plays[m.pl]?.rej(new Error('NotSupportedError'));
+  await done(pf);
+  ok(tracks[m.t]?.readyState === 'ended' && said.slice(m.s).some(t => /would not start/.test(t)) && btn()[0] === 'Scan' && !btn()[1],
+     'a video that will not play: stopped, said, and the button is back');
+  playMode = 'ok';
+
+  // A refused permission, and a remembered lens that is gone.
+  S.setLens('cam-9');
+  m = mark();
+  const pg = S.psBarcode(); await flush();
+  ok(gum[m.g]?.c.video.deviceId?.exact === 'cam-9', '(it asked for the remembered lens)');
+  gum[m.g]?.rej(Object.assign(new Error('Permission denied'), { name: 'NotAllowedError' }));
+  await done(pg);
+  ok(/blocked/.test(alerts[m.a] || '') && !/No camera/.test(alerts[m.a] || '') && btn()[0] === 'Scan' && !btn()[1],
+     'a refused permission is named as such, not "No camera available"');
+  eq(S.st().lensId, null, '...and a remembered lens is forgotten, so the next scan asks for any back camera');
+  S.setLens('cam-gone');
+  m = mark();
+  const ph = S.psBarcode(); await flush();
+  gum[m.g]?.rej(Object.assign(new Error('Constraints could not be satisfied'), { name: 'OverconstrainedError' }));
+  await done(ph);
+  ok(/No camera available/.test(alerts[m.a] || '') && S.st().lensId === null,
+     '🔑 a remembered lens that is gone says "No camera available" and is forgotten — it used to fail every scan after it');
+
+  // A start that never settles.
+  m = mark();
+  const pi = S.psBarcode(); await flush();
+  ok(timers[m.tm]?.ms === 20000, 'a start has a 20 s limit');
+  timers[m.tm]?.fn();                                  // twenty seconds, and the camera never came
+  ok(said.slice(m.s).some(t => /did not open/.test(t)) && btn()[0] === 'Scan' && !btn()[1] && !S.st().starting,
+     '🔑 a start that never settles gives the button back and says so — "Starting…" is never a trap');
+  const ti = answer(m.g); await done(pi);
+  eq(ti?.readyState, 'ended', '...and a camera that opens after that is closed on arrival');
+  // A live start's own limit, and a stopped start's limit coming up during a newer start.
+  m = mark();
+  const pj = S.psBarcode(); await flush();
+  answer(m.g); await done(pj);
+  timers[m.tm]?.fn();
+  ok(S.st().scanning && !said.slice(m.s).some(t => /did not open/.test(t)), 'the time limit of a start that went live does nothing');
+  S.psStopScan();
+  m = mark();
+  const pk = S.psBarcode(); await flush();             // start A…
+  S.psStopScan();                                      // …stopped while it opens
+  const mB = mark();
+  const pl = S.psBarcode(); await flush();             // start B, still opening
+  timers[m.tm]?.fn();                                  // A's twenty seconds come up
+  ok(S.st().starting && btn()[0] === 'Starting…' && !said.slice(m.s).some(t => /did not open/.test(t)),
+     "🛑 an old start's time limit does not end a newer start");
+  const tkA = answer(m.g), tkB = answer(mB.g); await done(pk, pl);
+  ok(S.st().scanning && tkA?.readyState === 'ended' && tkB?.readyState === 'live',
+     '...which goes live, while the old camera is closed on arrival');
+  S.psStopScan();
+
+  // A late device list from a stopped start must not rewrite the newer scan's lens list, its
+  // Lens button or its camera line.
+  enumMode = 'hold';
+  m = mark();
+  const pm = S.psBarcode(); await flush();
+  answer(m.g, 'Lens A'); await flush();                // A is live, asking which lenses there are
+  enumMode = 'now';
+  S.psStopScan();
+  const mC = mark();
+  const pn = S.psBarcode(); await flush();
+  answer(mC.g, 'Lens B'); await done(pn);              // B is live, with two lenses
+  ok(S.st().scanning && !hidden('ps-lens') && /Lens B/.test(E['ps-diag'].textContent), '(B is live, and says so)');
+  enumHeld[m.h]?.([{ kind: 'videoinput', deviceId: 'cam-9' }]);   // A's list lands, late
+  await done(pm);
+  ok(!hidden('ps-lens') && S.st().lenses.join() === 'cam-1,cam-2' && /Lens B/.test(E['ps-diag'].textContent),
+     "🛑 a stopped start's late device list leaves the newer scan's lenses, Lens button and camera line alone");
+  S.psStopScan();
+
+  // A zoom that lands after its scan ended.
+  m = mark();
+  const po = S.psBarcode(); await flush();
+  const tzA = answer(m.g, 'Lens A'); await done(po);
+  let landA = () => {};
+  if (tzA) tzA.applyConstraints = () => new Promise(r => { landA = r; });
+  const pz = S.psZoom(2);                              // A's zoom, still out
+  S.psStopScan();
+  const mD = mark();
+  const pp = S.psBarcode(); await flush();
+  answer(mD.g, 'Lens B'); await done(pp);
+  landA(); await done(pz);
+  ok(/Lens B/.test(E['ps-diag'].textContent) && !/Lens A/.test(E['ps-diag'].textContent),
+     "a zoom that lands after its scan ended does not describe the old camera on the new scan's line");
+  S.psStopScan();
+
+  // Android's native detector. First the ordinary path — a code read on two frames running
+  // is looked up — so the stale case after it cannot pass by never reading at all.
+  detectorOn(true);
+  E['ps-video'].videoWidth = 320; E['ps-video'].videoHeight = 240;
+  const X = '036000291452';
+  m = mark();
+  const pq = S.psBarcode(); await flush();
+  answer(m.g); await done(pq); await flush();
+  eq(detects.length - m.d, 1, '(the first frame is being read)');
+  decodes = X;                                          // frame 1: our own decoder reads X…
+  detects[m.d]?.res([]); await flush();
+  decodes = null;
+  await runFrames();                                    // …and frame 2 is out
+  eq(detects.length - m.d, 2, '(the second frame is being read)');
+  detects[m.d + 1]?.res([{ rawValue: X, format: 'upc_a' }]); await flush();
+  ok(scans === 1 && E['ps-input'].value === X && !S.st().scanning,
+     '(a code read twice running is looked up, and the camera stops — the control for the case below)');
+  m = mark();
+  const pr = S.psBarcode(); await flush();
+  answer(m.g); await done(pr); await flush();
+  decodes = X;
+  detects[m.d]?.res([]); await flush();
+  decodes = null;
+  await runFrames();
+  S.psStopScan();                                       // Stop, while frame 2 is being read
+  detects[m.d + 1]?.res([{ rawValue: X, format: 'upc_a' }]); await flush();
+  eq(scans, 1, "🛑 a frame read across a Stop looks nothing up — it is not the scan's any more");
+  detectorOn(false);
+  E['ps-video'].videoWidth = 0; E['ps-video'].videoHeight = 0;
+
+  // A loop ends with its own start. Stop, then a fresh Scan that goes live before the old
+  // loop's next frame ever ran: the old loop's 30 s clock must not end the new scan.
+  frames.length = 0;
+  clock = 100000;
+  m = mark();
+  const ps1 = S.psBarcode(); await flush();
+  answer(m.g); await done(ps1);                        // A is live; its next frame is queued
+  S.psStopScan();
+  clock += 10000;
+  const mE = mark();
+  const ps2 = S.psBarcode(); await flush();
+  answer(mE.g); await done(ps2);                       // B is live
+  await runFrames();                                    // A's queued frame, and B's
+  clock += 20500;                                       // A would be 30.5 s old, B is 20.5 s
+  await runFrames();
+  ok(S.st().scanning && !said.slice(m.s).some(t => /No barcode found/.test(t)),
+     "🛑 an old scan's loop ends with its scan — its clock does not stop the new one");
+  S.psStopScan();
+
+  // The torch.
+  caps = { torch: true };
+  m = mark();
+  const pt1 = S.psBarcode(); await flush();
+  answer(m.g); await done(pt1);
+  ok(!hidden('ps-torch'), '(a camera with a light offers the torch)');
+  await S.psTorch();
+  ok(E['ps-torch'].style.background === 'rgba(255,255,255,.85)' && S.st().torchOn, '(the torch is lit)');
+  S.psStopScan();
+  ok(E['ps-torch'].style.background === 'rgba(0,0,0,.45)' && E['ps-torch'].style.color === '#fff' && !S.st().torchOn,
+     'stopping resets the torch button — the next scan no longer shows a lit torch that is off');
+  // A torch change that FAILS after its scan ended must not switch off, or hide, a newer scan's.
+  m = mark();
+  const pt2 = S.psBarcode(); await flush();
+  const tA = answer(m.g); await done(pt2);             // scan A
+  let failA = () => {};
+  if (tA) tA.applyConstraints = () => new Promise((_, rej) => { failA = rej; });
+  const pt3 = S.psTorch();                             // A's torch change, still out
+  S.psStopScan();
+  const mF = mark();
+  const pt4 = S.psBarcode(); await flush();
+  answer(mF.g); await done(pt4);                       // scan B
+  await S.psTorch();                                   // B lights its torch
+  failA(new Error('OverconstrainedError')); await done(pt3);   // A's change fails, late
+  ok(S.st().torchOn === true && !hidden('ps-torch') && E['ps-torch'].style.background === 'rgba(255,255,255,.85)',
+     "🛑 a late torch failure from an ended scan does not switch off, or hide, the newer scan's torch");
+  S.psStopScan();
+  caps = {};
+
+  await new Promise(r => setTimeout(r, 0));            // an unhandled rejection is reported after the microtasks
+  process.off('unhandledRejection', onUnhandled);
+  eq(rejected.length, 0, `🛑 no scan ever rejects — the page would show it as an uncaught error (${rejected.join(' | ')})`);
+  eq(unhandled.length, 0, `...and nothing else goes unhandled (${unhandled.join(' | ')})`);
+
+  // Every page switch but Price Scan stops its camera — including store detail, where
+  // swipe-back and the browser's back button land without passing navigateToPage.
+  let stops = 0;
+  const showOnlyPage = new Function('document', 'mosStopScan', 'psStopScan', `${src('showOnlyPage')}; return showOnlyPage;`)(
+    { querySelectorAll: () => [] }, () => {}, () => { stops++; });
+  showOnlyPage('store-detail'); showOnlyPage('dashboard');
+  eq(stops, 2, '🛑 showOnlyPage stops the Price Scan camera for any other page — swipe-back and popstate pass through it');
+  showOnlyPage('merch-scan');
+  eq(stops, 2, '...and showing Price Scan itself does not');
+  const navSrc = src('navigateToPage');
+  ok(/showOnlyPage\(page\)/.test(navSrc) && !/psStopScan\(\)/.test(navSrc),
+     'navigateToPage reaches it through showOnlyPage, with no copy of its own');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

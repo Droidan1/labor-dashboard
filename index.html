@@ -11861,11 +11861,14 @@
     document.querySelectorAll('[id^="page-"]').forEach(elm => {
       elm.classList.toggle('hidden', elm.id !== 'page-' + name);
     });
-    // Leaving the page must kill the camera — a torch left on in a pocket is the failure
-    // people notice, and the stream holds the lens against Price Scan. HERE, the one place
-    // every page switch passes: swipe-back and the browser's back button reach store detail
-    // through showStoreDetail, which never went through navigateToPage (oppbuys-mos-2).
+    // Leaving a page must kill its camera — a torch left on in a pocket is the failure people
+    // notice, a stream left running drains the battery and keeps the recording indicator lit
+    // (which reads as the app watching them), and it holds the lens against the other
+    // scanner. HERE, the one place every page switch passes: swipe-back and the browser's back
+    // button reach store detail through showStoreDetail, which never went through
+    // navigateToPage (oppbuys-mos-2, merch-price-scan-8).
     if (name !== 'mos' && typeof mosStopScan === 'function') mosStopScan();
+    if (name !== 'merch-scan' && typeof psStopScan === 'function') psStopScan();
   }
   window.showOnlyPage = showOnlyPage;
 
@@ -12054,10 +12057,6 @@
     }
     if (page === 'merch-scan') {
       if (typeof initPriceScan === 'function') initPriceScan();
-    } else if (typeof psStopScan === 'function') {
-      // Leaving the page releases the camera. A stream left running drains the battery
-      // and keeps the recording indicator lit, which reads as the app watching them.
-      psStopScan();
     }
     if (page === 'merch-products') {
       if (typeof initMerchProducts === 'function') initMerchProducts();
@@ -12098,7 +12097,8 @@
       if (typeof invLoadSaleComposer === 'function') invLoadSaleComposer(null);
       if (typeof loadSaleSchedules === 'function') loadSaleSchedules();
     }
-    // (The MOS camera is stopped in showOnlyPage, which every page switch passes.)
+    // (The MOS and Price Scan cameras are stopped in showOnlyPage, which every page switch
+    // passes.)
 
     // Close mobile sidebar
     const sidebar = el('sidebar');
@@ -26520,6 +26520,17 @@
   // cheaper than trying to deskew the image.
   let psStream = null, psScanning = false, psTorchOn = false;
   let psLenses = [], psLensId = null;
+  // 🛑 ONE START AT A TIME (merch-price-scan-8, as oppbuys-mos-2 on MOS). psScanning was only
+  // set once the camera was OPEN — 300-500 ms after the tap on a phone, with nothing on
+  // screen — so a second tap opened a second stream, and Stop stopped only one: the other kept
+  // the camera light on and the lens held. psScanGen numbers each start and psStopScan bumps
+  // it, so a start that was stopped (Stop, the Reprint tab, a full-body mode, leaving the page)
+  // touches nothing when its awaits return, and a camera that opens late is closed the moment
+  // it arrives.
+  let psScanGen = 0, psStarting = false;
+  // A start that never settles — a permission prompt left unanswered on a desktop — must not
+  // hold the button on "Starting…" for good.
+  const PS_START_TIMEOUT_MS = 20000;
   // 🔑 THE NATIVE DETECTOR WHERE THERE IS ONE, OURS WHERE THERE IS NOT. Safari still has
   // no BarcodeDetector and most of these phones are iPhones, which is why the decoder
   // above exists at all — but Android Chrome has had it since 83, and it reads a code at
@@ -26568,6 +26579,20 @@
 
   async function psBarcode() {
     if (psScanning) { psStopScan(); return; }
+    // A tap while the camera is still opening is IGNORED: it is someone who saw nothing
+    // happen, not someone asking to stop. The button says "Starting…" and waits.
+    if (psStarting) return;
+    const gen = ++psScanGen;
+    psStarting = true;
+    const btn = el('ps-barcode');
+    btn.disabled = true;
+    btn.textContent = 'Starting…';
+    const slow = setTimeout(() => {
+      if (gen !== psScanGen || !psStarting) return;
+      psStopScan();
+      psStatus('The camera did not open. Try again, or type the number.');
+    }, PS_START_TIMEOUT_MS);
+
     let stream;
     try {
       // 🔑 ASK FOR 4K, AND THE REASON IS ARITHMETIC. Reported from the floor: the phone
@@ -26587,18 +26612,36 @@
       else video0.facingMode = { ideal: 'environment' };
       stream = await navigator.mediaDevices.getUserMedia({ video: video0 });
     } catch (e) {
-      uiAlert('No camera available. Type the number, or use the Photo button.');
+      if (gen !== psScanGen) return;
+      // A remembered lens that is gone (OverconstrainedError) failed every scan after it.
+      psLensId = null;
+      psStopScan();
+      uiAlert(e && e.name === 'NotAllowedError'
+        ? 'The camera is blocked for this page. Allow it in the browser settings, or use the Photo button.'
+        : 'No camera available. Type the number, or use the Photo button.');
       return;
     }
-    psStream = stream; psScanning = true;
+    // 🛑 Stopped while the camera opened: nothing else will ever stop this stream.
+    if (gen !== psScanGen) { stream.getTracks().forEach(t => t.stop()); return; }
+    psStream = stream;                 // before play(), so a stop during it ends this stream
     const box = el('ps-scanbox');
     const video = el('ps-video');
     video.srcObject = stream;
     video.setAttribute('playsinline', '');
     video.muted = true;
-    await video.play();
+    try { await video.play(); }
+    catch (e) {
+      // A stop that landed mid-play ("the play() request was interrupted") has already done
+      // the cleaning up; anything else is a camera that will not show.
+      if (gen !== psScanGen) return;
+      psStopScan(); psStatus('The camera would not start. Try again, or use Photo.'); return;
+    }
+    if (gen !== psScanGen) return;
+    clearTimeout(slow);
+    psStarting = false; psScanning = true;
     box.classList.remove('hidden');
-    el('ps-barcode').textContent = 'Stop';
+    btn.disabled = false;
+    btn.textContent = 'Stop';
     psStatus('Hold the barcode inside the box…');
 
     // A warehouse aisle is darker than the phone thinks it is, and a barcode is a
@@ -26634,18 +26677,21 @@
       zoomEl.value = Math.min(3, zmax);
       zoomEl.classList.remove('hidden');
       try { await track.applyConstraints({ advanced: [{ zoom: Number(zoomEl.value) }] }); } catch (e) {}
+      if (gen !== psScanGen) return;
     } else {
       zoomEl.classList.add('hidden');
     }
 
     // A lens switch is the escape hatch that works whatever iOS decides today. Which
     // camera `environment` means has changed between releases and is not ours to predict.
+    let lenses = null;
     try {
-      const devs = (await navigator.mediaDevices.enumerateDevices())
-        .filter(d => d.kind === 'videoinput');
-      psLenses = devs.map(d => d.deviceId);
-      el('ps-lens').classList.toggle('hidden', psLenses.length < 2);
-    } catch (e) { el('ps-lens').classList.add('hidden'); }
+      lenses = (await navigator.mediaDevices.enumerateDevices())
+        .filter(d => d.kind === 'videoinput').map(d => d.deviceId);
+    } catch (e) { lenses = null; }
+    if (gen !== psScanGen) return;
+    if (lenses) psLenses = lenses;
+    el('ps-lens').classList.toggle('hidden', !lenses || lenses.length < 2);
 
     // 🔑 SAY WHAT THE CAMERA ACTUALLY GAVE US. Two rounds of this were spent reasoning
     // about a phone nobody could see; the resolution, the zoom and the lens name settle
@@ -26653,6 +26699,7 @@
     psDiag(track);
 
     const detector = await psDetector();
+    if (gen !== psScanGen) return;
     const canvas = document.createElement('canvas');
     const ctx2d = canvas.getContext('2d', { willReadFrequently: true });
     const vcanvas = document.createElement('canvas');
@@ -26673,7 +26720,9 @@
     };
 
     const tick = async () => {
-      if (!psScanning) return;
+      // This loop's own start, not psScanning: a loop that outlived a Stop must end even once
+      // a NEWER scan is running, or two loops decode and the old one's clock ends the new scan.
+      if (gen !== psScanGen) return;
       const age = Date.now() - started;
       if (age > 30000) { psStopScan(); psStatus('No barcode found — type the number, or use Photo.'); return; }
       if (age > 12000 && !hinted) {
@@ -26691,13 +26740,16 @@
         const top = Math.round((h - bandH) / 2);
 
         if (detector) {
-          try {
-            const found = await detector.detect(video);
-            for (const b of found || []) {
-                  const code = psNormalizeCode(b.rawValue, b.format);
-              if (code && code.length >= 12 && accept(code)) return;
-            }
-          } catch (e) { /* fall through to our own decoder */ }
+          let found = null;
+          try { found = await detector.detect(video); }
+          catch (e) { /* fall through to our own decoder */ }
+          // 🛑 A frame read across a Stop is not this scan's: accepting it would look up a
+          // code after the person stopped, or left the page.
+          if (gen !== psScanGen) return;
+          for (const b of found || []) {
+            const code = psNormalizeCode(b.rawValue, b.format);
+            if (code && code.length >= 12 && accept(code)) return;
+          }
         }
 
         // 🔑 THE BAND IS RESAMPLED DOWN, NOT SAMPLED FROM. It used to read every pixel
@@ -26752,11 +26804,12 @@
 
   // Zoom is what buys pixels across the bars, and the useful setting is per-phone.
   async function psZoom(v) {
-    const track = psStream?.getVideoTracks?.()[0];
+    const gen = psScanGen, track = psStream?.getVideoTracks?.()[0];
     if (!track) return;
     try {
       await track.applyConstraints({ advanced: [{ zoom: Number(v) }] });
-      psDiag(track);
+      // A zoom that lands after its scan ended describes a camera that is gone.
+      if (gen === psScanGen) psDiag(track);
     } catch (e) { /* the camera refused it; leave the slider where the user put it */ }
   }
   window.psZoom = psZoom;
@@ -26795,7 +26848,7 @@
   // The camera light, where the camera has one.
   async function psTorch() {
     if (!psStream) return;
-    const track = psStream.getVideoTracks()[0];
+    const gen = psScanGen, track = psStream.getVideoTracks()[0];
     if (!track) return;
     psTorchOn = !psTorchOn;
     try {
@@ -26803,6 +26856,9 @@
       el('ps-torch').style.background = psTorchOn ? 'rgba(255,255,255,.85)' : 'rgba(0,0,0,.45)';
       el('ps-torch').style.color = psTorchOn ? '#111' : '#fff';
     } catch (e) {
+      // A failure that lands after its scan ended is not this scan's: it must not switch off,
+      // or hide, a newer scan's torch.
+      if (gen !== psScanGen) return;
       psTorchOn = false;
       el('ps-torch').classList.add('hidden');
     }
@@ -26812,6 +26868,10 @@
   window.psBarcode = psBarcode;
 
   function psStopScan() {
+    // First, before anything that could throw: a start still in flight is now stale (see
+    // psScanGen), whatever happens below.
+    psScanGen++;
+    psStarting = false;
     psScanning = false;
     if (psStream) { psStream.getTracks().forEach(t => t.stop()); psStream = null; }
     psTorchOn = false;
@@ -26821,7 +26881,7 @@
     const dg = el('ps-diag'); if (dg) dg.textContent = '';
     const zm = el('ps-zoom'); if (zm) zm.classList.add('hidden');
     const hint = el('ps-scanhint'); if (hint) hint.textContent = 'Fill the box with the barcode';
-    const b = el('ps-barcode'); if (b) b.textContent = 'Scan';
+    const b = el('ps-barcode'); if (b) { b.textContent = 'Scan'; b.disabled = false; }
   }
   window.psStopScan = psStopScan;
 
