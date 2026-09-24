@@ -6,7 +6,7 @@
 > - **Not reviewed yet:** App shell / navigation / service worker / initial load, Labor, Inventory Receiver, Submit Photos + Marketing + Comments, Users & access.
 > - **Verified:** only *Worker crons* (all 15 findings confirmed by an independent verifier). **Every other finding below is one reviewer's claim.** The one verified unit came back 15/15, so the reviews look reliable, but re-check each finding against the code before fixing it.
 > - **The review itself changed no code.** Every finding is either **minor** (local, frontend-only or self-contained, no API/schema/deploy coupling) or **major** (needs a plan: cross-cutting, frontend+worker coordination, schema, or destructive-path work).
-> - **Fixed since (2026-09-23):** 14 Bin Dump findings — bin-dump-1, 2, 3, 4, 7, 10, 11, 12, 13, 14, 15, 20, 22, 23 — each checked against the code before fixing; marked in the Bin Dump table. Also oppbuys-mos-2, oppbuys-mos-3 and oppbuys-mos-11, and the lookup half of oppbuys-mos-4, marked in the Opportunity Buys + MOS table. On 2026-09-24, merch-price-scan-8 (Price Scan's copy of the oppbuys-mos-2 race) and merch-price-scan-20 (the camera kept running in the background; MOS's scanner is covered by the same fix), marked in the Price Scan table. See `tasks/todo.md`.
+> - **Fixed since (2026-09-23):** 14 Bin Dump findings — bin-dump-1, 2, 3, 4, 7, 10, 11, 12, 13, 14, 15, 20, 22, 23 — each checked against the code before fixing; marked in the Bin Dump table. Also oppbuys-mos-2, oppbuys-mos-3 and oppbuys-mos-11, and the lookup half of oppbuys-mos-4, marked in the Opportunity Buys + MOS table. On 2026-09-24, merch-price-scan-8 (Price Scan's copy of the oppbuys-mos-2 race) and merch-price-scan-20 (the camera kept running in the background; MOS's scanner is covered by the same fix), marked in the Price Scan table. Also on 2026-09-24, with the Viewer's delete: inventory-5, inventory-24, inventory-8, and inventory-1 in part (the Viewer rows, Edit, and Schedule Sale's chips, preview and log), marked in the Inventory table. See `tasks/todo.md`.
 
 ## How to pick this up
 
@@ -56,11 +56,11 @@
 | Retail Summary | [weekly-retail-1](#weekly-retail-1) | minor | bug | A failed Retail Summary load hides its own error and leaves the previous range's numbers under the new range chip |
 | Retail Summary | [weekly-retail-2](#weekly-retail-2) | minor | bug | Categories 'Vs' counts today's not-yet-written snapshot as $0, so the default This Week view reports a false decline |
 | Retail Summary | [weekly-retail-3](#weekly-retail-3) | minor | bug | T13 Net card '% Budget' divides only the 12 merchandise categories by the full chain budget |
-| Inventory | [inventory-1](#inventory-1) | minor | security | Stored XSS / broken Edit: Clover item names interpolated into HTML attributes without quote escaping (incl. JSON in a single-quoted onclick) |
+| Inventory | [inventory-1](#inventory-1) | minor | security | Stored XSS / broken Edit: Clover item names interpolated into HTML attributes without quote escaping (incl. JSON in a single-quoted onclick) **Partly fixed 2026-09-24** — the Add Item results' onclick and two raw error strings remain. |
 | Inventory | [inventory-2](#inventory-2) | minor | bug | create-clover-item overwrites the shared IM# cost table and writes a global L3 mapping even when nothing was created |
 | Inventory | [inventory-3](#inventory-3) | minor | bug | Overlapping loadInventory calls share one global array: a double-click on Load doubles the catalog and flags every code as a duplicate |
 | Inventory | [inventory-4](#inventory-4) | minor | bug | Saving the Edit modal overwrites the item's `sku` with `code`, and wipes both when the code is empty |
-| Inventory | [inventory-5](#inventory-5) | minor | bug | Delete is unreachable: the redesign dropped the row's Del button, so openDeleteModal has no caller |
+| Inventory | [inventory-5](#inventory-5) | minor | bug | Delete is unreachable: the redesign dropped the row's Del button, so openDeleteModal has no caller **Fixed 2026-09-24.** |
 | Inventory | [inventory-6](#inventory-6) | minor | bug | Schedule Sale offers six locations but sends one store's Clover item ids; every other store's rows fail at activation |
 | Bin Dump | [bin-dump-1](#bin-dump-1) | minor | security | escapeHtml inside value="" / title="" attributes: values with a double quote are cut short on save, and attributes can be injected (stored XSS) **Fixed 2026-09-23.** |
 | Opportunity Buys + MOS | [oppbuys-mos-1](#oppbuys-mos-1) | major | bug | Buy 'Sold' counts every sale of an ordinary (non-PO) code printed under the buy, across all stores |
@@ -1365,14 +1365,14 @@ The three Inventory pages follow DESIGN.md §4.8 closely: panel, bar, legend, st
 
 | ID | Sev | Size | Category | Finding | Where | Verified |
 |---|---|---|---|---|---|---|
-| [inventory-1](#inventory-1) | high | minor | security | Stored XSS / broken Edit: Clover item names interpolated into HTML attributes without quote escaping (incl. JSON in a single-quoted onclick) | `index.html:30940` | unverified |
+| [inventory-1](#inventory-1) | high | minor | security | Stored XSS / broken Edit: Clover item names interpolated into HTML attributes without quote escaping (incl. JSON in a single-quoted onclick) | `index.html:30940` | **partly fixed 2026-09-24** |
 | [inventory-2](#inventory-2) | high | minor | bug | create-clover-item overwrites the shared IM# cost table and writes a global L3 mapping even when nothing was created | `worker.js:19983` | unverified |
 | [inventory-3](#inventory-3) | high | minor | bug | Overlapping loadInventory calls share one global array: a double-click on Load doubles the catalog and flags every code as a duplicate | `index.html:30803` | unverified |
 | [inventory-4](#inventory-4) | high | minor | bug | Saving the Edit modal overwrites the item's `sku` with `code`, and wipes both when the code is empty | `index.html:31191` | unverified |
-| [inventory-5](#inventory-5) | high | minor | bug | Delete is unreachable: the redesign dropped the row's Del button, so openDeleteModal has no caller | `index.html:31223` | unverified |
+| [inventory-5](#inventory-5) | high | minor | bug | Delete is unreachable: the redesign dropped the row's Del button, so openDeleteModal has no caller | `index.html:31223` | **fixed 2026-09-24** |
 | [inventory-6](#inventory-6) | high | minor | bug | Schedule Sale offers six locations but sends one store's Clover item ids; every other store's rows fail at activation | `index.html:31535` | unverified |
 | [inventory-7](#inventory-7) | medium | minor | bug | An active sale with one errored item shows 'Remove' instead of 'Cancel & restore', so it cannot be cancelled; Remove also deletes error history without confirmation | `index.html:31612` | unverified |
-| [inventory-8](#inventory-8) | medium | minor | bug | Changing the Viewer's store select does not reload; Edit, Schedule sale and Find duplicates then act on the new store with the old store's rows | `index.html:2404` | unverified |
+| [inventory-8](#inventory-8) | medium | minor | bug | Changing the Viewer's store select does not reload; Edit, Schedule sale and Find duplicates then act on the new store with the old store's rows | `index.html:2404` | **fixed 2026-09-24** |
 | [inventory-9](#inventory-9) | medium | minor | bug | Sale fan-out uses Promise.all, so one store's network error hides the stores that succeeded; partial failures don't name the store and clear the selection | `index.html:31541` | unverified |
 | [inventory-10](#inventory-10) | medium | minor | bug | Scheduler fires up to 50 Clover item reads and writes at once on one merchant; a 429 on revert marks the row 'error', which is never retried, leaving the item at sale price | `worker.js:1619` | unverified |
 | [inventory-11](#inventory-11) | medium | minor | bug | etLocalToDate is wrong across the year boundary: a New Year's Day sale starting 00:00 starts at 22:00 on Dec 31; one ending Dec 31 23:59 runs until ~01:00 | `index.html:31442` | unverified |
@@ -1386,7 +1386,7 @@ The three Inventory pages follow DESIGN.md §4.8 closely: panel, bar, legend, st
 | [inventory-19](#inventory-19) | medium | minor | ui-ux | After scheduling, the log reloads BL1 (the select's default) rather than the store just scheduled, and the success message is cleared 1.2 s later | `index.html:31557` | unverified |
 | [inventory-20](#inventory-20) | medium | minor | performance | The Viewer rebuilds the whole table (≈1.5 KB of HTML per row) on every search keystroke: 370–900 ms per key at 1,100 items unthrottled, 6–7 s at 5,000 on a 4× slower CPU | `index.html:2412` | unverified |
 | [inventory-21](#inventory-21) | medium | minor | ui-ux | Phone: every Inventory input is 12.5–13.5px, so iOS zooms the page on focus; key tap targets are 14–31px | `index.html:2007` | unverified |
-| [inventory-24](#inventory-24) | medium | minor | bug | Delete modal's 'Also delete from every other location' deletes nothing and reports success (latent until inventory-5 rewires Delete) | `index.html:31244` | unverified |
+| [inventory-24](#inventory-24) | medium | minor | bug | Delete modal's 'Also delete from every other location' deletes nothing and reports success (latent until inventory-5 rewires Delete) | `index.html:31244` | **fixed 2026-09-24** |
 | [inventory-25](#inventory-25) | low | minor | bug | The Edit modal's category datalist is appended to on every open and never cleared; openEditModal also repopulates the Add page's datalist with the Viewer's store | `index.html:30633` | unverified |
 | [inventory-26](#inventory-26) | low | minor | accessibility | Hidden-item rows dim text with opacity .55, failing AA in both themes (light 2.33–4.16:1, dark 2.62–3.30:1) | `index.html:2135` | unverified |
 | [inventory-27](#inventory-27) | low | minor | accessibility | Keyboard/screen-reader gaps: sortable headers are click-only <th>, modals have no dialog semantics, focus or Escape, status strips aren't live, and the discount input has no label | `index.html:2428` | unverified |
@@ -1400,7 +1400,9 @@ The three Inventory pages follow DESIGN.md §4.8 closely: panel, bar, legend, st
 <a id="inventory-1"></a>
 #### inventory-1 — Stored XSS / broken Edit: Clover item names interpolated into HTML attributes without quote escaping (incl. JSON in a single-quoted onclick)
 
-*high · minor · security · confidence high · `index.html:30940` · unverified*
+*high · minor · security · confidence high · `index.html:30940` · unverified · partly fixed 2026-09-24*
+
+**Status (2026-09-24).** Fixed in renderInvTable: every attribute goes through `invEsc`, which also escapes `"`, and Edit and Delete look the item up by id instead of inlining it as JSON. Fixed as well in Schedule Sale's chips, preview and log, because the whole name now reaches them. Until then the row cut it off at the first `"`. `scripts/browser-inventory-delete.mjs` §7 plants one name per quote style and checks every place it lands. **Still open:** the Add Item results' `invOpenInViewer('${escapeHtml(r.store)}','${escapeHtml(code)}')`, and the raw `data.error` in loadInventory's and saveEditItem's error strips.
 
 **Evidence.** index.html:30940 `<button ... onclick='openEditModal(${JSON.stringify(item)})'>Edit</button>` — JSON.stringify does not escape `'`, and the attribute is single-quoted. index.html:30930-30932 `data-item-name="${nm}"`, `aria-label="Select ${nm}"`, `title="${nm}"` where `nm = escapeHtml(item.name)`; escapeHtml (index.html:7753) is textContent→innerHTML, which escapes & < > but NOT quotes. Same pattern at 31370-31374 (sale chips), 31621/31627 (schedule log title), 30709 (`onclick="invOpenInViewer('${escapeHtml(r.store)}','${escapeHtml(code)}')"`). Raw Clover error text also goes into innerHTML via invStrip at 30817/31205/31256. Verified in Chromium by rendering the sliced renderInvTable: name `x' onmouseover='window.viaQuote=1' y='` and name `z" onmouseover="window.viaDouble=1` both executed on hover ({viaQuoteInEditButton:1, viaDoubleQuoteInTrAttr:1}); a plain "Men's Tee" row threw `SyntaxError: Invalid or unexpected token` on Edit and `55" Smart TV` was stored in the selection as `"55"`.
 
@@ -1444,7 +1446,7 @@ The three Inventory pages follow DESIGN.md §4.8 closely: panel, bar, legend, st
 <a id="inventory-5"></a>
 #### inventory-5 — Delete is unreachable: the redesign dropped the row's Del button, so openDeleteModal has no caller
 
-*high · minor · bug · confidence high · `index.html:31223` · unverified*
+*high · minor · bug · confidence high · `index.html:31223` · unverified · fixed 2026-09-24*
 
 **Evidence.** `grep openDeleteModal index.html` finds only its definition (31223). The row's action cell (30940) renders only `Edit`. `git show e7af0b2` (today, 'Inventory becomes a sidebar group') removed `-<button onclick='openDeleteModal(${JSON.stringify(item)})' ...>Del</button>`, while its commit message says it fixed confirmDelete's store list, so the removal was not intended. tasks/todo.md:1511: '**Brian still has to delete the five duplicates** — Admin → Inventory, keep one per store'. The #inv-delete-modal markup (2636-2656) and confirmDelete are now dead.
 
@@ -1477,7 +1479,7 @@ The three Inventory pages follow DESIGN.md §4.8 closely: panel, bar, legend, st
 <a id="inventory-8"></a>
 #### inventory-8 — Changing the Viewer's store select does not reload; Edit, Schedule sale and Find duplicates then act on the new store with the old store's rows
 
-*medium · minor · bug · confidence high · `index.html:2404` · unverified*
+*medium · minor · bug · confidence high · `index.html:2404` · unverified · fixed 2026-09-24 — nothing acts on the moved select until Load, though it still does not reload by itself*
 
 **Evidence.** index.html:2404 `<select id="inv-view-store" ... onchange="invViewStore=this.value">` only reassigns the variable while the table still shows the previous store. openEditModal titles and saves with it (31155 `Edit Item — ${invViewStore}`, 31191 `store: invViewStore`). openSaleModal preselects `el('inv-view-store').value` (31347). findDuplicates says 'reload if empty or store changed' (31109) but only checks `invViewAllItems.length === 0`, so it reports the old store's duplicates under the new store's name.
 
@@ -1631,7 +1633,7 @@ The three Inventory pages follow DESIGN.md §4.8 closely: panel, bar, legend, st
 <a id="inventory-24"></a>
 #### inventory-24 — Delete modal's 'Also delete from every other location' deletes nothing and reports success (latent until inventory-5 rewires Delete)
 
-*medium · minor · bug · confidence high · `index.html:31244` · unverified*
+*medium · minor · bug · confidence high · `index.html:31244` · unverified · fixed 2026-09-24 — the checkbox is gone; the worker still reports a 404 as ok, which, sent to the right store, now means already gone*
 
 **Evidence.** index.html:31244 `? { stores: INV_STORES.filter(st => st !== invViewStore), itemId: item.id }`. This sends one merchant's item id to the other five merchants (ids are per merchant, index.html:17174) and leaves out the store being viewed. Worker delete-clover-item treats `delResp.status === 404` as `{ ok: true }` (worker.js:20224). The client then removes the row locally and prints `Deleted "${item.name}".` (31261-31265), with the name unescaped into innerHTML.
 
