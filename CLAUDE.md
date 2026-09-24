@@ -1,54 +1,57 @@
 ## Workflow Orchestration
 
-### 1. Plan Node Default
-	⁃	﻿﻿Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
-	⁃	﻿﻿If something goes sideways, STOP and re-plan immediately - don't keep pushing
-	⁃	﻿﻿Use plan mode for verification steps, not just building
+### 1. Plan Mode Default
+	⁃	﻿﻿Enter plan mode for architectural decisions and anything under Destructive Operations; otherwise write the plan and start
+	⁃	﻿﻿If the plan's assumption proves wrong, update the plan before continuing - don't keep pushing
+	⁃	﻿﻿Include how you'll verify in the plan
 	⁃	﻿﻿Write detailed specs upfront to reduce ambiguity
 ### 2. Subagent Strategy
-	-          Use subagents liberally to keep main context window clean
+	-          Use subagents when a search or read would flood the main context window
 	⁃	﻿Offload research, exploration, and parallel analysis to subagents
-	⁃	﻿﻿For complex problems, throw more compute at it via subagents
-	⁃	﻿﻿One tack per subagent for focused execution
+	⁃	﻿﻿One task per subagent for focused execution
 ### 3. Self-Improvement Loop
 	⁃	﻿﻿After ANY correction from the user: update "tasks/lessons.md" with the pattern
 	⁃	﻿﻿Write rules for yourself that prevent the same mistake
-	⁃	﻿﻿Ruthlessly iterate on these lessons until mistake rate drops
-	⁃	﻿﻿Review lessons at session start for relevant project
+	⁃	﻿﻿Before adding a lesson, extend an existing one if it covers the same pattern
+	⁃	﻿﻿At session start, read the lesson headings and open the ones that touch the task
 ### 4. Verification Before Done
 	⁃	﻿﻿Never mark a task complete without proving it works
 	⁃	﻿﻿Diff behavior between main and your changes when relevant
-	⁃	﻿﻿Ask yourself: "Would a staff engineer approve this?"
-	⁃	﻿﻿Run tests, check logs, demonstrate correctness
-### 5. Demand Elegance (Balanced)
-	⁃	﻿﻿For non-trivial changes: pause and ask "is there a more elegant way?"
-	⁃	﻿﻿If a fix feels hacky: "Knowing everything I know now, implement the elegant solution"
-	⁃	﻿﻿Skip this for simple, obvious fixes - don't over-engineer
-	⁃	﻿﻿Challenge your own work before presenting it
-### 6. Autonomous Bug Fizing
+	⁃	﻿﻿Done = `npm test` passes; new behaviour has a test or `scripts/browser-*.mjs` check that fails without the change; UI changes pass the checks under UI work, in both themes; a deploy meets Destructive Operations rule 5
+### 5. Autonomous Bug Fixing
 	⁃	﻿﻿When given a bug report: just fix it. Don't ask for hand-holding
 	⁃	﻿﻿Point at logs, errors, failing tests - then resolve them
 	⁃	﻿﻿Zero context switching required from the user
 	⁃	﻿﻿Go fix failing CI tests without being told how
 ## Task Management
 
-1. **Plan First**: Write plan to "tasks/todo.md" with checkable items
+1. **Plan First**: Add the plan as a new dated entry at the top of tasks/todo.md (it's a newest-first log — never overwrite it), with checkable items
 
-2. **Verify Plan**: Check in before starting implementation
+2. **Verify Plan**: Check in before implementing only when the plan includes a Destructive Operations step or a product decision the request doesn't settle; otherwise proceed
 
 3. **Track Progress**: Mark items complete as you go
 
-4. **Explain Changes**: High-level summary at each step
+4. **Explain Changes**: Once, at the end of the run, in the Reporting format below
 
-5. **Document Results**: Add review section to 'tasks/todo.md"
+5. **Document Results**: Add review section to tasks/todo.md
 
-6. **Capture Lessons**: Update tasks/lessons.md" after corrections
+6. **Capture Lessons**: Update tasks/lessons.md after corrections
 
+## Reporting
+
+End every long run (anything unattended, or more than a few steps) with a report under exactly
+these three headings, in this order. Write "None" under an empty heading.
+
+- **Blocked on me**: everything waiting on the user, such as a merge click, a `wrangler` deploy
+  or migration, a Destructive Operations rule 7 confirmation, a credential, or a product
+  decision. Give the exact ask for each and what it unblocks.
+- **Changed**: files, commits, PR links, deploys and data writes, each with how it was verified.
+- **Found**: problems noticed but not fixed, each with `file:line` and why it was left.
 
 ## Core Principles
 	⁃	﻿﻿**Simplicity First**: Make every change as simple as possible. Impact minimal code.
 	⁃	﻿﻿**No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
-	⁃	﻿﻿**Minimat Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
+	⁃	﻿﻿**Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
 
 ## UI work
 
@@ -62,6 +65,13 @@ already shipped broken once; check them before saying a table is done.
 Verify a colour change in BOTH themes by computing contrast against the real background
 (≥ 4.5:1), never by looking at a screenshot — and never against the local `tailwind.css`,
 which is stale and carries no `dark:` variants.
+
+## Design Context
+
+Users: store managers, district managers and admins of a liquidation retail chain, often on
+phones as an installed PWA. Jobs: sales vs budget, labor, inventory and receiving,
+merchandising, marketing. Direction: DESIGN.md §1, V1 "Operator" (operational, dense). Fonts,
+palette and tokens are fixed by DESIGN.md §2 in both themes: extend them, don't pick new ones.
 
 ## Pull requests
 
@@ -84,7 +94,10 @@ answer rather than trying again.
 automatically, so a merged `index.html` change reaches www.retjghub.com with no
 further step. The worker and every migration still need an explicit `wrangler` run, and
 the Destructive Operations rules below apply to those in full and are not softened by
-this.
+this. Claude does not run `wrangler deploy` or a migration: ask for each one under
+**Blocked on me**. Ask for a backward-compatible worker change to be deployed as soon as it
+is pushed, before review: it is inert until a frontend calls it, and shipping it first means
+a merge can never put the frontend ahead of its worker.
 
 Approving a PR remains out of scope.
 
@@ -102,10 +115,13 @@ Approving a PR remains out of scope.
    evidence of a complete fetch. Cross-check every write against D1.
 5. **Confirm a deploy actually landed, everywhere.** Worker rollout is gradual (~180 s observed)
    and mid-rollout requests hit a mix of old and new. Poll on the full condition; require
-   consecutive clean passes.
+   3 consecutive clean passes.
 6. **Derive deploy order from which side stops being backward-compatible** — not from last time.
-7. **Database mutations and any KV overwrite of stored history require explicit confirmation**,
-   with a summary of exactly what will be affected.
+7. **In production, database mutations and any KV overwrite of stored history require
+   explicit confirmation**, with a summary of exactly what will be affected. A probe that writes
+   (even an additive `ALTER`) counts; check schema read-only instead, e.g.
+   `PRAGMA table_info(<table>)`. Before citing this rule, grep what the code actually writes:
+   an in-memory cache is not stored history.
 </rules>
 
 See [MEMORY.md](MEMORY.md) for the incidents behind each of these.

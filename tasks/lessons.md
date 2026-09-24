@@ -132,11 +132,7 @@ own attention around the merge, which is the one moment I do not control.
    since the raw checksums differ every fetch — turned "this is probably broken" into "this
    is broken, here is the line." That part worked and is worth keeping; it is what made the
    deploy decision a ten-second one instead of a discussion.
-5. **When a frontend can outrun its backend, consider making the skew visible in the UI.**
-   Not done here and not obviously worth it for one enum value, but the general fix for
-   "the worker silently stores a default" is for the client to read back what was saved and
-   say so. Silence on the write path is what turns an ordering slip into a mystery.
-6. **I then wrote a health check that could not fail, in the act of verifying this.** The
+5. **I then wrote a health check that could not fail, in the act of verifying this.** The
    confirmation poller probed the `workers.dev` hostname, which this environment's proxy
    refuses; curl printed `000` and the `|| echo 000` fallback appended another, so the
    status read `000000` — not equal to `"000"`, not starting with `"5"`, so both guards
@@ -354,10 +350,7 @@ with.
    whose message says "wrote a plan" is the whole finding, available instantly, and it sat
    unread in `git commit`'s own output. `git diff --stat HEAD~1` costs one second and answers
    "did I change only what I meant to".
-4. **An instruction that describes a file's SHAPE is load-bearing — read it as a spec, not as
-   prose.** "Add a review section" and "write the plan to" describe the same file accumulating
-   in both directions. The verb was the spec and I skimmed past it.
-5. **Recovery by git is not evidence of a safe method.** The command was equally happy to run
+4. **Recovery by git is not evidence of a safe method.** The command was equally happy to run
    against something with no undo. Judge the method by what it would have done to the least
    recoverable target it could have been pointed at, not by how this instance landed.
 </rules>
@@ -387,8 +380,8 @@ A note is not a mechanism. Once the same trap catches twice, the write-up is not
 3. **If the worker genuinely cannot go first, the CLIENT must tolerate the old one** — feature
    detection, or a refusal path that says something useful — rather than a PR body asking for
    a particular click order. Design for it, do not document around it.
-4. **Escalate a repeat.** The second occurrence of a documented trap is evidence the
-   documentation is not load-bearing. Change the plan, not the wording.
+4. **On a repeat, change the plan, not the wording.** The second occurrence of a documented
+   trap is evidence the documentation is not load-bearing.
 </rules>
 
 ## The API pretty-prints, and my grep did not (2026-09-18)
@@ -456,8 +449,8 @@ working**: the check refused to confirm a deploy rather than pass on a value it 
    answers `401 NO_SESSION` to real, new and nonsense actions alike, so no unauthenticated
    request distinguishes a deployed version — which is why earlier deploys could only be
    confirmed from the control plane. A CORS preflight runs before the auth gate and does
-   discriminate. When designing a change, notice whether anything about it will be observable
-   after shipping.
+   discriminate. When designing a worker change, name the probe that will prove it shipped: a
+   string literal unique to the change, or an unauthenticated response that differs.
 5. **A verification that fails closed on its own bug is not a nuisance.** Ten RESET lines that
    turned out to be a bad `sed` are cheaper than one confirmation built on a misparse. Read
    them before assuming the deploy is wrong — and before assuming the check is.
@@ -801,8 +794,9 @@ suite built from the diff can only confirm the diff.
 1. **Auditing a value means searching every spelling of it.** A CSS colour has at least
    three: `#101826`, `rgb(16 24 38)`, `rgba(16,24,38,.64)`. Enumerate the token's decimal
    channels and grep those too, before declaring a sweep complete.
-2. **A clean grep only proves the pattern is absent.** State the pattern to yourself and ask
-   what it cannot match. "No hits" is evidence about the query, not about the file.
+2. **A clean grep only proves the pattern is absent.** Before calling a sweep complete, grep
+   the value's other spellings (rule 1) or sweep the rendered page for it (rule 4). "No hits"
+   is evidence about the query, not about the file.
 3. **Inconsistency in your own edits is a signal.** I converted one of four identical
    `rgba(136,147,167,0.35)` borders by hand and left three. That asymmetry meant my
    mechanical pass had a blind spot; I read it as a tidy-up I had not got to.
@@ -872,7 +866,9 @@ Rules:
    Read the mutated code in context and ask what input would now behave differently. If
    there is none, the mutation was semantically equivalent and the suite is fine.
 2. **A survivor sometimes indicts the CODE, not the test.** An unreachable guard passes
-   mutation testing by definition. That is a reason to delete it, not to test it.
+   mutation testing by definition. That is a reason to delete it, not to test it — unless it
+   is a permission or data-loss backstop, which stays with a source pin (the `canAccessStore`
+   lesson, 2026-09-16).
 3. **Then mutate the thing that actually carries the rule.** Both of these had a real
    guard elsewhere, and both of those guards were caught immediately once aimed at.
 4. Same family as "grepping a name is not testing a behaviour": the question is always
@@ -992,7 +988,7 @@ and on a note in our own docs instead of reading what the error actually said.
    the file size was correlated, not causal. It has now been corrected in place — an entry
    that names the wrong cause is worse than none, because it aims the next person at the
    same dead end and lends it authority.
-4. **Ask where the repo lives before debugging git on macOS.** `~/Desktop` and
+4. **Check where the repo lives (`pwd`) before debugging git on macOS.** `~/Desktop` and
    `~/Documents` are iCloud-synced by default. One `pwd` would have settled this before
    any of the tuning.
 </rules>
@@ -1197,9 +1193,9 @@ the branch working copy had drifted. I trusted the on-disk file over the tracked
 **Rule:** When deploying the worker from a worktree missing `wrangler.toml`, restore it
 from git: `git show origin/main:wrangler.toml > wrangler.toml`. **Never** copy the
 main-repo working file. After EVERY `wrangler deploy`, read back the printed bindings
-(MEDIA, BL16_*) and the 6 crons before trusting it. Also: push the deployed worker.js to
-`main` so main == prod and a later main-based deploy can't revert it. Fixed by redeploy
-with the tracked config (version a4922cdd).
+(MEDIA, BL16_*) and the 6 crons before trusting it. Also: land the deployed worker.js on
+`main` through its PR, so main == prod and a later main-based deploy can't revert it.
+Fixed by redeploy with the tracked config (version a4922cdd).
 
 
 ## Don't call a CSS transition class "inert" without checking classList toggles (2026-07-07)
@@ -1282,7 +1278,7 @@ state. Any UI keyed off another element's visibility must (1) hold a
 conservative default until an explicit `roleReady` flag flips, and (2) be
 re-synced BY `applyRoleUI` itself, not wait for the next user action.
 **Test pattern:** extract the real inline IIFE from index.html and run it in
-node `vm` with a stub DOM (scratchpad navprev/test_race.js) — replays
+node `vm` with a stub DOM — replays
 boot → auth-lands sequences per role without a browser.
 
 ## Brace-matching source extractors MUST skip comments (2026-07-31)
@@ -1305,8 +1301,7 @@ harness can go green while testing a blob you did not intend.
 **Rules:**
 1. A brace matcher over real source must handle **four** states, not one:
    `//` line comments, `/* */` block comments, quoted strings (with `\` escapes),
-   and template literals. Shared correct implementation:
-   `scratchpad/extract.mjs` — copy it, don't rewrite it.
+   and template literals.
 2. **Bound the extraction on BOTH sides.** Assert `length < someMax` and that the
    slice does NOT contain a symbol you know lives outside it (e.g. the next
    endpoint's action string). "Not too short" is only half a check.
@@ -1389,7 +1384,8 @@ out, because none of it was wrong.** Re-running the identical call a few minutes
 later: `written=0, skipped=1, ratio 0.3619`, snapshot sha256 byte-identical.
 
 **Rules:**
-1. After `wrangler deploy`, give the worker time before testing the changed path.
+1. After `wrangler deploy`, poll the changed path until it shows the new behaviour on 3
+   consecutive calls, then test it.
 2. **If a just-shipped fix appears inert, RE-TEST before you diagnose.** One repeat
    call is cheaper than an hour of tracing correct code.
 3. When the verification itself is destructive, this matters doubly — the failed
@@ -1500,8 +1496,8 @@ fine. $19,233 across five stores, all conveniently dated today, should have read
 as suspicious before it read as a finding.
 
 **Rules:**
-1. **Run a finished diagnostic against production and read the output critically
-   BEFORE trusting it.** Ask "is this plausible?" not "did it return 200?".
+1. **Run a finished diagnostic against production and check whether the flagged rows
+   share one store, one date, or today BEFORE trusting it** (rule 2).
    Cheap here precisely because the tool was read-only by construction.
 2. **Interrogate the alarming result first.** If a first run reports a big number,
    assume the tool before assuming the data. Check whether the flagged rows share
@@ -1578,7 +1574,7 @@ non-existent bug in the deletion.
 **Rules:**
 1. **Poll on exactly the assertion you are about to make.** If the claim is "all
    four are gone", the wait condition is "all four are gone" — not "one is gone".
-2. **On a gradually-rolled deploy, require N consecutive clean passes**, not one.
+2. **On a gradually-rolled deploy, require 3 consecutive clean passes**, not one.
    A single pass can be served entirely by updated instances by luck.
 3. **A mixed old/new reading looks exactly like a partial failure.** Before
    diagnosing a half-applied change, re-run the check — non-determinism across
@@ -1683,8 +1679,8 @@ was tracked, meaning it existed and had content.
    the file for you. Edit is the safe default; Write is for files you know are new.
 2. **A convention that names a fixed path ("write the plan to tasks/todo.md")
    assumes that path is yours.** In a repo with concurrent workstreams it is not.
-   Use a task-specific name — `tasks/<feature>.md`, matching the eight other
-   named plan docs already there — and leave `todo.md` to whoever is using it.
+   Add a new dated entry at the top of `todo.md` and leave every other entry alone
+   (CLAUDE.md, Plan First).
 3. **`git status` at session start already tells you what is tracked.** A file
    absent from the untracked list is a file with committed content.
 
@@ -1810,8 +1806,9 @@ was rejected.
    present in your tree** before redeploying. `git diff <base>..origin/main -- worker.js`,
    collect the `+` lines, check every one is in the file. A clean `git status` proves
    nothing — it is relative to HEAD, and HEAD was the problem.
-3. **Then assert `HEAD == origin/main`** and `git diff HEAD -- worker.js` is empty, so the
-   bytes deployed are the bytes on main.
+3. **Then assert the checkout contains all of main** and `git diff HEAD -- worker.js` is
+   empty, so the bytes deployed are committed and include everything on main:
+   `git fetch origin main && git merge-base --is-ancestor origin/main HEAD`.
 </rules>
 
 ## A global selector needs a label per CONSUMER, not one per page (2026-09-01)
@@ -1903,8 +1900,9 @@ seen the old dates, and reasonably concluded the fix did not work.
 2. **"The deploy is green" is not "users have it."** A green Pages run proves the CDN has
    the bytes. The service worker sits between the CDN and the user and is a second, separate
    cache with its own invalidation. Verify the LAST hop, not the first.
-3. **Re-read `MEMORY.md` before saying a frontend change has shipped.** The rule was already
-   written down; I had read the file for the destructive-ops rules and skipped past this line
+3. **Before saying a frontend change has shipped, confirm the same diff bumps `CACHE_NAME` in
+   `sw.js`** (the check under "Repeat offence" below). The rule was already written down in
+   `MEMORY.md`; I had read the file for the destructive-ops rules and skipped past this line
    because it was not about the task in front of me.
 4. **When egress policy blocks verifying prod, say so and check what you CAN reach.** Both
    `www.retjghub.com` and the artifact host returned 403 CONNECT here. The proxy README says
@@ -2346,13 +2344,13 @@ which costs nothing if the column exists — not "you are in this state, here is
 2. **When a safe, self-diagnosing probe exists, run it BEFORE narrating a diagnosis.** CLAUDE.md
    rule 3 forbids verifying a guard with a probe that does the damage; the corollary is that a
    probe which is harmless in *both* outcomes should come first, not after the conclusion.
+   If the probe writes (even an additive `ALTER`), it is a CLAUDE.md rule 7 mutation: hand it
+   over with the confirmation summary, or ask the same question read-only with
+   `PRAGMA table_info(<table>)`.
 3. **Once you have enumerated two consistent states, you may not later pick one for free.**
    Write the disjunction down and re-read it. Collapsing it silently is how a hedge becomes a
    claim between two messages.
-4. **Weigh the two error costs before raising an alarm.** "Run this, it may already be done"
-   costs a command. "Your app is down" costs someone dropping what they are doing mid-shift.
-   Asymmetric costs mean asymmetric evidence bars.
-5. **Never put a trailing `#` comment on a shell command you hand someone.** Interactive zsh does
+4. **Never put a trailing `#` comment on a shell command you hand someone.** Interactive zsh does
    not set `INTERACTIVE_COMMENTS`, so `--file=x.sql   # staging` passes `#` and `staging` as
    arguments. My annotation is what made both of his migration runs fail. Put the label on its
    own line, above the command.
@@ -2378,15 +2376,15 @@ This is the same error as rule 1, pointed inward. I was careful about claims reg
 was far cheaper to check and was the thing forcing all the inference.
 
 <rules>
-6. **Check your own capabilities before declaring them absent.** "I can't reach X" is a factual
-   claim about the environment, not a property of being an assistant. `env | grep -i TOKEN`,
-   `which wrangler`, one read-only call — seconds, against an afternoon of reasoning built on
-   the assumption.
-7. **A stated limitation propagates further than a stated fact.** A wrong claim about
+5. **Check your own capabilities before declaring them absent.** "I can't reach X" is a factual
+   claim about the environment, not a property of being an assistant.
+   `env | cut -d= -f1 | grep -i token` (names, never values), `which wrangler`, one read-only
+   call — seconds, against an afternoon of reasoning built on the assumption.
+6. **A stated limitation propagates further than a stated fact.** A wrong claim about
    production gets corrected the moment somebody looks. A wrong claim about what you cannot do
    ends up in the notes you hand your successor, who then does not try either. Mine survived
    three check-ins.
-8. **When someone asks you to do the thing you said you could not do, look before answering.**
+7. **When someone asks you to do the thing you said you could not do, look before answering.**
    The request is evidence: they may know something about your access that you do not.
 </rules>
 
@@ -2564,11 +2562,10 @@ briefly read live-vs-local count differences (4 vs 3, 9 vs 11) as signal when `g
 counts LINES and a bundler re-joins them, so the two numbers were never comparable.
 
 <rules>
-24. **Before `wrangler deploy`, diff the file you are deploying against the branch you
-   think you are on.** `git diff <deploying> origin/main -- worker.js` coming back empty
-   is the one check that would have prevented the 40-minute rollback, and it costs a
-   second. Deploying from a feature branch is fine; deploying from one that is BEHIND is
-   the incident.
+24. **Before `wrangler deploy`, check the checkout contains all of main.**
+   `git fetch origin main && git merge-base --is-ancestor origin/main HEAD` succeeding is the
+   one check that would have prevented the 40-minute rollback, and it costs a second.
+   Deploying from a feature branch is fine; deploying from one that is BEHIND is the incident.
 25. **Grep the deployed bundle for features you did not touch.** Your own markers being
    present proves your change shipped and says nothing about what left with it. Pick three
    or four of the most recent unrelated features and confirm they are still in there.
