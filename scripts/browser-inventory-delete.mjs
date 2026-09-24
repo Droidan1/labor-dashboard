@@ -21,6 +21,11 @@
 // So every fault shape below is asserted to leave the row in place and say why, and
 // each one's sentence is asserted to be distinct from the others.
 //
+// §7 and §7b also plant hostile text wherever an Inventory page puts it on screen —
+// item names, a typed code, the worker's error bodies — on the Viewer, Schedule Sale,
+// Add Item and Edit (code review inventory-1). They live here because the delete work
+// is what exposed them.
+//
 // 🛑 THE APP'S THEME IS A `.dark` CLASS DRIVEN BY localStorage, NOT prefers-color-scheme.
 // It is set through localStorage AND asserted before anything is measured — see
 // browser-inventory-nav.mjs, whose contrast walk this reuses.
@@ -124,12 +129,16 @@ async function open({ dark = true, width = 1400, height = 1000 } = {}) {
       if (s.includes('inventory-items')) {
         const st = new URL(s).searchParams.get('store');
         window.__loads.push(st);
-        if (window.__failLoad === st) return J({ ok: false, error: 'Clover returned 503' }, 502);
+        if (window.__failLoad === st) return J({ ok: false, error: window.__failLoadText || 'Clover returned 503' }, 502);
         const el = window.__catalog[st] || [];
         return J({ ok: true, elements: el, offset: 0, total: el.length, hasMore: false });
       }
       if (s.includes('clover-categories')) return J({ ok: true, elements: [{ id: 'C1', name: 'FG BL CONSUMABLES - OTHER - LAUNDRY' }] });
       if (s.includes('list-sale-schedules')) return J({ ok: true, groups: window.__sched || [] });
+      if (s.includes('create-clover-item')) return J(window.__create || { results: [] });
+      // The real handler's failure: Clover's body passed through as `error`, with its status.
+      if (s.includes('update-clover-item')) return window.__editFail
+        ? J({ ok: false, error: window.__editFail, stage: 'patch' }, 502) : J({ ok: true });
       if (s.includes('delete-clover-item')) {
         const body = JSON.parse(o.body || '{}');
         window.__del.push(body);
@@ -564,6 +573,69 @@ async function settle(page) {
     eq(await page.evaluate(() => window.__pwned || 0), 0, '🛑 no hover anywhere ran the name');
   });
   check(errs.length === 0, `hostile name: no JS errors${errs.length ? ': ' + errs.join(' | ') : ''}`);
+  blocked.forEach(h => allBlocked.add(h));
+  await ctx.close();
+}
+
+// ── 7b. Hostile TEXT on Add Item and Edit (the rest of inventory-1). ──────────
+// Add Item's "Open in Viewer" carried the TYPED code inside a single-quoted JS string in a
+// double-quoted onclick. The Viewer's load error and Edit's save error put the worker's
+// text into innerHTML — and that text is Clover's raw body, or a category name typed into
+// Edit and echoed back ("Could not resolve category …"). Three sections, so each sink
+// fails on its own against a build that lacks its fix.
+{
+  const { ctx, page, errs, blocked } = await open();
+  const CODE = `9'1"2`;
+  const BAIT = '<img src=x onerror="window.__pwned=(window.__pwned||0)+1">';
+  await section('Add Item: a typed code with both quotes', async () => {
+    await page.evaluate(bait => {
+      window.__create = { results: [
+        { store: 'BL4', ok: false, duplicate: true, existingId: 'OLD4', error: 'already exists' },
+        { store: 'BL8', ok: false, stage: 'item', error: bait + 'Clover said no' },
+      ], costUpdated: false, l3Mapped: false, l3MapSkipped: bait + 'a built-in' };
+    }, BAIT);
+    await page.evaluate(() => navigateToPage('inventory-add')); await page.waitForTimeout(150);
+    await page.fill('#inv-name', 'Hostile code test');
+    await page.fill('#inv-code', CODE);
+    await page.fill('#inv-price', '4.99');
+    await page.fill('#inv-l3', 'FG BL CONSUMABLES - HBA - HYGIENE');   // a built-in: L2 fills itself
+    await page.click('#inv-submit'); await page.waitForTimeout(400);
+    eq(await page.$$eval('#inv-results-body .invres', n => n.map(x => x.className.replace('invres ', ''))), ['dupe', 'bad'],
+       'the results render, one row per store');
+    // The create path's own error texts were already escaped; pinned so they stay that way.
+    eq(await page.$$eval('#page-inventory-add *', n => n.filter(e => e.tagName === 'IMG' || e.hasAttribute('onerror')).length), 0,
+       'Add Item holds no img and no injected handler');
+    await page.click('#inv-results-body .invres.dupe button:has-text("Open in Viewer")', { timeout: 2000 });
+    await page.waitForTimeout(400);
+    eq(await page.$$eval('[id^="page-"]', ps => ps.filter(p => !p.classList.contains('hidden')).map(p => p.id)),
+       ['page-inventory-viewer'], '"Open in Viewer" opens the Viewer for a code holding both quotes');
+    eq(await page.$eval('#inv-view-search', e => e.value), CODE, '…with that exact code in the search');
+    eq(await page.$eval('#inv-view-store', e => e.value), 'BL4', '…on the store the result named');
+  });
+  await section('Viewer: a load error carrying markup', async () => {
+    await page.evaluate(bait => { window.__failLoad = 'BL2'; window.__failLoadText = bait + 'Clover returned 503'; }, BAIT);
+    await page.evaluate(() => navigateToPage('inventory-viewer')); await page.waitForTimeout(150);
+    await page.selectOption('#inv-view-store', 'BL2');
+    await page.click('#page-inventory-viewer button:text-is("Load")'); await page.waitForTimeout(400);
+    eq(await page.$$eval('#inv-view-status img', n => n.length), 0, 'a failed load shows its error as text: no img');
+    check((await page.$eval('#inv-view-status', e => e.textContent)).includes('<img src=x'),
+          '…the markup shows as characters, so the reader still sees what came back');
+  });
+  await section('Edit: a save error carrying markup', async () => {
+    await page.evaluate(() => { window.__failLoad = null; });
+    // "Open in Viewer" left the typed code in the search; it would filter BL1 to nothing.
+    await page.fill('#inv-view-search', '');
+    await loadStore(page, 'BL1');
+    await page.evaluate(bait => { window.__editFail = bait + 'Clover rejected the patch'; }, BAIT);
+    await row(page, 'Downy').locator('button:text-is("Edit")').click({ timeout: 2000 });
+    await page.click('#inv-edit-modal button:has-text("Save changes")'); await page.waitForTimeout(400);
+    eq(await page.$$eval('#inv-edit-status img', n => n.length), 0, 'a failed Edit save shows its error as text: no img');
+    check((await page.$eval('#inv-edit-status', e => e.textContent)).includes('Clover rejected the patch'),
+          '…and still says what the worker said');
+  });
+  await page.waitForTimeout(200);
+  eq(await page.evaluate(() => window.__pwned || 0), 0, '🛑 nothing Add Item, the Viewer or Edit showed was run');
+  check(errs.length === 0, `hostile text: no JS errors${errs.length ? ': ' + errs.join(' | ') : ''}`);
   blocked.forEach(h => allBlocked.add(h));
   await ctx.close();
 }

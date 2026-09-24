@@ -1,3 +1,76 @@
+# Inventory: escape what Add Item and Edit put on the page (inventory-1, 2026-09-24)
+
+**Request:** *"Fix the escaping in Add Item and Edit next."* This is the rest of code review
+finding **inventory-1**. #287 fixed the Viewer rows, Edit's button and Schedule Sale's names,
+and left three sinks. A sweep of every `innerHTML`, status strip and attribute in the Add Item,
+Viewer and Edit code (`index.html` 31047–31926) found no others:
+
+1. **Add Item → "Open in Viewer"** (`index.html:31174`), on a result row for a code that is
+   already in use.
+   - It is built as `onclick="invOpenInViewer('${escapeHtml(r.store)}','${escapeHtml(code)}')"`.
+   - `code` is whatever was typed in the form. A `'` in it ends the JS string, so the click
+     throws. A `"` ends the attribute, so the rest of the code becomes markup.
+2. **The Viewer's load error** (`index.html:31292`).
+   - `invViewSetStatus('Error: ' + (data.error || 'unknown'), 'error')` puts the worker's text
+     into `innerHTML`, and for a failed Clover call that text is Clover's raw response body.
+3. **The Edit modal's save error** (`index.html:31692`). `invEditSetStatus` does the same.
+
+Everything else there is already escaped or set through DOM properties: the other result
+columns, the category notes, the Edit fields and the datalists.
+
+## Plan
+
+- [x] **Browser check first**, in `scripts/browser-inventory-delete.mjs` §7b (hostile text), and
+      run it against the build without the fix:
+  - an Add Item result for a code holding both `'` and `"`: "Open in Viewer" must open the
+    Viewer on that store with that exact code in the search, and the results must carry no
+    injected attribute;
+  - a failed load and a failed Edit save whose error is `<img src=x onerror=…>`: the strip
+    must show it as text, with no `img` and nothing run;
+  - the create path's own error texts (`r.error`, `l3MapSkipped`) already escape. Pin them too,
+    so they stay that way.
+- [x] **Fix:**
+  - the `onclick` passes both arguments as JSON through `invEsc`, the way #287's sale chip does;
+  - both strips wrap `data.error` in `escapeHtml`.
+- [x] **Mutations:** revert each of the three fixes in its own copy of `dist/`, and watch the
+      check fail.
+- [x] `npm test`, the nav check, `CACHE_NAME` (v240) + the shell-cache fixture. inventory-1 is
+      marked fixed in the review doc.
+- [x] **Before pushing**, re-read the PR state. #287 merged, so this is a new PR from a fresh
+      `main`.
+
+## Review
+
+**Reproduced before fixing.** The new §7b ran against the unfixed build: 176 passed, 8 failed.
+- **Add Item:** "Open in Viewer" threw `SyntaxError: missing ) after argument list` for the
+  code `9'1"2`, and the Viewer never opened.
+- **Viewer and Edit:** the load error and the Edit save error each inserted a live `<img>`. Its
+  `onerror` ran, twice in total.
+
+**One test bug, found by the fix.** On the fixed build the Edit section failed, but not in
+the product.
+- "Open in Viewer" now works, so it left the typed code in the Viewer's search, and the next
+  load of BL1 was filtered down to no rows.
+- On the broken build the click never happened, which is why it passed there.
+- The section now clears the search first. A fix that makes one step work can change the
+  state that the next step of the same test depends on.
+
+**Verified:**
+- **`browser-inventory-delete.mjs`:** 184 / 184, in both themes.
+- **`browser-inventory-nav.mjs`:** 72 / 72.
+- **`npm test`:** 5907 assertions across 82 suites, unchanged, since no Node suite covers these
+  three lines.
+- **Mutations: 3 / 3 caught.** Each revert of one fix, in its own copy of `dist/`, fails only
+  its own section plus the shared "nothing ran" count:
+  - the `onclick`: 4 fails;
+  - the load strip: 3;
+  - the Edit strip: 2.
+
+**Left, not in scope:** Schedule Sale's error strip (`index.html:32200`,
+`setSaleModalStatus('Error: ' + (errors[0].error || 'unknown'))`) is the same raw-text shape.
+Its text is the worker's own messages, which echo a Clover item id at most, so nobody else
+controls it.
+
 # Inventory Viewer: delete one item, or every selected item (inventory-delete, 2026-09-24)
 
 **Request:** *"In the inventory viewer page add the feature to allow to delete individual items

@@ -6,7 +6,7 @@
 > - **Not reviewed yet:** App shell / navigation / service worker / initial load, Labor, Inventory Receiver, Submit Photos + Marketing + Comments, Users & access.
 > - **Verified:** only *Worker crons* (all 15 findings confirmed by an independent verifier). **Every other finding below is one reviewer's claim.** The one verified unit came back 15/15, so the reviews look reliable, but re-check each finding against the code before fixing it.
 > - **The review itself changed no code.** Every finding is either **minor** (local, frontend-only or self-contained, no API/schema/deploy coupling) or **major** (needs a plan: cross-cutting, frontend+worker coordination, schema, or destructive-path work).
-> - **Fixed since (2026-09-23):** 14 Bin Dump findings — bin-dump-1, 2, 3, 4, 7, 10, 11, 12, 13, 14, 15, 20, 22, 23 — each checked against the code before fixing; marked in the Bin Dump table. Also oppbuys-mos-2, oppbuys-mos-3 and oppbuys-mos-11, and the lookup half of oppbuys-mos-4, marked in the Opportunity Buys + MOS table. On 2026-09-24, merch-price-scan-8 (Price Scan's copy of the oppbuys-mos-2 race) and merch-price-scan-20 (the camera kept running in the background; MOS's scanner is covered by the same fix), marked in the Price Scan table. Also on 2026-09-24, with the Viewer's delete: inventory-5, inventory-24, inventory-8, and inventory-1 in part (the Viewer rows, Edit, and Schedule Sale's chips, preview and log), marked in the Inventory table. See `tasks/todo.md`.
+> - **Fixed since (2026-09-23):** 14 Bin Dump findings — bin-dump-1, 2, 3, 4, 7, 10, 11, 12, 13, 14, 15, 20, 22, 23 — each checked against the code before fixing; marked in the Bin Dump table. Also oppbuys-mos-2, oppbuys-mos-3 and oppbuys-mos-11, and the lookup half of oppbuys-mos-4, marked in the Opportunity Buys + MOS table. On 2026-09-24, merch-price-scan-8 (Price Scan's copy of the oppbuys-mos-2 race) and merch-price-scan-20 (the camera kept running in the background; MOS's scanner is covered by the same fix), marked in the Price Scan table. Also on 2026-09-24, with the Viewer's delete: inventory-5, inventory-24, inventory-8, and inventory-1 in part (the Viewer rows, Edit, and Schedule Sale's chips, preview and log); later that day the rest of inventory-1 (Add Item's "Open in Viewer", and the Viewer's and Edit's error strips). All marked in the Inventory table. See `tasks/todo.md`.
 
 ## How to pick this up
 
@@ -56,7 +56,7 @@
 | Retail Summary | [weekly-retail-1](#weekly-retail-1) | minor | bug | A failed Retail Summary load hides its own error and leaves the previous range's numbers under the new range chip |
 | Retail Summary | [weekly-retail-2](#weekly-retail-2) | minor | bug | Categories 'Vs' counts today's not-yet-written snapshot as $0, so the default This Week view reports a false decline |
 | Retail Summary | [weekly-retail-3](#weekly-retail-3) | minor | bug | T13 Net card '% Budget' divides only the 12 merchandise categories by the full chain budget |
-| Inventory | [inventory-1](#inventory-1) | minor | security | Stored XSS / broken Edit: Clover item names interpolated into HTML attributes without quote escaping (incl. JSON in a single-quoted onclick) **Partly fixed 2026-09-24** — the Add Item results' onclick and two raw error strings remain. |
+| Inventory | [inventory-1](#inventory-1) | minor | security | Stored XSS / broken Edit: Clover item names interpolated into HTML attributes without quote escaping (incl. JSON in a single-quoted onclick) **Fixed 2026-09-24.** |
 | Inventory | [inventory-2](#inventory-2) | minor | bug | create-clover-item overwrites the shared IM# cost table and writes a global L3 mapping even when nothing was created |
 | Inventory | [inventory-3](#inventory-3) | minor | bug | Overlapping loadInventory calls share one global array: a double-click on Load doubles the catalog and flags every code as a duplicate |
 | Inventory | [inventory-4](#inventory-4) | minor | bug | Saving the Edit modal overwrites the item's `sku` with `code`, and wipes both when the code is empty |
@@ -1365,7 +1365,7 @@ The three Inventory pages follow DESIGN.md §4.8 closely: panel, bar, legend, st
 
 | ID | Sev | Size | Category | Finding | Where | Verified |
 |---|---|---|---|---|---|---|
-| [inventory-1](#inventory-1) | high | minor | security | Stored XSS / broken Edit: Clover item names interpolated into HTML attributes without quote escaping (incl. JSON in a single-quoted onclick) | `index.html:30940` | **partly fixed 2026-09-24** |
+| [inventory-1](#inventory-1) | high | minor | security | Stored XSS / broken Edit: Clover item names interpolated into HTML attributes without quote escaping (incl. JSON in a single-quoted onclick) | `index.html:30940` | **fixed 2026-09-24** |
 | [inventory-2](#inventory-2) | high | minor | bug | create-clover-item overwrites the shared IM# cost table and writes a global L3 mapping even when nothing was created | `worker.js:19983` | unverified |
 | [inventory-3](#inventory-3) | high | minor | bug | Overlapping loadInventory calls share one global array: a double-click on Load doubles the catalog and flags every code as a duplicate | `index.html:30803` | unverified |
 | [inventory-4](#inventory-4) | high | minor | bug | Saving the Edit modal overwrites the item's `sku` with `code`, and wipes both when the code is empty | `index.html:31191` | unverified |
@@ -1400,9 +1400,12 @@ The three Inventory pages follow DESIGN.md §4.8 closely: panel, bar, legend, st
 <a id="inventory-1"></a>
 #### inventory-1 — Stored XSS / broken Edit: Clover item names interpolated into HTML attributes without quote escaping (incl. JSON in a single-quoted onclick)
 
-*high · minor · security · confidence high · `index.html:30940` · unverified · partly fixed 2026-09-24*
+*high · minor · security · confidence high · `index.html:30940` · unverified · fixed 2026-09-24*
 
-**Status (2026-09-24).** Fixed in renderInvTable: every attribute goes through `invEsc`, which also escapes `"`, and Edit and Delete look the item up by id instead of inlining it as JSON. Fixed as well in Schedule Sale's chips, preview and log, because the whole name now reaches them. Until then the row cut it off at the first `"`. `scripts/browser-inventory-delete.mjs` §7 plants one name per quote style and checks every place it lands. **Still open:** the Add Item results' `invOpenInViewer('${escapeHtml(r.store)}','${escapeHtml(code)}')`, and the raw `data.error` in loadInventory's and saveEditItem's error strips.
+**Status (2026-09-24).** Fixed in renderInvTable: every attribute goes through `invEsc`, which also escapes `"`, and Edit and Delete look the item up by id instead of inlining it as JSON. Fixed as well in Schedule Sale's chips, preview and log, because the whole name now reaches them. Until then the row cut it off at the first `"`. `scripts/browser-inventory-delete.mjs` §7 plants one name per quote style and checks every place it lands. **Finished later the same day:**
+- Add Item's "Open in Viewer" passes the store and the typed code as JSON through `invEsc`. A code holding both quotes used to throw `SyntaxError` on click.
+- The Viewer's load error and Edit's save error wrap `data.error` in `escapeHtml`. That text is Clover's raw body, or, for Edit, a typed category name echoed back.
+- `browser-inventory-delete.mjs` §7b fails without each of the three fixes.
 
 **Evidence.** index.html:30940 `<button ... onclick='openEditModal(${JSON.stringify(item)})'>Edit</button>` — JSON.stringify does not escape `'`, and the attribute is single-quoted. index.html:30930-30932 `data-item-name="${nm}"`, `aria-label="Select ${nm}"`, `title="${nm}"` where `nm = escapeHtml(item.name)`; escapeHtml (index.html:7753) is textContent→innerHTML, which escapes & < > but NOT quotes. Same pattern at 31370-31374 (sale chips), 31621/31627 (schedule log title), 30709 (`onclick="invOpenInViewer('${escapeHtml(r.store)}','${escapeHtml(code)}')"`). Raw Clover error text also goes into innerHTML via invStrip at 30817/31205/31256. Verified in Chromium by rendering the sliced renderInvTable: name `x' onmouseover='window.viaQuote=1' y='` and name `z" onmouseover="window.viaDouble=1` both executed on hover ({viaQuoteInEditButton:1, viaDoubleQuoteInTrAttr:1}); a plain "Men's Tee" row threw `SyntaxError: Invalid or unexpected token` on Edit and `55" Smart TV` was stored in the selection as `"55"`.
 
