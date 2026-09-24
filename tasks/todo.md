@@ -1,3 +1,107 @@
+# Price Scan: one camera, and none left running (merch-price-scan-8, 2026-09-24)
+
+**Request:** *"Fix the Price Scan double-tap bug next."* This is the same race oppbuys-mos-2 fixed
+on MOS. `psBarcode` set `psScanning` only once the camera was open, so a second tap in the
+300-500 ms a phone takes opened a second stream that Stop never reached. Leaving the page, the
+Reprint tab or a full-body mode while the camera opened left the stream running on a hidden page.
+Swipe-back and the browser's back button to store detail skipped the camera stop entirely.
+
+Also found in the same code:
+- a stop during `play()` left a dead box and threw a TypeError;
+- late results from a stopped scan (the torch, the lens list, `ps-diag`, zoom, and a `detect()`
+  frame) wrote into the next one.
+
+## Plan
+
+- [x] `browser-price-scan.mjs` (new): fake camera, written first and run against `main` to watch it
+      fail
+- [x] `psScanGen` + `psStarting`: a tap while opening is ignored; the button is disabled and reads
+      "Starting…"; a 20 s start timeout
+- [x] A generation check after every await and in every catch; a stale stream is stopped on
+      arrival; `psScanning` is set only once `play()` resolves; `tick` exits on a stale generation,
+      and one check covers `detect()`
+- [x] Failures say what happened (a blocked permission is named); a failed `getUserMedia` clears
+      the saved lens
+- [x] `psStopScan` bumps the generation first and re-enables the button; `psTorch` and `psZoom` are
+      guarded
+- [x] The Price Scan stop moves into `showOnlyPage`, beside MOS's
+- [x] `test-price-scan.mjs`: `psBarcode`, `psStopScan`, `psTorch`, `psZoom` executed with fakes;
+      `showOnlyPage`
+- [x] Mutation checks, each runner isolated; `sw.js` v236 + shell-cache fixture; `npm test` green
+- [x] Docs: merch-price-scan-8 marked fixed in the review
+
+## Review
+
+**Reproduced before fixing.** The new browser check ran against `main` first:
+- a double tap opened two live cameras (`["live","live"]`), and Stop left one running;
+- leaving the page and the Reprint tab while the camera opened each left the late stream `live`;
+- the leaked camera then took over the Scan button, so the run stopped there.
+
+A probe (not committed) covered the rest on `main`: Manual mode and swipe-back mid-open, and a
+**running** scan on swipe-back, all left `["live"]`.
+
+**Fix:** the MOS pattern from #283, plus what differs in Price Scan:
+- **`tick` is async.** It awaits `detector.detect()`, and nothing cancels its frame. So `tick`
+  exits on its own generation, not on `psScanning`, and one check after the detector read covers
+  success and failure. Otherwise a frame read across a Stop could still look a code up, and an old
+  loop could end a new scan with its 30 s clock.
+- **`psZoom` writes the camera line after its await**, so it is guarded too.
+- **`psStopScan` bumps the generation before the track stop**, which is not in a try.
+
+**Reviewed before writing.** A Plan agent reviewed the plan against the code. It found:
+- the timer guard missing from the plan's wording;
+- `psZoom`;
+- five guards with no scenario;
+- that the Node mutation runner needs its own copy of the repo, because test-price-scan reads
+  `index.html`, `worker.js` and the migrations from the root.
+
+All of these were folded in.
+
+**Verified:**
+- **`npm test`:** 5835 across 81 suites, all pass (5787 before). `test-price-scan.mjs` went from
+  973 to 1021: a new block runs the real `psBarcode`, `psStopScan`, `psTorch`, `psZoom` and
+  `showOnlyPage` against a fake camera. It includes a positive control for the detector path, so
+  the stale-frame check cannot pass by never reading.
+- **`browser-price-scan.mjs`:** 30 / 30 (it was 11 passed, 10 failed on `main`).
+- **"Starting…" contrast, painted:** 2.17 (light), 2.81 (dark) and 2.70 (OLED), against 7.48
+  enabled.
+  - This is the page's existing `.ps-btn:disabled{opacity:.5}`, shared with the merged MOS button.
+  - Disabled controls are exempt from WCAG 1.4.3, so the number is reported, not restyled here.
+- **Mutations, Node suite:** 21 / 21 caught, each by the check that names the guard. It ran in its
+  own copy of the repo.
+- **Mutations, browser check:** 8 / 21 caught, in its own copy of `dist/`.
+  - **Caught:**
+    - the start guard;
+    - the check after `getUserMedia`;
+    - closing the stale stream;
+    - the generation bump;
+    - the disabled button;
+    - re-enabling it on Stop;
+    - the stop in `showOnlyPage` (swipe-back);
+    - the lens reset.
+  - **The 13 misses are paths Chromium's fake camera cannot produce**, and the Node suite catches
+    all 13:
+    - a camera refused after a stop, or refused at all;
+    - `play()` rejecting, slow, or resolving after a stop;
+    - the 20 s start limit;
+    - a torch;
+    - a zoom;
+    - the native detector;
+    - a device list landing late.
+  - **The `tick` check was reproduced alone and still missed.** A real browser runs an old loop's
+    pending frame within one frame, while a new start is still waiting on the camera, so only held
+    frames (Node) reach it.
+- **`browser-mos.mjs`:** 59 / 59; **`browser-bin-dump.mjs`:** 113 / 113 on the final build
+  (`showOnlyPage` changed).
+
+**Follow-ups:**
+- On Android, a code only the native detector can read is never accepted: the JS decoder's miss on
+  the same frame resets `lastCode`. Queued as its own task.
+- `visibilitychange` (merch-price-scan-20).
+- A more legible disabled state for both scanners' "Starting…".
+
+---
+
 # Mark Out of Stock: one camera, and none left running (oppbuys-mos-2, 2026-09-23)
 
 **Request:** *"Fix the MOS double-tap scan bug next."* `mosScan` set `mosScanning` only once the
