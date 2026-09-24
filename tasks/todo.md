@@ -1,3 +1,96 @@
+# Worker: update-clover-item takes only an item id (2026-09-24)
+
+**Request:** *"Fix update-clover-item's itemId check next."*
+`worker.js` `?action=update-clover-item` checks only that `itemId` is truthy, then pastes it
+into two Clover URLs: the POST that carries the patch (`worker.js:20089`) and, when `l3` is
+sent, the `?expand=categories` read (`20119`). #289 closed the same hole in delete-clover-item.
+
+**What that lets through:**
+- The URL parser resolves dot segments, percent-encoded ones too. `../categories/C1` makes the
+  patch a POST to `/v3/merchants/M/categories/C1`, and `..` a POST to `/v3/merchants/M/`.
+- A `?` or `#` in the id rewrites the query. A non-string id, such as JSON `[".."]`, is
+  stringified into the same path.
+- The endpoint needs an admin session, so this is defense in depth, not an open hole.
+
+**In the same validation block:** `request.json()` has no catch, and the body is destructured
+before any check. So a GET, a truncated body or a JSON `null` throws, which reaches the caller
+as Cloudflare's 1101 page. Since #289, delete-clover-item answers those with 405 and 400. That
+answer is also what makes a safe post-deploy probe possible (see Deploy).
+
+## Plan
+
+- [x] **Harness test first:** `scripts/test-inventory-update.mjs` drives the real handler. Its
+      Clover stub resolves URLs the way `fetch` does and records every call. Watch it fail on
+      the current worker:
+  - an ordinary update sends exactly one POST, to `items/<id>`, with the patch, and answers
+    `{ ok: true, item }`: the positive beside the negatives;
+  - with `l3`, the expand read and the category assign both name the item;
+  - ids holding `/`, `.`, `%`, `?`, `#` or a space, an empty id, and non-strings (`[".."]`,
+    `["X1"]`, `7`, `true`, `{}`, `null`) are refused with 400 and Clover is never asked. Each is
+    sent with `name` and `l3`, so the old handler reaches both URLs;
+  - GET gives 405, and a truncated body or a JSON `null` gives 400. None reaches Clover;
+  - a manager, staff and no session are refused, and Clover is never asked.
+- [x] **Worker:** one `isCloverId()` beside `cloverFetch`, used by both handlers: one rule,
+      written once (lessons, 2026-09-09). Update checks the method, then the JSON, then the
+      store and the id. Delete keeps its message and its behaviour.
+- [x] **Mutations,** each in its own repo copy. Then `npm test`.
+- [x] **Deploy:** worker-only. The Edit modal is the only caller, and it sends a POST with a
+      Clover id, so the new worker is backward-compatible and can ship at push. Production
+      still runs the 09-22 worker, so this deploy also ships #289. The console probe must die
+      at validation on both the old and the new worker.
+- [x] A note under inventory-24's worker half in the review doc, and a review section here.
+
+## Review
+
+**Reproduced before fixing.** The new suite, run against the current worker: 24 passed, 32
+failed.
+- `..` sent the patch as `POST /v3/merchants/M-BL1/`, and `X1/../../..` sent it as
+  `POST /v3/merchants/`.
+- `../categories/C1`, and the same id written `%2e%2e/`, sent it to
+  `/v3/merchants/M-BL1/categories/C1`, then read that path with `?expand=categories`.
+- `X1?expand=categories`, `X1#x` and `["X1"]` renamed X1 through an id that is not one.
+- GET, a truncated body and a JSON `null` each threw. In production that is the 1101 page.
+
+**Verified:**
+- **`test-inventory-update.mjs`:** 60 / 60. **`test-inventory-delete.mjs`:** 84 / 84, as before.
+- **`npm test`:** 5996 assertions across 83 suites.
+- **Mutations: 11 / 11 caught.** Each ran in its own repo copy with its own `TMPDIR`, one at a
+  time, because `loadWorker` names its temp file by byte length. A baseline copy stayed green.
+  - The shared helper: it accepts any string, it drops the `typeof`, its regex loses `$`, or
+    its regex loses `^`. Each fails both suites. Without the `typeof`, a missing id passes as
+    the string "undefined": update sent `POST …/items/undefined`, and delete reported
+    `{store:"BL1"}` as deleted.
+  - Each handler back on a truthiness check.
+  - Update's method check, its JSON catch, its null guard, and its object guard.
+  - The id checked only after the patch has gone out.
+- **The first run caught 10 of 11.** Dropping `typeof body !== "object"` survived. It only
+  changed what a body like `7` is told: "Invalid store or itemId" instead of "Invalid JSON".
+  That message is what a caller reads, so the suite now pins it, and the mutation fails three
+  assertions.
+- `index.html` is untouched, so no `CACHE_NAME` bump is needed, and merging deploys nothing.
+
+**What the deploy ships.** Production `clover-sales-api` was last modified 09-22 00:28 UTC
+(Cloudflare API, read-only). That was three minutes after `4b3785d`, and #289 merged without a
+deploy. So a deploy of this branch ships #289's delete change and this one, and the probe checks
+both.
+
+**The console snippet ran verbatim in the harness,** as the superuser, against three workers. A
+thrown handler was emulated as the browser's CORS rejection.
+
+| worker | delete | update | result | calls to Clover |
+|---|---|---|---|---|
+| `4b3785d` (production now) | old | old | never DEPLOYED, 20 passes | 0 of 120 requests |
+| `main` (#289 only) | new | old | never DEPLOYED, 20 passes | 0 of 120 |
+| this branch | new | new | DEPLOYED on pass 3 | 0 of 18 |
+
+**Left, not in scope:**
+- **Sale Scheduler:** `schedule-sale` stores `items[].id` with no shape check (`worker.js:28003`).
+  The every-minute cron's `processSaleSchedules` then pastes `row.item_id` into Clover URLs,
+  through `getCloverItem` and `setCloverItemFields` (`1596`, `1603`, `1632`, `1638`). The
+  activation POSTs `{ price, name }`, unattended. The same `isCloverId` check belongs at
+  `schedule-sale`'s input.
+- Carried over from #289: a `cloverFetch` that throws still escapes both handlers as 1101.
+
 # Worker: delete-clover-item takes one store, and only an item id (inventory-24, 2026-09-24)
 
 **Request:** *"Fix the worker's cross-store delete next."*

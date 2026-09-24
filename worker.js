@@ -1379,6 +1379,15 @@ async function cloverFetch(url, options) {
   }
 }
 
+// ─── Is this a Clover object id? ────────────────────────────────────────
+// 🛑 A handler pastes the id into Clover's URL, and the URL parser resolves dot segments,
+// percent-encoded ones too: items/../categories/C1 is the category's path, and items/.. the
+// merchant's own. A `?` or `#` rewrites the query, and a non-string is no safer, since
+// `${[".."]}` is "..". Clover's ids are letters and digits, so nothing else is one.
+function isCloverId(id) {
+  return typeof id === "string" && /^[A-Za-z0-9]+$/.test(id);
+}
+
 // ─── Is this item code already in use at a store? ───────────────────────
 //
 // 🛑 CLOVER CANNOT FILTER ITEMS BY `code`. It answers every such request with
@@ -20060,16 +20069,29 @@ export default {
 
     // ── Admin: Update Clover Item
     //    POST ?action=update-clover-item  body: { store, itemId, name, code, priceCents, costCents, taxable, hidden, l3, currentCategoryId }
+    //
+    // 🛑 AN ITEM ID IS ONLY AN ITEM ID. It goes into two Clover URLs below: the POST that
+    // carries the patch, and the ?expand=categories read. Only its truthiness was checked,
+    // so "../categories/C1" made the patch a POST to a category. isCloverId is the rule
+    // delete-clover-item uses too.
     if (url.searchParams.get("action") === "update-clover-item") {
       const unauth = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
-      const body = await request.json();
+      // Refused as JSON, as delete-clover-item does. A GET or a body that is not JSON used to
+      // throw in request.json(), which reaches the caller as Cloudflare's 1101 page.
+      if (request.method !== "POST") {
+        return new Response(JSON.stringify({ ok: false, error: "Method not allowed" }), { status: 405, headers: corsJson });
+      }
+      const body = await request.json().catch(() => null);
+      if (!body || typeof body !== "object") {
+        return new Response(JSON.stringify({ ok: false, error: "Invalid JSON" }), { status: 400, headers: corsJson });
+      }
       // `l3` ADDS a category (an item may legitimately hold several — see the
       // category block below). Pass `removeOtherCategories: true` to make it the
       // item's only one.
       const { store, itemId, name, code, priceCents, costCents, taxable, hidden, l3,
               currentCategoryId, removeOtherCategories = false } = body;
-      if (!ALL_STORES.includes(store) || !itemId) {
+      if (!ALL_STORES.includes(store) || !isCloverId(itemId)) {
         return new Response(JSON.stringify({ ok: false, error: "Invalid store or itemId" }), { status: 400, headers: corsJson });
       }
       const mId = env[`${store}_MERCHANT_ID`];
@@ -20214,7 +20236,8 @@ export default {
     //
     // 🛑 AND AN ITEM ID IS ONLY AN ITEM ID. It is pasted into Clover's URL, and the URL
     // parser resolves dot segments, percent-encoded ones included: "../categories/C1"
-    // made this a DELETE on a category. Clover ids are alphanumeric; nothing else passes.
+    // made this a DELETE on a category. Clover ids are alphanumeric; nothing else passes
+    // isCloverId.
     if (url.searchParams.get("action") === "delete-clover-item") {
       const unauth = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
@@ -20233,7 +20256,7 @@ export default {
                + "Clover merchant, so it cannot be deleted across stores." }), { status: 400, headers: corsJson });
       }
       const { store, itemId } = body;
-      if (!ALL_STORES.includes(store) || typeof itemId !== "string" || !/^[A-Za-z0-9]+$/.test(itemId)) {
+      if (!ALL_STORES.includes(store) || !isCloverId(itemId)) {
         return new Response(JSON.stringify({ ok: false, error: "Invalid itemId or store(s)" }), { status: 400, headers: corsJson });
       }
       const mId = env[`${store}_MERCHANT_ID`];
