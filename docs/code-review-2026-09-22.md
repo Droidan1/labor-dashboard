@@ -6,7 +6,7 @@
 > - **Not reviewed yet:** App shell / navigation / service worker / initial load, Labor, Inventory Receiver, Submit Photos + Marketing + Comments, Users & access.
 > - **Verified:** only *Worker crons* (all 15 findings confirmed by an independent verifier). **Every other finding below is one reviewer's claim.** The one verified unit came back 15/15, so the reviews look reliable, but re-check each finding against the code before fixing it.
 > - **The review itself changed no code.** Every finding is either **minor** (local, frontend-only or self-contained, no API/schema/deploy coupling) or **major** (needs a plan: cross-cutting, frontend+worker coordination, schema, or destructive-path work).
-> - **Fixed since (2026-09-23):** 14 Bin Dump findings — bin-dump-1, 2, 3, 4, 7, 10, 11, 12, 13, 14, 15, 20, 22, 23 — each checked against the code before fixing; marked in the Bin Dump table. Also oppbuys-mos-2, oppbuys-mos-3 and oppbuys-mos-11, and the lookup half of oppbuys-mos-4, marked in the Opportunity Buys + MOS table. On 2026-09-24, merch-price-scan-8 (Price Scan's copy of the oppbuys-mos-2 race), marked in the Price Scan table. See `tasks/todo.md`.
+> - **Fixed since (2026-09-23):** 14 Bin Dump findings — bin-dump-1, 2, 3, 4, 7, 10, 11, 12, 13, 14, 15, 20, 22, 23 — each checked against the code before fixing; marked in the Bin Dump table. Also oppbuys-mos-2, oppbuys-mos-3 and oppbuys-mos-11, and the lookup half of oppbuys-mos-4, marked in the Opportunity Buys + MOS table. On 2026-09-24, merch-price-scan-8 (Price Scan's copy of the oppbuys-mos-2 race) and merch-price-scan-20 (the camera kept running in the background; MOS's scanner is covered by the same fix), marked in the Price Scan table. See `tasks/todo.md`.
 
 ## How to pick this up
 
@@ -3552,7 +3552,7 @@ Performance: the camera loop decodes every animation frame on a 4K request, whic
 | [merch-price-scan-17](#merch-price-scan-17) | low | minor | bug | Missing JSON-parse guards turn edge 5xx HTML pages into 'Unexpected token <' with the status lost | `index.html:23676` | unverified |
 | [merch-price-scan-18](#merch-price-scan-18) | low | minor | bug | A lookup still running when Manual or Furniture opens renders into the new mode | `index.html:23679` | unverified |
 | [merch-price-scan-19](#merch-price-scan-19) | low | minor | accessibility | Missing labels, live region and keyboard access on scan controls | `index.html:4949` | unverified |
-| [merch-price-scan-20](#merch-price-scan-20) | low | minor | performance | Camera keeps running while the app is backgrounded, and the 30 s auto-stop cannot fire | `index.html:26627` | unverified |
+| [merch-price-scan-20](#merch-price-scan-20) | low | minor | performance | Camera keeps running while the app is backgrounded, and the 30 s auto-stop cannot fire | `index.html:26627` | **fixed 2026-09-24** |
 | [merch-price-scan-21](#merch-price-scan-21) | low | minor | bug | Furniture 'priced before' date uses the UTC calendar day | `index.html:24454` | unverified |
 
 <details><summary>Details: evidence, failure scenario, proposed fix</summary>
@@ -3802,7 +3802,7 @@ About 8 lines.
 <a id="merch-price-scan-20"></a>
 #### merch-price-scan-20 — Camera keeps running while the app is backgrounded, and the 30 s auto-stop cannot fire
 
-*low · minor · performance · confidence medium · `index.html:26627` · unverified*
+*low · minor · performance · confidence medium · `index.html:26627` · unverified · fixed 2026-09-24*
 
 **Evidence.** The only automatic release is the 30 s check inside the rAF loop (index.html:26627 `if (age > 30000) { psStopScan(); ... }`), plus navigateToPage (12002-12007). rAF is paused in hidden documents, so while the app is backgrounded the check never runs. grep finds no visibilitychange or pagehide handler in the file.
 

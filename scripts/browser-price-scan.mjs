@@ -320,6 +320,80 @@ await section('3. native detector (Android)', async () => {
   check(!errs.length, `no page errors (${errs.slice(0, 2).join(' | ')})`);
 });
 
+// ── 4. Backgrounding the app stops the camera (merch-price-scan-20) ─────
+// Switching apps or tabs hides the page without leaving it, so no page switch stops the
+// camera; the scan loop's own 30 s stop rides requestAnimationFrame, which browsers pause for
+// a hidden page. So the camera and its light stayed on for as long as the app sat in the
+// background. Headless Chromium keeps every page visible (minimising, a second tab and
+// dropping Playwright's anti-backgrounding flags were all tried), so this does what the
+// browser does: it sets document.hidden and dispatches the event.
+const setHidden = (page, hidden) => page.evaluate(h => {
+  Object.defineProperty(document, 'hidden', { configurable: true, get: () => h });
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => (h ? 'hidden' : 'visible') });
+  document.dispatchEvent(new Event('visibilitychange'));
+}, hidden);
+const BG = /stopped while the app was in the background/;
+for (const theme of ['light', 'dark', 'oled']) await section(`4. background [${theme}] (merch-price-scan-20)`, async () => {
+  const { page, errs } = await open({ theme });
+  const states = n0 => page.evaluate(n => window.__ps.streams.slice(n).map(s => s.getTracks()[0].readyState), n0);
+  const count = () => page.evaluate(() => ({ gum: window.__ps.gumCalls, streams: window.__ps.streams.length }));
+  const label = () => text(page, '#ps-barcode');
+  const status = () => text(page, '#ps-status');
+  const whenLive = () => page.waitForFunction(() => document.getElementById('ps-barcode').textContent === 'Stop', null, { timeout: 8000 });
+
+  // A running scan.
+  let c0 = await count();
+  await page.click('#ps-barcode'); await whenLive();
+  await setHidden(page, true); await page.waitForTimeout(200);
+  check((await states(c0.streams)).join() === 'ended' && (await label()) === 'Scan' && BG.test(await status()),
+        `🛑 [${theme}] a running scan stops when the app goes to the background, and says why (${JSON.stringify({ st: await states(c0.streams), status: await status() })})`);
+  // The message is text on the page itself, so it is held to 4.5:1 against what is behind it.
+  const paint = await page.evaluate(() => {
+    const n = document.getElementById('ps-status'), chain = [];
+    for (let p = n; p; p = p.parentElement) {
+      const bg = getComputedStyle(p).backgroundColor; chain.push(bg);
+      const a = (bg.match(/[\d.]+/g) || [])[3];
+      if (a == null || +a === 1) break;
+    }
+    return { fg: getComputedStyle(n).color, chain };
+  });
+  let base = rgba(paint.chain[paint.chain.length - 1]);
+  for (let i = paint.chain.length - 2; i >= 0; i--) base = over(rgba(paint.chain[i]), base);
+  const pr = ratio(over(rgba(paint.fg), base), base);
+  check(rgba(paint.chain[paint.chain.length - 1])[3] === 1 && pr >= 4.5, `[${theme}] the background message reads ${pr.toFixed(2)}:1`);
+  measured.push(`${theme.padEnd(5)}  background message ${pr.toFixed(2)}:1`);
+  await setHidden(page, false); await page.waitForTimeout(600);
+  check((await count()).gum === c0.gum + 1 && (await label()) === 'Scan',
+        `[${theme}] coming back does not turn the camera back on`);
+
+  // A scan still opening when the app goes to the background.
+  c0 = await count();
+  await page.evaluate(() => { window.__ps.gumDelay = 600; });
+  await page.click('#ps-barcode');
+  await page.waitForFunction(n => window.__ps.gumCalls > n, c0.gum, { timeout: 5000 });
+  await setHidden(page, true);
+  await page.waitForFunction(n => window.__ps.streams.length > n, c0.streams, { timeout: 5000 });
+  await page.waitForTimeout(200);
+  check((await states(c0.streams)).join() === 'ended' && (await label()) === 'Scan',
+        `🛑 [${theme}] a scan still opening when the app goes to the background: the late camera is closed on arrival`);
+  await setHidden(page, false);
+  await page.evaluate(() => { window.__ps.gumDelay = 0; });
+
+  // No scan: going to the background leaves the page alone.
+  await page.evaluate(() => { document.getElementById('ps-status').textContent = ''; });
+  await setHidden(page, true); await page.waitForTimeout(150);
+  check((await status()) === '' && (await label()) === 'Scan', `[${theme}] with no scan, going to the background changes nothing`);
+  await setHidden(page, false);
+
+  // And the next Scan works as normal.
+  c0 = await count();
+  await page.click('#ps-barcode'); await whenLive();
+  const ok1 = (await states(c0.streams)).join() === 'live';
+  await page.click('#ps-barcode'); await page.waitForTimeout(150);
+  check(ok1 && (await states(c0.streams)).join() === 'ended', `[${theme}] ...and the next Scan works as normal`);
+  check(!errs.length, `[${theme}] no page errors (${errs.slice(0, 2).join(' | ')})`);
+});
+
 await b.close();
 srv.close();
 if (measured.length) console.log('Painted contrast:\n  ' + measured.join('\n  '));

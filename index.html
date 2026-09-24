@@ -11871,6 +11871,25 @@
     if (name !== 'merch-scan' && typeof psStopScan === 'function') psStopScan();
   }
   window.showOnlyPage = showOnlyPage;
+  // 🛑 NOR MAY A CAMERA OUTLIVE THE PAGE BEING SEEN (merch-price-scan-20). Switching apps or
+  // tabs hides the page without leaving it, so showOnlyPage never runs, and each scan loop's
+  // own time limit rides requestAnimationFrame, which browsers pause for a hidden page. So a
+  // camera, and its light, stayed on for as long as the app sat in the background. A scan that
+  // is running or still opening stops here and says why. Nothing turns a camera back on: the
+  // person taps Scan again.
+  function stopCamerasWhenHidden() {
+    if (!document.hidden) return;
+    const why = 'The camera stopped while the app was in the background.';
+    if (typeof psStopScan === 'function' && (psScanning || psStarting)) {
+      psStopScan();
+      psStatus(`${why} Tap Scan to start again.`);
+    }
+    if (typeof mosStopScan === 'function' && (mosScanning || mosStarting)) {
+      mosStopScan();
+      mosSetStatus(`${why} Tap Scan QR to start again.`);
+    }
+  }
+  document.addEventListener('visibilitychange', stopCamerasWhenHidden);
 
   function navigateToPage(page, pushHistory = true) {
     // 🔑 FIRST guard, above every role list below. An associate is on none of

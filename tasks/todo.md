@@ -1,3 +1,88 @@
+# Both scanners: the camera stops when the app goes to the background (merch-price-scan-20, 2026-09-24)
+
+**Request:** *"Fix the camera running in the background bug next."* This is finding
+**merch-price-scan-20**.
+- **Why the camera keeps running:** switching apps or tabs hides the page without leaving it, so
+  `showOnlyPage` never runs. The scan loop's 30 s auto-stop rides `requestAnimationFrame`, which
+  browsers pause for a hidden page. So the camera and its light stayed on for as long as the app
+  sat in the background.
+- **Where:** `index.html` has no `visibilitychange` handler at all.
+- **MOS too:** its scanner has the same gap. oppbuys-mos-2 listed it as optional, and #283 left it
+  out. So one handler covers both cameras.
+
+## Plan
+
+- [x] **The handler.** A named `stopCamerasWhenHidden` beside `showOnlyPage`, registered for
+      `visibilitychange`. When the page is hidden, a scan that is running **or still opening**
+      stops, and its status line says why:
+  - "The camera stopped while the app was in the background. Tap Scan to start again."
+  - This replaces Price Scan's stale "Hold the barcode inside the box…".
+  - Coming back never turns a camera on by itself.
+  - An idle scanner is left untouched.
+- [x] **Browser** (`browser-price-scan.mjs` and `browser-mos.mjs`):
+  - background a running scan, and one still opening: every track ends, the message shows, and
+    coming back opens no camera;
+  - backgrounding with no scan changes nothing;
+  - the message's painted contrast in light, dark and OLED;
+  - **run it first against the build without the fix, and watch it fail.**
+  - Headless and Xvfb Chromium here keep pages `visible` (probed: minimising, a second tab, and
+    dropping Playwright's anti-backgrounding flags). So the check sets `document.hidden` and
+    dispatches the event, as the browser would.
+- [x] **Node** (`test-price-scan.mjs`): the handler executed with stubs:
+  - hidden plus running, or opening, stops that scanner and says so;
+  - hidden while idle does nothing;
+  - visible does nothing;
+  - the listener is registered.
+- [x] **Mutations**, each runner isolated. `sw.js` v238 + the shell-cache fixture. `npm test`.
+      merch-price-scan-20 marked fixed in the review.
+- [x] **Before pushing**, re-read #285's state (tasks/lessons.md, rule 6). If it is open, this
+      joins it. If it merged, replay onto `main` as a new PR.
+  - **Outcome:** the re-read found #285 merged at 13:44 UTC, while this was being built. So the
+    commit was replayed onto the new `main`, which is byte-identical to #285's head, before
+    anything was pushed. It is its own PR.
+
+## Review
+
+**Reproduced before fixing.** Both new browser sections ran against the build without the fix:
+- **The result:** backgrounding a running scan left the camera `["live"]` in Price Scan and in MOS.
+- **Price Scan's status line** still said "Hold the barcode inside the box…" over a camera no one
+  could see.
+- **Then** each section stopped, because the leaked camera still owned the Scan button.
+- **Totals:** 41 passed and 9 failed (Price Scan); 65 passed and 9 failed (MOS).
+
+**Fix:** one `visibilitychange` handler, beside `showOnlyPage`.
+- On hidden, a scanner that is running **or still opening** stops. A camera still opening is
+  closed on arrival by the start generation from #284.
+- The status line says why.
+- An idle scanner is untouched, and coming back never turns a camera on.
+
+**Verified:**
+- **`npm test`:** 5852 across 81 suites, all pass (5844 before). `test-price-scan.mjs` went from
+  1030 to 1038: the handler executed for both scanners, running or opening, plus idle, visible,
+  and the registration.
+- **`browser-price-scan.mjs` 59 / 59 and `browser-mos.mjs` 83 / 83**, each in light, dark and
+  OLED. The background message paints at:
+  - Price Scan: 5.29, 6.18 and 8.83;
+  - MOS: 6.55, 6.67 and 7.69.
+- **Hiding was simulated.** Chromium in this environment keeps every page `visible`: minimising,
+  a second tab, headed on Xvfb, and without Playwright's anti-backgrounding flags were all probed.
+  So the checks set `document.hidden` and dispatch the event. The claim that browsers pause
+  `requestAnimationFrame` for hidden pages is documented browser behaviour, not something run
+  here.
+- **Mutations, Node suite:** 9 / 9 caught, in its own copy of the repo.
+- **Mutations, browser checks** (trimmed to the background sections, one theme, their own copy):
+  8 / 9 caught.
+  - **Caught:**
+    - the listener;
+    - each scanner's still-opening case;
+    - each scanner's stop;
+    - each scanner's message;
+    - stopping when idle.
+  - **The miss:** the `document.hidden` guard. No browser flow sends a *visible* event while a
+    scan runs, so only Node's "coming back stops nothing" check reaches it, and it does.
+- **Not run:** a real phone. A camera-permission prompt is not expected to hide the page on iOS
+  or Android. If one does on some device, the first scan there would need a second tap.
+
 # Price Scan: let Android's barcode detector confirm a read (2026-09-24)
 
 **Request:** *"Fix the Android barcode detector bug next."* This is the follow-up found while
