@@ -1,3 +1,131 @@
+# Sign Studio: PRD review, decisions, page preview (2026-09-24)
+
+**Request (Brian):** *"I want to build a sign maker studio page so managers can type in the
+product name and price, what kind of sale (Flash Sale, Manager special, Blow Out, ETC) and a
+sign is created. I want all signs to follow a common design style. Here is a PRD, review it,
+ask me questions, and then make the necessary changes and then create me preview of the
+frontend for me to review before we build it."* PRD: *RETJG HUB Sign Studio v1.0*.
+
+Preview only. **Nothing in `index.html`, `worker.js`, `sw.js` or any migration is touched.**
+Deliverables:
+- `docs/sign-studio-preview.html`. `scripts/build.sh` excludes `docs/` from its copy
+  allowlist, so it cannot reach production.
+- The PRD revised to v1.1 as tracked changes, handed back as a file. **This repo is public**
+  (`private: false`), so the PRD itself is not committed; the decisions are recorded here.
+
+## What the PRD assumed vs what the checkout says
+
+| PRD | Checkout | Where |
+|---|---|---|
+| "Confirm district manager inclusion" | `district_manager` is retired: migration 029 made them `manager` + title "District Manager". Moot. | `migration-029.sql:60,72-75` |
+| Marketing access must not leak | Marketing group is shown to **every** role; each child has its own gate (Submit Photos: all). | `index.html:34050-34057` |
+| (implied) pages are gated | `navigateToPage` blocks only pages it names; an unlisted page opens for anyone. Sign Studio needs its own allow-list guard, equal to the sidebar gate. | `index.html:11952-11966` |
+| "Use the original approved logo" | Already here: `BLlogo.svg` wraps a **1758×665 PNG of the full lockup** (coin + italic BARGAIN LANE® + a tagline) and crops it to the coin. ~500 dpi at a 3.5 in sign logo. No vector original in the repo. | `BLlogo.svg` |
+| Reference images = the look | They disagree with each other: greens `#007A40` vs `#009A40` (brand, app theme-color and logo: `#3BB54A`); FLASH SALE upright vs italic. The portrait wordmark has malformed letters (AI-made), so it is no source for the logo. | sampled; `index.html:9` |
+| 0.25 in safe margin | The reference border sits **0.13 in** from the paper edge, inside most printers' dead zone. | sampled |
+| 11×8 references vs Letter | The references are 11×8 in proportion (1.374), not Letter (1.294). | sampled |
+| 50-char product label | At 49 characters two portrait lines hold letters only **0.26–0.40 in** tall (cereal reference: ~1.1 in). 32 chars keeps ~0.6 in with a condensing face. | measured, real fonts |
+| "embedded approved font" | No heavy face is loaded; jsPDF embeds TTF only, and the app gets WOFF2 from Google. No `addFont` anywhere. | `index.html:22-23` |
+| PDF export conventions | jsPDF 2.5.1 from cdnjs, no SRI, and `loadScript` wedges after one failure (code review weekly-retail-19). The SW never caches it (opaque no-cors). | `index.html:15378-15394` |
+| Print dialog | The one `@media print` hides everything but `#print-report` and forces Letter portrait: a sign print needs its own container and page size. | `index.html:798-834` |
+| (unstated) | The SW reloads the app when a new version activates; only a Content draft defers it, so an unsaved sign would be lost. | `index.html:35433-35445` |
+| (unstated) | `scripts/browser-mobile-menu.mjs:236-240` searches "sign" expecting only Sign out: a "Sign Studio" row breaks it. | |
+
+PRD's code-evidence lines, now: Marketing nav 1007 (same); page access **11952** (was 11892);
+PDF export **15378** (was 15321); Marketing visibility **34050** (was 33729).
+
+## Decisions (Brian, 2026-09-24)
+
+| Question | Answer |
+|---|---|
+| Sale labels | None (default), Sale, Flash Sale, Manager Special, Blow Out, **plus custom text, max 12 chars** |
+| First release | **Print first** (form, both previews, Print, PDF; frontend only). Saved signs = release 2 |
+| Paper | **US Letter** |
+| Access | Managers (DMs included), admins, superusers. **No one else**; not a grantable page |
+| Product label | **32 chars + fit check**: export blocked, naming field and orientation, below 0.6 in letters |
+| Reprints (release 2) | **Current design**; the saved revision keeps its design version for audit |
+
+Left to the preview review (visual, so shown rather than asked): typeface (Archivo, which
+condenses, vs Geist Black, the app's own family), label italic vs upright, brand green vs a
+deeper print green, cents style ($2.50 vs raised cents), and which of three page layouts.
+
+## Plan
+
+- [x] Review the PRD against the checkout (three read-only agents, then spot checks)
+- [x] Ask the open product questions (two rounds, answers above)
+- [x] PRD → v1.1: tracked changes + comments carrying the evidence; validate; render and look
+- [x] `docs/sign-studio-preview.html`: three page layouts (PRD delivery step 1) over one
+      shared sign renderer (SVG, points, one layout model for both orientations); fit engine
+      with the decided limits; design-option switches; example gallery; Print test
+- [x] Verify in Chromium (below), then `npm test`
+- [x] Commit, push, draft PR
+
+## Verification plan
+
+- No console or page errors; fonts routed locally, TLS untouched.
+- Render and LOOK at the awkward cases: a 32-char name, `$9,999.99` in two-price portrait,
+  a custom 12-char label, `$2.50`, `99¢`, the yellow-dot qualifier.
+- Behaviour: invalid price / empty field / too-long name block export with a field message
+  that names the orientation; switching layout or orientation keeps every input; second
+  render after toggling every design option.
+- Hostile text (`"><img src=x onerror=…>`) lands as text: no `on*` attribute, no dialog.
+- Contrast ≥ 4.5:1 on the composited background, dark / light / pure black.
+- No horizontal overflow at 390 px.
+- Print: one page per sign at 792×612 / 612×792 pt (`page.pdf` with the CSS page size).
+- Preview update < 300 ms after input (PRD target).
+
+## Review
+
+**PRD v1.1** (handed back as files, not committed): a redline with 114 tracked marks and 13
+comments that carry the evidence, and a clean copy with every change accepted. Both pass the
+docx skill's schema validation, the redline with `--author Claude`: every changed character sits
+inside a tracked mark. The clean copy is accepted at the XML level. LibreOffice's accept-changes
+round-trip broke two schema rules (`w:color` and `w:shd` without `w:val`) and restyled every
+paragraph. Rendered and checked: 8 pages, no blank page. The redline's blank page 4 only
+appears while struck text is shown.
+
+**The preview.** One renderer draws every sign: the page, the Print test and the gallery. It
+lays out in print points on US Letter. The sheet has a 0.25 in safe margin, and the border's
+outer edge sits on it. The fit rule goes narrower first (Archivo, widths 100 → 62.5%), then
+smaller, never under 0.6 in. The price targets 2× the name's capitals and is blocked below 1.1×.
+All user text reaches the DOM via `textContent` or `.value`. The logo is the lockup cropped out
+of `BLlogo.svg`'s embedded PNG with the tagline removed: 1711×497 px.
+
+**Verified: 107 checks, all green.**
+- Behaviour, layouts A/B/C × desktop/phone, font failure and retry, the two-price dot.
+- Price parser: 22 cases, the real function.
+- Geometry: 4,608 renders (two typefaces × two cents styles × 12 names × 6 prices × one/two
+  prices × 4 labels × 2 orientations). Ink boxes come from canvas `measureText`, a different
+  path from the layout's SVG widths. No printable sign has ink within 6 pt of the border,
+  overlapping ink, a name under 0.6 in, or a price under 1.1× its name.
+- Contrast: 2,751 text measurements across three themes × every screen. Minimums: dark 5.16,
+  light 4.80, pure black 5.82.
+- Print: `page.pdf` gives one page at 792×612 / 612×792. `pdffonts` shows Archivo embedded, and
+  `pdftotext` reads ALL CEREAL / $2 / FLASH.
+- Keystroke → both signs redrawn in 5–8 ms (target 300). No sideways scroll at 390 px.
+- **The checks bite.** Three mutations, each caught: `innerHTML` in the SVG builder, 2 fails;
+  light `inkDim` → `#9c9484`, contrast 2.46; blaming both two-price names, 1 fail. The ink check
+  also catches text shifted 30 pt.
+- `npm test`: 5996 assertions across 83 suites, unchanged, since no app code moved.
+
+**Defects the checks found in my own preview, all fixed before this commit:**
+1. The comma in `$9,999` dips below the `$`, so its ink hit EACH. Descent now counts the comma.
+2. In a two-price sign, the name that fits was told it was too long, because it was only small
+   to match the other. Now only the name that caused it gets the message.
+3. A portrait two-price row gave a two-line name too little height, so "Premium leather work
+   boots" was blocked in both orientations instead of landscape only.
+4. Light-theme red text on its wash over `panelHi` measured 4.49:1. It now uses `#a93226`, per
+   DESIGN.md §4.8.
+5. The toolbar overflowed 390 px by 10 px.
+
+Two early "failures" were the harness's own. It counted section 2's previews twice, and it read
+colours mid-transition, which is the lesson from 2026-09-10.
+
+**Open for Brian:** page layout A / B / C; typeface; label italic or upright; brand or deep
+green; raised or plain cents. Also a vector logo, if one exists.
+
+---
+
 # Worker: update-clover-item takes only an item id (2026-09-24)
 
 **Request:** *"Fix update-clover-item's itemId check next."*
