@@ -69,10 +69,30 @@ All of these were folded in.
   - Disabled controls are exempt from WCAG 1.4.3, so the number is reported, not restyled here.
 - **Mutations, Node suite:** 21 / 21 caught, each by the check that names the guard. It ran in its
   own copy of the repo.
-- **Mutations, browser check:** still running in its own copy of `dist/` when this was committed;
-  the result follows in the next commit.
-- **`browser-mos.mjs` and `browser-bin-dump.mjs`** (`showOnlyPage` changed): also still running
-  then; their results follow too.
+- **Mutations, browser check:** 8 / 21 caught, in its own copy of `dist/`.
+  - **Caught:**
+    - the start guard;
+    - the check after `getUserMedia`;
+    - closing the stale stream;
+    - the generation bump;
+    - the disabled button;
+    - re-enabling it on Stop;
+    - the stop in `showOnlyPage` (swipe-back);
+    - the lens reset.
+  - **The 13 misses are paths Chromium's fake camera cannot produce**, and the Node suite catches
+    all 13:
+    - a camera refused after a stop, or refused at all;
+    - `play()` rejecting, slow, or resolving after a stop;
+    - the 20 s start limit;
+    - a torch;
+    - a zoom;
+    - the native detector;
+    - a device list landing late.
+  - **The `tick` check was reproduced alone and still missed.** A real browser runs an old loop's
+    pending frame within one frame, while a new start is still waiting on the camera, so only held
+    frames (Node) reach it.
+- **`browser-mos.mjs`:** 59 / 59; **`browser-bin-dump.mjs`:** 113 / 113 on the final build
+  (`showOnlyPage` changed).
 
 **Follow-ups:**
 - On Android, a code only the native detector can read is never accepted: the JS decoder's miss on
