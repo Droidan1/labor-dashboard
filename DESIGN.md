@@ -572,7 +572,10 @@ token keeps the fills and the borders, and red TEXT in dark takes `#f87171`
 Light needs no split: `opl-bad` `#c0392b` clears 4.69:1 even on its own wash.
 One exception: red text on its wash **over an amber (edited) row** is 4.18:1 in light —
 Bin Dump's DUP chip sits exactly there, so it uses `#a93226` (5.09:1 on that stack, 5.71:1
-plain); dark keeps `#f87171`.
+plain); dark keeps `#f87171`. The Inventory danger button (`.invbtn-danger`) takes
+`#a93226` for the same reason: it sits on the selection bar's blue info wash (4.28:1 with
+`#c0392b`) and its hover wash lands on amber and green rows (4.18, 4.49). So a red control
+that can sit on *any* tint uses `#a93226` in light, not only one on amber.
 
 The same shape catches the light greens. `accent-green` `#22c55e` is **2.28:1 on
 `opl-panel`** — a fill and a dark-theme text colour, never light-theme text; use

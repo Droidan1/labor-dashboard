@@ -1,3 +1,167 @@
+# Inventory Viewer: delete one item, or every selected item (inventory-delete, 2026-09-24)
+
+**Request:** *"In the inventory viewer page add the feature to allow to delete individual items
+and bulk items."*
+
+## What is there today
+
+The Viewer had a per-row **Del** button until the Inventory redesign (`e7af0b2`, 2026-09-22)
+rebuilt the row and left it out. Neither that commit message nor its entry below mentions
+removing it. The modal, `openDeleteModal`, `confirmDelete` and the worker's `delete-clover-item`
+all survived, unreachable.
+
+Putting the button back as things stand would ship four faults. All four were reproduced in a
+stubbed browser against the current build:
+
+1. **The store dropdown re-points the store before anything loads.**
+   - `#inv-view-store` runs `invViewStore=this.value` on change.
+   - Pick BL2, don't press Load, and delete a row still showing BL1. The POST says
+     `{store:'BL2', itemId:<a BL1 id>}`.
+   - Each store is its own Clover merchant, and BL2 does not hold that id, so nothing is
+     deleted. But the worker counts not-found (404) as already deleted, so when the answer
+     is ok the row vanishes and the status says "Deleted". (The stubbed run shows that
+     path; what live Clover returns for another merchant's id was not probed, because
+     that probe is a live DELETE.)
+2. **"Also delete from every other location" skips the location you're in.**
+   - It sends `INV_STORES.filter(st => st !== invViewStore)`. `e7af0b2` added that while fixing
+     BL12/BL16.
+   - It sends *this* store's item id to the other five. `create-clover-item` gives each store's
+     copy its own id, so none of the five holds it.
+   - So the checkbox deletes nothing anywhere, and can still report success the same way as
+     fault 1.
+3. **Any answer that isn't a failed result reads as success.**
+   - `confirmDelete` only looks for `results[].ok === false`.
+   - A 403 `{error:'Forbidden'}` has no `results`, so the row was removed and "Deleted" shown.
+4. **Edit throws on any name with an apostrophe**, such as `Men's`, `Levi's` or `Kellogg's`.
+   - The row puts the item's JSON inside a single-quoted `onclick`, and the apostrophe ends it.
+   - The click throws a SyntaxError and the modal never opens.
+   - A Delete button built the same way would break the same way.
+
+## Defaults I chose (the request doesn't settle these; they don't block)
+
+- **A delete acts only on the store whose catalog is loaded.**
+  - The cross-store checkbox goes. It has never deleted anything (fault 2).
+  - Doing it properly means matching items across stores by code. The Viewer's own "dup" badge
+    shows codes are not unique within a store.
+  - Offered as a follow-up, not built.
+- **Frontend only.**
+  - Bulk sends one `delete-clover-item` POST per item, in sequence, each `{store, itemId}`.
+  - No worker change, so nothing to deploy. `cloverFetch` already retries on 429.
+  - Sending them in sequence stays well inside Clover's rate limit, and makes Stop exact.
+- **A bulk delete asks you to type the count.**
+  - Select-all on BL1 is about 1,100 rows, and Clover has no undo.
+  - One item (a row, or a selection of one) needs a single click.
+- **The modal names what will go:** every item (name · code · price), the store, and the
+  reversible alternative (Hidden).
+
+## Plan
+
+These four are findings in `docs/code-review-2026-09-22.md`: **inventory-5** (Delete
+unreachable), **inventory-24** (the checkbox), **inventory-8** (the dropdown), and part of
+**inventory-1** (attribute escaping).
+
+- [x] **Row:** `Edit` and `Delete` buttons carry `data-item-id`, and the handler looks the item
+      up. No JSON in attributes, which also fixes fault 4 for Edit in the same cell.
+- [x] **Selection bar:** a `Delete…` danger button beside Clear and Schedule sale, wrapping on a
+      phone.
+- [x] **Modal rework (`#inv-delete-modal`):**
+  - title with the count, and a line naming the store;
+  - a scrollable item list, and a no-undo note pointing at Hidden;
+  - the typed count when there are 2 or more items;
+  - a status strip, and per-item outcome rows;
+  - Cancel becomes Stop while running, and Close afterwards.
+- [x] **Runner:**
+  - sequential;
+  - success only when the answer is HTTP 2xx AND `results` holds `{store, ok:true}` for the
+    store asked;
+  - every other answer is a failure with its reason: Clover's text, the refusal code, or the
+    status;
+  - Stop lets the request in flight finish, then halts.
+- [x] **After the run:**
+  - deleted items leave both arrays and the selection;
+  - `invDupCodes` is recomputed, and the table re-renders;
+  - failed and never-attempted items stay selected, so `Delete…` retries them;
+  - the status sentence gives the count and the store.
+- [x] **Store binding:**
+  - the dropdown stops writing `invViewStore`, so `loadInventory` is the only writer;
+  - a load of a different store clears the selection and `invViewItems`;
+  - `findDuplicates` reloads when the dropdown differs from the loaded store. Its comment
+    already says it does; the code didn't.
+  - Schedule sale preselects the loaded store, not the dropdown (the rest of inventory-8).
+- [x] `sw.js` CACHE_NAME bump (v239), and the shell-cache fixture.
+- [x] **`npm test`:** extract the outcome function and run it over every response shape the
+      worker can give. `scripts/test-inventory-delete.mjs` also drives the real handler through
+      the worker harness.
+- [x] **`scripts/browser-inventory-delete.mjs`:**
+  - everything above;
+  - both themes, and 390px;
+  - contrast computed from painted colours;
+  - **run it against the build without the change first, and watch it fail.**
+- [x] **Mutations**, each in its own scratch copy.
+- [x] **Before pushing**, re-read the PR state (lessons, rule 6).
+
+### Added while building (not in the plan)
+
+- **Schedule Sale's attributes are now escaped too.** Once the row was fixed, a name with `"`
+  reached the sale chips, the preview and the stored log whole. Those three still used
+  `escapeHtml` inside `title="…"`. Probed: 4 injected handlers and 5 executions on hover. The
+  lesson is in `tasks/lessons.md`.
+- **`.invbtn-danger` light text is now `#a93226`.** `#c0392b` measured 4.28:1 on the selection
+  bar's blue wash. Under its own hover wash it was 4.18 on a duplicate row and 4.49 on a
+  selected row. DESIGN.md §4.8 already makes this split for red text on tints, and now names
+  the button.
+- **The bar wraps only at 720px and below.** Wrapping at every width put the buttons on a
+  second line on a 1400px desktop, which the first render showed.
+- **The Viewer's status keeps the reason after Close.** Its first version said "the reason is
+  under each", which pointed at a list that had just closed.
+
+## Review
+
+**Reproduced before fixing.** All four faults showed in a stubbed browser against `main`.
+The new check fails there in every section: 20 passed, 10 failed as first written. With its
+hostile-name section added, `main` fails that section too: 4 injected handlers in the rows.
+
+**Verified:**
+- **`npm test`:** 5907 assertions across 82 suites, all pass (5852 / 81 before).
+  `test-inventory-delete.mjs` has 55. It covers 17 fault shapes, a success, the length cap,
+  and nine distinct sentences. It also drives the real `delete-clover-item`: done, already
+  gone, a Clover refusal, an admin, and a manager, staff and no session refused. One case
+  pins **why the store matters**: a BL1 item "deleted from BL2" comes back as done while the
+  item is still in BL1.
+- **`browser-inventory-delete.mjs`: 172 / 172**, in dark and light, at 1400 and 390px:
+  - row delete, with its focus, Cancel, and the one POST;
+  - the store binding (dropdown, selection, Find duplicates, a failed load, Schedule sale);
+  - seven fault shapes, each distinct and none shown as a success;
+  - bulk: the typed count, sequential POSTs, the selection, the second render, select-all;
+  - a half-failed run, a retry, and Stop;
+  - the phone layout;
+  - the hostile names;
+  - painted contrast, including both hover states.
+- **`browser-inventory-nav.mjs`: 72 / 72**, unchanged.
+- **Painted contrast (light):** the bar's Delete 5.21, hover on a duplicate row 5.09, on a
+  selected row 5.47. Dark: 5.84, 4.51 and 5.25.
+- **Looked at, not only measured.** Screenshots in both themes (desktop and phone) showed two
+  defects that no assertion had caught: the desktop wrap, and the stale "under each". Both
+  fixed and now asserted.
+- **Mutations, browser: 23 / 23 caught**, each in its own copy of `dist/` on its own port. Each
+  failed on the assertion named for it. They covered:
+  - the dropdown, the store switch, and the failed-load reset;
+  - Find duplicates, the dup recompute, and the selection;
+  - Stop, the typed count in the button and in `confirmDelete`;
+  - the row escaping, Edit's JSON, and select-all;
+  - Schedule sale's store, the hidden Delete, and the old success rule;
+  - a network throw, the POST's store, and both wrap rules;
+  - the red, the `.invf.hidden` guard, a parallel run, and Close's focus.
+  - Separately, the build without the Sale-page escaping fails exactly the two hostile-name
+    assertions.
+- **Mutations, Node: 9 / 9 caught**, in a separate repo copy. One of them first crashed the
+  suite rather than failing it, so that assertion was hardened.
+
+**Not verified:**
+- What live Clover returns for another merchant's item id. That probe is a live DELETE.
+- Nothing here ran against production, and nothing was deployed. The worker is unchanged, so
+  a merge ships all of it.
+
 # Both scanners: the camera stops when the app goes to the background (merch-price-scan-20, 2026-09-24)
 
 **Request:** *"Fix the camera running in the background bug next."* This is finding

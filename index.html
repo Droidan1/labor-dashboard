@@ -1961,8 +1961,9 @@
          on source order, because this block is parsed after tailwind.css. Same trap the
          sidebar hit (see the note by `.sidebar .nav-item.hidden` above): the selection
          bar and the table legend both rendered while the JS had correctly hidden them.
-         (0,2,0) settles it. */
-      .invstatus.hidden,.invp-legend.hidden,.invp-bar.hidden,.invmodal.hidden{display:none}
+         (0,2,0) settles it. .invf joined when the delete modal's typed-count field
+         became the first .invf anything hides. */
+      .invstatus.hidden,.invp-legend.hidden,.invp-bar.hidden,.invmodal.hidden,.invf.hidden{display:none}
 
       /* A modal is centred with flex, so it cannot just be `.hidden` + nothing: removing
          .hidden has to leave it displaying as flex, not block. */
@@ -2054,7 +2055,13 @@
       .invbtn-ghost:hover{background:#fafaf6}
       .dark .invbtn-ghost:hover{background:rgb(var(--op-panelHi))}
       .invbtn-sm{padding:6px 11px;font-size:11.5px;border-radius:8px}
-      .invbtn-danger{background:transparent;color:#c0392b;border-color:rgba(192,57,43,.40);
+      /* Light text is #a93226, not #c0392b: the button sits on washes, not only on the
+         panel. Painted and measured (browser-inventory-delete.mjs), #c0392b was 4.28:1
+         on the selection bar's blue wash, 4.18 under its own hover wash on a duplicate
+         row's amber and 4.49 on a selected row's green. #a93226 is 5.21, 5.09 and 5.47
+         there, and 5.71 on bare panel — the split .invbdg.r below already makes. The
+         border keeps the token. */
+      .invbtn-danger{background:transparent;color:#a93226;border-color:rgba(192,57,43,.40);
         padding:6px 11px;font-size:11.5px;border-radius:8px;font-weight:700}
       .dark .invbtn-danger{color:#f87171;border-color:rgba(239,68,68,.42)}
       .invbtn-danger:hover{background:rgba(192,57,43,.10)}
@@ -2224,6 +2231,22 @@
       .invit.errrow .p{color:#c0392b}
       .dark .invit.errrow .p{color:#f87171}
 
+      /* ── Delete modal: the items going, and what happened to each ──
+           Rows reuse .invit. The name takes a zero basis so a long one ellipsizes
+           instead of wrapping the row; only a failure's reason drops to a second
+           line. #a93226 is 5.71:1 on the red wash over opl-panel (see .invbdg.r),
+           #f87171 5.78:1 on it over op-panel. */
+      .invdel-list{max-height:min(38vh,300px);overflow:auto;margin-top:0}
+      .invdel-list .invit{flex-wrap:wrap}
+      .invdel-list .invit .n{flex:1 1 0;min-width:0}
+      .invdel-why{flex-basis:100%;font-size:11.5px;line-height:1.45;color:#a93226;overflow-wrap:anywhere}
+      .dark .invdel-why{color:#f87171}
+      /* Three buttons do not fit beside the sentence on a phone; they drop to their
+         own line, still right-aligned by their margin-left:auto. Only there: wrapping
+         at every width broke the bar onto two lines on a 1400px desktop, where the
+         sentence can simply wrap inside its own span. */
+      @media (max-width:720px){#inv-sel-toolbar{flex-wrap:wrap}}
+
       /* ── Step header ── */
       .invstep{display:flex;align-items:center;gap:9px}
       .invstep-n{width:21px;height:21px;border-radius:6px;font-size:11px;font-weight:700;display:grid;
@@ -2392,7 +2415,10 @@
             <b id="inv-sel-count"></b> selected · <span id="inv-sel-value"></span> combined retail.
             <span class="invdim">Scheduling from here opens Schedule Sale with these items already loaded.</span>
           </span>
+          <!-- Delete sits furthest from the primary button: it cannot be taken back, and
+               it asks first, but a thumb aiming at Schedule sale should not land on it. -->
           <span style="margin-left:auto;display:flex;gap:8px;flex-shrink:0">
+            <button type="button" id="inv-sel-delete" class="invbtn invbtn-danger" onclick="openBulkDelete()">Delete…</button>
             <button type="button" class="invbtn invbtn-ghost invbtn-sm" onclick="clearInvSelection()">Clear</button>
             <button type="button" class="invbtn invbtn-primary invbtn-sm" style="padding:6px 13px" onclick="openSaleModal()">Schedule sale →</button>
           </span>
@@ -2401,7 +2427,10 @@
         <div class="invp">
           <div class="invp-bar">
             <span class="invp-lbl">Catalog</span>
-            <select id="inv-view-store" class="invi invi-sm" onchange="invViewStore=this.value">
+            <!-- No onchange. invViewStore is the store the ROWS came from, and only a load
+                 changes it: this used to write it on change, before anything loaded, so a
+                 BL1 row was edited or deleted "in BL2". -->
+            <select id="inv-view-store" class="invi invi-sm">
               <option value="BL1">BL1 · Coliseum</option>
               <option value="BL2">BL2 · South Bend</option>
               <option value="BL4">BL4 · Dupont</option>
@@ -2633,23 +2662,32 @@
       </div>
     </div>
 
-    <div id="inv-delete-modal" class="invmodal hidden">
-      <div class="invp" style="width:100%;max-width:460px;margin:0">
+    <!-- Delete: one row, or every selected row, from ONE store — the one whose catalog
+         is loaded. It used to offer "Also delete from every other location", which sent
+         this store's item id to the other five and skipped this store. Each store is
+         its own Clover merchant and none of the five holds that id, so it deleted
+         nothing anywhere — and the worker counts not-found as already deleted, so it
+         could say it had. -->
+    <div id="inv-delete-modal" class="invmodal hidden" role="dialog" aria-modal="true" aria-labelledby="inv-del-title">
+      <div class="invp" style="width:100%;max-width:520px;max-height:90vh;overflow:auto;margin:0">
         <div class="invp-bar">
-          <span class="invp-lbl">Delete item</span>
+          <span class="invp-lbl" id="inv-del-title">Delete item</span>
         </div>
+        <div class="invp-status" id="inv-del-scope"></div>
         <div class="invp-body">
-          <div style="font-size:13.5px;font-weight:600" id="inv-del-name"></div>
-          <div class="invdim" style="font-size:12px;margin-top:3px">Code <span id="inv-del-code"></span></div>
-          <label class="invchk" for="inv-del-all-stores" style="margin-top:14px">
-            <input id="inv-del-all-stores" type="checkbox"> Also delete from every other location
-          </label>
-          <div id="inv-del-status" class="hidden invstatus" style="margin:14px 0 0"></div>
+          <div id="inv-del-list" class="invitems invdel-list"></div>
+          <div class="invf-note" style="margin-top:12px">Clover has no undo for this. To take an item off the
+            register but keep it, Edit it and tick <b>Hidden</b> instead.</div>
+          <div class="invf hidden" id="inv-del-typed-fld" style="margin-top:14px">
+            <label class="invf-l" for="inv-del-typed">Type <span id="inv-del-typed-n"></span> to confirm</label>
+            <input id="inv-del-typed" type="text" inputmode="numeric" autocomplete="off" class="invi" oninput="invDelSync()">
+          </div>
+          <div id="inv-del-status" class="hidden invstatus" style="margin:14px 0 0" aria-live="polite"></div>
         </div>
         <div class="invp-foot">
           <span class="invp-right">
-            <button type="button" class="invbtn invbtn-ghost" onclick="closeInvModal('inv-delete-modal')">Cancel</button>
-            <button type="button" class="invbtn invbtn-danger" style="padding:10px 18px;font-size:13px" onclick="confirmDelete()">Delete</button>
+            <button id="inv-del-cancel" type="button" class="invbtn invbtn-ghost" onclick="invDelCancel()">Cancel</button>
+            <button id="inv-del-go" type="button" class="invbtn invbtn-danger" style="padding:10px 18px;font-size:13px" onclick="confirmDelete()">Delete</button>
           </span>
         </div>
       </div>
@@ -31218,16 +31256,26 @@
   let invNoCostMode = false; // filter: only items Clover holds no cost for
   let invSortAsc = true;
   let invDupCodes = new Set();
-  let invPendingDelete = null; // { item }
 
 
 
 
   async function loadInventory(reset = true) {
-    invViewStore = el('inv-view-store').value;
+    // 🛑 The ONE place invViewStore changes, and it changes with the rows. Edit and
+    // Delete send it as the store, so it must always name the store the table holds.
+    // The dropdown used to set it on change, before anything loaded, so a BL1 row was
+    // deleted "from BL2" — a merchant that does not hold that id. Nothing was deleted,
+    // and the worker counts not-found as already deleted, so it could still come back
+    // as a success. A selection names rows of the store being left, so it goes too.
+    const store = el('inv-view-store').value;
+    if (store !== invViewStore) clearInvSelection();
+    invViewStore = store;
     if (reset) {
       invViewOffset = 0;
       invViewAllItems = [];
+      // Emptied too: a search typed while this loads, or after it fails, re-renders
+      // from it — and it still held the OLD store's rows under the new store's name.
+      invViewItems = [];
       invViewDupMode = false;
       invDupCodes = new Set();
     }
@@ -31291,6 +31339,12 @@
     return (item.price - item.cost) / item.price * 100;
   }
 
+  // For attributes. escapeHtml leaves quotes alone, which is right for text and wrong
+  // inside quotes: `TV Stand 32" Oak` ended data-item-name at `32`, and the selection —
+  // and the sale it schedules — took the name from there. fcEsc / irEsc / laborEsc do
+  // the same for their own modules.
+  const invEsc = s => escapeHtml(s == null ? '' : s).replace(/"/g, '&quot;');
+
   function renderInvTable() {
     const query = (el('inv-view-search')?.value || '').toLowerCase();
     let rows = invViewDupMode
@@ -31344,7 +31398,8 @@
         const isDup = invDupCodes.has(dupKey(item));
         const isChecked = invSelectedItems.has(item.id);
         const cls = [isChecked ? 'sel' : '', isDup ? 'dup' : '', item.hidden ? 'off' : ''].filter(Boolean).join(' ');
-        const nm = escapeHtml(item.name);
+        const nm = invEsc(item.name);
+        const id = invEsc(item.id);
         const m = invGp(item);
         // Clover's item<->category link is many-to-many. `category` is the flattened
         // primary; `categories` is the whole list, and an item sitting in the sku book
@@ -31355,16 +31410,17 @@
           ? '<span class="invdim">\u2014</span>'
           : `<b style="color:${m >= 50 ? 'var(--inv-good)' : m >= 30 ? 'var(--inv-warn)' : 'var(--inv-bad)'}">${m.toFixed(0)}%</b>`;
         return `<tr class="${cls}" data-item-name="${nm}" data-price-cents="${item.price}">
-          <td class="ck stick"><input type="checkbox" data-item-id="${escapeHtml(item.id)}" data-item-name="${nm}" data-price-cents="${item.price}" ${isChecked ? 'checked' : ''} onchange="toggleRowSelect(this)" aria-label="Select ${nm}"></td>
+          <td class="ck stick"><input type="checkbox" data-item-id="${id}" data-item-name="${nm}" data-price-cents="${item.price}" ${isChecked ? 'checked' : ''} onchange="toggleRowSelect(this)" aria-label="Select ${nm}"></td>
           <td class="stick" style="left:34px"><span class="invname" title="${nm}">${nm}</span></td>
           <td>${escapeHtml(item.code) || '<span class="invdim">\u2014</span>'}${isDup ? ' <span class="invbdg a">dup</span>' : ''}</td>
-          <td class="invdim" style="max-width:210px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(item.category)}">${escapeHtml(item.category) || '\u2014'}${extraCats}</td>
+          <td class="invdim" style="max-width:210px;overflow:hidden;text-overflow:ellipsis" title="${invEsc(item.category)}">${escapeHtml(item.category) || '\u2014'}${extraCats}</td>
           <td class="num">${item.price ? fmtDollar(item.price / 100) : '<span class="invdim">\u2014</span>'}</td>
           <td class="num">${item.cost ? fmtDollar(item.cost / 100) : '<span class="invdim">\u2014</span>'}</td>
           <td class="num">${gpCell}</td>
           <td>${item.hidden ? '<span class="invbdg">hidden</span> ' : ''}${item.defaultTaxRates ? '' : '<span class="invbdg">no tax</span>'}</td>
           <td class="num invdim">${item.modifiedTime ? invAgo(item.modifiedTime) : '\u2014'}</td>
-          <td><button type="button" class="invbtn invbtn-ghost invbtn-sm" onclick='openEditModal(${JSON.stringify(item)})'>Edit</button></td>
+          <td><button type="button" class="invbtn invbtn-ghost invbtn-sm" data-item-id="${id}" onclick="invEditRow(this)">Edit</button>
+            <button type="button" class="invbtn invbtn-danger" data-item-id="${id}" onclick="invDeleteRow(this)" aria-label="Delete ${nm}">Delete</button></td>
         </tr>`;
       }).join('');
     }
@@ -31474,7 +31530,9 @@
   function invOpenInViewer(store, code) {
     navigateToPage('inventory-viewer');
     const sel = el('inv-view-store');
-    if (sel) { sel.value = store; invViewStore = store; }
+    // Only the dropdown: loadInventory moves invViewStore, and drops a selection made
+    // in another store while it does.
+    if (sel) sel.value = store;
     const q = el('inv-view-search');
     if (q) q.value = code;
     loadInventory(true);
@@ -31530,11 +31588,13 @@
       renderInvTable();
       return;
     }
-    invViewStore = el('inv-view-store').value;
     el('inv-view-table-wrap').classList.add('hidden');
     try {
-      // Reuse already-loaded full catalog; reload if empty or store changed
-      if (invViewAllItems.length === 0) {
+      // Reuse the loaded catalog only when it IS the store the dropdown names. This
+      // said "reload if empty or store changed" while checking only for empty, and
+      // re-pointed invViewStore first — so a moved dropdown left one store's rows on
+      // screen while Edit and Delete aimed at the other.
+      if (invViewAllItems.length === 0 || el('inv-view-store').value !== invViewStore) {
         await loadInventory(true);
         if (invViewAllItems.length === 0) return; // loadInventory showed its own error
       }
@@ -31647,55 +31707,213 @@
     }
   }
 
-  function openDeleteModal(item) {
-    invPendingDelete = item;
-    el('inv-del-name').textContent = item.name;
-    el('inv-del-code').textContent = item.code;
-    el('inv-del-all-stores').checked = false;
+  // ── Delete: one row, or every selected row ─────────────────────────────
+  // 🛑 ONE STORE: invViewStore, captured when the modal opens, so nothing can re-point a
+  // run halfway. A Clover item id belongs to one merchant, and each store here is its
+  // own. In another store the id is simply not there, and the worker counts not-found
+  // as "already gone" — so a wrong store need not be an error anyone sees. It can be a
+  // success report for a delete that never happened.
+  //
+  // 🔑 ONE AT A TIME. Each item is its own POST, in order: every item gets its own
+  // outcome, Clover never sees a burst, and Stop is exact — the request in flight
+  // finishes and nothing after it starts.
+  let invDel = null; // { store, items:[{id,name,code,price}], out: Map<id,{ok,why}>, running, stop, done }
+
+  function invItemById(id) {
+    return invViewAllItems.find(i => i.id === id) || null;
+  }
+  const invDelWhere = store => `${store} · ${INV_STORE_LABEL[store] || store}`;
+
+  // The row's buttons carry only an id. Edit used to inline the whole item as JSON in a
+  // single-quoted onclick, so an apostrophe in the name (Men's, Levi's) ended the
+  // attribute and the click threw instead of opening anything.
+  function invEditRow(btn) {
+    const item = invItemById(btn.dataset.itemId);
+    if (item) openEditModal(item);
+  }
+  function invDeleteRow(btn) {
+    const item = invItemById(btn.dataset.itemId);
+    if (item) openDeleteModal([item]);
+  }
+  // Every selected item, including any the search has filtered off screen — which is
+  // why the modal lists each one by name rather than only counting them.
+  function openBulkDelete() {
+    openDeleteModal([...invSelectedItems.values()].map(s =>
+      invItemById(s.id) || { id: s.id, name: s.name, code: '', price: s.priceCents }));
+  }
+
+  function openDeleteModal(items) {
+    if ((invDel && invDel.running) || !items.length) return;
+    const n = items.length;
+    invDel = { store: invViewStore, items, out: new Map(), running: false, stop: false, done: false };
+    el('inv-del-title').textContent = n === 1 ? 'Delete item' : `Delete ${n} items`;
+    el('inv-del-scope').innerHTML = `Deletes from <b>${invEsc(invDelWhere(invViewStore))}</b> only `
+      + '— other locations are not touched.';
+    el('inv-del-list').innerHTML = items.map(it => '<div class="invit">'
+      + `<span class="n" title="${invEsc(it.name)}">${invEsc(it.name)}</span>`
+      + `<span class="p">${invEsc(it.code || '—')} · ${it.price ? fmtDollar(it.price / 100) : '—'}</span>`
+      + '</div>').join('');
+    el('inv-del-typed-n').textContent = n;
+    el('inv-del-typed').value = '';
     invDelSetStatus('', '');
+    invDelSync();
     el('inv-delete-modal').classList.remove('hidden');
+    // Never on Delete. For one item a stray Enter presses Cancel; for many, focus sits
+    // in the box that asks for the count.
+    (n > 1 ? el('inv-del-typed') : el('inv-del-cancel')).focus();
+  }
+
+  // The buttons follow the run: Cancel, then Stop, then Close. Delete opens only on the
+  // typed count when there is more than one item, and is gone once the run is over, so
+  // a finished run offers no second Delete to press by reflex.
+  function invDelSync() {
+    const d = invDel;
+    if (!d) return;
+    const n = d.items.length;
+    const go = el('inv-del-go'), cancel = el('inv-del-cancel'), typed = el('inv-del-typed');
+    el('inv-del-typed-fld').classList.toggle('hidden', n === 1 || d.done);
+    typed.disabled = d.running;
+    go.classList.toggle('hidden', d.done);
+    go.disabled = d.running || (n > 1 && typed.value.trim() !== String(n));
+    if (!d.running) go.textContent = n === 1 ? 'Delete' : `Delete ${n} items`;
+    cancel.textContent = d.done ? 'Close' : !d.running ? 'Cancel' : d.stop ? 'Stopping…' : 'Stop';
+    cancel.disabled = d.running && d.stop;
+  }
+
+  function invDelCancel() {
+    if (invDel && invDel.running) { invDel.stop = true; invDelSync(); return; }
+    invDel = null;
+    closeInvModal('inv-delete-modal');
+  }
+
+  // One POST's answer, for the one store it asked about. A delete counts only when the
+  // worker SAYS so: HTTP 2xx and a result for this store with ok:true. confirmDelete used
+  // to look only for a FAILED result, so a 403 (no results at all), an empty list and an
+  // HTML error page each removed the row and reported "Deleted". Every other answer is a
+  // failure, and says which kind.
+  function invDelOutcome(store, status, data) {
+    const r = data && Array.isArray(data.results)
+      ? data.results.find(x => x && x.store === store) : null;
+    if (status >= 200 && status < 300 && r && r.ok === true) return { ok: true };
+    if (r && r.ok === false) {
+      // The worker passes Clover's reply through as text, usually {"message": …}.
+      let said = String(r.error || '').trim();
+      try { const j = JSON.parse(said); if (j && j.message) said = String(j.message); } catch (_) {}
+      return { ok: false, why: 'Clover did not delete it' + (said ? `: ${said.slice(0, 200)}` : '.') };
+    }
+    const code = data && data.code;
+    if (status === 401) return { ok: false, why: 'Your session has expired. Sign in again, then retry.' };
+    if (code === 'UNCLASSIFIED_ACTION') return { ok: false,
+      why: 'This worker does not know how to delete items, so the worker half of a deploy is missing.' };
+    if (code === 'NO_BUSINESS_ACCESS') return { ok: false,
+      why: 'Your account has no Bargain Lane access, so it cannot delete items.' };
+    if (status === 403) return { ok: false,
+      why: 'Refused: deleting items needs an admin account' + (code ? ` (${code}).` : '.') };
+    if (status >= 200 && status < 300) return { ok: false,
+      why: `The server answered with no result for ${store}, so it is not known whether this was `
+        + 'deleted. Load the store again to check.' };
+    const said = data && data.error ? `: ${String(data.error).slice(0, 200)}` : '.';
+    return { ok: false, why: (status >= 500 ? `The server failed (HTTP ${status})`
+                                            : `The server refused the request (HTTP ${status})`) + said };
+  }
+
+  // Marks one listed item with what happened to it; null means the run stopped first.
+  // textContent, so a reason carrying Clover's own text is shown and never parsed.
+  function invDelMark(row, o) {
+    if (!row) return;
+    const b = document.createElement('span');
+    b.className = 'invbdg' + (!o ? '' : o.ok ? ' g' : ' r');
+    b.textContent = !o ? 'not tried' : o.ok ? 'deleted' : 'failed';
+    row.appendChild(b);
+    if (o && !o.ok) {
+      row.classList.add('errrow');
+      const w = document.createElement('span');
+      w.className = 'invdel-why';
+      w.textContent = o.why;
+      row.appendChild(w);
+    }
   }
 
   async function confirmDelete() {
-    if (!invPendingDelete) return;
-    const item = invPendingDelete;
-    const allStores = el('inv-del-all-stores').checked;
-    const delBtn = el('inv-delete-modal').querySelector('button[onclick="confirmDelete()"]');
-    delBtn.disabled = true;
-    invDelSetStatus('Deleting…', 'info');
-    try {
-      const payload = allStores
-        // Was ['BL1','BL2','BL4','BL8','BL12','BL14'] — BL12 is Wyoming, which is
-        // closed, and BL16 (Indy East) was missing, so this silently left the item
-        // alive in Indy East. INV_STORES is the one roster now.
-        ? { stores: INV_STORES.filter(st => st !== invViewStore), itemId: item.id }
-        : { store: invViewStore, itemId: item.id };
-      const resp = await fetch(`${WORKER_BASE}?action=delete-clover-item`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        credentials: 'include',
-      });
-      const data = await resp.json();
-      const results = data.results || [];
-      const anyFail = results.some(r => !r.ok);
-      if (anyFail) {
-        const errs = results.filter(r => !r.ok).map(r => `${r.store}: ${r.error}`).join('; ');
-        invDelSetStatus('Partial failure — ' + errs, 'error');
-        return;
+    const d = invDel;
+    if (!d || d.running || d.done) return;
+    const n = d.items.length;
+    if (n > 1 && el('inv-del-typed').value.trim() !== String(n)) return;
+    d.running = true;
+    invDelSync();
+    const rows = el('inv-del-list').children;
+    for (let i = 0; i < n && !d.stop; i++) {
+      el('inv-del-go').textContent = `Deleting ${i + 1} of ${n}…`;
+      invDelSetStatus(`Deleting ${i + 1} of ${n} from ${escapeHtml(invDelWhere(d.store))}…`, 'info');
+      let o;
+      try {
+        const resp = await fetch(`${WORKER_BASE}?action=delete-clover-item`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ store: d.store, itemId: d.items[i].id }),
+          credentials: 'include',
+        });
+        // A worker that throws answers with Cloudflare's HTML page, not JSON. The
+        // status is then all there is, and invDelOutcome says so.
+        let data = null;
+        try { data = await resp.json(); } catch (_) {}
+        o = invDelOutcome(d.store, resp.status, data);
+      } catch (err) {
+        o = { ok: false, why: `Could not reach the server (${(err && err.message) || err}).` };
       }
-      // Remove from local arrays
-      invViewItems = invViewItems.filter(i => i.id !== item.id);
-      invViewAllItems = invViewAllItems.filter(i => i.id !== item.id);
-      renderInvTable();
-      closeInvModal('inv-delete-modal');
-      invViewSetStatus(`Deleted "${item.name}".`, 'ok');
-      invPendingDelete = null;
-    } catch(err) {
-      invDelSetStatus('Error: ' + escapeHtml(err.message), 'error');
-    } finally {
-      delBtn.disabled = false;
+      d.out.set(d.items[i].id, o);
+      invDelMark(rows[i], o);
     }
+    d.running = false;
+    d.done = true;
+    d.items.forEach((it, i) => { if (!d.out.has(it.id)) invDelMark(rows[i], null); });
+
+    const gone = new Set(d.items.filter(it => d.out.get(it.id)?.ok).map(it => it.id));
+    if (gone.size) {
+      invViewAllItems = invViewAllItems.filter(i => !gone.has(i.id));
+      invViewItems = invViewItems.filter(i => !gone.has(i.id));
+      gone.forEach(id => invSelectedItems.delete(id));
+      // A deleted item may have been the only other holder of its code.
+      invDupCodes = invFindDupCodes(invViewAllItems);
+      renderInvTable();
+      updateSelectionUI();
+      invSyncSelAll();
+    }
+    const where = escapeHtml(invDelWhere(d.store));
+    if (gone.size === n) {
+      invDel = null;
+      closeInvModal('inv-delete-modal');
+      invViewSetStatus(n === 1 ? `Deleted <b>${escapeHtml(d.items[0].name)}</b> from ${where}.`
+                               : `Deleted <b>${n} items</b> from ${where}.`, 'ok');
+      return;
+    }
+    // Something is left, and the modal stays open on it. Failed and never-tried items of
+    // a bulk run were selected to begin with, and only a delete takes an item out of the
+    // selection — so they are still in it, ready to retry.
+    const failed = d.items.filter(it => d.out.get(it.id)?.ok === false);
+    const skipped = n - d.out.size;
+    const why0 = failed.length ? escapeHtml(d.out.get(failed[0].id).why) : '';
+    const stopped = skipped ? ` Stopped before the last ${skipped}, which ${skipped === 1 ? 'is' : 'are'} still selected.` : '';
+    if (n === 1) {
+      // The reason alone, after the name. "Nothing was deleted" would contradict the one
+      // reason that cannot say whether it was.
+      const msg = `<b>${escapeHtml(d.items[0].name)}</b> — ${why0}`;
+      invDelSetStatus(msg, 'error');
+      invViewSetStatus(msg, 'error');
+    } else {
+      const head = `Deleted ${gone.size} of ${n} from ${where}.`;
+      const nf = failed.length;
+      // In the modal each failure shows its own reason under it. The Viewer's copy
+      // outlives the modal, so it carries the reason itself.
+      invDelSetStatus(head + (nf ? ` ${nf} failed — the reason is under ${nf === 1 ? 'it' : 'each'}, and `
+        + `${nf === 1 ? 'it stays' : 'they stay'} selected to retry.` : '') + stopped, nf ? 'error' : 'warn');
+      invViewSetStatus(head + (nf ? ` ${nf} failed and ${nf === 1 ? 'is' : 'are'} still selected — ${why0}`
+        + (failed.every(it => escapeHtml(d.out.get(it.id).why) === why0) ? '' : ' (and other reasons)') : '')
+        + stopped, nf ? 'error' : 'ok');
+    }
+    invDelSync();
+    // Delete has just gone away under the pointer; give focus to the one way out.
+    el('inv-del-cancel').focus();
   }
 
   function closeInvModal(modalId) {
@@ -31732,11 +31950,15 @@
       invSelectedItems.delete(itemId);
     }
     updateSelectionUI();
-    // Keep select-all checkbox in sync
+    invSyncSelAll();
+  }
+
+  // The header box means "every row on screen is ticked". Recomputed from the rows, not
+  // left as it was clicked — or it stays ticked over rows a delete has just removed.
+  function invSyncSelAll() {
     const allCbs = el('inv-view-tbody').querySelectorAll('input[type=checkbox]');
-    const allChecked = allCbs.length > 0 && [...allCbs].every(c => c.checked);
     const selAll = el('inv-sel-all');
-    if (selAll) selAll.checked = allChecked;
+    if (selAll) selAll.checked = allCbs.length > 0 && [...allCbs].every(c => c.checked);
   }
 
   function toggleSelectAll(checked) {
@@ -31771,7 +31993,9 @@
   function openSaleModal() {
     if (invSelectedItems.size === 0) return;
     navigateToPage('inventory-sale');
-    invLoadSaleComposer(el('inv-view-store').value);
+    // The store the selected rows came from, not whatever the dropdown was moved to
+    // since: their ids exist in that store only.
+    invLoadSaleComposer(invViewStore);
   }
 
   // Fill the composer from the current selection. Split out from openSaleModal so the
@@ -31793,12 +32017,16 @@
         + `Inventory Viewer · combined retail <b>${fmtDollar(total / 100)}</b>. Prices are re-read from `
         + `Clover when the sale activates, so an item repriced between now and then still discounts off `
         + `its real price.`;
+      // invEsc in every attribute. The Viewer's row cut a name off at its first `"` until
+      // it was escaped properly, so a name that breaks out of an attribute never used to
+      // arrive here whole. Now it does — here, in the preview and, once scheduled, in the
+      // log (it is stored as item_name).
       list.innerHTML = items.map(item => `
-        <span class="invchip" data-item-id="${escapeHtml(item.id)}">
-          <span class="invname" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+        <span class="invchip" data-item-id="${invEsc(item.id)}">
+          <span class="invname" title="${invEsc(item.name)}">${escapeHtml(item.name)}</span>
           <span class="pr">${fmtDollar(item.priceCents / 100)}</span>
-          <button type="button" class="x" aria-label="Remove ${escapeHtml(item.name)}"
-                  onclick="invDropSaleItem('${escapeHtml(item.id)}')">&times;</button>
+          <button type="button" class="x" aria-label="Remove ${invEsc(item.name)}"
+                  onclick="invDropSaleItem(${invEsc(JSON.stringify(item.id))})">&times;</button>
         </span>`).join('');
     }
 
@@ -31924,7 +32152,7 @@
     preview.innerHTML = items.map(item => {
       const sale = priceOf(item.priceCents);
       const off = Math.round((1 - sale / item.priceCents) * 100);
-      return `<div class="invit"><span class="n" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>`
+      return `<div class="invit"><span class="n" title="${invEsc(item.name)}">${escapeHtml(item.name)}</span>`
         + `<span class="p"><s>${fmtDollar(item.priceCents / 100)}</s> \u2192 <b>${fmtDollar(sale / 100)}</b>`
         + ` <span class="invdim">(\u2212${off}%)</span></span></div>`;
     }).join('') + (() => {
@@ -32045,13 +32273,13 @@
           // An item that failed to revert is the one row worth finding on this page:
           // its price on the register is wrong right now.
           if (item.errorMsg) {
-            return `<div class="invit errrow"><span class="n" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>`
+            return `<div class="invit errrow"><span class="n" title="${invEsc(item.name)}">${escapeHtml(item.name)}</span>`
                  + `<span class="p">${escapeHtml(item.errorMsg)}</span></div>`;
           }
           const price = (item.originalPrice && item.salePrice)
             ? `<s>${fmtDollar(item.originalPrice / 100)}</s> \u2192 <b>${fmtDollar(item.salePrice / 100)}</b>`
             : '<span class="invdim">not applied yet</span>';
-          return `<div class="invit"><span class="n" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>`
+          return `<div class="invit"><span class="n" title="${invEsc(item.name)}">${escapeHtml(item.name)}</span>`
                + `<span class="p">${price}</span></div>`;
         }).join('');
         const n = g.items.length;

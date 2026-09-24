@@ -122,8 +122,9 @@ ok(!/WRS_STORE_KEYS/.test(bcoBody),
   'and the backfill does not borrow it');
 // The shape of the bug, not just the one string it wore: any roster literal that
 // names retired BL12 while leaving out BL16 is the same mistake. Comment lines are
-// skipped deliberately — the note above confirmDelete quotes the old literal on
-// purpose, and that record is worth more than the strictness.
+// skipped deliberately — a note may quote an old literal on purpose (the one above
+// confirmDelete did, until cross-store delete was removed), and that record is worth
+// more than the strictness.
 const bl12NoBl16 = html.split('\n')
   .filter(l => !/^\s*(\/\/|\*|<!--)/.test(l))
   .filter(l => /\[\s*'BL1'[^\]]*'BL12'[^\]]*\]/.test(l) && !/'BL16'/.test(l));

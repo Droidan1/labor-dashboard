@@ -1,3 +1,32 @@
+## Fixing the escape at the source moved the injection one page along (2026-09-24)
+
+The Inventory Viewer's row built attributes with `escapeHtml`, which leaves quotes alone. So an
+item name like `x" onmouseover="…"` put a live handler into the row (code review inventory-1).
+Adding the Viewer's delete meant rebuilding that row, so I escaped it properly. Every check
+went green.
+
+**The broken attribute had a second job nobody knew about.** It cut every name off at its
+first `"`, and the selection reads the name back out of that attribute. So no name with a
+quote in it had ever reached Schedule Sale whole.
+
+Once the row was fixed, the full name travelled on. It reached the sale chips, the preview and
+the schedule log, and the log is stored in D1. All three still used `escapeHtml` inside
+`title="…"`. A probe with the hostile name found 4 injected handlers there, and hovering ran
+them 5 times. The XSS had not gone: it had moved one page along, and it now persisted.
+
+<rules>
+1. **When you fix sanitising at a source, follow the value to every sink.** A bug upstream
+   can be quietly protecting a bug downstream: a truncation, a crash, a dropped field. The fix
+   removes that protection.
+2. **Test the hostile value end to end, not only where you fixed it.** Plant it, then assert
+   at every place it lands. For XSS, that means no `on*` attribute appears and a hover runs
+   nothing. Run it against the build without the downstream fix, and watch it fail there.
+3. **In `index.html`, `escapeHtml` is for text, not attributes.** `attr="${escapeHtml(x)}"` is
+   a quote injection. Use the module's quote-safe escaper (`invEsc`, `irEsc`, `fcEsc`,
+   `laborEsc`). Before calling a module clean, grep `="\${escapeHtml(` — 11 sites remain
+   outside Inventory.
+</rules>
+
 ## Two mutation runners shared `dist/`, and one quietly un-mutated the other (2026-09-23)
 
 The MOS scanner fix (oppbuys-mos-2) was mutation-tested twice: the Node suite in the
