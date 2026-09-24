@@ -31170,8 +31170,11 @@
               + (r.categoryCreated ? '<b>created</b>' : 'matched');
         } else if (r.duplicate) {
           msg = `Code <b>${escapeHtml(code)}</b> is already in use — nothing was created.`;
+          // The code is whatever was typed. It used to sit in a single-quoted JS string
+          // inside this double-quoted attribute, so a ' threw on click and a " ended the
+          // attribute. As JSON, then invEsc, it arrives exactly as typed.
           action = `<button type="button" class="invbtn invbtn-ghost invbtn-sm"
-                      onclick="invOpenInViewer('${escapeHtml(r.store)}','${escapeHtml(code)}')">Open in Viewer</button>`;
+                      onclick="invOpenInViewer(${invEsc(JSON.stringify(r.store))},${invEsc(JSON.stringify(code))})">Open in Viewer</button>`;
         } else {
           msg = escapeHtml(r.error || 'Unknown error')
               + (r.stage ? ` <span class="invbdg">${escapeHtml(r.stage)}</span>` : '');
@@ -31289,7 +31292,8 @@
           credentials: 'include',
         });
         const data = await resp.json();
-        if (!data.ok) { invViewSetStatus('Error: ' + (data.error || 'unknown'), 'error'); return; }
+        // The worker passes Clover's body through as `error`: text, never markup.
+        if (!data.ok) { invViewSetStatus('Error: ' + escapeHtml(data.error || 'unknown'), 'error'); return; }
         invViewAllItems = invViewAllItems.concat(data.elements);
         if (data.total != null) invViewTotal = data.total;
         if (!data.hasMore) break;
@@ -31689,7 +31693,8 @@
         credentials: 'include',
       });
       const data = await resp.json();
-      if (!data.ok) { invEditSetStatus('Error: ' + (data.error || 'unknown'), 'error'); return; }
+      // Text, never markup: this is Clover's body, or a typed category name echoed back.
+      if (!data.ok) { invEditSetStatus('Error: ' + escapeHtml(data.error || 'unknown'), 'error'); return; }
       // Update in-place in both arrays
       const update = idx => {
         if (idx >= 0) invViewItems[idx] = { ...invViewItems[idx], name, code, price: Math.round(priceVal * 100), cost: costVal !== undefined ? Math.round(costVal * 100) : invViewItems[idx]?.cost, defaultTaxRates: taxable, hidden, category: l3 };
