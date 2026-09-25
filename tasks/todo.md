@@ -1,3 +1,99 @@
+# Sign Studio: 22-character names, and each orientation prints on its own (2026-09-25)
+
+**Request (Brian):** *"Let the orientation that fits print, and cap names at 22"*. These are his
+answers to the two Poppins questions in the last report (the entry below, "What Poppins costs").
+
+## What changes
+
+| | Before | Now |
+|---|---|---|
+| Product name | 32 characters | **22 characters** per group (the note stays at 32) |
+| A name, price, label or note too big for one orientation | blocks both | **blocks only that orientation**; the other prints |
+| A field error: missing name, bad price or percent, a dot with no note, the Us vs Them guards | blocks both | blocks both (unchanged) |
+
+## How the page says it (my choices)
+
+- The status pill stays green "Ready to print" and red "N things to fix". It gets an **amber
+  "Portrait only" / "Landscape only"** state for a sign that fits one orientation.
+- The summary under the signs turns amber when one orientation can print: "Only the portrait sign
+  can print. To print the landscape sign too:", then the messages. Field errors keep the red "Fix
+  these to print".
+- Each Print and PDF button follows its own orientation. `printSign` checks the same function, so
+  there is one rule with two readers, not two copies of it.
+- A name over 22 characters that reaches the model some other way (a paste the browser lets
+  through, a saved sign later) gets a field message. The input's maxlength is not the only guard.
+- Examples: the 32-character example becomes a 22-character one that fits both orientations.
+  The Sofa / Sectional card reads "(portrait only)".
+
+## Plan
+
+- [x] Preview: `LIMIT.name` 22 plus a validation message. `validate` returns the messages and
+      which orientations are blocked. The pill, summary, buttons, `printSign` and gallery follow
+      it. Copy and examples updated.
+- [x] Checks:
+      - per-orientation gating: buttons, pill, summary, `printSign`;
+      - a field error still stops both;
+      - a sign that fits neither stops both;
+      - the 22 limit, in the maxlength and in the model;
+      - geometry per orientation;
+      - contrast of the amber states in three themes;
+      - mutations.
+- [x] PRD v1.4, tracked on the v1.3 clean copy: the 22 limit, export per orientation, the
+      acceptance row and decisions. The open font question is closed.
+- [x] `npm test`, commit, push to #291, PR body, report.
+
+## Review
+
+**Built as planned.** The example name is now MENS ATHLETIC SNEAKERS (22), which prints both ways
+at 0.70 / 0.63 in.
+
+**Found while measuring 22-character names (not built, it's Brian's call):** on **Us vs Them**,
+landscape takes one-line names only. The name gets 22% of the body, which can't hold two lines at
+0.6 in, and one line of Poppins fits only about 17 characters. On 10 names × 3 price pairs, 12 of
+30 fit landscape and 27 of 30 fit portrait. Those signs now print portrait. I tried giving the
+name more room: at 24% nothing changes, and at 25% two names still miss 0.6 in while YOU PAY drops
+from 2.6 in to 1.9 in. So it's a trade. It sits on the page and in PRD v1.4 as the open question,
+and the layout stays as it is.
+
+**Verified:**
+- verify.mjs: **258 pass**, up from 245. New checks cover:
+  - a sign that fits only portrait: landscape Print and PDF off, portrait on, in A and in B;
+  - the amber pill and summary, and the buttons' reason text;
+  - `printSign` refuses landscape and prints portrait at 8.5 × 11;
+  - a field error on top stops both, in red;
+  - a name that fits neither orientation stops both;
+  - the name field stops at 22, the counter reads 22/22, and a 23-character name reaching the
+    model is refused;
+  - the gallery shows "(portrait only)" on the SECTIONAL card;
+  - geometry: every orientation that fits prints (1,416 renders), whatever the other does;
+  - contrast of the amber and red states in three themes.
+- Two old checks needed new inputs, since the field now stops at 22: the hostile-name payload is
+  a whole 21-character tag, and the cut-suggestion checks use 22-character names.
+- Mutations: **6 of 6 caught**, each by its intended check:
+  - buttons all-or-nothing;
+  - `printSign` all-or-nothing;
+  - `validate` blocking both on any fit failure;
+  - the limit back to 32;
+  - no model length check;
+  - no amber pill state.
+- Contrast: 9,351 measurements ≥ 4.5:1. Minimums: dark 5.16, light 4.8, pure black 5.82.
+  Screenshots of the amber state were checked in dark and light.
+- PRD v1.4: redline and clean both pass `validate.py` (170 → 171 paragraphs), and both were
+  rendered.
+- `npm test`: under `TZ=America/New_York`, **5,996 assertions across 83 suites pass**. In this
+  container's UTC at 00:16, one suite failed (below). This branch changes neither `index.html`
+  nor `scripts/` from `main`, so `main` fails it the same way at that hour.
+
+**Not mine, left alone:** `scripts/test-daily-auction-column.mjs` fails in UTC after midnight UTC,
+before midnight in New York ("today's figure is live POS + auctionRaw", got 415, want 1915). The
+test's today is New York's. `buildWeeklyTable` has two todays of its own: the device's local date
+for the live row (`index.html:10571`, `:10602`) and New York's date for future rows
+(`index.html:10572`). In a UTC process those disagree for four hours. Under
+`TZ=America/New_York` and `TZ=America/Chicago` it passes. This branch changes neither
+`index.html` nor `scripts/`. Suggested as its own task.
+
+---
+
 # Sign Studio: design picked, and a "% Off" sign type (2026-09-24)
 
 **Request (Brian):** *"Layout C, Typeface use the Bargain Lane fonts: Poppins for text and

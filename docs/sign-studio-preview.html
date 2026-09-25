@@ -237,6 +237,7 @@ html.light .nav-item.active{background:rgba(34,197,94,.10);color:var(--accent);}
 .pill.ok{background:var(--greenWash);border:1px solid var(--greenEdge);color:var(--accent);}
 .pill.no{background:var(--badWash);border:1px solid var(--badEdge);color:var(--badText);}
 .pill.wait{background:var(--panelHi);border:1px solid var(--border);color:var(--inkDim);}
+.pill.part{background:var(--amberWash);border:1px solid var(--amberEdge);color:var(--amber);}   /* one orientation prints */
 .pill i{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block;}
 
 /* form fields */
@@ -313,6 +314,8 @@ html.light .nav-item.active{background:rgba(34,197,94,.10);color:var(--accent);}
 .note svg{width:16px;height:16px;flex-shrink:0;margin-top:1px;color:var(--blue);}
 .note.err{background:var(--badWash);border-color:var(--badEdge);}
 .note.err svg{color:var(--badText);}
+.note.warn{background:var(--amberWash);border-color:var(--amberEdge);}
+.note.warn svg{color:var(--amber);}
 .note b{font-weight:700;}
 .errlist{margin:4px 0 0 16px;}
 
@@ -450,8 +453,8 @@ html.light .nav-item.active{background:rgba(34,197,94,.10);color:var(--accent);}
   <h1 class="doc-title">Sign Studio</h1>
   <p class="doc-sub">Type a product and a price or a percentage, pick the sale, print. Every sign comes out of <b>one template</b>, so every sign in every store looks like one family. This page is a review copy: nothing on it is wired to the app, and <code style="font-size:12px">docs/</code> never reaches production. The signs, though, are real: the same drawing the build will print, laid out in print points on US Letter.</p>
   <div class="doc-notes">
-    <div class="doc-note"><b>Decided on 24 Sep.</b> US Letter. Labels: None, Sale, Flash Sale, Manager Special, Blow Out, and custom text up to 12 characters. Product names up to 32 characters, never below 0.6-inch letters. Managers (district managers included), admins, superusers. Print first; saving comes in the second release. <b>Picked:</b> layout C; Poppins for words and Luckiest Guy for numbers; an italic label; deep green; raised cents. <b>Sign types:</b> Price, % Off, and Us vs Them.</div>
-    <div class="doc-note ask"><b>Still open.</b><ol><li>Long names on portrait. Poppins has no narrow widths, so a name over about 22 characters fits only the landscape sign at 0.6 in. Allow a third line on portrait, or cap names at 22 characters?</li><li>Two prices on landscape. Each half holds about 7 capitals a line at 0.6 in, so one long word (SECTIONAL, MATTRESSES) doesn't fit, and the PRD then blocks both orientations. Let the orientation that fits print on its own?</li><li>A fine-print line for an item code and date, as stores write on signs today?</li><li>Optional: print any sign from here and hang it on a store shelf.</li></ol></div>
+    <div class="doc-note"><b>Decided on 24 Sep.</b> US Letter. Labels: None, Sale, Flash Sale, Manager Special, Blow Out, and custom text up to 12 characters. Product names up to 22 characters, never below 0.6-inch letters; a sign whose words fit only one orientation prints in that one. Managers (district managers included), admins, superusers. Print first; saving comes in the second release. <b>Picked:</b> layout C; Poppins for words and Luckiest Guy for numbers; an italic label; deep green; raised cents. <b>Sign types:</b> Price, % Off, and Us vs Them.</div>
+    <div class="doc-note ask"><b>Still open.</b><ol><li>Us vs Them on landscape. A name over about 17 characters needs two lines there, and two lines don't fit at 0.6 in, so those signs print portrait only. Give the name more room (YOU PAY drops from about 2.6 in to 1.9 in), or keep it as it is?</li><li>A fine-print line for an item code and date, as stores write on signs today?</li><li>Optional: print any sign from here and hang it on a store shelf.</li></ol></div>
   </div>
 
   <div class="toolbar" role="toolbar" aria-label="Preview controls">
@@ -479,7 +482,7 @@ html.light .nav-item.active{background:rgba(34,197,94,.10);color:var(--accent);}
       <button type="button" data-ex="pcttwo">% Off · two groups</button>
       <button type="button" data-ex="uvt">Us vs Them · end table</button>
       <button type="button" data-ex="custom">Custom label</button>
-      <button type="button" data-ex="long">32 characters · landscape only</button>
+      <button type="button" data-ex="long">22 characters (the limit)</button>
       <button type="button" data-ex="boots" class="warn">Too long for landscape</button>
       <button type="button" data-ex="badprice" class="warn">Bad price</button>
       <button type="button" data-ex="fontfail" class="warn">Font didn't load</button>
@@ -517,7 +520,7 @@ html.light .nav-item.active{background:rgba(34,197,94,.10);color:var(--accent);}
   <!-- 3 ─ gallery -->
   <section class="sect" id="s-gallery">
     <div class="sect-h"><span class="sect-n">3</span><h2 class="sect-t">One system, every label</h2></div>
-    <p class="sect-d">Every label choice, and the awkward cases, from the same template. Same logo, same corner, same letter size for every preset label; only the words and the price change. The long names show the fit rule working: two lines before smaller letters, and <b>never under 0.6 in</b>. Then the two other sign types. <b>% Off</b> makes the percentage the hero, with the % raised and OFF under it. On <b>Us vs Them</b> the discount is worked out from the two prices and rounded down, and their price prints at most 40% the size of YOU PAY, so a glance lands on what the customer pays.</p>
+    <p class="sect-d">Every label choice, and the awkward cases, from the same template. Same logo, same corner, same letter size for every preset label; only the words and the price change. The long names show the fit rule working: two lines before smaller letters, <b>never under 0.6 in</b>, and a sign that fits only one orientation prints in that one. Then the two other sign types. <b>% Off</b> makes the percentage the hero, with the % raised and OFF under it. On <b>Us vs Them</b> the discount is worked out from the two prices and rounded down, and their price prints at most 40% the size of YOU PAY, so a glance lands on what the customer pays.</p>
     <div class="gallery" id="gallery"></div>
   </section>
 
@@ -569,7 +572,7 @@ const SALE_LABELS = [
 const TEMPLATES = [{ id: 'price', name: 'Price sign' }, { id: 'pct', name: '% Off' }, { id: 'uvt', name: 'Us vs Them' }];
 const UNITS = [{ id: '', name: 'None' }, { id: 'each', name: 'Each' }, { id: 'pair', name: 'Per pair' }];
 const UNIT_TEXT = { each: 'EACH', pair: 'PER PAIR' };
-const LIMIT = { name: 32, qual: 32, custom: 12 };
+const LIMIT = { name: 22, qual: 32, custom: 12 };   // name: 22 (Brian, 24 Sep; was 32)
 
 const blankGroup = () => ({ name: '', price: '', pct: '', unit: '', qual: '', dot: false });
 const S = {
@@ -587,7 +590,7 @@ const EXAMPLES = {
   towels:   { sale: 'sale', two: false, g: [{ name: 'Bath towels', price: '4.99', unit: 'each' }] },
   candy:    { sale: 'none', two: false, g: [{ name: 'All candy', price: '0.99' }] },
   custom:   { sale: 'custom', custom: 'Weekend deal', two: false, g: [{ name: 'Patio cushions', price: '15', unit: 'each' }] },
-  long:     { sale: 'manager', two: false, g: [{ name: 'Outdoor patio furniture cushions', price: '24.99', unit: 'each' }] },
+  long:     { sale: 'manager', two: false, g: [{ name: 'Mens athletic sneakers', price: '24.99', unit: 'each' }] },
   boots:    { sale: 'blowout', two: true, g: [{ name: 'Work boots', price: '20', unit: 'pair' },
               { name: 'Premium work boots', price: '35', unit: 'pair' }] },
   badprice: { sale: 'sale', two: false, g: [{ name: 'Bath towels', price: '4.995' }] },
@@ -1184,12 +1187,17 @@ function describe(model) {
    7. VALIDATION — field messages that name the field AND the orientation.
    ═══════════════════════════════════════════════════════════════════════ */
 function inches(pt) { return (pt / PT).toFixed(2).replace(/0$/, '') + ' in'; }
+/* → { msgs: { key: message }, blocked: { landscape, portrait } }. A field error
+   (a missing name, a bad price) stops both orientations. A fit failure stops
+   only the orientation it happens in, and the other still prints (Brian, 24
+   Sep). The Print and PDF buttons and printSign all read `blocked` from here. */
 function validate(model) {
   const errs = {};           // key → message
   const add = (k, m) => { if (!errs[k]) errs[k] = m; };
   model.groups.forEach(g => {
     const nm = model.groups.length > 1 ? (g.i ? 'Second name' : 'First name') : 'Product name';
     if (!g.name) add(`name-${g.i}`, `${nm}: required.`);
+    else if (g.rawName.length > LIMIT.name) add(`name-${g.i}`, `${nm}: ${LIMIT.name} characters at most.`);   // not only the input's maxlength
     if (g.kind === 'pct') { if (g.pct.err) add(`pct-${g.i}`, g.pct.err); }
     else if (g.price.err) add(`price-${g.i}`, g.price.err);
     if (g.dot && !g.qual) add(`qual-${g.i}`, 'Say what the dot means, for example: Yellow dot on bottom.');
@@ -1203,7 +1211,9 @@ function validate(model) {
       else if (discountPct(t.cents, g0.price.cents) < 1) add('price-0', 'The saving is under 1%. Use a price sign instead.');
     }
   }
-  if (S.assets !== 'ready') return errs;
+  const whole = Object.keys(errs).length > 0;
+  const blocked = { landscape: whole, portrait: whole };
+  if (S.assets !== 'ready') return { msgs: errs, blocked };
   // Fit, per orientation.
   const fails = {}, hero = model.template === 'pct' ? 'pct' : 'price';
   for (const o of ['landscape', 'portrait']) {
@@ -1218,6 +1228,7 @@ function validate(model) {
     if (L.report.uvt && !L.report.uvt.themOk) (fails.them ||= []).push({ o });
   }
   for (const [k, list] of Object.entries(fails)) {
+    list.forEach(x => { blocked[x.o] = true; });
     const where = list.length === 2 ? 'both signs' : `the ${list[0].o} sign`;
     if (k.startsWith('name')) {
       const worst = Math.min(...list.map(x => x.cap));
@@ -1228,7 +1239,7 @@ function validate(model) {
     else if (k === 'them') add(k, `Their price would crowd what they pay on ${where}. Shorten the product name.`);
     else add(k, `The note doesn't fit ${where} legibly. Shorten it.`);
   }
-  return errs;
+  return { msgs: errs, blocked };
 }
 function charsToCut(model, gi, orients) {
   const g = model.groups[gi];
@@ -1606,9 +1617,10 @@ let lastRenderMs = 0;
 function refresh() {
   const t0 = performance.now();
   const model = signModel();
-  const errs = validate(model);
-  const nErr = Object.keys(errs).length;
-  const blocked = nErr > 0 || S.assets !== 'ready';
+  const v = validate(model), errs = v.msgs;
+  const nErr = Object.keys(errs).length, ready = S.assets === 'ready';
+  const can = { landscape: ready && !v.blocked.landscape, portrait: ready && !v.blocked.portrait };
+  const only = can.landscape !== can.portrait ? (can.landscape ? 'landscape' : 'portrait') : null;   // one orientation prints
 
   // Messages and counters.
   document.querySelectorAll('[data-msg]').forEach(n => { n.textContent = errs[n.getAttribute('data-msg')] || ''; });
@@ -1656,15 +1668,16 @@ function refresh() {
   });
   // Status, summary, reminder, buttons.
   document.querySelectorAll('[data-status]').forEach(n => {
-    n.className = 'pill ' + (S.assets !== 'ready' ? 'wait' : nErr ? 'no' : 'ok');
+    n.className = 'pill ' + (!ready ? 'wait' : only ? 'part' : nErr ? 'no' : 'ok');
     n.replaceChildren(h('i'), S.assets === 'loading' ? 'Loading the sign font' : S.assets === 'failed' ? 'Sign font missing'
-      : nErr ? `${nErr} thing${nErr > 1 ? 's' : ''} to fix` : 'Ready to print');
+      : only ? (only === 'landscape' ? 'Landscape only' : 'Portrait only') : nErr ? `${nErr} thing${nErr > 1 ? 's' : ''} to fix` : 'Ready to print');
   });
   document.querySelectorAll('[data-summary]').forEach(n => {
     n.replaceChildren();
     if (!nErr) return;
-    n.append(h('div', { class: 'note err', role: 'status' }, icon('alert'),
-      h('div', null, h('b', null, `Fix ${nErr === 1 ? 'this' : 'these'} to print:`),
+    const other = only === 'landscape' ? 'portrait' : 'landscape';
+    n.append(h('div', { class: 'note ' + (only ? 'warn' : 'err'), role: 'status' }, icon(only ? 'info' : 'alert'),
+      h('div', null, h('b', null, only ? `Only the ${only} sign can print. To print the ${other} sign too:` : `Fix ${nErr === 1 ? 'this' : 'these'} to print:`),
         h('ul', { class: 'errlist' }, Object.values(errs).map(m => h('li', null, m))))));
   });
   document.querySelectorAll('[data-discount]').forEach(n => {
@@ -1683,7 +1696,11 @@ function refresh() {
       h('b', null, offers.length ? offers.join(' and ') : pctSign ? 'the discount' : 'the price'),
       pctSign ? '. The sign does not set up the discount in Clover.' : '. The sign does not change the price in Clover.');
   });
-  document.querySelectorAll('[data-print],[data-pdf]').forEach(b => { b.disabled = blocked; b.title = blocked ? 'Fix the fields above first' : ''; });
+  document.querySelectorAll('[data-print],[data-pdf]').forEach(b => {
+    const o = b.getAttribute('data-print') || b.getAttribute('data-pdf');
+    b.disabled = !can[o];
+    b.title = can[o] ? '' : only ? `The ${o} sign doesn't fit. The ${only} one prints.` : 'Fix the fields above first';
+  });
   lastRenderMs = performance.now() - t0;
   window.__lastRenderMs = lastRenderMs;
 }
@@ -1693,7 +1710,7 @@ function refresh() {
    ═══════════════════════════════════════════════════════════════════════ */
 function printSign(orient) {
   const model = signModel();
-  if (Object.keys(validate(model)).length || S.assets !== 'ready') return;
+  if (S.assets !== 'ready' || validate(model).blocked[orient]) return;
   const host = document.getElementById('sign-print');
   host.replaceChildren(renderSign(model, orient, { print: true }));
   document.getElementById('print-page').textContent =
@@ -1732,9 +1749,9 @@ const GALLERY = [
   ['Blow Out · two prices · dot', 'The PRD shoe example. Both prices at one size.', EXAMPLES.shoes],
   ['Custom label', '“Weekend deal”, 12 characters.', { sale: 'custom', custom: 'Weekend deal', two: false, g: [{ name: 'Kitchen storage bins', price: '8' }] }],
   ['No label · under a dollar', 'The corner stays empty.', { sale: 'none', two: false, g: [{ name: 'All candy', price: '0.99' }] }],
-  ['32 characters (the limit)', 'Fits landscape. Portrait would go under 0.6 in: the first open question at the top.', EXAMPLES.long],
+  ['22 characters (the limit)', 'The longest name allowed, at 0.6 in or more on both signs.', EXAMPLES.long],
   ['The biggest price', '$9,999.99 in two groups: the worst case for width.', { sale: 'sale', two: true, g: [{ name: 'Sofa', price: '9999.99' }, { name: 'Loveseat', price: '9999.99' }] }],
-  ['Two prices · a 9-letter word', 'Half a landscape sign holds about 7 capitals a line at 0.6 in, and one word cannot wrap. Portrait fits: the second open question at the top.',
+  ['Two prices · a 9-letter word', 'Half a landscape sign holds about 7 capitals a line at 0.6 in, and SECTIONAL cannot wrap. Portrait fits, so portrait prints.',
     { sale: 'sale', two: true, g: [{ name: 'Sofa', price: '499' }, { name: 'Sectional', price: '899' }] }],
   ['% Off', 'No price: the percentage is the hero, with % raised and OFF under it.', EXAMPLES.pct],
   ['% Off · two groups · dot', 'Shoes 20% and premium shoes 40%, both at one size.', EXAMPLES.pcttwo],
@@ -1758,8 +1775,9 @@ function renderGallery() {
   g.replaceChildren(...GALLERY.map(([t, d, ex]) => withSign(ex, () => {
     const model = signModel();
     const L = renderSign(model, 'landscape'), P = renderSign(model, 'portrait');
-    const bad = Object.keys(validate(model)).length;
-    return h('div', { class: 'g-card' }, h('h5', null, t), h('div', { class: 'gd' }, d, bad ? ' (blocked)' : ''),
+    const bl = validate(model).blocked;
+    const only = bl.landscape && bl.portrait ? ' (blocked)' : bl.landscape ? ' (portrait only)' : bl.portrait ? ' (landscape only)' : '';
+    return h('div', { class: 'g-card' }, h('h5', null, t), h('div', { class: 'gd' }, d, only),
       h('div', { class: 'g-pair' }, h('div', { class: 'sheet land' }, L), h('div', { class: 'sheet port' }, P)));
   })));
 }
