@@ -31968,11 +31968,52 @@
         ssH('div', null, "Sign Studio didn't load. Close the app and open it again.")));
       return;
     }
-    if (!ssSign) ssSign = SignRender.blankSign();
+    if (!ssSign) {
+      const d = ssLoadDraft();
+      ssSign = SignRender.normalizeSign(d ? d.sign : null);
+      if (d) {
+        ssView.step = [1, 2, 3].includes(d.step) ? d.step : 1;
+        ssView.orient = SignRender.ORIENTS.includes(d.orient) ? d.orient : 'landscape';
+      }
+      ssDraftJson = ssDraftBody();   // restoring is not a change: the draft keeps its age
+    }
     if (ssAssets === 'idle') ssLoadAssets();
     ssRender();
   }
   window.initSignStudio = initSignStudio;
+
+  /* The sign in progress survives an app update, a reload or a closed tab: every change is
+     saved here, and the page comes back to it for 12 hours, for the same person only (a store
+     device is shared). A restored sign goes through normalizeSign and validate like a typed
+     one, so an old or edited draft can only ever raise messages, never print past a rule.
+     localStorage can be missing or full (private mode): then the sign still works, it just
+     is not kept. */
+  const SS_DRAFT = 'sign-studio-draft', SS_DRAFT_TTL = 12 * 3600 * 1000;
+  let ssDraftJson = null;
+  const ssDraftUser = () => (currentUser && currentUser.email) || null;
+  const ssDraftBody = () => JSON.stringify({ sign: ssSign, step: ssView.step, orient: ssView.orient });
+  const ssIsBlank = sign => JSON.stringify(SignRender.normalizeSign(sign)) === JSON.stringify(SignRender.blankSign());
+  function ssLoadDraft() {
+    let d = null;
+    try { d = JSON.parse(localStorage.getItem(SS_DRAFT) || 'null'); } catch (e) {}
+    const now = Date.now();
+    const usable = d && typeof d === 'object' && d.v === 1 && d.user === ssDraftUser() && typeof d.savedAt === 'number'
+      && now - d.savedAt < SS_DRAFT_TTL && d.savedAt < now + 60000;   // and not stamped in the future, which would never expire
+    if (usable) return d;
+    try { localStorage.removeItem(SS_DRAFT); } catch (e) {}
+    return null;
+  }
+  function ssSaveDraft() {
+    const user = ssDraftUser(), body = ssDraftBody();
+    if (!user || !ssSign || body === ssDraftJson) return;   // nothing changed: keep its age
+    ssDraftJson = body;
+    try {
+      if (ssIsBlank(ssSign)) localStorage.removeItem(SS_DRAFT);   // nothing to keep, so nothing kept
+      else localStorage.setItem(SS_DRAFT, JSON.stringify({ v: 1, savedAt: Date.now(), user, sign: ssSign, step: ssView.step, orient: ssView.orient }));
+    } catch (e) {}
+  }
+  // For the service worker's reload (DOMContentLoaded): a sign half-made on screen waits.
+  window.ssIsDirty = () => !!ssSign && !ssIsBlank(ssSign);
 
   /* The fonts and the logo, fetched once and used three ways: FontFace draws the preview,
      SignRender.readFont measures, and the same bytes go into the PDF. Nothing is measured
@@ -32406,6 +32447,7 @@
       b.disabled = !can[o];
       b.title = can[o] ? '' : !ready ? "The sign font hasn't loaded" : only ? `The ${o} sign doesn't fit. The ${only} one prints.` : 'Fix the fields above first';
     });
+    ssSaveDraft();
     if (ready && ssView.step === 3 && !ssPdfWarm) {   // so the first PDF does not wait for 364 KB
       ssPdfWarm = true;
       (window.requestIdleCallback || (f => setTimeout(f, 300)))(() => ssLoadPdfLib().catch(() => {}));
@@ -36952,6 +36994,12 @@
           if (typeof window.ctIsDirty === 'function' && window.ctIsDirty()) {
             const pc = document.getElementById('page-content');
             if (pc && !pc.classList.contains('hidden')) return;
+          }
+          // Sign Studio, the same way: a sign in progress is saved on every change, so a
+          // reload would bring it back, but not out from under the person typing it.
+          if (typeof window.ssIsDirty === 'function' && window.ssIsDirty()) {
+            const ps = document.getElementById('page-merch-signs');
+            if (ps && !ps.classList.contains('hidden')) return;
           }
           swRefreshing = true;
           window.location.reload();

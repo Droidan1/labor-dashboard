@@ -41,9 +41,14 @@ const PORT = 8094;
 // A path in `fail` answers 503, the way a struggling CDN or a dead store connection does, so a
 // check can take one file away. `served` counts what was asked for.
 const fail = new Set(), served = {};
+let swDeploy = 0;   // section 10 bumps this to ship a "new deploy" of sw.js
 const srv = http.createServer((q, s) => {
   const u = q.url.split('?')[0];
   served[u] = (served[u] || 0) + 1;
+  if (u === '/sw.js' && swDeploy) {
+    s.writeHead(200, { 'Content-Type': 'text/javascript', 'Cache-Control': 'no-cache' });
+    return s.end(fs.readFileSync(path.join(root, 'sw.js'), 'utf8').replace(/const CACHE_NAME = '([^']+)'/, `const CACHE_NAME = '$1-next${swDeploy}'`));
+  }
   const f = path.join(root, u === '/' ? 'index.html' : u);
   if (fail.has(u)) { s.writeHead(503); return s.end('down'); }
   if (!f.startsWith(root) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { s.writeHead(404); return s.end('no'); }
@@ -97,8 +102,8 @@ async function section(name, fn) {
   catch (e) { check(false, `${name}: stopped after "${(results[results.length - 1] || [])[1]}" — ${String((e && e.message) || e).split('\n')[0]}`); }
   finally { for (const c of live) { try { await c.close(); } catch (e) {} } live.clear(); }
 }
-async function open({ role = 'manager', theme = 'light', phone = false, go = true } = {}) {
-  const ctx = await b.newContext(Object.assign({ timezoneId: 'America/New_York', locale: 'en-US', serviceWorkers: 'block' },
+async function open({ role = 'manager', theme = 'light', phone = false, go = true, sw = false } = {}) {
+  const ctx = await b.newContext(Object.assign({ timezoneId: 'America/New_York', locale: 'en-US', serviceWorkers: sw ? 'allow' : 'block' },
     phone ? { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 }
           : { viewport: { width: 1280, height: 900 } }));
   live.add(ctx);
@@ -107,7 +112,9 @@ async function open({ role = 'manager', theme = 'light', phone = false, go = tru
   page.on('pageerror', e => errs.push(String(e)));
   // A failed load of a refused off-host file (Google Fonts, the CDNs) is this harness, not a fault.
   page.on('console', m => { if (m.type() === 'error' && !(m.location().url && !m.location().url.startsWith(ORIGIN))) errs.push('console: ' + m.text()); });
-  await page.route(u => !u.href.startsWith(ORIGIN), r => r.abort());
+  // A context route also covers the service worker's own requests (Chromium), which a page
+  // route does not see.
+  await (sw ? ctx : page).route(u => !u.href.startsWith(ORIGIN), r => r.abort());
   await page.addInitScript(pageMocks, { who: ROLES[role], theme });
   await page.goto(`${ORIGIN}/`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => typeof window.navigateToPage === 'function' && window.__ssAuthed, null, { timeout: 10000 });
@@ -561,6 +568,117 @@ await section('6. pdf', async () => {
   const forced = P.page.waitForEvent('download', { timeout: 1500 }).then(() => true, () => false);
   await P.page.evaluate(() => { const b = document.querySelector('[data-pdf="landscape"]'); b.disabled = false; b.click(); });
   eq(await forced, false, '🛑 a forced click on it makes no PDF: the PDF path checks too');
+});
+
+// ── 7. The sign in progress survives a reload ────────────────────────────
+await section('7. draft', async () => {
+  const { page, errs } = await open();
+  const draft = () => page.evaluate(() => JSON.parse(localStorage.getItem('sign-studio-draft') || 'null'));
+  eq(await draft(), null, 'an untouched page saves nothing');
+  await makeSign(page, { template: 'pct', two: true, fields: { 'name-0': 'Winter coats', 'pct-0': '20', 'name-1': 'Boots', 'pct-1': '40' }, sale: 'custom', custom: 'Weekend deal' });
+  await page.click('[data-step="2"]'); await settle(page);
+  await page.click('[data-orient="portrait"]'); await settle(page);
+  const d = await draft();
+  check(d && d.v === 1 && d.user === 'manager@example.com' && d.step === 2 && d.orient === 'portrait' && d.sign.groups[1].name === 'Boots',
+        `every change is saved, with its owner, step and orientation (${JSON.stringify(d).slice(0, 120)})`);
+  const before = d.savedAt;
+  // A reload (an app update does the same) comes back to it.
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => typeof window.navigateToPage === 'function' && window.__ssAuthed, null, { timeout: 10000 });
+  await page.waitForTimeout(500);
+  await enter(page);
+  const back = await page.evaluate(() => ({ step: document.querySelector('.ss-step[aria-current="step"]').dataset.step,
+    orient: document.querySelector('[data-orient][aria-pressed="true"]').dataset.orient,
+    tile: document.querySelector('.ss-tile[aria-pressed="true"]').dataset.v, custom: document.getElementById('ss-f-custom').value }));
+  eq(back, { step: '2', orient: 'portrait', tile: 'custom', custom: 'Weekend deal' }, 'after a reload: the same step, orientation and label');
+  eq((await draft()).savedAt, before, 'coming back to it is not a change: the draft keeps its age');
+  await page.click('[data-step="1"]'); await settle(page);
+  eq(await page.evaluate(() => [document.getElementById('ss-f-name-0').value, document.getElementById('ss-f-pct-1').value]), ['Winter coats', '40'], '…and the same fields');
+  const seed = async (patch) => {
+    await page.evaluate(p => { const x = JSON.parse(localStorage.getItem('sign-studio-draft')); Object.assign(x, p); localStorage.setItem('sign-studio-draft', typeof p.raw === 'string' ? p.raw : JSON.stringify(x)); }, patch);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => typeof window.navigateToPage === 'function' && window.__ssAuthed, null, { timeout: 10000 });
+    await page.waitForTimeout(500);
+    await enter(page);
+    return page.evaluate(() => ({ step: document.querySelector('.ss-step[aria-current="step"]').dataset.step,
+      name: (document.getElementById('ss-f-name-0') || {}).value, kept: !!localStorage.getItem('sign-studio-draft') }));
+  };
+  eq(await seed({ savedAt: Date.now() - 13 * 3600 * 1000 }), { step: '1', name: '', kept: false }, 'a 13-hour-old draft: a fresh sign, and the old draft gone');
+  await makeSign(page, { fields: { 'name-0': 'All cereal', 'price-0': '2' } });
+  eq(await seed({ user: 'someone.else@example.com' }), { step: '1', name: '', kept: false }, "another person's draft on this device: a fresh sign");
+  await makeSign(page, { fields: { 'name-0': 'All cereal', 'price-0': '2' } });
+  eq(await seed({ savedAt: Date.now() + 30 * 24 * 3600 * 1000 }), { step: '1', name: '', kept: false }, 'a draft stamped in the future (so it would never expire): a fresh sign');
+  await makeSign(page, { fields: { 'name-0': 'All cereal', 'price-0': '2' } });
+  eq(await seed({ raw: '{not json' }), { step: '1', name: '', kept: false }, 'an unreadable draft: a fresh sign, no error');
+  // A stored name longer than the box allows is kept, flagged and blocked, not cut quietly.
+  await makeSign(page, { fields: { 'name-0': 'All cereal', 'price-0': '2' } });
+  const long = 'A thirty character product nm';
+  await page.evaluate(n => { const x = JSON.parse(localStorage.getItem('sign-studio-draft')); x.sign.groups[0].name = n; x.step = 3; localStorage.setItem('sign-studio-draft', JSON.stringify(x)); }, long);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => typeof window.navigateToPage === 'function' && window.__ssAuthed, null, { timeout: 10000 });
+  await page.waitForTimeout(500);
+  await enter(page);
+  eq(await pill(page), { cls: 'no', text: '1 thing to fix' }, 'a stored 30-character name: nothing prints');
+  eq(await page.$$eval('[data-print]', bs => bs.map(b => b.disabled)), [true, true], '…both Print buttons are off');
+  check(/22 characters at most/.test(await page.$eval('[data-summary]', n => n.textContent)), '…and the summary says why');
+  await page.click('[data-step="1"]'); await settle(page);
+  eq(await page.$eval('#ss-f-name-0', n => n.value), long, '…with the whole name in the box to shorten');
+  // Start a new sign clears it for good.
+  await page.click('[data-step="3"]'); await settle(page);
+  await page.click('[data-new]'); await settle(page);
+  eq(await draft(), null, 'Start a new sign clears the draft');
+  check(!errs.length, `no page errors (${errs.slice(0, 2).join(' | ')})`);
+});
+
+// ── 10. The service worker: precache, offline, and an update mid-sign ─────
+// The real sw.js runs here. Everything a sign needs must be in its precache, the page must
+// make, print and PDF a sign with no network, and a new deploy must not reload the page out
+// from under someone making a sign, while still reloading everyone else.
+await section('10. service worker', async () => {
+  const want = [...fs.readFileSync(path.join(root, 'sw.js'), 'utf8').match(/const PRECACHE_ASSETS = \[([\s\S]*?)\];/)[1]
+    .replace(/\/\/.*$/gm, '').matchAll(/'([^']+)'/g)].map(m => m[1]);
+  const { ctx, page, errs } = await open({ sw: true, go: false });
+  await page.waitForFunction(() => navigator.serviceWorker.controller, null, { timeout: 20000 });
+  const cached = await page.evaluate(async () => {
+    const name = (await caches.keys()).find(k => k.startsWith('dashboard-cache-'));
+    return (await (await caches.open(name)).keys()).map(r => new URL(r.url).pathname);
+  });
+  const missing = want.filter(p => !cached.includes(p.replace(/^\.\//, '/')));
+  eq(missing, [], `the precache holds every listed path (${want.length}), fonts, logo and jsPDF included`);
+  // Offline: the page, the sign, Print and PDF all come from the cache.
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => typeof window.navigateToPage === 'function' && window.__ssAuthed, null, { timeout: 10000 });
+  await ctx.setOffline(true);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => typeof window.navigateToPage === 'function' && window.__ssAuthed, null, { timeout: 15000 });
+  await page.waitForTimeout(500);
+  await enter(page);
+  await makeSign(page, { fields: { 'name-0': 'All cereal', 'price-0': '2' }, sale: 'flash' });
+  eq(await page.$$eval('#ss-root [data-preview] svg', ns => ns.length), 2, 'offline: both signs draw, in the sign fonts from the cache');
+  await page.click('[data-print="landscape"]');
+  const offPrint = pdfFacts(await page.pdf({ preferCSSPageSize: true, printBackground: true }), 'offline-print.pdf');
+  check(offPrint.pages === 1 && /ALL CEREAL/.test(offPrint.text), 'offline: Print makes the sign');
+  const offPdf = await makePdf(page, 'portrait');
+  check(offPdf.buf.length > 10000, 'offline: so does PDF, with jsPDF from the cache');
+  await ctx.setOffline(false);
+  // A new deploy while the sign is on screen: no reload.
+  const reloaded = async () => { await page.waitForTimeout(3000); return page.evaluate(() => window.__stay !== 1); };
+  const deploy = async () => { swDeploy++; await page.evaluate(async () => {
+    window.__stay = 1;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { window.__changes = (window.__changes || 0) + 1; });
+    await (await navigator.serviceWorker.getRegistration()).update();
+  }); };
+  await page.click('[data-step="1"]'); await settle(page);
+  await deploy();
+  eq(await reloaded(), false, '🛑 a new deploy while a sign is being made on screen does not reload the page');
+  eq(await page.evaluate(() => window.__changes), 1, '…though the new worker did take over: the page saw it and stayed');
+  eq(await page.$eval('#ss-f-name-0', n => n.value), 'All cereal', '…and what was typed is still there');
+  // Anywhere else, the update still reloads, as it always has.
+  await page.evaluate(() => window.navigateToPage('dashboard'));
+  await page.waitForTimeout(300);
+  await deploy();
+  eq(await reloaded(), true, 'a new deploy on another page still reloads it');
+  check(!errs.filter(e => !/ERR_INTERNET_DISCONNECTED|Failed to fetch/.test(e)).length, `no page errors (${errs.slice(0, 2).join(' | ')})`);
 });
 
 // ── 8. Contrast: every word readable, in all three themes ────────────────
