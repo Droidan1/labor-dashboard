@@ -7547,6 +7547,797 @@
     </div>
   </div>
 
+  <script id="sign-render">
+  /* ═══════════════════════════════════════════════════════════════════════
+     SIGN STUDIO RENDERER: window.SignRender
+     The sign itself: the prices, the fit rules that keep it readable from
+     across a store, the four layouts, validation, and two drawers fed the
+     same list of items: SVG (the preview and Print) and jsPDF (the PDF).
+     Ported from docs/sign-studio-preview.html, the design Brian approved.
+
+     Rules for this block, checked by scripts/test-sign-render.mjs:
+     - ONE IIFE, NO TOP-LEVEL BINDINGS. The main script declares
+       `const COLORS` and a global `el()`. A clash here would stop the app
+       loading.
+     - NO DOM. Nothing runs at load time but definitions. The only document
+       is the one a caller hands to drawSVG, and the Node test runs this
+       block with none at all.
+     - USER TEXT reaches the SVG only through textContent and setAttribute.
+     - TEXT IS MEASURED FROM THE FONT FILES (readFont), never from the page,
+       so the preview, the PDF and the tests get the same widths everywhere.
+       The fonts carry no kerning, so neither the browser nor jsPDF adjusts
+       a pair (fonts/README.md).
+     - EVERY TEXT ITEM IS DRAWN FROM ITS LEFT EDGE. The layout works out
+       each item's x. Neither drawer uses text-anchor or jsPDF's align, so
+       the two can't centre by different widths.
+     ═══════════════════════════════════════════════════════════════════════ */
+  (function () {
+    'use strict';
+
+    /* ── 1. The vocabulary ───────────────────────────────────────────────── */
+    const SALE_LABELS = [
+      { id: 'none',    name: 'None',            lines: [] },
+      { id: 'sale',    name: 'Sale',            lines: ['SALE'] },
+      { id: 'flash',   name: 'Flash Sale',      lines: ['FLASH', 'SALE'] },
+      { id: 'manager', name: 'Manager Special', lines: ['MANAGER', 'SPECIAL'] },
+      { id: 'blowout', name: 'Blow Out',        lines: ['BLOW', 'OUT'] },
+      { id: 'custom',  name: 'Custom',          lines: null },
+    ];
+    const TEMPLATES = [{ id: 'price', name: 'Price sign' }, { id: 'pct', name: '% Off' }, { id: 'uvt', name: 'Us vs Them' }];
+    const UNITS = [{ id: '', name: 'None' }, { id: 'each', name: 'Each' }, { id: 'pair', name: 'Per pair' }];
+    const UNIT_TEXT = { each: 'EACH', pair: 'PER PAIR' };
+    const LIMIT = { name: 22, qual: 32, custom: 12 };   // name: 22 (Brian, 24 Sep)
+    const ORIENTS = ['landscape', 'portrait'];
+
+    /* The faces (Brian, 24 Sep): Poppins for words, Luckiest Guy for numbers.
+       Each file is its own family, drawn at weight 400 and style normal, so a
+       browser has nothing to synthesise. */
+    const FACES = {
+      word:  { fam: 'SS Poppins Black',        file: 'fonts/poppins-900.ttf' },                       // names, OFF
+      label: { fam: 'SS Poppins Black Italic', file: 'fonts/poppins-900-italic.ttf', italic: true },  // sale label, YOU PAY
+      small: { fam: 'SS Poppins Bold',         file: 'fonts/poppins-700.ttf' },                       // unit, note, row labels
+      num:   { fam: 'SS Luckiest Guy',         file: 'fonts/luckiest-guy-400.ttf', num: true },       // prices, $, ¢, %
+    };
+    // green: 5.5:1 on white (the logo keeps its own #3BB54A). dim: THEIR PRICE, 9.1:1.
+    const COLORS = { ink: '#111111', dim: '#4a4a4a', green: '#20792B', rule: '#c9c9c9', dot: '#FFD200', paper: '#ffffff' };
+    const LOGO = { file: 'sign-logo.png', ar: 1711 / 497 };
+
+    /* What the Poppins files can draw: Basic Latin, Latin-1 and a little
+       punctuation (fonts/README.md). A character is judged in CAPITALS, as it
+       prints: µ uppercases to a Greek capital the font doesn't have. Control
+       and format characters (U+00AD, a bidi override) never print. */
+    const TEXT_CHARS = /^[\u0020-\u007E\u00A0-\u00AC\u00AE-\u00FF\u0152\u0153\u0178\u2013\u2014\u2018\u2019\u201C\u201D\u2022\u2026\u20AC\u2122]$/;
+    const nfc = s => String(s == null ? '' : s).normalize('NFC');
+    const clean = s => nfc(s).trim().replace(/\s+/g, ' ');
+    const caps = s => s.toUpperCase().normalize('NFC');
+    function unsupportedChars(text) {
+      const bad = [];
+      for (const ch of clean(text))
+        if (![...caps(ch)].every(u => TEXT_CHARS.test(u)) && !bad.includes(ch)) bad.push(ch);
+      return bad;
+    }
+    // How a refused character is named in a message: itself if it has a shape,
+    // otherwise its code, so an invisible or direction-changing one can't hide.
+    const charName = ch => /^[\p{L}\p{N}\p{P}\p{S}]$/u.test(ch) ? `“${ch}”`
+      : 'U+' + ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0');
+
+    /* ── 2. Prices: integer cents from a string, never a float, never a round ── */
+    function parsePrice(raw) {
+      const s = String(raw == null ? '' : raw).trim();
+      if (!s) return { err: 'Enter a price.' };
+      const t = s.replace(/^\$\s*/, '');
+      if (/^-/.test(t)) return { err: 'A price has to be more than $0.' };
+      if (/^[\d,]*\.\d{3,}$/.test(t)) return { err: 'Use at most two decimal places. Nothing is rounded for you.' };
+      if (!/^(\d{1,4}|\d{1,3},\d{3})?(\.\d{1,2})?$/.test(t) || t === '.') return { err: 'Type a price like 2, 2.50 or 1,299.99.' };
+      const [d, c = ''] = t.replace(/,/g, '').split('.');
+      const cents = Number(d || 0) * 100 + Number((c + '00').slice(0, 2));
+      if (cents <= 0) return { err: 'A price has to be more than $0.' };
+      if (cents > 999999) return { err: 'Prices go up to $9,999.99.' };
+      return { cents };
+    }
+    const thousands = d => String(d).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    /* → { lead:'$', dollars:'1,299', cents:'99', tail:'' }. Cents are raised, and
+       under $1 the price is 99 with a raised ¢. */
+    function priceParts(cents) {
+      const d = Math.floor(cents / 100), c = cents % 100;
+      if (d === 0) return { lead: '', dollars: String(c), cents: '', tail: '¢' };
+      return { lead: '$', dollars: thousands(d), cents: c ? String(c).padStart(2, '0') : '', tail: '' };
+    }
+    function priceText(cents) {
+      const d = Math.floor(cents / 100), c = cents % 100;
+      return '$' + thousands(d) + (c ? '.' + String(c).padStart(2, '0') : '');
+    }
+    /* % Off: a whole number from 1 to 99. "20", "20%" and "20 % off" all mean 20. */
+    function parsePct(raw) {
+      const s = String(raw == null ? '' : raw).trim();
+      if (!s) return { err: 'Enter the percent off, like 20.' };
+      const t = s.replace(/\s*%?\s*(off)?$/i, '');
+      if (!/^-?\d+$/.test(t)) return { err: 'Use a whole number, like 20.' };
+      const n = Number(t);
+      return n >= 1 && n <= 99 ? { n } : { err: 'Percent off goes from 1 to 99.' };
+    }
+    /* Us vs Them: the discount is WORKED OUT, never typed, and rounded DOWN, so
+       it can't disagree with the prices or overstate the saving. */
+    function discountPct(themC, ourC) {
+      return themC > 0 && ourC > 0 && ourC < themC ? Math.floor((themC - ourC) * 100 / themC) : null;
+    }
+
+    /* ── 3. The sign being made, and the model the layout reads ──────────── */
+    const blankGroup = () => ({ name: '', price: '', pct: '', unit: '', qual: '', dot: false });
+    const blankSign = () => ({ template: 'price', sale: 'none', custom: '', two: false, them: '', groups: [blankGroup(), blankGroup()] });
+    /* Anything that claims to be a sign (a saved draft, a stale version of one)
+       becomes a well-formed one: known ids only, strings for text, capped so
+       a planted value can't stall the fit loop. Lengths over the limits are
+       KEPT, so validate says so rather than the sign quietly changing. */
+    function normalizeSign(raw) {
+      const r = raw && typeof raw === 'object' ? raw : {};
+      const str = v => (typeof v === 'string' ? v : typeof v === 'number' && isFinite(v) ? String(v) : '').slice(0, 200);
+      const pick = (list, v, dflt) => list.some(x => x.id === v) ? v : dflt;
+      const template = pick(TEMPLATES, r.template, 'price');
+      const groups = [0, 1].map(k => {
+        const g = Array.isArray(r.groups) && r.groups[k] && typeof r.groups[k] === 'object' ? r.groups[k] : {};
+        return { name: str(g.name), price: str(g.price), pct: str(g.pct), unit: pick(UNITS, g.unit, ''),
+                 qual: str(g.qual), dot: g.dot === true };
+      });
+      if (groups[0].dot && groups[1].dot) groups[1].dot = false;   // one dot, one group
+      return { template, sale: pick(SALE_LABELS, r.sale, 'none'), custom: str(r.custom),
+               two: template !== 'uvt' && r.two === true, them: str(r.them), groups };
+    }
+    function signModel(sign) {
+      const sg = normalizeSign(sign), tpl = sg.template, pct = tpl === 'pct';
+      const n = tpl !== 'uvt' && sg.two ? 2 : 1;
+      const groups = sg.groups.slice(0, n).map((g, i) => {
+        const rawName = clean(g.name), rawQual = clean(g.qual);
+        // On % Off the price is not on the sign ({}: neither cents nor an
+        // error), and neither is the unit: a percentage has nothing to count.
+        return { i, kind: pct ? 'pct' : 'price', name: caps(rawName), rawName,
+                 price: pct ? {} : parsePrice(g.price), pct: pct ? parsePct(g.pct) : null, unit: pct ? '' : g.unit,
+                 qual: caps(rawQual), rawQual, dot: g.dot };
+      });
+      let label = null;
+      if (sg.sale === 'custom') { const raw = clean(sg.custom); label = { custom: true, text: caps(raw), raw }; }
+      else {
+        const L = SALE_LABELS.find(x => x.id === sg.sale);
+        if (L && L.lines.length) label = { custom: false, lines: L.lines };
+      }
+      return { template: tpl, groups, label, them: tpl === 'uvt' ? parsePrice(sg.them) : null };
+    }
+    /* What a group's hero shows: its price, or on % Off its percentage. */
+    function heroParts(g) {
+      if (g.kind === 'pct') return g.pct.n ? { kind: 'pct', lead: '', dollars: String(g.pct.n), cents: '', tail: '' } : null;
+      return g.price.cents ? priceParts(g.price.cents) : null;
+    }
+
+    /* ── 4. Fonts: widths and heights read from the file itself ───────────
+       A TrueType file has what the fit rules need: each glyph's advance
+       (hmtx) and ink box (glyf), found through the Unicode map (cmap). */
+    function readFont(bytes) {
+      const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+      const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+      if (dv.getUint32(0) !== 0x00010000) throw new Error('Not a TrueType font.');
+      const tables = {};
+      for (let i = 0, n = dv.getUint16(4); i < n; i++) {
+        const o = 12 + 16 * i;
+        tables[String.fromCharCode(u8[o], u8[o + 1], u8[o + 2], u8[o + 3])] = dv.getUint32(o + 8);
+      }
+      const at = t => { if (tables[t] == null) throw new Error(`The font has no ${t} table.`); return tables[t]; };
+      const head = at('head'), upm = dv.getUint16(head + 18), longLoca = dv.getInt16(head + 50) === 1;
+      const nMetrics = dv.getUint16(at('hhea') + 34), hmtx = at('hmtx'), loca = at('loca'), glyf = at('glyf');
+      const cmap = at('cmap'), map = new Map();
+      let sub = null;
+      for (let i = 0, n = dv.getUint16(cmap + 2); i < n; i++) {
+        const pid = dv.getUint16(cmap + 4 + 8 * i), eid = dv.getUint16(cmap + 6 + 8 * i);
+        const off = cmap + dv.getUint32(cmap + 8 + 8 * i), fmt = dv.getUint16(off);
+        if ((pid === 0 || (pid === 3 && (eid === 1 || eid === 10))) && (fmt === 12 || (fmt === 4 && !sub))) sub = { off, fmt };
+      }
+      if (!sub) throw new Error('The font has no Unicode map.');
+      if (sub.fmt === 4) {
+        const o = sub.off, segX2 = dv.getUint16(o + 6), ends = o + 14, starts = ends + segX2 + 2;
+        const deltas = starts + segX2, ranges = deltas + segX2;
+        for (let s = 0; s < segX2; s += 2) {
+          const end = dv.getUint16(ends + s), start = dv.getUint16(starts + s);
+          const delta = dv.getInt16(deltas + s), ro = dv.getUint16(ranges + s);
+          for (let c = start; c <= end && c !== 0xFFFF; c++) {
+            let g = ro ? dv.getUint16(ranges + s + ro + 2 * (c - start)) : c;
+            if (g) g = (g + delta) & 0xFFFF;
+            if (g) map.set(c, g);
+          }
+        }
+      } else {
+        for (let i = 0, n = dv.getUint32(sub.off + 12); i < n; i++) {
+          const p = sub.off + 16 + 12 * i, first = dv.getUint32(p), last = dv.getUint32(p + 4), g0 = dv.getUint32(p + 8);
+          for (let c = first; c <= last; c++) map.set(c, g0 + c - first);
+        }
+      }
+      const glyph = ch => map.get(ch.codePointAt(0)) || 0;
+      const advance = g => dv.getUint16(hmtx + 4 * Math.min(g, nMetrics - 1));
+      const box = g => {
+        const a = longLoca ? dv.getUint32(loca + 4 * g) : 2 * dv.getUint16(loca + 2 * g);
+        const b = longLoca ? dv.getUint32(loca + 4 * g + 4) : 2 * dv.getUint16(loca + 2 * g + 2);
+        return b > a ? { yMin: dv.getInt16(glyf + a + 4), yMax: dv.getInt16(glyf + a + 8) } : { yMin: 0, yMax: 0 };
+      };
+      return {
+        upm,
+        has: ch => map.has(ch.codePointAt(0)),
+        codepoints: () => [...map.keys()],
+        // Advance width at font size 100, glyph by glyph: what jsPDF draws.
+        w100(str) { let w = 0; for (const ch of str) w += advance(glyph(ch)); return w * 100 / upm; },
+        // Ink above and below the baseline, in em, from the glyph's box.
+        up: ch => box(glyph(ch)).yMax / upm,
+        down: ch => -box(glyph(ch)).yMin / upm,
+      };
+    }
+
+    /* ── 5. The layout, in print points (1 pt = 1/72 in) ──────────────────
+       US Letter. 0.25 in safe margin; the border's outer edge sits on it. */
+    const PT = 72;
+    const PAGE = { landscape: [792, 612], portrait: [612, 792] };
+    const G = { safe: 18, border: 13, pad: 20, gapHead: 28,
+                logoH: { landscape: 62, portrait: 60 }, labelBlock: 1.18, lineGap: 0.24,
+                // Name capitals top out near the store's own signs (0.85–1.1 in) so
+                // the price can be the hero; the name never takes over ~30% of the body.
+                product: { landscape: 76, portrait: 82 }, groupMax: { landscape: 62, portrait: 56 },
+                nameShare: { landscape: 0.30, portrait: 0.30 },
+                nameShareTwo: { landscape: 0.40, portrait: 0.42 },   // a half-height row needs more for two lines at 0.6 in
+                minCap: 0.6 * PT, labelMin: 0.3 * PT, qualCap: 17, qualMin: 0.2 * PT, unitCap: 18,
+                priceOverName: 2.0,     // target: price capitals ≥ 2× the name's (the name shrinks, never below 0.6 in)
+                priceFloorRatio: 1.1 }; // hard rule: under this the price is not the biggest text, so it can't print
+    /* Us vs Them. THEIR PRICE is never bigger than 40% of YOU PAY's capitals,
+       so a three-second glance lands on what the customer pays. */
+    G.uvt = { nameMax: { landscape: 60, portrait: 68 }, nameShare: 0.22,
+              rowCap: { landscape: 30, portrait: 30 }, rowMin: 18, labelR: 0.72, rowGapR: 0.5,
+              axisGap: 14, gapRows: 14, divider: 24, themRatio: 0.40, labelGap: 26,
+              youLabel: { landscape: 0.42, portrait: 0.30 }, youLabelMin: 0.3 * PT,
+              youLabelMax: { landscape: 60, portrait: 44 }, youGapR: 0.38 };
+    const PCT = { sup: 0.6, off: 0.44, gap: 0.06 };   // % size, OFF size, gap before their column (em)
+    /* Score = cap height, discounted a little per extra line, so ALL CEREAL stays
+       on one line unless breaking buys real height. Labels break freely, so a
+       two-word custom label stacks like FLASH / SALE. */
+    const PER_LINE = { name: 0.16, label: 0, small: 0.25 };
+
+    /* The fit engine, bound to the four fonts readFont returned:
+       { word, label, small, num }. */
+    function engine(fonts) {
+      for (const k of Object.keys(FACES)) if (!fonts || !fonts[k]) throw new Error(`Missing the ${k} font.`);
+      const w100 = (str, kind) => fonts[kind].w100(str);
+      const METRICS = {};
+      function metricsOf(kind) {
+        if (METRICS[kind]) return METRICS[kind];
+        const f = fonts[kind];
+        // Luckiest Guy's digits bounce, so a number's cap is its TALLEST digit:
+        // no price can poke above the height it was given.
+        const cap = FACES[kind].num ? Math.max(...[...'0123456789'].map(f.up)) : f.up('H');
+        return (METRICS[kind] = { cap: cap || 0.7,
+          dUp: Math.max(f.up('$'), 0.7), dDown: Math.max(f.down('$'), 0.05),
+          comma: Math.max(f.down(','), 0.1),     // $9,999: the comma dips lowest
+          pctUp: f.up('%') || 0.64 });           // a raised % hangs from its top
+      }
+
+      /* FIT: for each way of breaking the words (up to maxLines), the tallest
+         capitals that fit the box; take the best score. In points of CAP
+         HEIGHT, which is what "0.6 inch letters" means. */
+      function splits(words, maxLines) {
+        const out = [[words.join(' ')]];
+        if (maxLines >= 2) for (let i = 1; i < words.length; i++) out.push([words.slice(0, i).join(' '), words.slice(i).join(' ')]);
+        return out;
+      }
+      function fitText(text, o) {
+        // o: { font, boxW, boxH, maxCap, minCap, maxLines, gap, lines (fixed), perLine }
+        const m = metricsOf(o.font), perLine = o.perLine == null ? PER_LINE.name : o.perLine;
+        const cands = o.lines ? [o.lines] : splits(text.split(/\s+/).filter(Boolean), o.maxLines || 1);
+        let best = null;
+        for (const lines of cands) {
+          const widest = Math.max(...lines.map(l => w100(l, o.font)));
+          const n = lines.length, cap = Math.min(o.boxW / (widest / 100) * m.cap, o.boxH / (n + (n - 1) * o.gap), o.maxCap);
+          const c = { lines, cap, n, score: cap * (1 - perLine * (n - 1)), feasible: cap >= o.minCap - 0.01 };
+          if (!best || (c.feasible && !best.feasible) || (c.feasible === best.feasible && c.score > best.score)) best = c;
+        }
+        best.size = best.cap / m.cap;
+        best.h = best.n * best.cap + (best.n - 1) * o.gap * best.cap;
+        best.ok = best.feasible;
+        return best;
+      }
+      /* The same text at a GIVEN cap (to make two groups match): fewest lines. */
+      function atCap(text, cap, o) {
+        const m = metricsOf(o.font), size = cap / m.cap;
+        const cands = o.lines ? [o.lines] : splits(text.split(/\s+/).filter(Boolean), o.maxLines || 1);
+        for (const lines of cands.slice().sort((a, b) => a.length - b.length))
+          if (Math.max(...lines.map(l => w100(l, o.font))) * size / 100 <= o.boxW + 0.01)
+            return { lines, cap, size, n: lines.length, h: lines.length * cap + (lines.length - 1) * o.gap * cap, ok: cap >= o.minCap - 0.01 };
+        return fitText(text, Object.assign({}, o, { maxCap: cap }));
+      }
+      /* The hero, in Luckiest Guy: '$' + dollars with cents raised at half size
+         (or a raised ¢ under $1), or a percentage with % raised over OFF.
+         Widths per 100 units of size, heights in em; drawPrice uses the same gaps. */
+      function heroMeasure(parts) {
+        const m = metricsOf('num');
+        if (parts.kind === 'pct') {
+          const wMain = w100(parts.dollars, 'num');
+          const wCol = Math.max(w100('%', 'num') * PCT.sup, w100('OFF', 'word') * PCT.off);
+          return { wMain, w: wMain + PCT.gap * 100 + wCol, up: m.cap, down: 0.04 };
+        }
+        const wMain = w100(parts.lead + parts.dollars, 'num');
+        const wC = parts.cents ? w100(parts.cents, 'num') * 0.5 + 6 : 0;
+        const wT = parts.tail ? w100(parts.tail, 'num') * 0.6 + 4 : 0;
+        return { wMain, w: wMain + wC + wT, up: parts.lead ? Math.max(m.dUp, m.cap) : m.cap * 1.02,   // a raised ¢ tops the digits a hair
+                 down: Math.max(parts.lead ? m.dDown : 0.04, parts.dollars.includes(',') ? m.comma : 0) };
+      }
+      const heroAt = (M, size, m) => ({ size, cap: size * m.cap, up: M.up * size, down: M.down * size,
+                                        w: M.w / 100 * size, wMain: M.wMain / 100 * size });
+      function fitPrice(parts, o) {
+        const m = metricsOf('num'), M = heroMeasure(parts);
+        return heroAt(M, Math.min(o.boxW / (M.w / 100), o.boxH / (M.up + M.down), o.maxCap / m.cap), m);
+      }
+      function priceAtCap(parts, cap, o) {
+        const m = metricsOf('num'), M = heroMeasure(parts), size = cap / m.cap;
+        if (M.w / 100 * size <= o.boxW + 0.01) return heroAt(M, size, m);
+        return fitPrice(parts, Object.assign({}, o, { maxCap: cap }));
+      }
+
+      function layoutSign(model, orient) {
+        const [W, H] = PAGE[orient];
+        const inset = G.safe + G.border + G.pad;
+        const box = { x: inset, y: inset, w: W - 2 * inset, h: H - 2 * inset };
+        const out = { W, H, orient, items: [], report: { groups: [], label: null } };
+        // Border: a stroke centred on a rect whose OUTER edge is the safe margin.
+        out.items.push({ t: 'border', x: G.safe + G.border / 2, y: G.safe + G.border / 2,
+                         w: W - 2 * G.safe - G.border, h: H - 2 * G.safe - G.border, sw: G.border });
+        const logoH = G.logoH[orient], logoW = logoH * LOGO.ar;
+        out.items.push({ t: 'logo', x: box.x, y: box.y, w: logoW, h: logoH });
+        // Sale label, top right: ONE shared cap for every preset label.
+        let headH = logoH;
+        const labelCap = logoH * G.labelBlock / (2 + G.lineGap);
+        if (model.label && (!model.label.custom || model.label.text)) {
+          const italicPad = FACES.label.italic ? 0.06 : 0;   // the italic's overhang stays inside the edge
+          const o = { font: 'label', boxW: box.w - logoW - 24, boxH: logoH * G.labelBlock, maxCap: labelCap,
+                      minCap: model.label.custom ? G.labelMin : labelCap * 0.98, maxLines: 2, gap: G.lineGap,
+                      lines: model.label.custom ? null : model.label.lines, perLine: PER_LINE.label };
+          const fit = model.label.custom ? fitText(model.label.text, o) : atCap(null, labelCap, o);
+          const top = box.y + Math.max(0, (logoH - fit.h) / 2) * (fit.n === 1 ? 1 : 0);
+          fit.lines.forEach((ln, k) => out.items.push({ t: 'text', role: 'label', text: ln, anchor: 'end',
+            x: box.x + box.w - fit.size * italicPad, y: top + fit.cap + k * fit.cap * (1 + G.lineGap),
+            size: fit.size, font: 'label', fill: 'green' }));
+          headH = Math.max(logoH, fit.h);
+          out.report.label = { cap: fit.cap, ok: fit.ok };
+        }
+        const y0 = box.y + headH + G.gapHead, area = { x: box.x, y: y0, w: box.w, h: box.y + box.h - y0 };
+        if (model.template === 'uvt') layoutUvT(out, model, area, orient);
+        else if (model.groups.length === 1) layoutSingle(out, model.groups[0], area, orient);
+        else layoutTwo(out, model.groups, area, orient);
+        // Every text item gets its LEFT edge and its width, from the same widths
+        // the fit used. Letter spacing goes between letters, not after the last.
+        for (const it of out.items) if (it.t === 'text') {
+          it.ls = it.spacing ? it.size * it.spacing : 0;
+          it.w = w100(it.text, it.font) * it.size / 100 + it.ls * Math.max(0, [...it.text].length - 1);
+          if (it.anchor === 'middle') it.x -= it.w / 2; else if (it.anchor === 'end') it.x -= it.w;
+          delete it.anchor; delete it.spacing;
+        }
+        return out;
+      }
+
+      /* Unit and note, under a price. Shared by every template. */
+      function planExtras(g, width) {
+        const extras = [];
+        if (g.unit) extras.push({ kind: 'unit', h: G.unitCap });
+        let qfit = null;
+        if (g.qual) {
+          const dotW = g.dot ? G.qualCap * 1.5 + 8 : 0;
+          qfit = fitText(g.qual, { font: 'small', boxW: width - dotW, boxH: G.qualCap * 2.3, maxCap: G.qualCap,
+                                   minCap: G.qualMin, maxLines: 2, gap: 0.3, perLine: PER_LINE.small });
+          qfit.dotW = dotW;
+          extras.push({ kind: 'qual', h: qfit.h });
+        }
+        const gapE = 12;
+        return { extras, qfit, gapE, h: extras.reduce((a, e) => a + e.h + gapE, 0) };
+      }
+      function drawExtras(out, g, X, cx, y) {
+        for (const e of X.extras) {
+          y += X.gapE;
+          if (e.kind === 'unit') {
+            out.items.push({ t: 'text', role: 'unit', group: g.i, text: UNIT_TEXT[g.unit], anchor: 'middle',
+              x: cx, y: y + G.unitCap, size: G.unitCap / metricsOf('small').cap, font: 'small', fill: 'ink', spacing: 0.08 });
+          } else {
+            const q = X.qfit, widest = Math.max(...q.lines.map(l => w100(l, 'small'))) * q.size / 100;
+            const left = cx - (widest + q.dotW) / 2;
+            if (g.dot) out.items.push({ t: 'dot', cx: left + G.qualCap * 0.75, cy: y + q.h / 2, r: G.qualCap * 0.75 });
+            q.lines.forEach((ln, k) => out.items.push({ t: 'text', role: 'qual', group: g.i, text: ln, anchor: 'middle',
+              x: left + q.dotW + widest / 2, y: y + q.cap + k * q.cap * 1.3, size: q.size, font: 'small', fill: 'ink' }));
+          }
+          y += e.h;
+        }
+        return y;
+      }
+      /* A hero at a fitted size F, from its left edge x on baseline `base`:
+         '$' + dollars, then raised cents or a raised ¢; or the percentage with
+         % hung from the digits' top and OFF on their baseline, in one column. */
+      function drawPrice(out, parts, F, x, base, roles, gi, fill) {
+        const m = metricsOf('num');
+        out.items.push({ t: 'text', role: roles[0], group: gi, text: parts.lead + parts.dollars, anchor: 'start',
+          x, y: base, size: F.size, font: 'num', fill });
+        const x2 = x + F.wMain;
+        if (parts.kind === 'pct') {
+          const ps = F.size * PCT.sup, colX = x2 + F.size * PCT.gap, mid = colX + (x + F.w - colX) / 2;
+          out.items.push({ t: 'text', role: 'pct', group: gi, text: '%', anchor: 'middle',
+            x: mid, y: base - F.cap + ps * m.pctUp, size: ps, font: 'num', fill });
+          out.items.push({ t: 'text', role: 'off', group: gi, text: 'OFF', anchor: 'middle',
+            x: mid, y: base, size: F.size * PCT.off, font: 'word', fill });
+          return;
+        }
+        if (parts.cents) {
+          const cs = F.size * 0.5;
+          out.items.push({ t: 'text', role: roles[1], group: gi, text: parts.cents, anchor: 'start',
+            x: x2 + F.size * 0.06, y: base - F.cap + cs * m.cap, size: cs, font: 'num', fill });
+        }
+        if (parts.tail) {
+          const ts = F.size * 0.6;
+          out.items.push({ t: 'text', role: roles[1], group: gi, text: parts.tail, anchor: 'start',
+            x: x2 + F.size * 0.04, y: base - F.cap + ts * m.cap, size: ts, font: 'num', fill });
+        }
+      }
+
+      /* One group's column: name → price → unit → note. `forced` = { nameCap,
+         priceCap } makes two groups match. */
+      function planGroup(g, area, orient, { maxName, forced, two }) {
+        const X = planExtras(g, area.w), avail = area.h - X.h;
+        const nameO = { font: 'word', boxW: area.w, boxH: avail * (two ? G.nameShareTwo : G.nameShare)[orient],
+                        maxCap: maxName, minCap: G.minCap, maxLines: 2, gap: G.lineGap, perLine: PER_LINE.name };
+        let name = g.name ? (forced && forced.nameCap ? atCap(g.name, forced.nameCap, nameO) : fitText(g.name, nameO)) : null;
+        const parts = heroParts(g);
+        const priceBox = () => ({ boxW: area.w, boxH: avail - (name ? name.h + name.cap * 0.45 : 0), maxCap: 400 });
+        let price = parts ? (forced && forced.priceCap ? priceAtCap(parts, forced.priceCap, priceBox()) : fitPrice(parts, priceBox())) : null;
+        // The price is the hero: shrink the NAME toward half the price, never
+        // below 0.6 in. Each pass frees height, so the price grows back.
+        if (!(forced && forced.nameCap) && name && price) {
+          for (let k = 0; k < 4 && price.cap < name.cap * G.priceOverName && name.cap > G.minCap + 0.5; k++) {
+            name = atCap(g.name, Math.max(price.cap / G.priceOverName, G.minCap), nameO);
+            price = fitPrice(parts, priceBox());
+          }
+        }
+        return { g, name, price, parts, qfit: X.qfit, extras: X.extras, gapE: X.gapE, X };
+      }
+      function placeGroup(out, P, area, alignTop) {
+        const cx = area.x + area.w / 2;
+        const nameGap = P.name ? P.name.cap * 0.45 : 0;
+        const stackH = (P.name ? P.name.h + nameGap : 0) + (P.price ? P.price.up + P.price.down : 0) + P.X.h;
+        let y = alignTop != null ? alignTop : area.y + Math.max(0, (area.h - stackH) * 0.46);
+        if (P.name) {
+          P.name.lines.forEach((ln, k) => out.items.push({ t: 'text', role: 'name', group: P.g.i, text: ln, anchor: 'middle',
+            x: cx, y: y + P.name.cap + k * P.name.cap * (1 + G.lineGap), size: P.name.size, font: 'word', fill: 'ink' }));
+          y += P.name.h + nameGap;
+        }
+        if (P.price) {
+          const base = y + P.price.up;
+          drawPrice(out, P.parts, P.price, cx - P.price.w / 2, base, ['price', 'cents'], P.g.i, 'ink');
+          y = base + P.price.down;
+        }
+        drawExtras(out, P.g, P.X, cx, y);
+      }
+      /* nameOk comes from the group's OWN fit (freeP): in a two-price sign the
+         shorter name is only small because it matches the longer one, so only
+         the name that caused it is told to change. */
+      function reportGroup(out, P, freeP) {
+        const own = freeP || P;
+        out.report.groups[P.g.i] = { nameCap: P.name ? P.name.cap : null, nameOk: own.name ? own.name.ok : true,
+          priceCap: P.price ? P.price.cap : null, qualOk: P.qfit ? P.qfit.ok : true, name: P.g.name,
+          priceOk: !(P.name && P.price) || P.price.cap >= P.name.cap * G.priceFloorRatio };
+      }
+      function layoutSingle(out, g, area, orient) {
+        const P = planGroup(g, area, orient, { maxName: G.product[orient], two: false });
+        placeGroup(out, P, area);
+        reportGroup(out, P);
+      }
+      function layoutTwo(out, groups, area, orient) {
+        const land = orient === 'landscape', gut = land ? 40 : 30;
+        const cells = land
+          ? [{ x: area.x, y: area.y, w: (area.w - gut) / 2, h: area.h }, { x: area.x + (area.w + gut) / 2, y: area.y, w: (area.w - gut) / 2, h: area.h }]
+          : [{ x: area.x, y: area.y, w: area.w, h: (area.h - gut) / 2 }, { x: area.x, y: area.y + (area.h + gut) / 2, w: area.w, h: (area.h - gut) / 2 }];
+        out.items.push(land ? { t: 'rule', sw: 2, x1: area.x + area.w / 2, y1: area.y + 8, x2: area.x + area.w / 2, y2: area.y + area.h - 8 }
+                            : { t: 'rule', sw: 2, x1: area.x + 30, y1: area.y + area.h / 2, x2: area.x + area.w - 30, y2: area.y + area.h / 2 });
+        // Fit each alone; give BOTH the smaller name cap; refit the prices with
+        // the height that frees; then give both the smaller price cap.
+        const plan = (k, forced) => planGroup(groups[k], cells[k], orient, { maxName: G.groupMax[orient], forced, two: true });
+        const free = [0, 1].map(k => plan(k));
+        const nameCaps = free.filter(P => P.name).map(P => P.name.cap);
+        const nameCap = nameCaps.length ? Math.min(...nameCaps) : 0;
+        const named = [0, 1].map(k => plan(k, { nameCap }));
+        const priceCaps = named.filter(P => P.price).map(P => P.price.cap);
+        const priceCap = priceCaps.length ? Math.min(...priceCaps) : 0;
+        const plans = [0, 1].map(k => plan(k, { nameCap, priceCap }));
+        // Landscape: names start on one line across both columns, so prices line up too.
+        if (land) {
+          const heights = plans.map(P => (P.name ? P.name.h + P.name.cap * 0.45 : 0) + (P.price ? P.price.up + P.price.down : 0) + P.extras.reduce((a, e) => a + e.h + P.gapE, 0));
+          const nameHs = plans.map(P => P.name ? P.name.h : 0), maxNameH = Math.max(...nameHs);
+          const top = area.y + Math.max(0, (area.h - Math.max(...heights) - (maxNameH - Math.min(...nameHs))) * 0.46);
+          plans.forEach((P, k) => placeGroup(out, P, cells[k], top + (maxNameH - nameHs[k])));
+        } else plans.forEach((P, k) => placeGroup(out, P, cells[k]));
+        plans.forEach((P, k) => reportGroup(out, P, free[k]));
+      }
+
+      /* Us vs Them: the name; THEIR PRICE and OUR DISCOUNT as two small rows
+         about a centre line; a green rule; then YOU PAY with the price as the
+         hero. Their price is another seller's, not our old one, so it is never
+         struck through. */
+      function discAt(pct, cap, boxW) {   // "70% OFF" on one baseline at one cap height
+        const mN = metricsOf('num'), mW = metricsOf('word'), sp = 0.3;
+        const wN = w100(pct + '%', 'num') / 100 / mN.cap, wW = w100('OFF', 'word') / 100 / mW.cap;   // width per point of cap
+        const c = Math.min(cap, boxW / (wN + sp + wW));
+        return { cap: c, sizeN: c / mN.cap, sizeW: c / mW.cap, wN: wN * c, gap: sp * c };
+      }
+      function layoutUvT(out, model, area, orient) {
+        const U = G.uvt, land = orient === 'landscape', cx = area.x + area.w / 2;
+        const g = model.groups[0], X = planExtras(g, area.w), avail = area.h - X.h;
+        const ml = metricsOf('label');
+        // 1. Name.
+        const nameO = { font: 'word', boxW: area.w, boxH: avail * U.nameShare, maxCap: U.nameMax[orient],
+                        minCap: G.minCap, maxLines: 2, gap: G.lineGap, perLine: PER_LINE.name };
+        let name = g.name ? fitText(g.name, nameO) : null;
+        // 2. The comparison rows, at one shared cap (labels at 72% of it).
+        const themParts = model.them && model.them.cents ? priceParts(model.them.cents) : null;
+        const pct = model.them && model.them.cents && g.price.cents ? discountPct(model.them.cents, g.price.cents) : null;
+        const colW = area.w / 2 - U.axisGap;
+        const one = (t, cap) => atCap(null, cap, { font: 'small', boxW: colW, boxH: 1000, maxLines: 1, gap: 0, lines: [t], minCap: 0 });
+        const rowsAt = cap => {
+          const want = [];
+          if (themParts) want.push(['them', 'THEIR PRICE']);
+          if (pct != null && pct >= 1) want.push(['disc', 'OUR DISCOUNT']);
+          const rows = want.map(([kind, t]) => ({ kind, label: one(t, cap * U.labelR),
+            value: kind === 'them' ? priceAtCap(themParts, cap, { boxW: colW, boxH: 1000 }) : discAt(pct, cap, colW) }));
+          return { rows, cap, h: rows.length ? rows.length * cap + (rows.length - 1) * cap * U.rowGapR : 0 };
+        };
+        let R = rowsAt(U.rowCap[orient]);
+        const fitted = R.rows.length ? Math.min(...R.rows.map(r => r.value.cap)) : R.cap;
+        if (fitted < R.cap - 0.01) R = rowsAt(fitted);
+        // 3. YOU PAY and the price.
+        const parts = g.price.cents ? priceParts(g.price.cents) : null;
+        const nameBlock = () => name ? name.h + name.cap * 0.5 : 0;
+        const rowsBlock = () => R.rows.length ? R.h + U.gapRows : 0;
+        const hero = () => {
+          const Hh = avail - nameBlock() - rowsBlock() - U.divider;
+          if (land) {            // YOU / PAY beside the price, like the store's own sign
+            let P = parts ? fitPrice(parts, { boxW: area.w * 0.66, boxH: Hh, maxCap: 400 }) : null, Lc = 0, lw = 0;
+            for (let k = 0; k < 3; k++) {
+              Lc = Math.min(Math.max((P ? P.cap : 80) * U.youLabel.landscape, U.youLabelMin), U.youLabelMax.landscape, Hh / (2 + G.lineGap));
+              lw = Math.max(w100('YOU', 'label'), w100('PAY', 'label')) * (Lc / ml.cap) / 100;
+              if (!parts) break;
+              P = fitPrice(parts, { boxW: area.w - lw - U.labelGap, boxH: Hh, maxCap: 400 });
+            }
+            return { P, Lc, lw, h: Math.max(P ? P.up + P.down : 0, Lc * (2 + G.lineGap)) };
+          }
+          let Lc = U.youLabelMax.portrait, P = null;   // portrait: YOU PAY over the price
+          for (let k = 0; k < 2; k++) {
+            P = parts ? fitPrice(parts, { boxW: area.w, boxH: Hh - Lc * (1 + U.youGapR), maxCap: 400 }) : null;
+            Lc = Math.min(Math.max((P ? P.cap : 80) * U.youLabel.portrait, U.youLabelMin), U.youLabelMax.portrait);
+          }
+          const lwp = w100('YOU PAY', 'label') * (Lc / ml.cap) / 100;
+          if (lwp > area.w) Lc *= area.w / lwp;
+          return { P, Lc, h: Lc * (1 + U.youGapR) + (P ? P.up + P.down : 0) };
+        };
+        let HR = hero();
+        // The price is the hero: 2× the name (never below 0.6 in), their price ≤ 40% of it.
+        for (let k = 0; k < 4 && HR.P; k++) {
+          let changed = false;
+          if (name && HR.P.cap < name.cap * G.priceOverName && name.cap > G.minCap + 0.5) {
+            name = atCap(g.name, Math.max(HR.P.cap / G.priceOverName, G.minCap), nameO); changed = true;
+          }
+          if (R.rows.length && R.cap > HR.P.cap * U.themRatio + 0.01 && R.cap > U.rowMin + 0.01) {
+            R = rowsAt(Math.max(HR.P.cap * U.themRatio, U.rowMin)); changed = true;
+          }
+          if (!changed) break;
+          HR = hero();
+        }
+        // 4. Place, top to bottom, the stack centred a little high.
+        const total = nameBlock() + rowsBlock() + U.divider + HR.h + X.h;
+        let y = area.y + Math.max(0, (area.h - total) * 0.46);
+        if (name) {
+          name.lines.forEach((ln, k) => out.items.push({ t: 'text', role: 'name', group: 0, text: ln, anchor: 'middle',
+            x: cx, y: y + name.cap + k * name.cap * (1 + G.lineGap), size: name.size, font: 'word', fill: 'ink' }));
+          y += nameBlock();
+        }
+        R.rows.forEach((r, k) => {
+          const base = y + R.cap + k * R.cap * (1 + U.rowGapR), them = r.kind === 'them';
+          out.items.push({ t: 'text', role: them ? 'them-label' : 'disc-label', text: r.label.lines[0], anchor: 'end',
+            x: cx - U.axisGap, y: base, size: r.label.size, font: 'small', fill: them ? 'dim' : 'ink' });
+          if (them) drawPrice(out, themParts, r.value, cx + U.axisGap, base, ['them', 'them-cents'], 0, 'dim');
+          else {
+            out.items.push({ t: 'text', role: 'disc', text: pct + '%', anchor: 'start',
+              x: cx + U.axisGap, y: base, size: r.value.sizeN, font: 'num', fill: 'ink' });
+            out.items.push({ t: 'text', role: 'disc-off', text: 'OFF', anchor: 'start',
+              x: cx + U.axisGap + r.value.wN + r.value.gap, y: base, size: r.value.sizeW, font: 'word', fill: 'ink' });
+          }
+        });
+        y += rowsBlock();
+        out.items.push({ t: 'rule', green: true, sw: 3, x1: area.x + area.w * 0.12, y1: y + U.divider / 2 - 4, x2: area.x + area.w * 0.88, y2: y + U.divider / 2 - 4 });
+        y += U.divider;
+        const P = HR.P;
+        if (land) {
+          const blockW = HR.lw + U.labelGap + (P ? P.w : 0), x0 = cx - blockW / 2;
+          const base = y + Math.max(0, (HR.h - (P ? P.up + P.down : 0)) / 2) + (P ? P.up : 0);
+          const mid = P ? base - P.cap / 2 : y + HR.h / 2, top = mid - HR.Lc * (2 + G.lineGap) / 2;
+          ['YOU', 'PAY'].forEach((t, k) => out.items.push({ t: 'text', role: 'youpay', text: t, anchor: 'start',
+            x: x0, y: top + HR.Lc + k * HR.Lc * (1 + G.lineGap), size: HR.Lc / ml.cap, font: 'label', fill: 'green' }));
+          if (P) drawPrice(out, parts, P, x0 + HR.lw + U.labelGap, base, ['price', 'cents'], 0, 'ink');
+          y += HR.h;
+        } else {
+          out.items.push({ t: 'text', role: 'youpay', text: 'YOU PAY', anchor: 'middle', x: cx, y: y + HR.Lc,
+            size: HR.Lc / ml.cap, font: 'label', fill: 'green' });
+          y += HR.Lc * (1 + U.youGapR);
+          if (P) { const base = y + P.up; drawPrice(out, parts, P, cx - P.w / 2, base, ['price', 'cents'], 0, 'ink'); y = base + P.down; }
+        }
+        drawExtras(out, g, X, cx, y);
+        out.report.groups[0] = { nameCap: name ? name.cap : null, nameOk: name ? name.ok : true, name: g.name,
+          priceCap: P ? P.cap : null, qualOk: X.qfit ? X.qfit.ok : true,
+          priceOk: !(name && P) || P.cap >= name.cap * G.priceFloorRatio };
+        out.report.uvt = { pct, rowCap: R.rows.length ? R.cap : null,
+          themOk: !R.rows.length || !P || R.cap <= P.cap * U.themRatio + 0.01 };
+      }
+
+      return { layoutSign, metricsOf, w100 };
+    }
+
+    /* ── 6. Validation: messages that name the field AND the orientation ──
+       → { msgs, blocked: { landscape, portrait }, layouts }. A field error (a
+       missing name, a bad price, a character the font can't print) stops
+       both orientations. A fit failure stops only the orientation it happens
+       in, and the other still prints (Brian, 24 Sep). With no fonts (E null)
+       nothing can be measured, so nothing prints. The Print and PDF buttons,
+       and both print paths, read `blocked` from here. */
+    function inches(pt) { return (pt / PT).toFixed(2).replace(/0$/, '') + ' in'; }
+    function validate(model, E) {
+      const errs = {};
+      const add = (k, m) => { if (!errs[k]) errs[k] = m; };
+      const chars = (k, what, raw) => {
+        const bad = unsupportedChars(raw);
+        if (bad.length) add(k, `${what}: the sign can't print ${bad.map(charName).join(', ')}. Remove ${bad.length > 1 ? 'them' : 'it'}.`);
+      };
+      model.groups.forEach(g => {
+        const nm = model.groups.length > 1 ? (g.i ? 'Second name' : 'First name') : 'Product name';
+        if (!g.name) add(`name-${g.i}`, `${nm}: required.`);
+        else if (g.rawName.length > LIMIT.name) add(`name-${g.i}`, `${nm}: ${LIMIT.name} characters at most.`);   // not only the input's maxlength
+        else chars(`name-${g.i}`, nm, g.rawName);
+        if (g.kind === 'pct') { if (g.pct.err) add(`pct-${g.i}`, g.pct.err); }
+        else if (g.price.err) add(`price-${g.i}`, g.price.err);
+        if (g.dot && !g.qual) add(`qual-${g.i}`, 'Say what the dot means, for example: Yellow dot on bottom.');
+        else if (g.rawQual.length > LIMIT.qual) add(`qual-${g.i}`, `Note: ${LIMIT.qual} characters at most.`);
+        else chars(`qual-${g.i}`, 'Note', g.rawQual);
+      });
+      if (model.label && model.label.custom) {
+        if (!model.label.text) add('custom', 'Type the label, or pick another one.');
+        else if (model.label.raw.length > LIMIT.custom) add('custom', `Label: ${LIMIT.custom} characters at most.`);
+        else chars('custom', 'Label', model.label.raw);
+      }
+      if (model.template === 'uvt') {
+        const t = model.them, g0 = model.groups[0];
+        if (t.err) add('them', t.err === 'Enter a price.' ? 'Enter their price: what it sells for elsewhere.' : t.err);
+        else if (g0.price.cents) {
+          if (g0.price.cents >= t.cents) add('price-0', 'Has to be lower than their price, or there is no saving to show.');
+          else if (discountPct(t.cents, g0.price.cents) < 1) add('price-0', 'The saving is under 1%. Use a price sign instead.');
+        }
+      }
+      const whole = Object.keys(errs).length > 0 || !E;
+      const blocked = { landscape: whole, portrait: whole }, layouts = {};
+      if (!E) return { msgs: errs, blocked, layouts };
+      // Fit, per orientation.
+      const fails = {}, hero = model.template === 'pct' ? 'pct' : 'price';
+      for (const o of ORIENTS) {
+        const L = layouts[o] = E.layoutSign(model, o);
+        L.report.groups.forEach((r, i) => {
+          if (!r || r.nameCap == null) return;
+          if (!r.nameOk) (fails[`name-${i}`] = fails[`name-${i}`] || []).push({ o, cap: r.nameCap });
+          else if (!r.priceOk) (fails[`${hero}-${i}`] = fails[`${hero}-${i}`] || []).push({ o });
+          if (!r.qualOk) (fails[`qual-${i}`] = fails[`qual-${i}`] || []).push({ o });
+        });
+        if (L.report.label && !L.report.label.ok) (fails.custom = fails.custom || []).push({ o });
+        if (L.report.uvt && !L.report.uvt.themOk) (fails.them = fails.them || []).push({ o });
+      }
+      for (const [k, list] of Object.entries(fails)) {
+        list.forEach(x => { blocked[x.o] = true; });
+        const where = list.length === 2 ? 'both signs' : `the ${list[0].o} sign`;
+        if (k.startsWith('name')) {
+          const worst = Math.min(...list.map(x => x.cap));
+          const cut = charsToCut(model, +k.split('-')[1], list.map(x => x.o), E);
+          add(k, `Too long for ${where}: letters would be ${inches(worst)} tall, and the minimum is 0.6 in.` + (cut ? ` Cut about ${cut} character${cut > 1 ? 's' : ''}.` : ''));
+        } else if (k === 'custom') add(k, `Too long for the corner of ${where}. Shorten the label.`);
+        else if (k.startsWith(hero)) add(k, `Too wide to stay the biggest text on ${where}. Use the other orientation, or one ${hero === 'pct' ? 'group' : 'price'} per sign.`);
+        else if (k === 'them') add(k, `Their price would crowd what they pay on ${where}. Shorten the product name.`);
+        else add(k, `The note doesn't fit ${where} legibly. Shorten it.`);
+      }
+      return { msgs: errs, blocked, layouts };
+    }
+    function charsToCut(model, gi, orients, E) {
+      const g = model.groups[gi];
+      for (let cut = 1; cut < g.name.length; cut++) {
+        const m2 = Object.assign({}, model, { groups: model.groups.map(x => x.i === gi ? Object.assign({}, x, { name: g.name.slice(0, -cut).trim() }) : x) });
+        if (orients.every(o => { const r = E.layoutSign(m2, o).report.groups[gi]; return r && r.nameOk; })) return cut;
+      }
+      return 0;
+    }
+    function describe(model) {
+      if (model.template === 'uvt') {
+        const g0 = model.groups[0];
+        return `Us vs Them sign: ${g0.rawName || 'no name'}, their price ${model.them.cents ? priceText(model.them.cents) : 'missing'}, you pay ${g0.price.cents ? priceText(g0.price.cents) : 'missing'}`;
+      }
+      const offer = x => x.kind === 'pct' ? (x.pct.n ? `${x.pct.n}% off` : 'no percent') : (x.price.cents ? priceText(x.price.cents) : 'no price');
+      const g = model.groups.map(x => `${x.rawName || 'no name'} ${offer(x)}`).join(' and ');
+      const lab = model.label ? (model.label.custom ? model.label.text : model.label.lines.join(' ')) : 'no label';
+      return `${model.template === 'pct' ? '% Off sign' : 'Sign'}: ${g}, ${lab}`;
+    }
+
+    /* ── 7. The drawers. Same items, same order, same numbers ─────────────── */
+    const n2 = v => String(Math.round(v * 100) / 100);
+    /* SVG, node by node, into the `doc` the caller passes. opts: { label,
+       logoHref, print } (print sizes it in inches for the paper). */
+    function drawSVG(L, doc, opts) {
+      opts = opts || {};
+      const node = (tag, attrs, text) => {
+        const n = doc.createElementNS('http://www.w3.org/2000/svg', tag);
+        for (const k of Object.keys(attrs)) n.setAttribute(k, attrs[k]);
+        if (text != null) n.textContent = text;
+        return n;
+      };
+      const svg = node('svg', { viewBox: `0 0 ${L.W} ${L.H}`, role: 'img', 'aria-label': opts.label || 'Sign', 'text-rendering': 'geometricPrecision',
+        style: 'font-kerning:none;font-variant-ligatures:none;font-synthesis:none' });
+      if (opts.print) { svg.setAttribute('width', L.W / PT + 'in'); svg.setAttribute('height', L.H / PT + 'in'); }
+      svg.appendChild(node('rect', { x: 0, y: 0, width: L.W, height: L.H, fill: COLORS.paper }));
+      for (const it of L.items) {
+        if (it.t === 'border') svg.appendChild(node('rect', { x: n2(it.x), y: n2(it.y), width: n2(it.w), height: n2(it.h),
+          fill: 'none', stroke: COLORS.green, 'stroke-width': n2(it.sw) }));
+        else if (it.t === 'logo') svg.appendChild(node('image', { href: opts.logoHref || '', x: n2(it.x), y: n2(it.y),
+          width: n2(it.w), height: n2(it.h), preserveAspectRatio: 'none' }));
+        else if (it.t === 'rule') svg.appendChild(node('line', { x1: n2(it.x1), y1: n2(it.y1), x2: n2(it.x2), y2: n2(it.y2),
+          stroke: it.green ? COLORS.green : COLORS.rule, 'stroke-width': n2(it.sw), 'stroke-linecap': 'round' }));
+        else if (it.t === 'dot') svg.appendChild(node('circle', { cx: n2(it.cx), cy: n2(it.cy), r: n2(it.r),
+          fill: COLORS.dot, stroke: COLORS.ink, 'stroke-width': '2.2' }));
+        else if (it.t === 'text') {
+          const a = { x: n2(it.x), y: n2(it.y), 'font-family': FACES[it.font].fam, 'font-size': n2(it.size),
+                      fill: COLORS[it.fill] || COLORS.ink, 'data-role': it.role };
+          if (it.ls) a['letter-spacing'] = n2(it.ls);
+          svg.appendChild(node('text', a, it.text));
+        }
+      }
+      return svg;
+    }
+    /* jsPDF, onto the current page of `pdf` (unit pt, the layout's size). The
+       four fonts are registered under FACES[k].fam first (loadFontsInto). A
+       missing one would fall back to Times, so each setFont is checked. */
+    function drawPDF(L, pdf, opts) {
+      pdf.setCharSpace(0);   // so every text() below writes its own Tc
+      for (const it of L.items) {
+        if (it.t === 'border') { pdf.setDrawColor(COLORS.green); pdf.setLineWidth(it.sw); pdf.rect(it.x, it.y, it.w, it.h, 'S'); }
+        else if (it.t === 'logo') pdf.addImage(opts.logo, 'PNG', it.x, it.y, it.w, it.h, 'sign-logo');
+        else if (it.t === 'rule') { pdf.setDrawColor(it.green ? COLORS.green : COLORS.rule); pdf.setLineWidth(it.sw); pdf.setLineCap('round'); pdf.line(it.x1, it.y1, it.x2, it.y2); }
+        else if (it.t === 'dot') { pdf.setFillColor(COLORS.dot); pdf.setDrawColor(COLORS.ink); pdf.setLineWidth(2.2); pdf.circle(it.cx, it.cy, it.r, 'FD'); }
+        else if (it.t === 'text') {
+          const fam = FACES[it.font].fam;
+          pdf.setFont(fam, 'normal');
+          if (pdf.getFont().fontName !== fam) throw new Error(`The PDF has no ${fam} font.`);
+          pdf.setFontSize(it.size);
+          pdf.setTextColor(COLORS[it.fill] || COLORS.ink);
+          pdf.text(it.text, it.x, it.y, { charSpace: it.ls, baseline: 'alphabetic' });
+        }
+      }
+    }
+    /* Register the four TTFs with a jsPDF document. bytes: { word, label, small,
+       num } as Uint8Array, the same bytes readFont measured. */
+    function loadFontsInto(pdf, bytes) {
+      for (const k of Object.keys(FACES)) {
+        const f = FACES[k], file = f.file.split('/').pop();
+        let bin = '';
+        for (let i = 0; i < bytes[k].length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes[k].subarray(i, i + 0x8000));
+        pdf.addFileToVFS(file, bin);
+        pdf.addFont(file, f.fam, 'normal');
+      }
+    }
+
+    window.SignRender = Object.freeze({
+      SALE_LABELS, TEMPLATES, UNITS, LIMIT, ORIENTS, FACES, COLORS, LOGO, PT, PAGE, G,
+      parsePrice, parsePct, priceParts, priceText, discountPct, unsupportedChars,
+      blankGroup, blankSign, normalizeSign, signModel,
+      readFont, engine, validate, describe, inches,
+      drawSVG, drawPDF, loadFontsInto,
+    });
+  })();
+  </script>
+
   <script>
   // ═══════════════════════════════════════════════════════════════
   //  CONFIG
