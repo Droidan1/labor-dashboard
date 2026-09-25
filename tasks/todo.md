@@ -1,3 +1,91 @@
+# Sign Studio: under Merchandising; Us vs Them kept; no fine print (2026-09-25)
+
+**Request (Brian):** *"Keep the Us vs Them layout as is, no fine print. Also make sure this page in
+under Merchandising in the sidebar"*
+
+## Decided
+
+- **Us vs Them keeps its layout.** In landscape the name takes one line, about 17 characters at
+  0.6 in, so a longer name prints portrait only. That now goes into the PRD as a rule, not a
+  question.
+- **No fine-print line.** No item code or date on the sign.
+- **Merchandising ▸ Sign Studio**, not Marketing ▸ Sign Studio. The page, the preview's sidebar
+  mock and the PRD all said Marketing.
+
+## What Merchandising means for the build (read from `index.html` at `main` a79b11a)
+
+- The group already shows to everyone Sign Studio serves. `#nav-merch-group` (`:1041`) is
+  visible to `merchRoles` (superuser, admin, district_manager, manager) plus anyone who can use
+  Price Scan (`canScan` adds executive), at `:34041`. **The group gate needs no change.**
+- It also shows to **executives**, who get Price Scan. Sign Studio's access decision excludes
+  them, so the item needs **its own toggle** beside `nav-merch-scan` and `nav-merch-shelf-count`.
+  The group's audience stays the union of its children's, as the comment at `:34035` requires.
+- The router admits any page it doesn't name (`:11952` `adminOnly`, `:11955` `managerPages`).
+  Sign Studio needs its own allow-list equal to that toggle, like Shelf Count's. The phone Menu
+  is built from this sidebar, so a mismatch shows as a dead row.
+- Placement (my call): **after Price Scan**. A manager then sees Price Scan → Sign Studio → Shelf
+  Count: look up the price, then make its sign. The PRD already lists "create a sign from Price
+  Scan" as a later step.
+
+## Plan
+
+- [x] Preview:
+      - the sidebar mock mirrors the real order for a manager: Dashboard, Retail Summary,
+        Marketing (collapsed), Merchandising (open: Price Scan, **Sign Studio**, Shelf Count),
+        Inventory, Labor, Supply Request, with groups nested as in `index.html`;
+      - the breadcrumb and the build plan say Merchandising;
+      - the "Still open" box keeps only the pilot items.
+- [x] Checks: Sign Studio is the active item inside the Merchandising group, between Price Scan
+      and Shelf Count, and absent from Marketing; no "Marketing ▸ Sign Studio" text is left on the
+      page; a mutation moving it back is caught.
+- [x] PRD v1.5, tracked on the v1.4 clean copy:
+      - Merchandising in the purpose, access and code-evidence paragraphs, with the gating facts
+        above and fresh line numbers;
+      - the Us vs Them rule;
+      - decisions: navigation, no fine print, the layout kept;
+      - the two open items closed.
+- [x] `npm test`, commit, push to #291, PR body, report.
+
+## Review
+
+**Built as planned.**
+- The mock's Merchandising, Price Scan, Shelf Count and Labor icons are copied from
+  `index.html`. The mock's Merchandising used to wear a price-tag icon.
+- Two icons fell out of use and were removed: that tag, and the Submit Photos camera, since
+  Marketing is now shown shut.
+- The only "Marketing" left in PRD v1.5 is the paragraph recording Brian's own inspection at
+  `b33c6a6`. It reports what was found then, so it stays.
+
+**Verified:**
+- verify.mjs: **262 pass**, up from 258:
+  - Sign Studio is the active item inside `[data-group="merch"]`;
+  - the order is Price Scan / Sign Studio / Shelf Count;
+  - Marketing doesn't hold it;
+  - no "Marketing ▸" text is left anywhere on the page.
+
+  The whole suite reran, contrast included, since the sidebar is part of every screen.
+- Mutations: **3 of 3 caught**, each by its intended check:
+  - Sign Studio moved under Marketing;
+  - placed after Shelf Count;
+  - the section 1 breadcrumb reverted.
+- Screenshots of the sidebar in dark and light.
+- PRD v1.5: redline and clean both pass `validate.py` (171 → 173 paragraphs), and both were
+  rendered.
+- `npm test`: under `TZ=America/New_York`, **5,996 assertions across 83 suites pass**. In the
+  container's UTC at 00:2x, the only failure is the known `test-daily-auction-column.mjs` clock
+  window from the entry below. That's outside this branch, and it is queued as its own task.
+
+**Replayed onto `main` after #291 merged under me:**
+- Brian merged #291 at 00:21 (merge commit 5e57d23, head 4ecf625). That was before I pushed this
+  work as a3f14dd at 00:30, onto the merged branch. I had also rewritten #291's description to
+  claim it.
+- Now the branch restarts from `main`, the commit is cherry-picked as 4f1867a (same content), and
+  it goes up as a new PR. #291's description is back to what it merged.
+- `tasks/lessons.md` rule 6 already covered this exact case, which is why it recurred. The
+  lesson's heading now names the rule, and a guard in the push command checks it.
+
+---
+
 # Sign Studio: 22-character names, and each orientation prints on its own (2026-09-25)
 
 **Request (Brian):** *"Let the orientation that fits print, and cap names at 22"*. These are his

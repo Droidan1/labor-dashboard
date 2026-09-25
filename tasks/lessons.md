@@ -104,7 +104,7 @@ Concretely, before a comment that says a function/table/guard *does* something:
 The tell, every time: I wrote the sentence without running anything, because it *sounded*
 obviously true.
 
-## The third one today: my escalation lost a seven-second race (2026-09-21)
+## The third one today: my escalation lost a seven-second race (2026-09-21) · rule 6: re-read a PR's state before pushing to it (recurred 2026-09-25)
 
 Same trap as the entry below, and as 2026-09-18's. This time I did everything that entry
 says to do short of the one thing that would have worked.
@@ -182,6 +182,21 @@ own attention around the merge, which is the one moment I do not control.
      its description.
    - **If it merged:** replay the work onto the new `main` as a new PR, and put the merged PR's
      description back to what it merged.
+   - **It happened again the next day (#291, 2026-09-25), with this rule already written.**
+     - I checked #291 at 00:19 and found it green and conflict-free. Brian merged it at 00:21,
+       and then sent the next request.
+     - I did that work and pushed a3f14dd to the merged branch at 00:30. I also rewrote #291's
+       description to claim it.
+     - I missed the rule because it sits as rule 6 under a heading about a worker deploy. A scan
+       of the headings at session start never reaches it, so the heading now names it.
+     - It was also still only wording, which rule 1 says is not a mechanism.
+   - **The mechanism: guard the push in the same command.** This repo merges with merge
+     commits, so a merged branch's head is an ancestor of `main`:
+     `git fetch -q origin main <branch> && ! git merge-base --is-ancestor origin/<branch> origin/main && git push …`
+     - If the guard stops the push, the PR merged: replay the work as a new PR.
+     - A squash or rebase merge slips past this test. Read the PR's `merged` field then.
+     - Before editing a PR description, read that PR in the same turn and require
+       `merged: false`.
 </rules>
 
 ## Five copies in one store: I wrote the note the lesson says does not work (2026-09-21)
