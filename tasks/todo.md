@@ -1,3 +1,427 @@
+# Sign Studio: 22-character names, and each orientation prints on its own (2026-09-25)
+
+**Request (Brian):** *"Let the orientation that fits print, and cap names at 22"*. These are his
+answers to the two Poppins questions in the last report (the entry below, "What Poppins costs").
+
+## What changes
+
+| | Before | Now |
+|---|---|---|
+| Product name | 32 characters | **22 characters** per group (the note stays at 32) |
+| A name, price, label or note too big for one orientation | blocks both | **blocks only that orientation**; the other prints |
+| A field error: missing name, bad price or percent, a dot with no note, the Us vs Them guards | blocks both | blocks both (unchanged) |
+
+## How the page says it (my choices)
+
+- The status pill stays green "Ready to print" and red "N things to fix". It gets an **amber
+  "Portrait only" / "Landscape only"** state for a sign that fits one orientation.
+- The summary under the signs turns amber when one orientation can print: "Only the portrait sign
+  can print. To print the landscape sign too:", then the messages. Field errors keep the red "Fix
+  these to print".
+- Each Print and PDF button follows its own orientation. `printSign` checks the same function, so
+  there is one rule with two readers, not two copies of it.
+- A name over 22 characters that reaches the model some other way (a paste the browser lets
+  through, a saved sign later) gets a field message. The input's maxlength is not the only guard.
+- Examples: the 32-character example becomes a 22-character one that fits both orientations.
+  The Sofa / Sectional card reads "(portrait only)".
+
+## Plan
+
+- [x] Preview: `LIMIT.name` 22 plus a validation message. `validate` returns the messages and
+      which orientations are blocked. The pill, summary, buttons, `printSign` and gallery follow
+      it. Copy and examples updated.
+- [x] Checks:
+      - per-orientation gating: buttons, pill, summary, `printSign`;
+      - a field error still stops both;
+      - a sign that fits neither stops both;
+      - the 22 limit, in the maxlength and in the model;
+      - geometry per orientation;
+      - contrast of the amber states in three themes;
+      - mutations.
+- [x] PRD v1.4, tracked on the v1.3 clean copy: the 22 limit, export per orientation, the
+      acceptance row and decisions. The open font question is closed.
+- [x] `npm test`, commit, push to #291, PR body, report.
+
+## Review
+
+**Built as planned.** The example name is now MENS ATHLETIC SNEAKERS (22), which prints both ways
+at 0.70 / 0.63 in.
+
+**Found while measuring 22-character names (not built, it's Brian's call):** on **Us vs Them**,
+landscape takes one-line names only. The name gets 22% of the body, which can't hold two lines at
+0.6 in, and one line of Poppins fits only about 17 characters. On 10 names × 3 price pairs, 12 of
+30 fit landscape and 27 of 30 fit portrait. Those signs now print portrait. I tried giving the
+name more room: at 24% nothing changes, and at 25% two names still miss 0.6 in while YOU PAY drops
+from 2.6 in to 1.9 in. So it's a trade. It sits on the page and in PRD v1.4 as the open question,
+and the layout stays as it is.
+
+**Verified:**
+- verify.mjs: **258 pass**, up from 245. New checks cover:
+  - a sign that fits only portrait: landscape Print and PDF off, portrait on, in A and in B;
+  - the amber pill and summary, and the buttons' reason text;
+  - `printSign` refuses landscape and prints portrait at 8.5 × 11;
+  - a field error on top stops both, in red;
+  - a name that fits neither orientation stops both;
+  - the name field stops at 22, the counter reads 22/22, and a 23-character name reaching the
+    model is refused;
+  - the gallery shows "(portrait only)" on the SECTIONAL card;
+  - geometry: every orientation that fits prints (1,416 renders), whatever the other does;
+  - contrast of the amber and red states in three themes.
+- Two old checks needed new inputs, since the field now stops at 22: the hostile-name payload is
+  a whole 21-character tag, and the cut-suggestion checks use 22-character names.
+- Mutations: **6 of 6 caught**, each by its intended check:
+  - buttons all-or-nothing;
+  - `printSign` all-or-nothing;
+  - `validate` blocking both on any fit failure;
+  - the limit back to 32;
+  - no model length check;
+  - no amber pill state.
+- Contrast: 9,351 measurements ≥ 4.5:1. Minimums: dark 5.16, light 4.8, pure black 5.82.
+  Screenshots of the amber state were checked in dark and light.
+- PRD v1.4: redline and clean both pass `validate.py` (170 → 171 paragraphs), and both were
+  rendered.
+- `npm test`: under `TZ=America/New_York`, **5,996 assertions across 83 suites pass**. In this
+  container's UTC at 00:16, one suite failed (below). This branch changes neither `index.html`
+  nor `scripts/` from `main`, so `main` fails it the same way at that hour.
+
+**Not mine, left alone:** `scripts/test-daily-auction-column.mjs` fails in UTC after midnight UTC,
+before midnight in New York ("today's figure is live POS + auctionRaw", got 415, want 1915). The
+test's today is New York's. `buildWeeklyTable` has two todays of its own: the device's local date
+for the live row (`index.html:10571`, `:10602`) and New York's date for future rows
+(`index.html:10572`). In a UTC process those disagree for four hours. Under
+`TZ=America/New_York` and `TZ=America/Chicago` it passes. This branch changes neither
+`index.html` nor `scripts/`. Suggested as its own task.
+
+---
+
+# Sign Studio: design picked, and a "% Off" sign type (2026-09-24)
+
+**Request (Brian):** *"Layout C, Typeface use the Bargain Lane fonts: Poppins for text and
+Luckiest Guy for Numbers, italic, deep green, raised cents. Also add option for no price but %
+off. (20% off for example)"*
+
+## Decisions (Brian, 24 Sep)
+
+| | Picked |
+|---|---|
+| Page layout | **C · Three steps** |
+| Typeface | **Poppins** for words (names, labels, notes, YOU PAY, OFF) and **Luckiest Guy** for numbers (prices, $, ¢, %) |
+| Sale label | **Italic** (Poppins Black Italic). Luckiest Guy has no italic, so numbers stay upright |
+| Green | **Deep #20792B** (the logo keeps its own #3BB54A) |
+| Cents | **Raised**: $2⁵⁰, and 99¢ under a dollar |
+| New | A **% Off** sign: a percentage instead of a price |
+
+Both fonts are the app's own legacy Bargain Lane stack (`index.html:22`, DESIGN.md §2.2: "the
+original Poppins / Luckiest Guy stack is still loaded"), so no new face comes in. **Checked:**
+Luckiest Guy has every glyph a price needs (`0-9 $ % ¢ . , -`); Poppins covers A–Z, 0–9 and
+the symbols.
+
+## What Poppins costs (measured in the renderer, not assumed)
+
+Poppins has no narrow widths, which is how Archivo kept long names tall. I ran 18 sample product
+names through the real layout, in the committed Archivo preview and in this one:
+
+| Sign | Names that fit at ≥ 0.6 in, Archivo → Poppins | Newly blocked |
+|---|---|---|
+| One price, landscape | 18 → 18 | none |
+| One price, portrait | 18 → 16 | PREMIUM LEATHER WORK BOOTS (0.53 in), OUTDOOR PATIO FURNITURE CUSHIONS (0.45 in) |
+| Two prices, landscape | 13 → **7** | MATTRESSES, SECTIONAL, COMFORTERS, PATIO CUSHIONS, LT. BLUE END TABLE, WOMENS DENIM JEANS |
+| Two prices, portrait | 18 → 16 | the same two long names |
+
+Half of a two-price landscape sign holds about 7 capitals a line at 0.6 in, and a word cannot
+wrap, so one 9-letter word fails. The PRD blocks the whole sign when either orientation fails, so
+those signs cannot print in portrait either, although portrait fits. This is built as decided. The
+choices go to Brian: let an orientation that fits print on its own; and, for long names, a third
+portrait line or a 22-character cap.
+
+## % Off: taken as defaults
+
+- A third **sign type**, "% Off", beside Price sign and Us vs Them. One or two groups, like a
+  price sign: e.g. Shoes 20% / Premium shoes 40%.
+- The percent is a whole number from 1 to 99. "20", "20%" and "20 % off" are accepted; 0, 100,
+  12.5 and text are refused with a field message.
+- The hero is **20** in Luckiest Guy with **%** raised and **OFF** stacked under it, the same
+  grammar as raised cents. The hero is still 2× the name's capitals.
+- No unit (EACH has nothing to count). Note and yellow dot stay. The reminder becomes "check the
+  register takes 20% off".
+
+## Plan
+
+- [x] Preview: fonts and design fixed to the picks; section 2 becomes "Decided", keeping the
+      black-and-white view and the Print test. Layout C is the default and marked picked; A and B
+      stay viewable. Name hint and gallery copy lose the "narrower first" claim.
+- [x] Renderer: `fontOf` gets word / label / small / num faces. Prices in Luckiest Guy, with
+      metrics from the ~~digit "0"~~ **tallest digit**: the "0" assumption proved wrong, because
+      Luckiest Guy's digits bounce (0 is 0.71 em, 3 is 0.75). The discount row splits into "70%"
+      (Luckiest) and "OFF" (Poppins). Add the % hero: `parsePct`, the % Off template, form fields
+      in A/B/C, gallery, Try chip.
+- [x] Checks: fonts served locally; the old design toggles leave the suite; % Off behaviour,
+      parser, two groups, geometry, print text; the Poppins long-name behaviour pinned; mutations.
+- [x] PRD v1.3 as tracked changes on the v1.2 clean copy. Then `npm test`, commit, push to
+      #291, PR body.
+
+## Review
+
+**Built:** layout C by default (A and B stay in the bar), the design fixed to the picks, and
+section 2 now reads "Decided" (the black-and-white view stays). Plus the % Off type in all three
+layouts: parser, field messages, readout ("percent"), reminder ("check the register takes 20%
+off"), two gallery cards and two Try chips. The two font questions sit at the top of the page, and
+two gallery cards show them.
+
+**Found and fixed on the way:**
+1. `charsToCut` dropped the sign type, so on Us vs Them it measured a price sign and said "cut
+   about 11" where 15 is needed. It now copies the whole model. A check cuts exactly N and N − 1.
+2. The font check (`document.fonts.check`) passes when the stylesheet never arrives. The committed
+   preview then drew every sign in a fallback font with Print enabled (reproduced by blocking
+   Google Fonts). Now every face must really load, and a check opens the page with the stylesheet
+   blocked.
+3. The "Too long for landscape" example (PREMIUM LEATHER WORK BOOTS) now fails both orientations.
+   It is PREMIUM WORK BOOTS now, which still fails landscape only. "The biggest price" pairs SOFA
+   with LOVESEAT, since SECTIONAL no longer fits half a landscape sign. SECTIONAL has its own card
+   instead.
+4. I wrote code to keep THEIR PRICE and OUR DISCOUNT at one size. Its mutant survived: OUR
+   DISCOUNT fits its column even at the largest row. Removed as dead code; the invariant stays a
+   check.
+
+**Verified:**
+- verify.mjs: **245 pass**, up from 160. New checks cover:
+  - the faces and colours;
+  - % Off: 18 parser cases; % and OFF placed from real ink; fonts; fields and messages;
+    switching types; two groups at one size; print text;
+  - "cut about N" is exact for a price sign (11) and for Us vs Them (15);
+  - fonts really blocked;
+  - the "% off" suffix contrast;
+  - % Off in all six layout × device views;
+  - a price's letter height equals the ink of its tallest digit.
+- Geometry: 2,496 renders, 768 of them % Off, with no printable sign having ink near the border
+  or overlapping.
+- Contrast: 6,552 measurements ≥ 4.5:1. Minimums: dark 5.16, light 4.8, pure black 5.82.
+- Mutations: **7 of 7 caught**, each by its intended check:
+  - cut suggestion;
+  - % on the baseline;
+  - unit drawn on % Off;
+  - old font check;
+  - OFF in Luckiest Guy;
+  - decimal percent accepted;
+  - cap from "0".
+  (One run's print check failed only because parallel runs shared PDF filenames. Each run now
+  writes to its own folder.)
+- PRD v1.3: redline and clean both pass `validate.py` (160 → 170 paragraphs). Both were rendered
+  with LibreOffice and inspected.
+- `npm test`: 5,996 assertions across 83 suites pass.
+
+---
+
+# Sign Studio: "Us vs Them" template (2026-09-24)
+
+**Request (Brian):** *"Add a 'Us vs Them' Sign template, use the attached image as
+inspiration."* The image is a store's hand-lettered comparison sign: "Lt. Blue end table",
+**Their Price** $100.00, **Our Discount** 50% off, **YOU PAY** in big red letters, a dollar-sign
+mascot, and a marker-corrected price: $50.00 crossed out to $30.00. Fine print holds an item code
+(`S02251-50`) and two dates (7/26 struck through, 8/15).
+
+**What the photo shows us to design out:** after the correction the sign says *50% off* above
+*$30*. That is a 70% saving, so the sign disagrees with itself. So the template **works the
+discount out** from the two prices; a manager never types it.
+
+## Decisions taken as defaults (each named in the report, none blocking)
+
+| | Default | Why |
+|---|---|---|
+| Discount | Calculated `floor((their − ours) × 100 / their)`, printed as `NN% OFF` | Rounding down can never overstate the saving |
+| Guard | YOU PAY must be lower than THEIR PRICE; a saving under 1% is refused | A comparison sign with no saving is a mistake |
+| Hierarchy | YOU PAY price is the largest text; THEIR PRICE at most 40% of its letter height, in dark grey | A 3-second glance must land on $30, not $100 |
+| Their price | Not struck through | It is another seller's price, not our former one. A strike would claim a markdown |
+| Style | The template's own style: logo, corner label, green border, YOU PAY in the sign green (not the marker red) | "All signs follow a common design style" |
+| Mascot | Left out | Not in the repo and probably clip art. The logo holds the brand spot |
+| Scope | One product per sign: no second price group | The comparison is per item |
+
+**Asked in the report, not built:** a fine-print line for the item code and date, like the
+photo's corner.
+
+## Plan
+
+- [x] Preview: a Sign type choice (Price sign / Us vs Them) in all three layouts. Their price
+      field. A calculated discount line in the form. `layoutUvT` in the one renderer: landscape
+      puts YOU / PAY beside the price, portrait stacks it. The gallery gets two cards and the
+      Try chips get one.
+- [x] Extend the browser checks: the discount maths, rounding down and both guards; their price
+      stays smaller than YOU PAY. Us vs Them joins the geometry stress, contrast and print runs.
+      Mutations must be caught.
+- [x] PRD v1.2 as tracked changes on the v1.1 clean copy: first-release scope, a "Us vs Them
+      layout" section, the Their price input, the discount rule, an acceptance row, the
+      decision. Validate and render.
+- [x] `npm test`, commit, push to #291, update the PR body.
+
+## Review
+
+**Refactor first, proved neutral.** Price drawing and the unit/note block moved into
+`drawPrice` / `planExtras` / `drawExtras`, shared by both sign types. The existing 107 checks
+passed before any new code. The move also made the cents gap consistent: it was measured as
+0.06 em but drawn as a fixed 6 pt.
+
+**Verified: 160 checks, all green** (107 before):
+- 25 Us vs Them behaviour checks. $100 → $30 prints 70% OFF, and $50 prints 50%. **66.68% and
+  66.67% both print 66%.** You pay equal to or above their price is blocked with a message on
+  the field. A 0.5% saving is blocked and drops the discount row. Their price empty or malformed
+  is blocked. Switching sign type keeps every value, and a two-price sign switched over drops to
+  one product.
+- Their price stays at or under 40% of YOU PAY's size: in both orientations, and across **2,304**
+  Us vs Them renders in the geometry stress, now 6,912 renders in all. No printable sign has ink
+  within 6 pt of the border, overlapping ink, a name under 0.6 in, or a price under 1.1× its name.
+- All six layout × device views: the Their price field, the discount line and a drawn sign; no
+  sideways overflow; no element stringified into the page.
+- Print: one page each orientation, with THEIR PRICE, $100, 70% OFF, YOU, PAY and $30 all real text.
+- Contrast: 4,572 measurements, now including the Us vs Them form in every theme. Minimums
+  unchanged: dark 5.16, light 4.80, pure black 5.82.
+- **Four mutations, each caught:** `Math.round` for the discount (4 fails, 67% shown), no "lower
+  than their price" guard (2), THEIR PRICE allowed past 40% (2), and the flatten bug below (4).
+- `npm test`: 5996 assertions, unchanged.
+
+**A bug the checks caught in my own change.** Layout C's step 1 for a plain Price sign printed
+`[object HTMLDivElement]` instead of its fields. I had nested the field list two levels deep,
+and the element helper flattened only one. `h()` now flattens fully, and every layout pass
+asserts that no element is ever stringified into the page.
+
+**PRD v1.2** (files, not committed): 22 tracked marks and 2 comments on the v1.1 clean copy,
+so the redline shows only this change. Additions: a "Us vs Them layout" section, the Their
+price input, the discount rule, an acceptance row, the decision, a Price Scan prefill as a
+later enhancement, and the fine-print question as still open. Both copies pass validation.
+Rendered: 10 pages, no blank page. The accept script now also drops a tracked-row mark.
+
+**Open for Brian:** fine-print item code and date line, yes or no. The template itself needs
+no pick beyond the design options already open.
+
+---
+
+# Sign Studio: PRD review, decisions, page preview (2026-09-24)
+
+**Request (Brian):** *"I want to build a sign maker studio page so managers can type in the
+product name and price, what kind of sale (Flash Sale, Manager special, Blow Out, ETC) and a
+sign is created. I want all signs to follow a common design style. Here is a PRD, review it,
+ask me questions, and then make the necessary changes and then create me preview of the
+frontend for me to review before we build it."* PRD: *RETJG HUB Sign Studio v1.0*.
+
+Preview only. **Nothing in `index.html`, `worker.js`, `sw.js` or any migration is touched.**
+Deliverables:
+- `docs/sign-studio-preview.html`. `scripts/build.sh` excludes `docs/` from its copy
+  allowlist, so it cannot reach production.
+- The PRD revised to v1.1 as tracked changes, handed back as a file. **This repo is public**
+  (`private: false`), so the PRD itself is not committed; the decisions are recorded here.
+
+## What the PRD assumed vs what the checkout says
+
+| PRD | Checkout | Where |
+|---|---|---|
+| "Confirm district manager inclusion" | `district_manager` is retired: migration 029 made them `manager` + title "District Manager". Moot. | `migration-029.sql:60,72-75` |
+| Marketing access must not leak | Marketing group is shown to **every** role; each child has its own gate (Submit Photos: all). | `index.html:34050-34057` |
+| (implied) pages are gated | `navigateToPage` blocks only pages it names; an unlisted page opens for anyone. Sign Studio needs its own allow-list guard, equal to the sidebar gate. | `index.html:11952-11966` |
+| "Use the original approved logo" | Already here: `BLlogo.svg` wraps a **1758×665 PNG of the full lockup** (coin + italic BARGAIN LANE® + a tagline) and crops it to the coin. ~500 dpi at a 3.5 in sign logo. No vector original in the repo. | `BLlogo.svg` |
+| Reference images = the look | They disagree with each other: greens `#007A40` vs `#009A40` (brand, app theme-color and logo: `#3BB54A`); FLASH SALE upright vs italic. The portrait wordmark has malformed letters (AI-made), so it is no source for the logo. | sampled; `index.html:9` |
+| 0.25 in safe margin | The reference border sits **0.13 in** from the paper edge, inside most printers' dead zone. | sampled |
+| 11×8 references vs Letter | The references are 11×8 in proportion (1.374), not Letter (1.294). | sampled |
+| 50-char product label | At 49 characters two portrait lines hold letters only **0.26–0.40 in** tall (cereal reference: ~1.1 in). 32 chars keeps ~0.6 in with a condensing face. | measured, real fonts |
+| "embedded approved font" | No heavy face is loaded; jsPDF embeds TTF only, and the app gets WOFF2 from Google. No `addFont` anywhere. | `index.html:22-23` |
+| PDF export conventions | jsPDF 2.5.1 from cdnjs, no SRI, and `loadScript` wedges after one failure (code review weekly-retail-19). The SW never caches it (opaque no-cors). | `index.html:15378-15394` |
+| Print dialog | The one `@media print` hides everything but `#print-report` and forces Letter portrait: a sign print needs its own container and page size. | `index.html:798-834` |
+| (unstated) | The SW reloads the app when a new version activates; only a Content draft defers it, so an unsaved sign would be lost. | `index.html:35433-35445` |
+| (unstated) | `scripts/browser-mobile-menu.mjs:236-240` searches "sign" expecting only Sign out: a "Sign Studio" row breaks it. | |
+
+PRD's code-evidence lines, now: Marketing nav 1007 (same); page access **11952** (was 11892);
+PDF export **15378** (was 15321); Marketing visibility **34050** (was 33729).
+
+## Decisions (Brian, 2026-09-24)
+
+| Question | Answer |
+|---|---|
+| Sale labels | None (default), Sale, Flash Sale, Manager Special, Blow Out, **plus custom text, max 12 chars** |
+| First release | **Print first** (form, both previews, Print, PDF; frontend only). Saved signs = release 2 |
+| Paper | **US Letter** |
+| Access | Managers (DMs included), admins, superusers. **No one else**; not a grantable page |
+| Product label | **32 chars + fit check**: export blocked, naming field and orientation, below 0.6 in letters |
+| Reprints (release 2) | **Current design**; the saved revision keeps its design version for audit |
+
+Left to the preview review (visual, so shown rather than asked): typeface (Archivo, which
+condenses, vs Geist Black, the app's own family), label italic vs upright, brand green vs a
+deeper print green, cents style ($2.50 vs raised cents), and which of three page layouts.
+
+## Plan
+
+- [x] Review the PRD against the checkout (three read-only agents, then spot checks)
+- [x] Ask the open product questions (two rounds, answers above)
+- [x] PRD → v1.1: tracked changes + comments carrying the evidence; validate; render and look
+- [x] `docs/sign-studio-preview.html`: three page layouts (PRD delivery step 1) over one
+      shared sign renderer (SVG, points, one layout model for both orientations); fit engine
+      with the decided limits; design-option switches; example gallery; Print test
+- [x] Verify in Chromium (below), then `npm test`
+- [x] Commit, push, draft PR
+
+## Verification plan
+
+- No console or page errors; fonts routed locally, TLS untouched.
+- Render and LOOK at the awkward cases: a 32-char name, `$9,999.99` in two-price portrait,
+  a custom 12-char label, `$2.50`, `99¢`, the yellow-dot qualifier.
+- Behaviour: invalid price / empty field / too-long name block export with a field message
+  that names the orientation; switching layout or orientation keeps every input; second
+  render after toggling every design option.
+- Hostile text (`"><img src=x onerror=…>`) lands as text: no `on*` attribute, no dialog.
+- Contrast ≥ 4.5:1 on the composited background, dark / light / pure black.
+- No horizontal overflow at 390 px.
+- Print: one page per sign at 792×612 / 612×792 pt (`page.pdf` with the CSS page size).
+- Preview update < 300 ms after input (PRD target).
+
+## Review
+
+**PRD v1.1** (handed back as files, not committed): a redline with 114 tracked marks and 13
+comments that carry the evidence, and a clean copy with every change accepted. Both pass the
+docx skill's schema validation, the redline with `--author Claude`: every changed character sits
+inside a tracked mark. The clean copy is accepted at the XML level. LibreOffice's accept-changes
+round-trip broke two schema rules (`w:color` and `w:shd` without `w:val`) and restyled every
+paragraph. Rendered and checked: 8 pages, no blank page. The redline's blank page 4 only
+appears while struck text is shown.
+
+**The preview.** One renderer draws every sign: the page, the Print test and the gallery. It
+lays out in print points on US Letter. The sheet has a 0.25 in safe margin, and the border's
+outer edge sits on it. The fit rule goes narrower first (Archivo, widths 100 → 62.5%), then
+smaller, never under 0.6 in. The price targets 2× the name's capitals and is blocked below 1.1×.
+All user text reaches the DOM via `textContent` or `.value`. The logo is the lockup cropped out
+of `BLlogo.svg`'s embedded PNG with the tagline removed: 1711×497 px.
+
+**Verified: 107 checks, all green.**
+- Behaviour, layouts A/B/C × desktop/phone, font failure and retry, the two-price dot.
+- Price parser: 22 cases, the real function.
+- Geometry: 4,608 renders (two typefaces × two cents styles × 12 names × 6 prices × one/two
+  prices × 4 labels × 2 orientations). Ink boxes come from canvas `measureText`, a different
+  path from the layout's SVG widths. No printable sign has ink within 6 pt of the border,
+  overlapping ink, a name under 0.6 in, or a price under 1.1× its name.
+- Contrast: 2,751 text measurements across three themes × every screen. Minimums: dark 5.16,
+  light 4.80, pure black 5.82.
+- Print: `page.pdf` gives one page at 792×612 / 612×792. `pdffonts` shows Archivo embedded, and
+  `pdftotext` reads ALL CEREAL / $2 / FLASH.
+- Keystroke → both signs redrawn in 5–8 ms (target 300). No sideways scroll at 390 px.
+- **The checks bite.** Three mutations, each caught: `innerHTML` in the SVG builder, 2 fails;
+  light `inkDim` → `#9c9484`, contrast 2.46; blaming both two-price names, 1 fail. The ink check
+  also catches text shifted 30 pt.
+- `npm test`: 5996 assertions across 83 suites, unchanged, since no app code moved.
+
+**Defects the checks found in my own preview, all fixed before this commit:**
+1. The comma in `$9,999` dips below the `$`, so its ink hit EACH. Descent now counts the comma.
+2. In a two-price sign, the name that fits was told it was too long, because it was only small
+   to match the other. Now only the name that caused it gets the message.
+3. A portrait two-price row gave a two-line name too little height, so "Premium leather work
+   boots" was blocked in both orientations instead of landscape only.
+4. Light-theme red text on its wash over `panelHi` measured 4.49:1. It now uses `#a93226`, per
+   DESIGN.md §4.8.
+5. The toolbar overflowed 390 px by 10 px.
+
+Two early "failures" were the harness's own. It counted section 2's previews twice, and it read
+colours mid-transition, which is the lesson from 2026-09-10.
+
+**Open for Brian:** page layout A / B / C; typeface; label italic or upright; brand or deep
+green; raised or plain cents. Also a vector logo, if one exists.
+
+---
+
 # Worker: update-clover-item takes only an item id (2026-09-24)
 
 **Request:** *"Fix update-clover-item's itemId check next."*
