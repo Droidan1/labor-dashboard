@@ -147,6 +147,14 @@ remaining `font-display`/`font-body` references on un-V1'd screens
 (Store Detail, Inventory, etc.) keep working. Don't remove until
 those screens are V1-converted.
 
+**Sign Studio's print fonts are not UI fonts.** `fonts/*.ttf` are subset
+copies of Poppins 700 / 900 / 900 italic and Luckiest Guy, registered
+under their own names (`SS Poppins Black`, `SS Luckiest Guy`, …) and
+used only for the printed sign: its preview, its Print and its PDF.
+Never set app text in them; the page around the sign is Geist and
+Lilita One like everything else. `fonts/README.md` says why they carry
+no kerning tables.
+
 All currency / count displays use `tabular-nums` for column alignment.
 
 ### 2.3 Spacing & radius

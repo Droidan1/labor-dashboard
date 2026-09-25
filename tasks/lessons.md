@@ -47,7 +47,25 @@ camera cannot produce) that look identical.
 dir with its own `dist/`), never two against one tree, and never let one runner's cleanup
 restore a file it did not write.** Before trusting a MISSED, reproduce it alone.
 
-## The rationale in the comment was a factual claim, and it was false (2026-09-21)
+## A `\u` escape I typed reached the file as the character itself (2026-09-25)
+
+Writing Sign Studio's renderer, I typed the alphabet regex as `\u0020-\u007E\u00A0-…`. The
+tool input delivered each escape as the literal character, so the file held a literal
+no-break space and a run of accented letters inside `[…]`. It worked, and it could not be
+read. An editor that normalised the no-break space to a plain space would have widened the
+range to take in the C1 control characters, silently. The same happened in the test: a
+literal U+202E, which reverses how the line displays, sat inside a string.
+
+Found only because a scan for invisible characters ran on the new files.
+
+<rules>
+1. **Never type a `\u` escape into a tool input and trust it.** Build escapes from code points
+   in a script (`chr(92) + 'u%04X' % cp` in Python) and check the bytes on disk (`od -c`).
+2. **Before committing new source, scan it for Cf, Cc, Mn and non-space Zs characters.**
+   Visible accented letters are fine; an invisible one in code is a defect even when it works.
+</rules>
+
+## The rationale in the comment was a factual claim, and it was false (2026-09-21) · recurred in a commit message (2026-09-25)
 
 Building the OB manifest, I wrote a comment explaining why `ob_price` lives in an OB-only
 hint table instead of the shared one:
@@ -103,6 +121,28 @@ Concretely, before a comment that says a function/table/guard *does* something:
 
 The tell, every time: I wrote the sentence without running anything, because it *sounded*
 obviously true.
+
+### Recurred: a number in a commit message (2026-09-25, Sign Studio)
+
+A browser check found ink in the band between a sign's border and its content box. I decided
+it was the italic sale label leaning past its fixed 0.06 em allowance, changed the layout to
+pad each line by its last letter's real overhang, and wrote in the pushed commit that the
+label "leaned up to 1.5 pt past the content box". I never measured 1.5 pt; it was an estimate
+that sounded about right.
+
+Measured later, per letter: with the old allowance only T, V and Y crossed, by 0.23 pt (OUT)
+and at most 0.69 pt (a custom label ending in Y). And most of the ink the band had found was
+something else: the round letters of BLOW and SALE rising above cap height, by design. The
+fix was still worth having (each line's ink now ends exactly at the edge, and a test pins it),
+but both the number and half the diagnosis were invented.
+
+<rules>
+4. **A number in a commit message or a PR body is a measurement, or it is not there.** A
+   pushed commit message cannot be corrected, only contradicted somewhere else.
+5. **When a check fails, locate what failed before naming the cause.** Print which items,
+   which side, by how much. Here one query showed the ink sat at the TOP edge, and was not
+   the italic lean I had assumed.
+</rules>
 
 ## The third one today: my escalation lost a seven-second race (2026-09-21) · rule 6: re-read a PR's state before pushing to it (recurred 2026-09-25)
 

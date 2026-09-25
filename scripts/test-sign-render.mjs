@@ -282,6 +282,25 @@ ok(grid.length === 540 && printable > 600 && blockedCount > 50, `the grid covers
 for (const k of ['blocked with no message', 'ink outside the content box', 'overlap', 'name under 0.6 in', 'price not the biggest text',
                  'two names at two sizes', 'two prices at two sizes', 'their price over 40% of the hero'])
   ok(!faults[k], `no printable sign has: ${k}${faults[k] ? ` (${faults[k].length}, e.g. ${faults[k][0]})` : ''}`);
+// The sale label's ink ends AT the content box's right edge, not near it. An italic letter
+// leans past its own advance (T by 0.065 em, V and Y by 0.075), so each line is pulled in by
+// its own last letter's lean, read from the font: flush when the letter leans out, never
+// across the edge, and short of it only when the letter itself stops short (L, D).
+{
+  const flush = [], across = [];
+  for (const lab of [{ sale: 'flash' }, { sale: 'manager' }, { sale: 'blowout' }, { sale: 'sale' },
+                     { sale: 'custom', custom: 'Hot buy' }, { sale: 'custom', custom: 'Last day' }, { sale: 'custom', custom: 'Wow' }])
+    for (const o of R.ORIENTS) {
+      const L = E.layoutSign(R.signModel(sign(Object.assign({ groups: [{ name: 'Tea', price: '2' }] }, lab))), o), edge = L.W - 51;
+      for (const it of L.items.filter(i => i.role === 'label')) {
+        const x1 = inkOf(it).x1, leans = fonts.label.inkRight([...it.text].pop()) > 0;
+        if (x1 > edge + 0.01) across.push(`${it.text} ${o} +${(x1 - edge).toFixed(2)} pt`);
+        if (leans && Math.abs(x1 - edge) > 0.01) flush.push(`${it.text} ${o} ${(x1 - edge).toFixed(2)} pt`);
+      }
+    }
+  eq(across.join('; '), '', 'no sale label line crosses the content box');
+  eq(flush.join('; '), '', 'a label line that ends in a leaning letter ends its ink exactly at the edge (FLASH, SALE, OUT, HOT BUY…)');
+}
 // The checks above must be able to fail: the same measure applied to a sign moved 30 pt.
 {
   const L = V(OKSIGN).layouts.landscape, shifted = L.items.map(it => it.t === 'text' ? Object.assign({}, it, { x: it.x + 30 }) : it);

@@ -19,8 +19,9 @@ through Pages.
   kerning or shaping tables.
 - **Assets:** four subset TTFs in `fonts/`, the logo flattened to RGB in `sign-logo.png`, and
   jsPDF 2.5.1 vendored. All are precached.
-- **Print** uses the sign's own container and `@page` rule, cleared on `afterprint` and when
-  leaving the page, never on a timer. **PDF** has real text and embedded fonts, and goes to the
+- **Print** uses the sign's own container and `@page` rule, cleared when the sign changes or
+  the page is left, never on a timer. (Changed while building: not on `afterprint` either. See
+  the review.) **PDF** has real text and embedded fonts, and goes to the
   share sheet where there is one, otherwise a download.
 - **The sign in progress survives an app update:** a 12-hour localStorage draft per user, and
   the service worker's reload waits while a sign is in progress.
@@ -31,34 +32,34 @@ through Pages.
 
 One PR, one commit per step, `npm test` green at every commit.
 
-- [ ] 1. Assets:
+- [x] 1. Assets:
       - `fonts/` (TTFs, licences, README with the source commit and command), `sign-logo.png`,
         `jspdf-2.5.1.umd.min.js`;
       - `build.sh` ships them;
       - `test-shell-cache.mjs` fails if a precached path is missing or unshipped.
-- [ ] 2. Renderer: `<script id="sign-render">` and `scripts/test-sign-render.mjs`, covering the
+- [x] 2. Renderer: `<script id="sign-render">` and `scripts/test-sign-render.mjs`, covering the
       parsers, the field rules, known outcomes with the real fonts, layout invariants, the two
       drawers agreeing, and real jsPDF in `vm`. Cache bumped.
-- [ ] 3. The page:
+- [x] 3. The page:
       - sidebar, role toggle, router guard and init, `NAV_BUSINESS`, the container and Layout C;
       - precache the fonts and logo;
       - `browser-mobile-menu.mjs` updated;
       - new `scripts/browser-sign-studio.mjs`: roles, Layout C, geometry, per-orientation gating,
         contrast in three themes, font failure.
-- [ ] 4. Print, with the browser checks for page size, fonts, cleanup, and a dashboard print
+- [x] 4. Print, with the browser checks for page size, fonts, cleanup, and a dashboard print
       still Letter portrait.
-- [ ] 5. PDF: the retrying loader, share or download, the WRS autotable fix, and jsPDF
+- [x] 5. PDF: the retrying loader, share or download, the WRS autotable fix, and jsPDF
       precached. Checks for the 3 s target, embedded fonts, text positions and a retry
       after a 503.
-- [ ] 6. Draft and the reload guard, with checks for restore, the TTL, another user's draft,
+- [x] 6. Draft and the reload guard, with checks for restore, the TTL, another user's draft,
       and `controllerchange`.
-- [ ] 7. Docs:
+- [x] 7. Docs:
       - this review;
       - a DESIGN.md §2.2 line: the SS fonts are print-only;
       - a gallery comparison against the preview, since removing kerning can widen a few
         prices.
-- [ ] Mutations, one aimed at each new check, each in its own copy of the tree.
-- [ ] `npm test`, `browser-mobile-menu.mjs`, draft PR, report.
+- [x] Mutations, one aimed at each new check, each in its own copy of the tree.
+- [x] `npm test`, `browser-mobile-menu.mjs`, draft PR, report.
 
 ## Verification
 
@@ -68,6 +69,77 @@ One PR, one commit per step, `npm test` green at every commit.
   - every mutant on the list fails a check.
 - Brian then checks on the pilot iPhone, in the installed app, that Print opens at the right
   page size. Chromium can't check that.
+
+## Review
+
+**Built as planned** on #293, one commit per step: plan, assets, renderer, page, Print, PDF
+with the WRS fix, draft, and these docs. No worker change and no migration.
+
+**Changed from the plan while building:**
+- **Print is not cleared on `afterprint`.** Nothing documents that iOS fires it after the
+  print sheet has drawn its pages. The print state stays until the sign changes or the page
+  is left. It is print-only CSS, so nothing on screen reads it.
+- **The app's print rule (line 802) is untouched.** The sign's rules outrank it by
+  specificity, (1,1,1) against (1,0,1), so it needed no scoping.
+- **`district_manager` is not a role you can sign in with.** Migration-029 made district
+  managers `manager`s with more stores. The allow-lists keep the name, to mirror
+  `merchRoles`. The browser check tests `manager`.
+
+**Two layout fixes, found by the new checks.** Both are in the approved preview too:
+- **The yellow dot:** beside a one-line note, it stuck 4.25 pt out of the content box on a
+  full sign. The note row is now budgeted as tall as the dot.
+- **The sale label:** with the fixed 0.06 em italic allowance, a line ending in T, V or Y
+  crossed the content box, by 0.23 pt (OUT) to 0.69 pt (a custom label ending in Y), and
+  lines ending in H, E, R or W stopped short of it. Each line now ends its ink exactly at the
+  edge, pulled in by its own last letter's lean, read from the font.
+  - The step 3 commit message says "up to 1.5 pt". That was an estimate, and wrong
+    (lessons.md, the factual-claim lesson).
+  - Most of the ink the browser band first found was round letters rising above cap height,
+    which is by design. The band allows 1 pt for that; the Node check allows 1.5% of the size.
+
+**Against the approved preview:** 564 signs (the 24 gallery and example signs, and the Node
+test's 540-sign grid), the app's renderer in Node against the preview in Chromium with
+Google's fonts.
+- **No sign changes outcome.** Every orientation that printed still prints, and every blocked
+  one is still blocked.
+- 80 "Too long" messages report a letter height 0.01 in lower (0.44 → 0.43), with the same
+  "cut about N".
+- **Sizes, from the unkerned fonts and glyph-box heights:** names move by at most 1.4% and
+  prices by 2.1%, measured with the dot fix undone.
+- **With the dot fix,** a sign with a dot beside a one-line note can reflow its name. ALL
+  CEREAL at 20% off goes on one line at 62.6 pt, not two at 75.3 pt: still over 0.6 in, and the
+  price barely moves.
+
+**Verified:**
+- `npm test`: 6343 assertions across 84 suites. `test-sign-render.mjs` has 320;
+  `test-shell-cache.mjs` has 33, with the new shipping guard.
+- `browser-sign-studio.mjs`: 174 pass across its 11 sections. Contrast over 248 texts is at
+  least 5.07:1 in light, 5.16:1 in dark and 5.48:1 in pure black.
+- **PDF and typing, under ×4 CPU throttling:** a PDF takes 188–246 ms (target 3 s) and is
+  75 KB. A keystroke is painted in 48 ms (target 300 ms), on a sign that does not fit.
+- **Offline, with the real service worker:** the sign draws, prints and makes a PDF from the
+  precache (13 paths).
+- `browser-mobile-menu.mjs`: 138 pass.
+- **Mutations,** each in its own copy of the tree and `dist/`:
+  - Node: 20 of 23 caught. The three survivors are equivalent:
+    - the 40% rule and the price floor never bind under the current constants, across
+      25,760 layouts;
+    - the hmtx tail can't differ for fonts where every glyph has its own metrics.
+    Both rule checks were shown to catch a mutant that does break them.
+  - Browser: 26 of 26 caught.
+  - Plus 3 asset-pin mutants and 4 shipping-guard mutants.
+  - Four of my first mutants were ineffective. Each was rewritten to test what it claimed,
+    and one exposed a weak check: typing in the middle of a name, now asserted.
+- No invisible or combining character was added to any file this PR touches. Scanned against
+  `main`; a new lesson in lessons.md says why.
+
+**Open:**
+- Brian, on the pilot iPhone in the installed app: does Print open at the right page size,
+  and does PDF open the share sheet? Chromium can't check either.
+- Follow-ups, not in this PR:
+  - WRS and Sign Studio to jsPDF 4.2.1. 2.5.1 has advisories, unreachable through the API
+    Sign Studio uses.
+  - `loadScript` never retries (weekly-retail-19).
 
 # Sign Studio: under Merchandising; Us vs Them kept; no fine print (2026-09-25)
 
