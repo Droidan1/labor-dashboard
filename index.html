@@ -8511,12 +8511,16 @@
     }
     /* jsPDF, onto the current page of `pdf` (unit pt, the layout's size). The
        four fonts are registered under FACES[k].fam first (loadFontsInto). A
-       missing one would fall back to Times, so each setFont is checked. */
+       missing one would fall back to Times, so each setFont is checked.
+       The logo goes in with 'FAST'. jsPDF decodes and re-encodes a PNG, and
+       its default for a compressed PDF, 'SLOW', took a median 400–440 ms on
+       this logo against 70–75 (Node), and took PDFs past the 3 s target under
+       ×4 CPU throttling (Chromium). Both are lossless. Measured 25 Sep. */
     function drawPDF(L, pdf, opts) {
       pdf.setCharSpace(0);   // so every text() below writes its own Tc
       for (const it of L.items) {
         if (it.t === 'border') { pdf.setDrawColor(COLORS.green); pdf.setLineWidth(it.sw); pdf.rect(it.x, it.y, it.w, it.h, 'S'); }
-        else if (it.t === 'logo') pdf.addImage(opts.logo, 'PNG', it.x, it.y, it.w, it.h, 'sign-logo');
+        else if (it.t === 'logo') pdf.addImage(opts.logo, 'PNG', it.x, it.y, it.w, it.h, 'sign-logo', 'FAST');
         else if (it.t === 'rule') { pdf.setDrawColor(it.green ? COLORS.green : COLORS.rule); pdf.setLineWidth(it.sw); pdf.setLineCap('round'); pdf.line(it.x1, it.y1, it.x2, it.y2); }
         else if (it.t === 'dot') { pdf.setFillColor(COLORS.dot); pdf.setDrawColor(COLORS.ink); pdf.setLineWidth(2.2); pdf.circle(it.cx, it.cy, it.r, 'FD'); }
         else if (it.t === 'text') {
@@ -16406,19 +16410,18 @@
   }
 
   async function downloadWrsAsPdf() {
-    // Lazy-load jsPDF + autotable only when the user first requests a PDF. Each is checked on
-    // its own: Sign Studio loads jsPDF WITHOUT autotable, and skipping both because jsPDF was
-    // already there left doc.autoTable undefined, so this export threw.
+    // Lazy-load jsPDF + autotable only when the user first requests a PDF: the copies vendored
+    // beside index.html, jsPDF through Sign Studio's loader so the two exports share one. Each
+    // is checked on its own: Sign Studio loads jsPDF WITHOUT autotable, and skipping both
+    // because jsPDF was already there left doc.autoTable undefined, so this export threw.
+    let jsPDFCtor;
     try {
-      if (!(window.jspdf?.jsPDF || window.jsPDF))
-        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
-      if (!(window.jspdf?.jsPDF || window.jsPDF)?.API?.autoTable)
-        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js');
+      jsPDFCtor = await ssLoadPdfLib();
+      if (!jsPDFCtor.API.autoTable) await loadScript('jspdf-autotable-5.0.8.min.js');
     } catch (e) {
       uiAlert('Failed to load PDF library. Check your connection and try again.'); return;
     }
-    const jsPDFCtor = window.jspdf?.jsPDF || window.jsPDF;
-    if (!jsPDFCtor) { uiAlert('PDF library failed to initialize — please try again.'); return; }
+    if (!jsPDFCtor.API.autoTable) { uiAlert('PDF library failed to initialize — please try again.'); return; }
 
     let activeLabel = 'Summary';
     const activeBtn = document.querySelector('#wrs-tabs .wrs-tab.text-\\[\\#3BB54A\\]')
@@ -32079,10 +32082,10 @@
   }
   window.ssEndPrint = ssEndPrint;
 
-  /* jsPDF, loaded on demand: 364 KB that only a PDF needs, so not a <script> tag in the page.
+  /* jsPDF, loaded on demand: 420 KB that only a PDF needs, so not a <script> tag in the page.
      sw.js precaches it, so this is a cache hit and works with no signal. One load at a time,
-     and a failure clears the promise so the next tap tries again. If the WRS export loaded
-     the same 2.5.1 from cdnjs first, that copy is used. */
+     and a failure clears the promise so the next tap tries again. The WRS export loads it
+     through here too, so the two share one copy whichever comes first. */
   let ssPdfLibPromise = null, ssPdfWarm = false, ssPdfBusy = false;
   const ssPdfLib = () => (window.jspdf && window.jspdf.jsPDF) || null;
   function ssLoadPdfLib() {
@@ -32091,7 +32094,7 @@
     ssPdfLibPromise = new Promise((resolve, reject) => {
       const s = document.createElement('script');
       const fail = () => { ssPdfLibPromise = null; s.remove(); reject(new Error("The PDF maker didn't load.")); };
-      s.src = 'jspdf-2.5.1.umd.min.js';
+      s.src = 'jspdf-4.2.1.umd.min.js';
       s.onload = () => { if (ssPdfLib()) resolve(ssPdfLib()); else fail(); };
       s.onerror = fail;
       document.head.appendChild(s);

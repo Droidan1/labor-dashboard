@@ -1,3 +1,139 @@
+# The PDF exports: jsPDF 2.5.1 → 4.2.1, and autotable 3.8.2 → 5.0.8 (2026-09-25)
+
+**Request (Brian):** move both PDF exports (Weekly Retail Summary, Sign Studio) from jsPDF 2.5.1
+to the current release. First confirm which of jsPDF's GitHub security advisories affect 2.5.1.
+
+## The advisories
+
+The GitHub Advisory Database, read through npm's advisory endpoints, lists **15 for `jspdf`.
+12 cover 2.5.1, and none covers 4.2.1** (the latest release, 2026-03-17). github.com and
+api.github.com are blocked from this session, so jsPDF's own Security tab could not be read.
+Instead, its git history was checked: between v2.5.1 and v4.2.1 there are 12 security fixes,
+one for each of the 12, each in the module its advisory names.
+
+| GHSA | Severity | Fixed in | Needs attacker input to | Reachable here? |
+|---|---|---|---|---|
+| w532-jxjh-hjhj | high | 3.0.1 | `addImage`/`html`/`addSvgAsImage` (a data-URL string) | No: the only image is our own PNG, as bytes |
+| 8mvj-3j78-4qmw | high | 3.0.2 | `addImage`/`html` (a corrupt PNG) | No: same |
+| f8cm-6447-x5h2 | critical | 4.0.0 | the **Node** build's `loadFile` | No: the browser UMD build is shipped |
+| pqxr-3g65-p328 | high | 4.1.0 | AcroForm choice/checkbox/radio | No: no AcroForm |
+| 95fx-jjr5-f39c | high | 4.1.0 | `addImage` (a BMP) | No: PNG only |
+| vm32-vv63-w422 | moderate | 4.1.0 | `addMetadata` (XMP) | No: not called (`setProperties` writes the Info dictionary) |
+| cjw8-79x6-5cj4 | moderate | 4.1.0 | `addJS` (shared state) | No: not called |
+| 9vjf-qc39-jprp | high | 4.2.0 | `addJS` | No: not called |
+| 67pg-wm7f-q7fj | high | 4.2.0 | `addImage` (a GIF) | No: PNG only |
+| p5xg-68wr-hm3m | high | 4.2.0 | AcroForm radio `appearanceState` | No: no AcroForm |
+| 7x6v-j9x4-qf24 | high | 4.2.1 | `createAnnotation` `color` | No: no annotations |
+| wfv2-pwc8-crg5 | critical | 4.2.1 | `output()`'s three new-window modes | No: Sign Studio uses `output('blob')`, WRS uses `save()` |
+
+The other three (GHSA-3q6f-8grx-pr4v and GHSA-vh59-v9r5-4mh4, both below 2.0.0; GHSA-57f3-gghm-9mhc,
+below 2.3.1) predate 2.5.1. jspdf-autotable has no advisories.
+
+## Decided
+
+- **jsPDF 4.2.1**, vendored byte for byte as `jspdf-4.2.1.umd.min.js` from the npm tarball
+  (sha512 checked against the registry), with its size and sha256 pinned. The 2.5.1 file goes.
+- **WRS loads that same copy through Sign Studio's loader** (`ssLoadPdfLib`), so there is one
+  path and one loader, and a failed load is retried on the next tap.
+- **jspdf-autotable 5.0.8**, the latest (5.0.7 and later declare `jspdf ^2 || ^3 || ^4`),
+  vendored the same way as `jspdf-autotable-5.0.8.min.js` and precached next to jsPDF.
+  This session cannot reach cdnjs, so a cdnjs URL for 5.0.8 could not be checked, and the
+  browser check had only ever answered the cdnjs URL with a stand-in. Vendored, the check runs
+  the real plugin. The options WRS passes are all current (4.0 removed only deprecated ones,
+  and none of them is used here).
+- **Sign Studio's logo is added with 'FAST' compression.** From 3.0.2, jsPDF decodes and
+  re-encodes every PNG. At its default for a compressed document ('SLOW'), adding the logo and
+  writing the PDF took a median of 400–440 ms in Node (two benchmarks). With 2.5.1 it took 3 ms,
+  because 2.5.1 embedded the PNG's own compressed data: its image stream is exactly the logo's
+  63,422 IDAT bytes. 'FAST' takes a median of 70–75 ms. Both are lossless. (Found while
+  building; the plan did not cover it. See the review.)
+- **charSpace:** 4.2.1's `text()` has the same branch as 2.5.1
+  (`options.charSpace || activeCharSpace`, and a `Tc` whenever that is defined). `drawPDF`'s
+  `setCharSpace(0)` still gives every text object its own `Tc`; the Node test checks every one.
+
+## Plan
+
+- [x] 1. Vendor both files; `build.sh` ships them; `sw.js` precaches them and bumps `CACHE_NAME`;
+      the 2.5.1 file is removed.
+- [x] 2. `index.html`:
+      - the loader's path;
+      - `drawPDF` passes 'FAST';
+      - WRS uses `ssLoadPdfLib` and the vendored autotable;
+      - the shell-cache fixture.
+- [x] 3. `test-sign-render.mjs`:
+      - pins both files;
+      - the recorder sees 'FAST';
+      - the real PDF's logo is Flate-compressed, not raw;
+      - "Real jsPDF" runs on 4.2.1.
+- [x] 4. `browser-sign-studio.mjs`:
+      - the new names;
+      - section 11 runs the real autotable and reads the table back out of the PDF;
+      - a new WRS-first case;
+      - no request reaches cdnjs.
+- [x] 5. Verify:
+      - `npm test`, then `build.sh` and the browser check, all sections;
+      - the same signs made with 2.5.1 and 4.2.1, content streams compared;
+      - the WRS PDF before and after (2.5.1 + 3.8.2 against 4.2.1 + 5.0.8), text and pixels
+        compared;
+      - mutations, each in its own copy of the tree.
+- [x] 6. Commit, push, draft PR, report.
+
+## Review
+
+**Done.** Both exports run jsPDF 4.2.1, vendored and precached. The WRS export adds autotable
+5.0.8, vendored the same way. There is no worker change and no migration; merging deploys it
+through Pages. `CACHE_NAME` goes from v245 to v246.
+
+**Nothing changes on paper.**
+- **Sign Studio:** the page content stream of every sign is byte-identical under 2.5.1 and
+  4.2.1, in all 10 printable sign and orientation cases. The logo is pixel-identical, and a
+  new Node check reads it back.
+- **WRS:** the same export was made from `main` and from this branch: 3 pages, KPI tiles, a
+  store table and a 65-row category table with totals. The two files differ in 64 bytes, all
+  in `/Producer` and the file `/ID`. `pdftotext -layout` gives identical output (176 lines).
+
+**A sign's PDF is slower.** Under ×4 CPU throttling in Chromium (same machine, run back to
+back), `main` took 131–254 ms and this branch takes 500–853 ms. The PDF is 88 KB, up from
+75 KB. At jsPDF's default compression it took 2.3–3.7 s, over the 3 s target in 2 of 4
+PDFs. That is why the logo goes in with 'FAST'. A whole PDF in Node, median of 9:
+- 9 ms with 2.5.1;
+- 88 ms with 4.2.1 and 'FAST';
+- 478 ms with 4.2.1 at its default.
+
+**charSpace.** The branch in 4.2.1's `text()` is unchanged from 2.5.1. Without `drawPDF`'s
+`setCharSpace(0)`, 4.2.1 writes no `Tc` for text with no letter spacing: the mutant fails with
+"label Tc null vs 0". So the guard stays, and with it every text object has its own `Tc`.
+
+**Verification:**
+- `npm test`: 6,360 assertions across 84 suites (6,343 before).
+  - `test-sign-render.mjs`: 335 (+15). Two new pins, 'FAST' at every sample, and the logo
+    compressed and pixel-identical.
+  - `test-shell-cache.mjs`: 35 (+2). Both files ship.
+- `browser-sign-studio.mjs`: 185 of 185 (174 before).
+  - Section 11 runs the real autotable and reads the table back out of the PDF.
+  - A new WRS-first case: after a 503 the export retries, and a sign made afterwards uses
+    the same jsPDF.
+  - No request goes to cdnjs.
+  - Section 10 checks both libraries are precached.
+- `browser-mobile-menu.mjs`: 138 of 138, unchanged.
+- **Mutations**, each in its own tree:
+  - Node, 7 of 7 caught: no 'FAST'; 'NONE'; no `setCharSpace(0)`; one expected pixel byte
+    changed; autotable out of `build.sh`; a byte flipped in each vendored file.
+  - Browser, 4 of 4 caught: WRS back on cdnjs; WRS loading jsPDF with `loadScript`, which does
+    not retry; the #293 autotable bug; autotable left out of the precache.
+
+**Changed while building:**
+- Measuring turned up the logo compression, which the plan did not cover.
+- The plan claimed WRS retries a failed jsPDF load, with nothing to check it. That claim now
+  has its own check.
+
+**Found, not fixed:**
+- `loadScript` still never retries (weekly-retail-19). After this change it loads only
+  autotable, and the follow-up already queued still applies.
+- A PDF now takes 0.37–0.59 s longer between the tap and the share sheet, under ×4 CPU
+  throttling (paired runs). It is worth confirming on the pilot iPhone that the share sheet
+  still opens.
+
 # Sign Studio: build the real page, first release, frontend only (2026-09-25)
 
 **Request (Brian):** *"Start building the Sign Studio page"*
