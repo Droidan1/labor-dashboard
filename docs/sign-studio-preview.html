@@ -170,6 +170,7 @@ button{font-family:inherit;}
   font-family:'Lilita One',cursive;font-size:14px;display:grid;place-content:center;}
 .side-name{font-family:'Lilita One',cursive;font-size:15px;letter-spacing:.02em;color:var(--ink);}
 .side-nav{flex:1;padding:0 8px 12px;display:flex;flex-direction:column;gap:3px;}
+.nav-group,.nav-sub{display:flex;flex-direction:column;gap:3px;}   /* a group and its open sub-menu, nested as in index.html */
 .nav-item{display:flex;align-items:center;height:42px;width:100%;border-radius:10px;cursor:default;
   color:var(--inkDim);font-size:.86rem;font-weight:500;border:0;background:transparent;text-align:left;}
 .nav-item.active{background:rgba(34,197,94,.12);color:#22c55e;font-weight:600;}
@@ -453,8 +454,8 @@ html.light .nav-item.active{background:rgba(34,197,94,.10);color:var(--accent);}
   <h1 class="doc-title">Sign Studio</h1>
   <p class="doc-sub">Type a product and a price or a percentage, pick the sale, print. Every sign comes out of <b>one template</b>, so every sign in every store looks like one family. This page is a review copy: nothing on it is wired to the app, and <code style="font-size:12px">docs/</code> never reaches production. The signs, though, are real: the same drawing the build will print, laid out in print points on US Letter.</p>
   <div class="doc-notes">
-    <div class="doc-note"><b>Decided on 24 Sep.</b> US Letter. Labels: None, Sale, Flash Sale, Manager Special, Blow Out, and custom text up to 12 characters. Product names up to 22 characters, never below 0.6-inch letters; a sign whose words fit only one orientation prints in that one. Managers (district managers included), admins, superusers. Print first; saving comes in the second release. <b>Picked:</b> layout C; Poppins for words and Luckiest Guy for numbers; an italic label; deep green; raised cents. <b>Sign types:</b> Price, % Off, and Us vs Them.</div>
-    <div class="doc-note ask"><b>Still open.</b><ol><li>Us vs Them on landscape. A name over about 17 characters needs two lines there, and two lines don't fit at 0.6 in, so those signs print portrait only. Give the name more room (YOU PAY drops from about 2.6 in to 1.9 in), or keep it as it is?</li><li>A fine-print line for an item code and date, as stores write on signs today?</li><li>Optional: print any sign from here and hang it on a store shelf.</li></ol></div>
+    <div class="doc-note"><b>Decided on 24 Sep.</b> US Letter. Labels: None, Sale, Flash Sale, Manager Special, Blow Out, and custom text up to 12 characters. Product names up to 22 characters, never below 0.6-inch letters; a sign whose words fit only one orientation prints in that one. Managers (district managers included), admins, superusers. Print first; saving comes in the second release. <b>Picked:</b> layout C; Poppins for words and Luckiest Guy for numbers; an italic label; deep green; raised cents. <b>Sign types:</b> Price, % Off, and Us vs Them. Us vs Them keeps its layout, so on landscape a name over about 17 characters prints portrait only. No fine-print line. <b>In the sidebar:</b> Merchandising ▸ Sign Studio, after Price Scan.</div>
+    <div class="doc-note ask"><b>Still open, for the pilot.</b><ol><li>A pilot store, its printer (color or black-and-white) and the viewing distance.</li><li>Optional: print any sign from here and hang it on a store shelf.</li></ol></div>
   </div>
 
   <div class="toolbar" role="toolbar" aria-label="Preview controls">
@@ -471,7 +472,7 @@ html.light .nav-item.active{background:rgba(34,197,94,.10);color:var(--accent);}
   <!-- 1 ─ the page -->
   <section class="sect" id="s-page">
     <div class="sect-h"><span class="sect-n">1</span><h2 class="sect-t">The page</h2></div>
-    <p class="sect-d">Marketing ▸ <b>Sign Studio</b>, as a manager sees it. It is fully working: type, pick, and both signs redraw from the one form. Switching layout, device or orientation keeps everything you typed. It opens on <b>C</b>, the layout you picked; A and B stay in the bar for comparison.</p>
+    <p class="sect-d">Merchandising ▸ <b>Sign Studio</b>, as a manager sees it. It is fully working: type, pick, and both signs redraw from the one form. Switching layout, device or orientation keeps everything you typed. It opens on <b>C</b>, the layout you picked; A and B stay in the bar for comparison.</p>
     <div class="layout-desc" id="layout-desc"></div>
     <div class="try" id="try"><span class="tb-lbl">Try</span>
       <button type="button" data-ex="cereal">Cereal · $2 · Flash Sale</button>
@@ -533,7 +534,7 @@ html.light .nav-item.active{background:rgba(34,197,94,.10);color:var(--accent);}
         <div class="panel-body"><ul>
           <li>The page as <b>layout C</b>: what's on sale, then which sale, then print.</li>
           <li>Three sign types: <b>Price</b> (one or two prices), <b>% Off</b> (one or two percentages) and <b>Us vs Them</b> (their price, the worked-out discount, you pay).</li>
-          <li><b>Marketing ▸ Sign Studio</b> for managers, admins and superusers. Its own guard in the router, equal to its sidebar gate, so the phone Menu can't show a dead row.</li>
+          <li><b>Merchandising ▸ Sign Studio</b>, after Price Scan, for managers, admins and superusers. The group already shows for all of them. The item gets its own gate, because executives see the group for Price Scan, and a router guard equal to that gate, so the phone Menu can't show a dead row.</li>
           <li>The renderer as its own module: one layout model feeds the preview, Print and the PDF, so they cannot disagree.</li>
           <li>Real-text PDF: jsPDF with Poppins and Luckiest Guy embedded as static TrueType files. Logo, fonts and jsPDF self-hosted and precached, so it keeps working if the store Wi-Fi drops.</li>
           <li>Its own print container and page size; the app's print rule would print a blank page.</li>
@@ -1545,15 +1546,18 @@ const NAVI = {
   dash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>',
   bag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18M16 10a4 4 0 0 1-8 0"/></svg>',
   box: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>',
-  tag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L2 12V2h10l8.6 8.6a2 2 0 0 1 0 2.8z"/><circle cx="7" cy="7" r="1.5"/></svg>',
   mega: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>',
-  cam: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>',
   sign: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M7 9h6M7 13h10"/></svg>',
   truck: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 3h15v13H1zM16 8h4l3 3v5h-7z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>',
   chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m6 9 6 6 6-6"/></svg>',
   chevr: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m9 6 6 6-6 6"/></svg>',
   menu: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>',
   up: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
+  // The next four are index.html's own (nav-merch, nav-merch-scan, nav-merch-shelf-count, nav-labor).
+  merch: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="9" x2="9" y2="15"/><line x1="15" y1="15" x2="15" y2="21"/></svg>',
+  scan: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="8" x2="7" y2="16"/><line x1="10.5" y1="8" x2="10.5" y2="16"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="17" y1="8" x2="17" y2="16"/></svg>',
+  shelf: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="7" x2="21" y2="7"/><line x1="3" y1="13" x2="21" y2="13"/><line x1="3" y1="19" x2="21" y2="19"/><line x1="7" y1="4" x2="7" y2="7"/><line x1="13" y1="10" x2="13" y2="13"/><line x1="10" y1="16" x2="10" y2="19"/></svg>',
+  labor: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg>',
 };
 function svgIcon(k) { const s = document.createElement('span'); s.innerHTML = NAVI[k]; return s.firstChild; } // static markup only
 function navItem(label, ic, opts = {}) {
@@ -1561,14 +1565,27 @@ function navItem(label, ic, opts = {}) {
     h('span', { class: 'nav-icon' }, svgIcon(ic)), h('span', null, label),
     opts.chev ? h('span', { class: 'nav-chev' }, svgIcon(opts.chev)) : null, opts.isNew ? h('span', { class: 'nav-new' }, 'NEW') : null);
 }
+/* A group, open or shut, with its items nested inside it as in index.html. */
+function navGroup(key, label, ic, items) {
+  return h('div', { class: 'nav-group', 'data-group': key }, navItem(label, ic, { chev: items ? 'chev' : 'chevr' }),
+    items ? h('div', { class: 'nav-sub' }, items) : null);
+}
+/* The real sidebar's order (index.html:1007-1140) as a MANAGER sees it: Marketing
+   shows them only Submit Photos, and Merchandising only Price Scan and Shelf Count.
+   Sign Studio joins Merchandising (Brian, 24 Sep) after Price Scan: look up the
+   price, then make its sign. */
 function sidebar() {
   return h('aside', { class: 'side', 'aria-label': 'Sidebar (mock, manager view)' },
     h('div', { class: 'side-logo' }, h('span', { class: 'side-mark' }, 're'), h('span', { class: 'side-name' }, 'RETJG HUB')),
     h('div', { class: 'side-nav' },
-      navItem('Dashboard', 'dash'), navItem('Retail', 'bag'), navItem('Supply Request', 'truck'),
-      navItem('Inventory', 'box', { chev: 'chevr' }), navItem('Merchandising', 'tag', { chev: 'chevr' }),
-      navItem('Marketing', 'mega', { chev: 'chev' }),
-      navItem('Submit Photos', 'cam', { sub: true }), navItem('Sign Studio', 'sign', { sub: true, active: true, isNew: true })),
+      navItem('Dashboard', 'dash'), navItem('Retail Summary', 'bag'),
+      navGroup('marketing', 'Marketing', 'mega'),
+      navGroup('merch', 'Merchandising', 'merch', [
+        navItem('Price Scan', 'scan', { sub: true }),
+        navItem('Sign Studio', 'sign', { sub: true, active: true, isNew: true }),
+        navItem('Shelf Count', 'shelf', { sub: true })]),
+      navGroup('inventory', 'Inventory', 'box'),
+      navItem('Labor', 'labor'), navItem('Supply Request', 'truck')),
     h('div', { class: 'side-foot' }, h('div', { class: 'side-user' }, h('span', { class: 'side-av' }, 'JM'),
       h('div', null, h('div', { class: 'side-un' }, 'Jordan M.'), h('div', { class: 'side-ur' }, 'Manager · Dupont')))));
 }
