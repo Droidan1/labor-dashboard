@@ -75,6 +75,15 @@ under Merchandising in the sidebar"*
   container's UTC at 00:2x, the only failure is the known `test-daily-auction-column.mjs` clock
   window from the entry below. That's outside this branch, and it is queued as its own task.
 
+**Replayed onto `main` after #291 merged under me:**
+- Brian merged #291 at 00:21 (merge commit 5e57d23, head 4ecf625). That was before I pushed this
+  work as a3f14dd at 00:30, onto the merged branch. I had also rewritten #291's description to
+  claim it.
+- Now the branch restarts from `main`, the commit is cherry-picked as 4f1867a (same content), and
+  it goes up as a new PR. #291's description is back to what it merged.
+- `tasks/lessons.md` rule 6 already covered this exact case, which is why it recurred. The
+  lesson's heading now names the rule, and a guard in the push command checks it.
+
 ---
 
 # Sign Studio: 22-character names, and each orientation prints on its own (2026-09-25)
