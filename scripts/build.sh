@@ -12,10 +12,15 @@ mkdir -p dist/html
 # committed to the repo but NEVER reaches production, and 404s silently.
 # BLlogo.svg is still used by the Bargain Lane Hourly Snapshot panel.
 cp index.html sw.js manifest.json \
-   jsqr.min.js \
-   retjg-logo.png retjg-logo-email.png \
+   jsqr.min.js jspdf-2.5.1.umd.min.js \
+   retjg-logo.png retjg-logo-email.png sign-logo.png \
    BLlogo.svg icon-192.png icon-512.png apple-touch-icon.png \
    dist/
+
+# Sign Studio's print fonts, with the licences they are distributed under.
+# fonts/README.md says where they came from; it stays in the repo.
+mkdir -p dist/fonts
+cp fonts/*.ttf fonts/*.txt dist/fonts/
 
 # Custom-domain marker. Harmless for Cloudflare Pages (it uses its own domain
 # config); REQUIRED for the GitHub Pages Actions deploy so www.retjghub.com

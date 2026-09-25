@@ -48,5 +48,46 @@ ok(/caches\.delete\(k\)/.test(sw), 'activate() still drops caches that are not t
 ok(/self\.skipWaiting\(\)/.test(sw), '…and the new worker still takes over immediately');
 ok(/k !== CACHE_NAME/.test(sw), '…keyed on CACHE_NAME, which is what makes bumping it work');
 
+// 🧱 EVERY PRECACHED PATH MUST EXIST AND SHIP. install() runs cache.addAll(), which is
+// all-or-nothing: one 404 in PRECACHE_ASSETS rejects the whole install, the new worker never
+// activates, and every installed app stays on its old build with no error anyone sees.
+// build.sh is an explicit allowlist, so "committed" is not "shipped". This reads build.sh the
+// way bash would run it: every `cp … dist/` with its globs expanded, plus tailwind's `-o`.
+console.log('Precache paths ship');
+const build = fs.readFileSync(path.join(repo, 'scripts/build.sh'), 'utf8').replace(/\\\n/g, ' ');
+const shipped = new Set(), fromRepo = new Map();
+const expand = src => {
+  if (!src.includes('*')) return [src];
+  const dir = path.posix.dirname(src), re = new RegExp('^' + path.posix.basename(src)
+    .replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*') + '$');
+  return fs.readdirSync(path.join(repo, dir)).filter(f => re.test(f)).map(f => path.posix.join(dir, f));
+};
+for (const line of build.split('\n')) {
+  // A `cp` that starts a command. The `find html … -exec cp` line is not one, and nothing
+  // under html/ is precached.
+  const m = line.match(/(?:^|&&\s*)cp\s+([^;&|]+)/);
+  if (!m) continue;
+  const args = m[1].trim().split(/\s+/).filter(a => !a.startsWith('-'));
+  const dest = args.pop();
+  if (!/^dist(\/|$)/.test(dest)) continue;
+  for (const src of args.flatMap(expand)) {
+    const out = path.posix.join(dest, path.posix.basename(src)).replace(/^dist\/?/, '');
+    shipped.add(out); fromRepo.set(out, src);
+  }
+}
+for (const m of build.matchAll(/\s-o\s+dist\/(\S+)/g)) shipped.add(m[1]);   // generated: tailwind.css
+const precache = [...((sw.match(/const PRECACHE_ASSETS = \[([\s\S]*?)\];/) || [])[1] || '')
+  .replace(/\/\/.*$/gm, '').matchAll(/'([^']+)'/g)].map(m => m[1]);
+
+// The reader has to have found what it claims to read, or every check below passes on nothing.
+ok(precache.length >= 5 && precache.includes('./index.html'), `PRECACHE_ASSETS was read (${precache.length} paths)`);
+ok(shipped.has('index.html') && shipped.has('sw.js') && shipped.has('jsqr.min.js') && shipped.has('tailwind.css'),
+   'build.sh was read: index.html, sw.js, jsqr.min.js and tailwind.css all ship');
+for (const p of precache) {
+  const rel = p.replace(/^\.\//, '') || 'index.html';   // './' is served as index.html
+  ok(shipped.has(rel), `${p} is precached but build.sh never copies it to dist/, so every install would fail`);
+  if (fromRepo.has(rel)) ok(fs.existsSync(path.join(repo, fromRepo.get(rel))), `${p} is precached but ${fromRepo.get(rel)} is not in the repo`);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
