@@ -1,3 +1,74 @@
+# Sign Studio: build the real page, first release, frontend only (2026-09-25)
+
+**Request (Brian):** *"Start building the Sign Studio page"*
+
+The design (`docs/sign-studio-preview.html`, #291 and #292) and PRD v1.5 are approved. This
+builds the page into the app. There is no worker change and no migration; merging deploys it
+through Pages.
+
+## Decided
+
+- **Page `merch-signs`, Merchandising ▸ Sign Studio**, after Price Scan. Managers (district
+  managers included), admins and superusers. Not executives, staff or associates, and not
+  grantable. Shelf Count is the model, since Price Scan's list includes executives.
+- **The renderer is a module in `index.html`:** `<script id="sign-render">`, one IIFE that
+  exposes `window.SignRender`, with no top-level bindings and no DOM at load time. It holds the
+  preview's approved logic, plus two drawers (SVG and PDF) fed the same item list.
+- **Text is measured from the font files**, through a small TTF reader, so the preview, the
+  PDF and the Node tests get the same widths on every device. The subset fonts carry no
+  kerning or shaping tables.
+- **Assets:** four subset TTFs in `fonts/`, the logo flattened to RGB in `sign-logo.png`, and
+  jsPDF 2.5.1 vendored. All are precached.
+- **Print** uses the sign's own container and `@page` rule, cleared on `afterprint` and when
+  leaving the page, never on a timer. **PDF** has real text and embedded fonts, and goes to the
+  share sheet where there is one, otherwise a download.
+- **The sign in progress survives an app update:** a 12-hour localStorage draft per user, and
+  the service worker's reload waits while a sign is in progress.
+- **The WRS PDF export gets fixed in the same PR.** Once Sign Studio has loaded jsPDF, that
+  export would otherwise skip loading autotable and throw.
+
+## Plan
+
+One PR, one commit per step, `npm test` green at every commit.
+
+- [ ] 1. Assets:
+      - `fonts/` (TTFs, licences, README with the source commit and command), `sign-logo.png`,
+        `jspdf-2.5.1.umd.min.js`;
+      - `build.sh` ships them;
+      - `test-shell-cache.mjs` fails if a precached path is missing or unshipped.
+- [ ] 2. Renderer: `<script id="sign-render">` and `scripts/test-sign-render.mjs`, covering the
+      parsers, the field rules, known outcomes with the real fonts, layout invariants, the two
+      drawers agreeing, and real jsPDF in `vm`. Cache bumped.
+- [ ] 3. The page:
+      - sidebar, role toggle, router guard and init, `NAV_BUSINESS`, the container and Layout C;
+      - precache the fonts and logo;
+      - `browser-mobile-menu.mjs` updated;
+      - new `scripts/browser-sign-studio.mjs`: roles, Layout C, geometry, per-orientation gating,
+        contrast in three themes, font failure.
+- [ ] 4. Print, with the browser checks for page size, fonts, cleanup, and a dashboard print
+      still Letter portrait.
+- [ ] 5. PDF: the retrying loader, share or download, the WRS autotable fix, and jsPDF
+      precached. Checks for the 3 s target, embedded fonts, text positions and a retry
+      after a 503.
+- [ ] 6. Draft and the reload guard, with checks for restore, the TTL, another user's draft,
+      and `controllerchange`.
+- [ ] 7. Docs:
+      - this review;
+      - a DESIGN.md §2.2 line: the SS fonts are print-only;
+      - a gallery comparison against the preview, since removing kerning can widen a few
+        prices.
+- [ ] Mutations, one aimed at each new check, each in its own copy of the tree.
+- [ ] `npm test`, `browser-mobile-menu.mjs`, draft PR, report.
+
+## Verification
+
+- Done means:
+  - `npm test` passes, including the new Node test;
+  - `browser-sign-studio.mjs` passes in light, dark and pure black;
+  - every mutant on the list fails a check.
+- Brian then checks on the pilot iPhone, in the installed app, that Print opens at the right
+  page size. Chromium can't check that.
+
 # Sign Studio: under Merchandising; Us vs Them kept; no fine print (2026-09-25)
 
 **Request (Brian):** *"Keep the Us vs Them layout as is, no fine print. Also make sure this page in
