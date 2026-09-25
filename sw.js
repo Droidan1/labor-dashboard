@@ -1,4 +1,4 @@
-const CACHE_NAME = 'dashboard-cache-v241';
+const CACHE_NAME = 'dashboard-cache-v242';
 
 // Pre-fetched and cached on install
 const PRECACHE_ASSETS = [
@@ -13,6 +13,15 @@ const PRECACHE_ASSETS = [
   './apple-touch-icon.png',
   './icon-192.png',
   './retjg-logo.png',
+  // Sign Studio's sign: its four fonts and the logo, about 112 KB. Precached so a sign can
+  // be made and printed on bad store wifi or none. Nothing is drawn until all five load, so
+  // a sign never fits or prints in a fallback face. scripts/test-shell-cache.mjs checks
+  // every path here ships: one 404 would fail the whole install.
+  './sign-logo.png',
+  './fonts/poppins-700.ttf',
+  './fonts/poppins-900.ttf',
+  './fonts/poppins-900-italic.ttf',
+  './fonts/luckiest-guy-400.ttf',
 ];
 
 // CDN + font hosts: versioned/immutable — serve cache-first

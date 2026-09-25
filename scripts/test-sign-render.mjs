@@ -216,7 +216,8 @@ eq(v.layouts.portrait.items.filter(i => i.role === 'label').length, 0, 'no label
 console.log('Layout invariants');
 const inkOf = it => {
   const f = fonts[it.font], chars = [...it.text];
-  return { x0: it.x, x1: it.x + it.w, y0: it.y - it.size * Math.max(0, ...chars.map(f.up)), y1: it.y + it.size * Math.max(0, ...chars.map(f.down)) };
+  return { x0: it.x + it.size * f.inkLeft(chars[0]), x1: it.x + it.w + it.size * f.inkRight(chars[chars.length - 1]),
+           y0: it.y - it.size * Math.max(0, ...chars.map(f.up)), y1: it.y + it.size * Math.max(0, ...chars.map(f.down)) };
 };
 const boxOf = it => it.t === 'text' ? inkOf(it) : it.t === 'logo' ? { x0: it.x, x1: it.x + it.w, y0: it.y, y1: it.y + it.h }
   : it.t === 'dot' ? { x0: it.cx - it.r, x1: it.cx + it.r, y0: it.cy - it.r, y1: it.cy + it.r } : null;
@@ -244,11 +245,16 @@ for (const s of grid) {
   for (const o of R.ORIENTS) {
     if (r.blocked[o]) { blockedCount++; if (!Object.keys(r.msgs).length) fault('blocked with no message', `${o} ${tag}`); continue; }
     printable++;
-    const L = r.layouts[o], inner = 18 + 13;   // the border's inner edge
+    const L = r.layouts[o], inner = 18 + 13 + 20;   // the content box: margin, border, pad
     const boxes = L.items.map(it => ({ it, b: boxOf(it) })).filter(x => x.b);
-    for (const { it, b } of boxes)
-      if (b.x0 < inner - 0.01 || b.y0 < inner - 0.01 || b.x1 > L.W - inner + 0.01 || b.y1 > L.H - inner + 0.01)
-        fault('outside the border', `${o} ${it.role || it.t} ${tag}`);
+    // Round letters overshoot the cap height and the baseline by about 1% of their size, by
+    // design (the O in BLOW, measured: 0.012 em), and the box is budgeted in cap heights. So
+    // 1.5% of a text's size is allowed; a letter hanging sideways out of the box is not.
+    for (const { it, b } of boxes) {
+      const tol = it.t === 'text' ? 0.015 * it.size : 0.01;
+      if (b.x0 < inner - tol || b.y0 < inner - tol || b.x1 > L.W - inner + tol || b.y1 > L.H - inner + tol)
+        fault('ink outside the content box', `${o} ${it.role || it.t} ${tag} (${[b.x0, b.y0, L.W - b.x1, L.H - b.y1].map(v => v.toFixed(2)).join(',')})`);
+    }
     for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
       const a = boxes[i].b, b = boxes[j].b;
       if (a.x0 < b.x1 - 0.01 && b.x0 < a.x1 - 0.01 && a.y0 < b.y1 - 0.01 && b.y0 < a.y1 - 0.01)
@@ -273,13 +279,13 @@ for (const s of grid) {
 const ms = Date.now() - t0;
 console.log(`  grid: ${grid.length} signs, ${printable} printable, ${blockedCount} blocked, ${ms} ms`);
 ok(grid.length === 540 && printable > 600 && blockedCount > 50, `the grid covers ${grid.length} signs: ${printable} printable orientations, ${blockedCount} blocked (${ms} ms)`);
-for (const k of ['blocked with no message', 'outside the border', 'overlap', 'name under 0.6 in', 'price not the biggest text',
+for (const k of ['blocked with no message', 'ink outside the content box', 'overlap', 'name under 0.6 in', 'price not the biggest text',
                  'two names at two sizes', 'two prices at two sizes', 'their price over 40% of the hero'])
   ok(!faults[k], `no printable sign has: ${k}${faults[k] ? ` (${faults[k].length}, e.g. ${faults[k][0]})` : ''}`);
 // The checks above must be able to fail: the same measure applied to a sign moved 30 pt.
 {
-  const L = V(OKSIGN).layouts.landscape, shifted = L.items.map(it => it.t === 'text' ? Object.assign({}, it, { x: it.x + 400 }) : it);
-  ok(shifted.some(it => { const b = boxOf(it); return b && b.x1 > L.W - 31; }), 'the border check catches a sign pushed off its edge');
+  const L = V(OKSIGN).layouts.landscape, shifted = L.items.map(it => it.t === 'text' ? Object.assign({}, it, { x: it.x + 30 }) : it);
+  ok(shifted.some(it => { const b = boxOf(it); return b && b.x1 > L.W - 51 + 0.01; }), 'the content-box check catches a sign pushed 30 pt');
 }
 
 // ── 7. The two drawers draw the same thing ───────────────────────────────────

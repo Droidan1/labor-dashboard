@@ -1049,6 +1049,10 @@
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="8" x2="7" y2="16"/><line x1="10.5" y1="8" x2="10.5" y2="16"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="17" y1="8" x2="17" y2="16"/></svg></span>
               <span class="nav-label">Price Scan</span>
             </div>
+            <div id="nav-merch-signs" class="nav-item nav-subitem" data-page="merch-signs" onclick="navigateToPage('merch-signs')">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M7 9h6M7 13h10"/></svg></span>
+              <span class="nav-label">Sign Studio</span>
+            </div>
             <div id="nav-merch-coverage" class="nav-item nav-subitem" data-page="merch-coverage" data-menu-hint="Desktop" onclick="navigateToPage('merch-coverage')">
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
               <span class="nav-label">Coverage</span>
@@ -5110,6 +5114,188 @@
       </div>
     </div>
 
+    <!-- ── Merchandising: Sign Studio ───────────────────────────────────────────
+         Prints the store's sale signs in three steps: what's on sale, which sale,
+         print. The sign itself is drawn by window.SignRender (the #sign-render script);
+         this page is the form around it. Layout C of docs/sign-studio-preview.html,
+         the design Brian picked (24 Sep). #ss-root holds ONLY what ssRender owns
+         (DESIGN.md §4.8 trap 7), and no id inside this page starts with "page-":
+         showOnlyPage toggles every one of those. -->
+    <div id="page-merch-signs" class="hidden">
+      <style>
+        /* DESIGN.md §4.8 panel anatomy. Every colour is a token, stated on the page for each
+           theme (trap 3): light from opl-*, dark from the --op-* variables so pure black
+           follows them (§2.1), and html.oled restates the hairline and border, which are not
+           variables. Green, amber and red TEXT take the light-safe values of §4.8 (#166534,
+           #92400e, #a93226); fills keep the brand hex. The SIGN is paper: white in every
+           theme, drawn by SignRender, never styled here. */
+        #page-merch-signs{--ss-panel:#ffffff;--ss-panelHi:#fafaf6;--ss-ink:#14110a;--ss-inkDim:#6b6453;
+          --ss-hairline:rgba(20,16,8,.10);--ss-border:rgba(20,16,8,.18);
+          --ss-accent:#166534;--ss-greenWash:rgba(34,197,94,.10);--ss-greenEdge:rgba(22,101,52,.30);
+          --ss-amber:#92400e;--ss-amberWash:rgba(245,158,11,.16);--ss-amberEdge:rgba(180,83,9,.45);
+          --ss-bad:#a93226;--ss-badWash:rgba(192,57,43,.10);--ss-badEdge:rgba(192,57,43,.40);
+          --ss-blue:#1d4ed8;--ss-blueWash:rgba(29,78,216,.08);--ss-blueEdge:rgba(29,78,216,.32);
+          --ss-paperEdge:rgba(20,16,8,.20);color:var(--ss-ink)}
+        .dark #page-merch-signs{--ss-panel:rgb(var(--op-panel));--ss-panelHi:rgb(var(--op-panelHi));
+          --ss-ink:rgb(var(--op-ink));--ss-inkDim:rgb(var(--op-inkDim));
+          --ss-hairline:rgba(255,255,255,.09);--ss-border:rgba(255,255,255,.16);
+          --ss-accent:#22c55e;--ss-greenEdge:rgba(34,197,94,.30);
+          --ss-amber:#f59e0b;--ss-amberWash:rgba(245,158,11,.14);--ss-amberEdge:rgba(245,158,11,.45);
+          --ss-bad:#f87171;--ss-badWash:rgba(239,68,68,.12);--ss-badEdge:rgba(239,68,68,.42);
+          --ss-blue:#60a5fa;--ss-blueWash:rgba(96,165,250,.12);--ss-blueEdge:rgba(96,165,250,.38);
+          --ss-paperEdge:rgba(255,255,255,.18);color-scheme:dark}   /* trap 4: UA-drawn controls, this page only */
+        html.oled #page-merch-signs{--ss-hairline:rgba(255,255,255,.14);--ss-border:rgba(255,255,255,.22)}
+        #ss-root{scroll-margin-top:140px}
+        #page-merch-signs button{font-family:inherit}
+        .ss-steps{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+        .ss-step{display:flex;align-items:center;gap:8px;min-height:40px;padding:6px 14px 6px 8px;border-radius:999px;
+          border:1px solid var(--ss-border);background:var(--ss-panel);color:var(--ss-inkDim);font-size:13px;font-weight:600;cursor:pointer}
+        .ss-step .ss-n{width:24px;height:24px;border-radius:50%;display:grid;place-content:center;font-size:12px;font-weight:700;
+          background:var(--ss-panelHi);border:1px solid var(--ss-border);color:var(--ss-ink)}
+        .ss-step[aria-current="step"]{color:var(--ss-ink);border-color:#22c55e}
+        .ss-step[aria-current="step"] .ss-n{background:#22c55e;border-color:#22c55e;color:#06210f}
+        .ss-step.done .ss-n{background:var(--ss-greenWash);border-color:var(--ss-greenEdge);color:var(--ss-accent)}
+        .ss-grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
+        .ss-panel{background:var(--ss-panel);border:1px solid var(--ss-hairline);border-radius:14px;overflow:hidden;color:var(--ss-ink)}
+        .ss-bar{background:var(--ss-panelHi);border-bottom:1px solid var(--ss-hairline);color:var(--ss-ink);padding:13px 18px;
+          display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+        .ss-lbl{font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--ss-inkDim)}
+        .ss-right{margin-left:auto;display:flex;gap:8px;align-items:center}
+        .ss-body{padding:16px 18px}
+        .ss-fld{display:flex;flex-direction:column;gap:5px;margin-bottom:14px;min-width:0}
+        .ss-fld-top{display:flex;align-items:baseline;gap:8px}
+        .ss-fld-l{font-size:13px;font-weight:600;color:var(--ss-ink)}
+        .ss-req{color:var(--ss-inkDim);font-weight:500}
+        .ss-count{margin-left:auto;font-size:12px;color:var(--ss-inkDim);font-variant-numeric:tabular-nums}
+        .ss-count.near{color:var(--ss-amber);font-weight:700}
+        /* 16px on every input: anything smaller and iOS Safari zooms the page on focus. */
+        .ss-inp{width:100%;font-family:inherit;font-size:16px;color:var(--ss-ink);background:var(--ss-panelHi);
+          border:1px solid var(--ss-border);border-radius:10px;padding:10px 12px;min-height:44px;outline:none;min-width:0}
+        .ss-inp::placeholder{color:var(--ss-inkDim);opacity:1}
+        .ss-inp:focus{border-color:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.18)}
+        .ss-inp.bad{border-color:var(--ss-badEdge);background:var(--ss-badWash)}
+        .ss-money,.ss-pct{position:relative}
+        .ss-money .ss-inp{padding-left:26px;font-variant-numeric:tabular-nums}
+        .ss-money::before{content:'$';position:absolute;left:12px;top:50%;transform:translateY(-50%);
+          color:var(--ss-inkDim);font-weight:600;pointer-events:none}
+        .ss-pct .ss-inp{padding-right:60px;font-variant-numeric:tabular-nums}
+        .ss-pct::after{content:'% off';position:absolute;right:12px;top:50%;transform:translateY(-50%);
+          color:var(--ss-inkDim);font-weight:600;pointer-events:none}
+        .ss-msg{font-size:12.5px;line-height:1.45;color:var(--ss-bad)}
+        .ss-msg:empty{display:none}
+        .ss-hint{font-size:12px;color:var(--ss-inkDim);line-height:1.45}
+        .ss-row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+        /* The worked-out discount (Us vs Them) reads as a result, not a field. */
+        .ss-calc{font-size:13px;line-height:1.5;padding:9px 12px;border-radius:10px;margin:-2px 0 14px;
+          background:var(--ss-panelHi);border:1px dashed var(--ss-border);color:var(--ss-ink)}
+        .ss-calc b{color:var(--ss-accent);font-weight:700}
+        .ss-calc-d{color:var(--ss-inkDim)}
+        .ss-grp{border:1px solid var(--ss-hairline);border-radius:12px;padding:12px 12px 0;margin-bottom:12px;
+          background:var(--ss-panel);color:var(--ss-ink)}
+        .ss-grp-h{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ss-inkDim);margin-bottom:10px}
+        .ss-chips{display:flex;flex-wrap:wrap;gap:6px}
+        .ss-chip{font-size:13px;font-weight:600;padding:8px 14px;min-height:40px;border-radius:999px;cursor:pointer;
+          background:var(--ss-panelHi);color:var(--ss-ink);border:1px solid var(--ss-border)}
+        .ss-chip[aria-pressed="true"]{background:#22c55e;border-color:#22c55e;color:#06210f}
+        .ss-chk{display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;color:var(--ss-ink);
+          cursor:pointer;margin-bottom:12px;min-height:40px}
+        .ss-chk input{width:20px;height:20px;margin:0;accent-color:#22c55e}
+        .ss-dot{width:14px;height:14px;border-radius:50%;background:#ffd200;border:2px solid #111111;flex-shrink:0}
+        .ss-btn{font-weight:700;border-radius:11px;cursor:pointer;border:1px solid transparent;font-size:14px;padding:10px 16px;
+          min-height:44px;display:inline-flex;align-items:center;gap:7px;justify-content:center;white-space:nowrap}
+        .ss-btn svg{width:16px;height:16px}
+        .ss-primary{background:#22c55e;color:#06210f}
+        .ss-ghost{background:transparent;color:var(--ss-ink);border-color:var(--ss-border)}
+        .ss-link{background:transparent;border:0;color:var(--ss-accent);padding:8px 2px;font-weight:700;font-size:13.5px;
+          min-height:40px;cursor:pointer}
+        .ss-btn:disabled{opacity:.45;cursor:not-allowed}
+        .ss-disclose{border-top:1px dashed var(--ss-border);margin:4px 0 14px;padding-top:10px}
+        .ss-disclose summary{cursor:pointer;font-size:13px;font-weight:700;color:var(--ss-accent);list-style:none;
+          min-height:36px;display:flex;align-items:center}
+        .ss-disclose summary::-webkit-details-marker{display:none}
+        .ss-disclose summary::before{content:'+';display:inline-block;width:14px}
+        .ss-disclose[open] summary::before{content:'−'}
+        .ss-disclose[open] summary{margin-bottom:10px}
+        .ss-note{display:flex;gap:9px;align-items:flex-start;padding:10px 12px;border-radius:10px;font-size:13px;line-height:1.5;
+          background:var(--ss-blueWash);border:1px solid var(--ss-blueEdge);color:var(--ss-ink)}
+        .ss-note svg{width:16px;height:16px;flex-shrink:0;margin-top:2px;color:var(--ss-blue)}
+        .ss-note.err{background:var(--ss-badWash);border-color:var(--ss-badEdge)}
+        .ss-note.err svg{color:var(--ss-bad)}
+        .ss-note.warn{background:var(--ss-amberWash);border-color:var(--ss-amberEdge)}
+        .ss-note.warn svg{color:var(--ss-amber)}
+        .ss-note b{font-weight:700}
+        .ss-errlist{margin:4px 0 0 18px;list-style:disc}
+        .ss-pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:11.5px;
+          font-weight:700;white-space:nowrap}
+        .ss-pill i{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
+        .ss-pill.ok{background:var(--ss-greenWash);border:1px solid var(--ss-greenEdge);color:var(--ss-accent)}
+        .ss-pill.no{background:var(--ss-badWash);border:1px solid var(--ss-badEdge);color:var(--ss-bad)}
+        .ss-pill.wait{background:var(--ss-panel);border:1px solid var(--ss-border);color:var(--ss-inkDim)}
+        .ss-pill.part{background:var(--ss-amberWash);border:1px solid var(--ss-amberEdge);color:var(--ss-amber)}
+        .ss-seg{display:inline-flex;border:1px solid var(--ss-border);border-radius:9px;overflow:hidden;background:var(--ss-panel)}
+        .ss-seg button{background:transparent;border:0;color:var(--ss-inkDim);cursor:pointer;font-size:12px;font-weight:600;
+          padding:0 10px;min-height:36px;white-space:nowrap}
+        .ss-seg button+button{border-left:1px solid var(--ss-border)}
+        .ss-seg button[aria-pressed="true"]{background:#22c55e;color:#06210f}
+        .ss-bar .ss-seg{margin-left:auto}
+        /* The sign's paper: white in every theme; only its outline is the theme's. */
+        .ss-sheet{position:relative;background:#ffffff;border-radius:4px;outline:1px solid var(--ss-paperEdge);overflow:hidden;width:100%}
+        .ss-sheet.land{aspect-ratio:11/8.5}
+        .ss-sheet.port{aspect-ratio:8.5/11}
+        .ss-sheet svg{display:block;width:100%;height:100%}
+        .ss-skel{position:absolute;inset:0;background:linear-gradient(100deg,#f1f1f1 30%,#e6e6e6 50%,#f1f1f1 70%);
+          background-size:200% 100%;animation:ss-skel 1.6s linear infinite}
+        @keyframes ss-skel{to{background-position:-200% 0}}
+        @media (prefers-reduced-motion:reduce){.ss-skel{animation:none}}
+        .ss-fail{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
+          padding:12px;text-align:center;background:#fafafa;color:#3d3d3d;font-size:13px;line-height:1.45}
+        .ss-fail b{color:#a93226}
+        .ss-fail .ss-btn{background:#111111;color:#ffffff;min-height:40px}
+        .ss-cap-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}
+        .ss-cap{font-size:12px;color:var(--ss-inkDim);font-variant-numeric:tabular-nums}
+        .ss-cap b{color:var(--ss-ink);font-weight:600}
+        .ss-readout{font-size:12px;color:var(--ss-inkDim);margin-top:4px;font-variant-numeric:tabular-nums}
+        .ss-readout b{color:var(--ss-ink);font-weight:600}
+        .ss-readout .bad{color:var(--ss-bad);font-weight:700}
+        .ss-tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px}
+        /* A label tile shows the label as it prints: on paper, in the sign's face and green. */
+        .ss-tile{border:1px solid var(--ss-border);border-radius:12px;background:#ffffff;cursor:pointer;padding:0;height:100px;
+          display:flex;flex-direction:column;overflow:hidden;text-align:left}
+        .ss-tile .tv{flex:1;display:flex;align-items:center;justify-content:flex-end;padding:8px 12px}
+        .ss-tile .tn{font-size:12px;font-weight:600;padding:7px 10px;background:var(--ss-panelHi);color:var(--ss-ink);
+          border-top:1px solid var(--ss-hairline)}
+        .ss-tile[aria-pressed="true"]{outline:3px solid #22c55e;outline-offset:1px;border-color:#22c55e}
+        .ss-tile .lbl-t{font-family:'SS Poppins Black Italic',sans-serif;color:#20792B;line-height:.95;text-align:right;
+          text-transform:uppercase;font-size:19px;overflow-wrap:anywhere}
+        .ss-tile .none-t{font-size:12.5px;color:#6b6453;font-weight:600}
+        .ss-review{display:grid;grid-template-columns:1.3fr 1fr;gap:16px;align-items:end}
+        .ss-nav{display:flex;gap:10px;justify-content:space-between;align-items:center;margin-top:8px;flex-wrap:wrap}
+        .ss-mini .ss-sheet{margin-bottom:6px}
+        @media (max-width:759px){
+          .ss-grid,.ss-review{grid-template-columns:1fr}
+          .ss-mini{order:-1}
+          .ss-mini .ss-sheet.port{max-width:280px;margin-left:auto;margin-right:auto}
+          .ss-tiles{grid-template-columns:repeat(2,1fr)}
+          .ss-body{padding:14px}
+        }
+        /* A phone: the three steps as three equal cells, number over name, so none wraps alone. */
+        @media (max-width:480px){
+          .ss-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
+          .ss-step{flex-direction:column;justify-content:center;gap:4px;padding:8px 4px;border-radius:12px;font-size:12px;
+            text-align:center;line-height:1.2}
+        }
+      </style>
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-5xl mx-auto">
+          <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Sign Studio</h1>
+          <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Three quick steps to a printed sign.</p>
+        </div>
+      </div>
+      <div class="max-w-5xl mx-auto px-4 sm:px-6 pt-4 pb-10">
+        <div id="ss-root"></div>
+      </div>
+    </div>
+
     <!-- ── Merchandising: Velocity & Reach ─────────────────────────────────────
          Units alone cannot say whether a slow category is the wrong PRODUCT or the wrong
          CUSTOMER — store size confounds it. Rates per transaction, basket reach, and both
@@ -7754,7 +7940,8 @@
       const box = g => {
         const a = longLoca ? dv.getUint32(loca + 4 * g) : 2 * dv.getUint16(loca + 2 * g);
         const b = longLoca ? dv.getUint32(loca + 4 * g + 4) : 2 * dv.getUint16(loca + 2 * g + 2);
-        return b > a ? { yMin: dv.getInt16(glyf + a + 4), yMax: dv.getInt16(glyf + a + 8) } : { yMin: 0, yMax: 0 };
+        if (b <= a) return { xMin: 0, yMin: 0, xMax: advance(g), yMax: 0 };   // an empty glyph: the space
+        return { xMin: dv.getInt16(glyf + a + 2), yMin: dv.getInt16(glyf + a + 4), xMax: dv.getInt16(glyf + a + 6), yMax: dv.getInt16(glyf + a + 8) };
       };
       return {
         upm,
@@ -7765,6 +7952,10 @@
         // Ink above and below the baseline, in em, from the glyph's box.
         up: ch => box(glyph(ch)).yMax / upm,
         down: ch => -box(glyph(ch)).yMin / upm,
+        // Ink left of the glyph's origin (negative when it hangs out), and past its advance on
+        // the right (positive when it hangs out, as an italic's top-right corner does), in em.
+        inkLeft: ch => box(glyph(ch)).xMin / upm,
+        inkRight: ch => { const g = glyph(ch); return (box(g).xMax - advance(g)) / upm; },
       };
     }
 
@@ -7888,14 +8079,15 @@
         let headH = logoH;
         const labelCap = logoH * G.labelBlock / (2 + G.lineGap);
         if (model.label && (!model.label.custom || model.label.text)) {
-          const italicPad = FACES.label.italic ? 0.06 : 0;   // the italic's overhang stays inside the edge
           const o = { font: 'label', boxW: box.w - logoW - 24, boxH: logoH * G.labelBlock, maxCap: labelCap,
                       minCap: model.label.custom ? G.labelMin : labelCap * 0.98, maxLines: 2, gap: G.lineGap,
                       lines: model.label.custom ? null : model.label.lines, perLine: PER_LINE.label };
           const fit = model.label.custom ? fitText(model.label.text, o) : atCap(null, labelCap, o);
           const top = box.y + Math.max(0, (logoH - fit.h) / 2) * (fit.n === 1 ? 1 : 0);
+          // Each line ends where its INK ends: an italic's last letter leans past its own
+          // advance (V by 0.075 em), so the line is pulled in by that letter's overhang.
           fit.lines.forEach((ln, k) => out.items.push({ t: 'text', role: 'label', text: ln, anchor: 'end',
-            x: box.x + box.w - fit.size * italicPad, y: top + fit.cap + k * fit.cap * (1 + G.lineGap),
+            x: box.x + box.w - fit.size * Math.max(0, fonts.label.inkRight([...ln].pop())), y: top + fit.cap + k * fit.cap * (1 + G.lineGap),
             size: fit.size, font: 'label', fill: 'green' }));
           headH = Math.max(logoH, fit.h);
           out.report.label = { cap: fit.cap, ok: fit.ok };
@@ -7925,7 +8117,10 @@
           qfit = fitText(g.qual, { font: 'small', boxW: width - dotW, boxH: G.qualCap * 2.3, maxCap: G.qualCap,
                                    minCap: G.qualMin, maxLines: 2, gap: 0.3, perLine: PER_LINE.small });
           qfit.dotW = dotW;
-          extras.push({ kind: 'qual', h: qfit.h });
+          // With a dot the row is as tall as the dot. A one-line note (17 pt) is shorter than
+          // it (25.5 pt), and budgeting only the text let the dot poke out of a full sign.
+          qfit.rowH = g.dot ? Math.max(qfit.h, G.qualCap * 1.5) : qfit.h;
+          extras.push({ kind: 'qual', h: qfit.rowH });
         }
         const gapE = 12;
         return { extras, qfit, gapE, h: extras.reduce((a, e) => a + e.h + gapE, 0) };
@@ -7938,10 +8133,10 @@
               x: cx, y: y + G.unitCap, size: G.unitCap / metricsOf('small').cap, font: 'small', fill: 'ink', spacing: 0.08 });
           } else {
             const q = X.qfit, widest = Math.max(...q.lines.map(l => w100(l, 'small'))) * q.size / 100;
-            const left = cx - (widest + q.dotW) / 2;
-            if (g.dot) out.items.push({ t: 'dot', cx: left + G.qualCap * 0.75, cy: y + q.h / 2, r: G.qualCap * 0.75 });
+            const left = cx - (widest + q.dotW) / 2, top = y + (q.rowH - q.h) / 2;   // the text centred in its row
+            if (g.dot) out.items.push({ t: 'dot', cx: left + G.qualCap * 0.75, cy: y + q.rowH / 2, r: G.qualCap * 0.75 });
             q.lines.forEach((ln, k) => out.items.push({ t: 'text', role: 'qual', group: g.i, text: ln, anchor: 'middle',
-              x: left + q.dotW + widest / 2, y: y + q.cap + k * q.cap * 1.3, size: q.size, font: 'small', fill: 'ink' }));
+              x: left + q.dotW + widest / 2, y: top + q.cap + k * q.cap * 1.3, size: q.size, font: 'small', fill: 'ink' }));
           }
           y += e.h;
         }
@@ -12767,6 +12962,16 @@
       const allowed = ['superuser','admin','district_manager','manager'];
       if (!allowed.includes(role)) return;
     }
+    // Sign Studio: managers, admins and superusers, the PRD's list (a district manager is a
+    // manager with more stores since migration-029; the old name stays to mirror merchRoles).
+    // Not executives, who get Price Scan, and not an associate by page grant: the role is
+    // the gate. Nothing here reaches the worker, so this is the only one, and the sidebar
+    // item in applyRoleUI carries the same list.
+    if (page === 'merch-signs') {
+      const role = currentUser && currentUser.role;
+      const allowed = ['superuser','admin','district_manager','manager'];
+      if (!allowed.includes(role)) return;
+    }
     // Bin Dump: a manager receiving pallets, not an admin surface. The worker is
     // the real gate; this only decides whether the shell opens.
     if (page === 'bin-dump') {
@@ -12905,6 +13110,9 @@
     }
     if (page === 'merch-scan') {
       if (typeof initPriceScan === 'function') initPriceScan();
+    }
+    if (page === 'merch-signs') {
+      if (typeof initSignStudio === 'function') initSignStudio();
     }
     if (page === 'merch-products') {
       if (typeof initMerchProducts === 'function') initMerchProducts();
@@ -31693,6 +31901,390 @@
   window.scSave = scSave;
 
   // ═══════════════════════════════════════════════════════════════
+  //  SIGN STUDIO — Merchandising ▸ Sign Studio
+  // ═══════════════════════════════════════════════════════════════
+  // The form around the sign, in three steps: what's on sale, which sale, print. Layout C
+  // of docs/sign-studio-preview.html (Brian's pick, 24 Sep). What the sign looks like, what
+  // fits and what may print all come from window.SignRender (the #sign-render script):
+  // nothing here measures text or decides a rule.
+  // Inputs are built once per ssRender, which runs only when the form's SHAPE changes (a
+  // step, the sign type, a second price). Typing runs ssRefresh, which redraws the previews
+  // and messages and never an input, so focus and the caret stay put.
+  let ssSign = null;                           // the sign being made: SignRender.normalizeSign's shape
+  const ssView = { step: 1, orient: 'landscape' };
+  let ssAssets = 'idle';                       // idle | loading | ready | failed
+  let ssKit = null;                            // { engine, fontBytes, logoBytes, logoUrl } once ready
+  const ssOpenDisclose = new Set();            // which "Note and yellow dot" boxes are open
+  const ssFacesAdded = new Set();              // FontFace families already given to the page
+
+  function ssH(tag, attrs, ...kids) {
+    const n = document.createElement(tag);
+    if (attrs) for (const k in attrs) {
+      const v = attrs[k];
+      if (k === 'class') n.className = v;
+      else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
+      else if (v === true) n.setAttribute(k, '');
+      else if (v !== false && v != null) n.setAttribute(k, v);
+    }
+    for (const c of kids.flat(Infinity)) if (c != null && c !== false) n.append(c.nodeType ? c : String(c));
+    return n;
+  }
+  // Static markup only: no value from a person or a server ever reaches these.
+  const SS_ICON = {
+    info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>',
+    alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>',
+  };
+  function ssIcon(k) { const s = document.createElement('span'); s.innerHTML = SS_ICON[k]; return s.firstChild; }
+
+  function initSignStudio() {
+    const root = el('ss-root');
+    if (!root) return;
+    if (!window.SignRender) {   // its own <script>: a failure there must not look like an empty page
+      root.replaceChildren(ssH('div', { class: 'ss-note err', role: 'alert' }, ssIcon('alert'),
+        ssH('div', null, "Sign Studio didn't load. Close the app and open it again.")));
+      return;
+    }
+    if (!ssSign) ssSign = SignRender.blankSign();
+    if (ssAssets === 'idle') ssLoadAssets();
+    ssRender();
+  }
+  window.initSignStudio = initSignStudio;
+
+  /* The fonts and the logo, fetched once and used three ways: FontFace draws the preview,
+     SignRender.readFont measures, and the same bytes go into the PDF. Nothing is measured
+     or printed until all of them have loaded, so a sign can never fit or print in a
+     fallback face. All five files are precached (sw.js), so this works offline. */
+  async function ssLoadAssets() {
+    const R = window.SignRender;
+    ssAssets = 'loading';
+    ssRefresh();
+    const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 20000);
+    try {
+      const get = async u => {
+        const r = await fetch(u, { signal: ctl.signal });
+        if (!r.ok) throw new Error(`${u}: HTTP ${r.status}`);
+        return new Uint8Array(await r.arrayBuffer());
+      };
+      const keys = Object.keys(R.FACES);
+      const [logoBytes, ...files] = await Promise.all([get(R.LOGO.file), ...keys.map(k => get(R.FACES[k].file))]);
+      const fonts = {}, fontBytes = {};
+      keys.forEach((k, i) => { fontBytes[k] = files[i]; fonts[k] = R.readFont(files[i]); });
+      for (const k of keys) {
+        if (ssFacesAdded.has(k)) continue;
+        const ff = new FontFace(R.FACES[k].fam, files[keys.indexOf(k)]);
+        await ff.load();
+        document.fonts.add(ff);
+        ssFacesAdded.add(k);
+      }
+      ssKit = { engine: R.engine(fonts), fontBytes, logoBytes,
+                logoUrl: URL.createObjectURL(new Blob([logoBytes], { type: 'image/png' })) };
+      ssAssets = 'ready';
+    } catch (e) {
+      console.warn('Sign Studio: the sign files did not load', e);
+      ssAssets = 'failed';
+    } finally {
+      clearTimeout(timer);
+    }
+    ssRefresh();
+  }
+  function ssRetry() { ssAssets = 'loading'; ssLoadAssets(); }
+
+  /* ── The fields ─────────────────────────────────────────────────── */
+  const ssReq = () => ssH('span', { class: 'ss-req' }, ' · required');
+  const ssMsg = key => ssH('div', { class: 'ss-msg', id: `ss-m-${key}`, 'data-msg': key, 'aria-live': 'polite' });
+  function ssInput(key, attrs, value, onInput) {
+    const inp = ssH('input', Object.assign({ type: 'text', class: 'ss-inp', id: `ss-f-${key}`, autocomplete: 'off',
+      'aria-describedby': `ss-m-${key}`, oninput: e => { onInput(e.target.value); ssRefresh(); } }, attrs));
+    inp.value = value;
+    return inp;
+  }
+  function ssNameField(gi) {
+    const two = ssSign.two;
+    const inp = ssInput(`name-${gi}`, { maxlength: SignRender.LIMIT.name,
+      placeholder: two ? (gi ? 'e.g. Premium shoes' : 'e.g. Shoes') : 'e.g. All cereal' },
+      ssSign.groups[gi].name, v => { ssSign.groups[gi].name = v; });
+    return ssH('div', { class: 'ss-fld' },
+      ssH('div', { class: 'ss-fld-top' }, ssH('label', { class: 'ss-fld-l', for: inp.id },
+        two ? (gi ? 'Second group name' : 'First group name') : 'Product name', ssReq()),
+        ssH('span', { class: 'ss-count', 'data-count': `name-${gi}` })),
+      inp, ssMsg(`name-${gi}`),
+      two ? null : ssH('div', { class: 'ss-hint' }, 'Printed in capitals, on up to two lines. Letters never go under 0.6 in.'));
+  }
+  function ssPriceField(gi) {
+    const inp = ssInput(`price-${gi}`, { inputmode: 'decimal', placeholder: '2.50' },
+      ssSign.groups[gi].price, v => { ssSign.groups[gi].price = v; });
+    return ssH('div', { class: 'ss-fld' },
+      ssH('div', { class: 'ss-fld-top' }, ssH('label', { class: 'ss-fld-l', for: inp.id }, ssSign.template === 'uvt' ? 'You pay' : 'Price', ssReq())),
+      ssH('div', { class: 'ss-money' }, inp), ssMsg(`price-${gi}`));
+  }
+  /* % Off: the percentage takes the price's place. */
+  function ssPctField(gi) {
+    const inp = ssInput(`pct-${gi}`, { inputmode: 'numeric', maxlength: 10, placeholder: '20' },
+      ssSign.groups[gi].pct, v => { ssSign.groups[gi].pct = v; });
+    return ssH('div', { class: 'ss-fld' },
+      ssH('div', { class: 'ss-fld-top' }, ssH('label', { class: 'ss-fld-l', for: inp.id }, 'Percent off', ssReq())),
+      ssH('div', { class: 'ss-pct' }, inp), ssMsg(`pct-${gi}`));
+  }
+  /* Us vs Them: the other seller's price. The discount is worked out from it, never typed. */
+  function ssThemField() {
+    const inp = ssInput('them', { inputmode: 'decimal', placeholder: '100' }, ssSign.them, v => { ssSign.them = v; });
+    return ssH('div', { class: 'ss-fld' },
+      ssH('div', { class: 'ss-fld-top' }, ssH('label', { class: 'ss-fld-l', for: inp.id }, 'Their price', ssReq())),
+      ssH('div', { class: 'ss-money' }, inp), ssMsg('them'),
+      ssH('div', { class: 'ss-hint' }, "What it sells for elsewhere. Price Scan's retail price is a good source."));
+  }
+  const ssDiscountLine = () => ssH('div', { class: 'ss-calc', 'data-discount': '', 'aria-live': 'polite' });
+  function ssChipGroup(label, items, current, onPick, key) {
+    return ssH('div', { class: 'ss-fld', role: 'group', 'aria-label': label },
+      ssH('div', { class: 'ss-fld-top' }, ssH('span', { class: 'ss-fld-l' }, label)),
+      ssH('div', { class: 'ss-chips', 'data-chips': key }, items.map(it =>
+        ssH('button', { type: 'button', class: 'ss-chip', 'data-v': it.id, 'aria-pressed': String(it.id === current),
+          onclick: () => onPick(it.id) }, it.name))));
+  }
+  function ssTemplateField() {
+    return ssChipGroup('Sign type', SignRender.TEMPLATES, ssSign.template, v => {
+      if (v === ssSign.template) return;
+      ssSign.template = v;
+      if (v === 'uvt') ssSign.two = false;   // Us vs Them is one product
+      ssRender();
+    }, 'template');
+  }
+  function ssUnitField(gi) {
+    return ssChipGroup('Unit', SignRender.UNITS, ssSign.groups[gi].unit,
+      v => { ssSign.groups[gi].unit = v; ssSyncChips(); ssRefresh(); }, `unit-${gi}`);
+  }
+  function ssCustomField() {
+    const inp = ssInput('custom', { maxlength: SignRender.LIMIT.custom, placeholder: 'e.g. Weekend deal' },
+      ssSign.custom, v => { ssSign.custom = v; ssSyncTiles(); });
+    return ssH('div', { class: 'ss-fld' },
+      ssH('div', { class: 'ss-fld-top' }, ssH('label', { class: 'ss-fld-l', for: inp.id }, 'Custom label'),
+        ssH('span', { class: 'ss-count', 'data-count': 'custom' })),
+      inp, ssMsg('custom'),
+      ssH('div', { class: 'ss-hint' }, 'Up to 12 characters, in the same corner and style as the other labels.'));
+  }
+  function ssExtrasField(gi) {
+    const g = ssSign.groups[gi];
+    const q = ssInput(`qual-${gi}`, { maxlength: SignRender.LIMIT.qual, placeholder: 'e.g. Yellow dot on bottom' },
+      g.qual, v => { ssSign.groups[gi].qual = v; });
+    const dot = ssH('input', { type: 'checkbox', id: `ss-f-dot-${gi}`, onchange: e => {
+      ssSign.groups[gi].dot = e.target.checked;
+      if (e.target.checked) {
+        ssSign.groups.forEach((o, k) => { if (k !== gi) o.dot = false; });   // one dot, one group
+        if (!ssSign.groups[gi].qual.trim()) ssSign.groups[gi].qual = 'Yellow dot on bottom';
+        ssRender(); return;
+      }
+      ssRefresh();
+    } });
+    dot.checked = g.dot;
+    const d = ssH('details', { class: 'ss-disclose' }, ssH('summary', null, 'Note and yellow dot'),
+      ssH('div', { class: 'ss-fld' },
+        ssH('div', { class: 'ss-fld-top' }, ssH('label', { class: 'ss-fld-l', for: q.id }, 'Note under the price'),
+          ssH('span', { class: 'ss-count', 'data-count': `qual-${gi}` })),
+        q, ssMsg(`qual-${gi}`)),
+      ssH('label', { class: 'ss-chk', for: dot.id }, dot, ssH('span', { class: 'ss-dot', 'aria-hidden': 'true' }), 'Show a yellow dot beside the note'));
+    if (g.qual || g.dot || ssOpenDisclose.has(gi)) d.open = true;
+    d.addEventListener('toggle', () => { if (d.open) ssOpenDisclose.add(gi); else ssOpenDisclose.delete(gi); });
+    return d;
+  }
+  function ssSecondToggle() {
+    const what = ssSign.template === 'pct' ? 'group' : 'price';
+    return ssH('button', { type: 'button', class: 'ss-link', 'data-two': '', onclick: () => {
+      ssSign.two = !ssSign.two;
+      ssRender();
+      const f = el(ssSign.two ? 'ss-f-name-1' : 'ss-f-name-0');
+      if (f) f.focus();
+    } }, ssSign.two ? `− Remove the second ${what}` : `+ Add a second ${what}`);
+  }
+  function ssGroupBlock(gi) {
+    const pct = ssSign.template === 'pct';
+    const offer = pct ? [ssPctField(gi)] : [ssPriceField(gi), ssUnitField(gi)];   // a percentage has no unit
+    if (!ssSign.two) return [ssNameField(gi), ...offer, ssExtrasField(gi)];
+    return ssH('div', { class: 'ss-grp' },
+      ssH('div', { class: 'ss-grp-h' }, (gi ? 'Second ' : 'First ') + (pct ? 'group' : 'price')),
+      ssNameField(gi), ...offer, ssExtrasField(gi));
+  }
+  /* Step 2: every label as it prints, on paper, in the sign's own face. */
+  function ssLabelTiles() {
+    return ssH('div', { class: 'ss-tiles', role: 'group', 'aria-label': 'Sale label' }, SignRender.SALE_LABELS.map(L =>
+      ssH('button', { type: 'button', class: 'ss-tile', 'data-v': L.id, 'aria-pressed': String(ssSign.sale === L.id),
+        onclick: () => { ssSign.sale = L.id; ssRender(); } },
+        ssH('span', { class: 'tv' }, L.id === 'none' ? ssH('span', { class: 'none-t' }, 'No label: the corner stays empty')
+          : ssH('span', { class: 'lbl-t', 'data-tile-text': L.id })),
+        ssH('span', { class: 'tn' }, L.id === 'custom' ? 'Custom (12 characters)' : L.name))));
+  }
+  function ssSyncTiles() {
+    const root = el('ss-root');
+    if (!root) return;
+    root.querySelectorAll('[data-tile-text]').forEach(n => {
+      const id = n.getAttribute('data-tile-text'), L = SignRender.SALE_LABELS.find(x => x.id === id);
+      const lines = id === 'custom' ? [ssSign.custom.trim() || 'Your words'] : L.lines;
+      n.replaceChildren(...lines.flatMap((t, k) => k ? [ssH('br'), t] : [t]));
+    });
+  }
+  function ssOrientSeg() {
+    return ssH('div', { class: 'ss-seg', role: 'group', 'aria-label': 'Orientation' },
+      SignRender.ORIENTS.map(o => ssH('button', { type: 'button', 'data-orient': o, 'aria-pressed': String(ssView.orient === o),
+        onclick: () => { ssView.orient = o; ssRender(); } }, o === 'landscape' ? 'Landscape' : 'Portrait')));
+  }
+  const ssSheet = key => ssH('div', { class: 'ss-sheet', 'data-preview': key });
+  function ssPreviewCard(orient) {
+    return ssH('div', null, ssSheet(orient),
+      ssH('div', { class: 'ss-cap-row' },
+        ssH('span', { class: 'ss-cap' }, ssH('b', null, orient === 'landscape' ? 'Landscape' : 'Portrait'),
+          orient === 'landscape' ? ' · 11 × 8.5 in' : ' · 8.5 × 11 in')),
+      ssH('div', { class: 'ss-readout', 'data-readout': orient }));
+  }
+  function ssPanel(label, right, ...body) {
+    return ssH('section', { class: 'ss-panel' },
+      ssH('div', { class: 'ss-bar' }, ssH('span', { class: 'ss-lbl' }, label), right),
+      ssH('div', { class: 'ss-body' }, body));
+  }
+
+  /* ── Layout C: one decision per screen ─────────────────────────────── */
+  function ssGo(step) {
+    ssView.step = step;
+    ssRender();
+    const root = el('ss-root');
+    if (root && root.getBoundingClientRect().top < 0) root.scrollIntoView({ block: 'start' });
+  }
+  function ssStartOver() {
+    ssSign = SignRender.blankSign();
+    ssOpenDisclose.clear();
+    ssGo(1);
+  }
+  function ssLayoutC() {
+    const st = ssView.step;
+    const steps = ssH('nav', { class: 'ss-steps', 'aria-label': 'Steps' },
+      [["What's on sale", 1], ['Which sale', 2], ['Print', 3]].map(([t, n]) =>
+        ssH('button', { type: 'button', class: 'ss-step' + (n < st ? ' done' : ''), 'data-step': n,
+          'aria-current': n === st ? 'step' : null, onclick: () => ssGo(n) },
+          ssH('span', { class: 'ss-n' }, n < st ? '✓' : String(n)), t)));
+    const nav = (back, next) => ssH('div', { class: 'ss-nav' }, back || ssH('span'), next);
+    const btn = (cls, label, onclick, attrs) => ssH('button', Object.assign({ type: 'button', class: 'ss-btn ' + cls, onclick }, attrs), label);
+    let card;
+    if (st === 1) card = ssPanel("1 · What's on sale", null, ssTemplateField(),
+      ssSign.template === 'uvt'
+        ? [ssNameField(0), ssH('div', { class: 'ss-row2' }, ssThemField(), ssPriceField(0)), ssDiscountLine(), ssUnitField(0), ssExtrasField(0)]
+        : [ssSign.two ? [ssGroupBlock(0), ssGroupBlock(1)] : ssGroupBlock(0), ssSecondToggle()],
+      nav(null, btn('ss-primary', 'Next: pick the sale →', () => ssGo(2), { 'data-next': '' })));
+    else if (st === 2) card = ssPanel('2 · Which sale', null, ssLabelTiles(), ssSign.sale === 'custom' ? ssCustomField() : null,
+      nav(btn('ss-ghost', '← Back', () => ssGo(1)), btn('ss-primary', 'Next: print →', () => ssGo(3), { 'data-next': '' })));
+    else card = ssPanel('3 · Print', ssH('span', { class: 'ss-right' }, ssH('span', { class: 'ss-pill wait', 'data-status': '' })),
+      ssH('div', { class: 'ss-review' }, ssPreviewCard('landscape'), ssPreviewCard('portrait')),
+      ssH('div', { style: 'margin-top:14px;display:grid;gap:10px' }, ssH('div', { 'data-summary': '' }),
+        ssH('div', { class: 'ss-note', 'data-reminder': '' }, ssIcon('info'), ssH('span', { 'data-reminder-text': '' }))),
+      nav(btn('ss-ghost', '← Back', () => ssGo(2)), btn('ss-ghost', 'Start a new sign', ssStartOver, { 'data-new': '' })));
+    const mini = st === 3 ? null : ssH('aside', { class: 'ss-mini' },
+      ssH('div', { class: 'ss-panel' }, ssH('div', { class: 'ss-bar' }, ssH('span', { class: 'ss-lbl' }, 'As it will print'), ssOrientSeg()),
+        ssH('div', { class: 'ss-body' }, ssSheet('current'), ssH('div', { class: 'ss-readout', 'data-readout': ssView.orient }))));
+    return [steps, ssH('div', { class: st === 3 ? '' : 'ss-grid' }, card, mini)];
+  }
+  function ssRender() {
+    const root = el('ss-root');
+    if (!root || !ssSign) return;
+    const active = document.activeElement && document.activeElement.id;
+    root.replaceChildren(...ssLayoutC());
+    if (active && active.startsWith('ss-f-') && el(active)) el(active).focus();
+    ssSyncTiles();
+    ssRefresh();
+  }
+  function ssSyncChips() {
+    const root = el('ss-root');
+    if (!root) return;
+    root.querySelectorAll('[data-chips]').forEach(g => {
+      const key = g.getAttribute('data-chips');
+      const cur = key === 'template' ? ssSign.template : ssSign.groups[+key.split('-')[1]].unit;
+      g.querySelectorAll('.ss-chip').forEach(c => c.setAttribute('aria-pressed', String(c.getAttribute('data-v') === cur)));
+    });
+  }
+
+  /* ── After every keystroke: previews, messages, what may print ──────── */
+  function ssRefresh() {
+    const R = window.SignRender, root = el('ss-root');
+    if (!R || !root || !ssSign) return;
+    const t0 = performance.now();
+    const ready = ssAssets === 'ready', failed = ssAssets === 'failed';
+    const model = R.signModel(ssSign);
+    const v = R.validate(model, ready ? ssKit.engine : null), errs = v.msgs;
+    const nErr = Object.keys(errs).length;
+    const can = { landscape: !v.blocked.landscape, portrait: !v.blocked.portrait };
+    const only = can.landscape !== can.portrait ? (can.landscape ? 'landscape' : 'portrait') : null;   // one orientation prints
+
+    root.querySelectorAll('[data-msg]').forEach(n => {
+      const k = n.getAttribute('data-msg'), m = errs[k] || '';
+      n.textContent = m;
+      const inp = el('ss-f-' + k);
+      if (inp) { inp.classList.toggle('bad', !!m); inp.setAttribute('aria-invalid', String(!!m)); }
+    });
+    root.querySelectorAll('[data-count]').forEach(n => {
+      const [kind, gi] = n.getAttribute('data-count').split('-');
+      const val = kind === 'custom' ? ssSign.custom : ssSign.groups[+gi][kind];
+      const lim = R.LIMIT[kind];
+      n.textContent = `${val.length}/${lim}`;
+      n.classList.toggle('near', val.length >= lim - 3);
+    });
+    // Previews: each orientation drawn once, from the layout validate has just measured.
+    const svgs = {};
+    const draw = o => svgs[o] || (svgs[o] = R.drawSVG(v.layouts[o], document, { label: `${R.describe(model)} (${o})`, logoHref: ssKit.logoUrl }));
+    root.querySelectorAll('[data-preview]').forEach(box => {
+      const k = box.getAttribute('data-preview'), o = k === 'current' ? ssView.orient : k;
+      box.classList.toggle('land', o === 'landscape'); box.classList.toggle('port', o === 'portrait');
+      if (failed) {
+        box.replaceChildren(ssH('div', { class: 'ss-fail', role: 'alert' }, ssH('b', null, "The sign font didn't load."),
+          ssH('span', null, 'Print and PDF stay off until it does, so a sign never prints in the wrong type.'),
+          ssH('button', { type: 'button', class: 'ss-btn', 'data-retry': '', onclick: ssRetry }, 'Retry')));
+        return;
+      }
+      if (!ready) { box.replaceChildren(ssH('div', { class: 'ss-skel', role: 'img', 'aria-label': 'Loading the sign' })); return; }
+      const svg = draw(o);
+      box.replaceChildren(svg.isConnected ? svg.cloneNode(true) : svg);
+    });
+    // Letter heights, in inches: the three-second rule, read back.
+    root.querySelectorAll('[data-readout]').forEach(n => {
+      const o = n.getAttribute('data-readout');
+      n.replaceChildren();
+      if (!ready) return;
+      const r = v.layouts[o].report.groups.filter(Boolean);
+      const nc = r.map(x => x.nameCap).filter(x => x != null), pc = r.map(x => x.priceCap).filter(x => x != null);
+      if (!nc.length && !pc.length) return;
+      const bad = nc.some(c => c < R.G.minCap - 0.01);
+      n.append('Letters: name ', ssH(bad ? 'span' : 'b', bad ? { class: 'bad' } : null, nc.length ? R.inches(Math.min(...nc)) : '—'),
+        model.template === 'pct' ? ' · percent ' : ' · price ', ssH('b', null, pc.length ? R.inches(Math.min(...pc)) : '—'));
+    });
+    root.querySelectorAll('[data-status]').forEach(n => {
+      n.className = 'ss-pill ' + (!ready ? 'wait' : only ? 'part' : nErr ? 'no' : 'ok');
+      n.replaceChildren(ssH('i'), ssAssets === 'failed' ? 'Sign font missing' : !ready ? 'Loading the sign font'
+        : only ? (only === 'landscape' ? 'Landscape only' : 'Portrait only')
+        : nErr ? `${nErr} thing${nErr > 1 ? 's' : ''} to fix` : 'Ready to print');
+    });
+    root.querySelectorAll('[data-summary]').forEach(n => {
+      n.replaceChildren();
+      if (!nErr) return;
+      const other = only === 'landscape' ? 'portrait' : 'landscape';
+      n.append(ssH('div', { class: 'ss-note ' + (only ? 'warn' : 'err'), role: 'status' }, ssIcon(only ? 'info' : 'alert'),
+        ssH('div', null, ssH('b', null, only ? `Only the ${only} sign can print. To print the ${other} sign too:` : `Fix ${nErr === 1 ? 'this' : 'these'} to print:`),
+          ssH('ul', { class: 'ss-errlist' }, Object.values(errs).map(m => ssH('li', null, m))))));
+    });
+    root.querySelectorAll('[data-discount]').forEach(n => {
+      const t = model.them, g0 = model.groups[0];
+      const pct = t && t.cents && g0.price.cents ? R.discountPct(t.cents, g0.price.cents) : null;
+      n.replaceChildren();
+      if (pct != null && pct >= 1)
+        n.append('Our discount: ', ssH('b', null, `${pct}% off`), `, saving ${R.priceText(t.cents - g0.price.cents)}. `,
+          ssH('span', { class: 'ss-calc-d' }, 'Worked out from the two prices and rounded down, so the sign can never disagree with itself.'));
+      else n.append(ssH('span', { class: 'ss-calc-d' }, 'Our discount is worked out from the two prices once both are in.'));
+    });
+    const pctSign = model.template === 'pct';
+    const offers = model.groups.map(g => pctSign ? (g.pct.n ? `${g.pct.n}% off` : '') : (g.price.cents ? R.priceText(g.price.cents) : '')).filter(Boolean);
+    root.querySelectorAll('[data-reminder-text]').forEach(n => {
+      n.replaceChildren(pctSign ? 'Before you hang it, check the register takes ' : 'Before you hang it, check the register rings up ',
+        ssH('b', null, offers.length ? offers.join(' and ') : pctSign ? 'the discount' : 'the price'),
+        pctSign ? '. The sign does not set up the discount in Clover.' : '. The sign does not change the price in Clover.');
+    });
+    window.__ssLastRenderMs = performance.now() - t0;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
   //  SIDEBAR
   // ═══════════════════════════════════════════════════════════════
   function initSidebar() {
@@ -34407,6 +34999,7 @@
     'nav-merch-chev': 'bl',
     'nav-merch-sub': 'bl',
     'nav-merch-scan': 'bl',
+    'nav-merch-signs': 'bl',
     'nav-merch-coverage': 'bl',
     'nav-merch-products': 'bl',
     'nav-merch-velocity': 'bl',
@@ -34831,6 +35424,7 @@
     // here is a row that navigateToPage refuses.
     el('nav-merch-group').classList.toggle('hidden', !merchRoles.includes(user.role) && !canScan);
     el('nav-merch-shelf-count').classList.toggle('hidden', !merchRoles.includes(user.role));
+    el('nav-merch-signs').classList.toggle('hidden', !merchRoles.includes(user.role));   // executives see the group, not this
     el('nav-merch-scan').classList.toggle('hidden', !canScan);
     el('nav-merch-coverage').classList.toggle('hidden', !isAdmin);
     el('nav-merch-products').classList.toggle('hidden', !isAdmin);
