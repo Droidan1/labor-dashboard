@@ -407,6 +407,68 @@ await section('4. per-orientation', async () => {
   check(!errs.length, `no page errors (${errs.slice(0, 2).join(' | ')})`);
 });
 
+// ── 5. Print: the sign alone, at its own paper size ──────────────────────
+// window.print() does nothing in headless Chromium, so the check prints what it leaves
+// behind: page.pdf() renders print media, honouring @page, exactly as the dialog would.
+const { execFileSync } = await import('node:child_process');
+const os = await import('node:os');
+const PDIR = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-print-'));   // this run's own files
+const poppler = (tool, file) => execFileSync(tool, [file], { encoding: 'utf8' });
+function pdfFacts(buf, name) {
+  const f = path.join(PDIR, name);
+  fs.writeFileSync(f, buf);
+  const info = poppler('pdfinfo', f), size = (info.match(/Page size:\s+([\d.]+) x ([\d.]+) pts/) || []).slice(1).map(Number);
+  const fonts = poppler('pdffonts', f).split('\n').slice(2).filter(Boolean).map(l => ({ name: l.split(/\s+/)[0].replace(/^[A-Z]{6}\+/, ''), emb: / yes /.test(l) }));
+  return { pages: +(info.match(/Pages:\s+(\d+)/) || [])[1], size, fonts, text: execFileSync('pdftotext', [f, '-'], { encoding: 'utf8' }) };
+}
+await section('5. print', async () => {
+  const { page, errs } = await open();
+  // A dashboard printed earlier in the session leaves its report in #print-report, which the
+  // app's own print rule always shows. A sign print must not carry it along.
+  await page.evaluate(() => { document.getElementById('print-report').textContent = 'EARLIER DASHBOARD REPORT'; });
+  await makeSign(page, { fields: { 'name-0': 'All cereal', 'price-0': '2' }, sale: 'flash' });
+  eq(await page.$$eval('[data-print]', bs => bs.map(b => b.disabled)), [false, false], 'a sign that fits both ways: both Print buttons are on');
+  const state = () => page.evaluate(() => ({ on: document.documentElement.classList.contains('printing-sign'),
+    paper: document.getElementById('sign-print-page').textContent, svg: document.querySelectorAll('#sign-print svg').length }));
+  for (const [o, W, H, paper] of [['landscape', 792, 612, '11in 8.5in'], ['portrait', 612, 792, '8.5in 11in']]) {
+    await page.click(`[data-print="${o}"]`);
+    eq(await state(), { on: true, paper: `@page { size: ${paper}; margin: 0; }`, svg: 1 }, `${o} Print: the sign is readied for print, at ${paper}`);
+    const facts = pdfFacts(await page.pdf({ preferCSSPageSize: true, printBackground: true }), `${o}.pdf`);
+    eq([facts.pages, facts.size], [1, [W, H]], `${o}: it prints ONE page, ${W} × ${H} pt`);
+    check(facts.fonts.length >= 2 && facts.fonts.every(x => x.emb && /Poppins|LuckiestGuy/.test(x.name)),
+          `${o}: only the sign's fonts, all embedded (${facts.fonts.map(x => x.name + (x.emb ? '' : ' NOT EMBEDDED')).join(', ')})`);
+    const text = facts.text.replace(/\s+/g, ' ');
+    check(/ALL CEREAL/.test(text) && /FLASH SALE/.test(text), `${o}: the sign's words are on the page, as text (${text.trim().slice(0, 60)})`);
+    check(!/Sign Studio|SIGN STUDIO|Merchandising|Three quick steps|Dashboard|DASHBOARD|Before you hang it/.test(text), `${o}: and nothing of the app is, not even an earlier dashboard report`);
+  }
+  // It stays readied through afterprint and a wait: iOS returns from print() at once and may
+  // fire afterprint before its print sheet draws. It ends on the next change, and on leaving.
+  await page.waitForTimeout(2000);
+  await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+  eq((await state()).on, true, 'still readied at 2 s and after afterprint: nothing clears it early');
+  await page.click('[data-step="1"]'); await settle(page);
+  eq(await state(), { on: false, paper: '', svg: 0 }, 'the next change clears it: the printed sign would be stale');
+  await page.click('[data-step="3"]'); await settle(page);
+  await page.click('[data-print="portrait"]');
+  eq((await state()).on, true, 'readied again…');
+  await page.evaluate(() => window.navigateToPage('dashboard'));
+  await page.waitForTimeout(200);
+  eq(await state(), { on: false, paper: '', svg: 0 }, '…and leaving the page clears it');
+  // The dashboard's own print is untouched: Letter portrait, its report only.
+  await page.evaluate(() => { document.getElementById('print-report').textContent = 'DASHBOARD PRINT MARKER'; });
+  const dash = pdfFacts(await page.pdf({ preferCSSPageSize: true }), 'dashboard.pdf');
+  eq(dash.size, [612, 792], 'a dashboard print afterwards is still Letter portrait');
+  check(/DASHBOARD PRINT MARKER/.test(dash.text) && !/ALL CEREAL/.test(dash.text), '…with the report on it, and no sign');
+  // A sign that fits only one way: the other Print is off, and printSign refuses it anyway.
+  await enter(page);
+  await makeSign(page, { two: true, fields: { 'name-0': 'Work boots', 'price-0': '20', 'name-1': 'Premium work boots', 'price-1': '35' }, sale: 'blowout' });
+  const btns = await page.$$eval('[data-print]', bs => bs.map(b => [b.getAttribute('data-print'), b.disabled, b.title]));
+  eq(btns, [['landscape', true, "The landscape sign doesn't fit. The portrait one prints."], ['portrait', false, '']], 'portrait only: landscape Print is off and says why');
+  await page.evaluate(() => { const b = document.querySelector('[data-print="landscape"]'); b.disabled = false; b.click(); });
+  eq((await state()).on, false, '🛑 a forced click on the disabled landscape Print readies nothing: the print path checks too');
+  check(!errs.length, `no page errors (${errs.slice(0, 2).join(' | ')})`);
+});
+
 // ── 8. Contrast: every word readable, in all three themes ────────────────
 // Computed against the composited background it is painted on, never eyeballed (DESIGN.md
 // §4.8 trap 6), across the states a manager can reach: each step, % Off and Us vs Them,
@@ -466,6 +528,7 @@ await section('9. font failure', async () => {
 
 await b.close();
 srv.close();
+fs.rmSync(PDIR, { recursive: true, force: true });
 if (measured.length) console.log('Painted contrast:\n  ' + measured.join('\n  '));
 const bad = results.filter(r => !r[0]);
 for (const [okk, m] of results) if (!okk) console.log('  FAIL ' + m);
