@@ -796,10 +796,18 @@
        printer loses nothing. print-color-adjust keeps the grayscale channel-mix
        bar from being dropped as a "background". */
     #print-report { display: none; }
+    /* Sign Studio's print (ssPrint): the sign alone, at the paper size #sign-print-page sets.
+       Nothing on screen reads html.printing-sign; it only decides what prints. */
+    #sign-print { display: none; }
     @media print {
       @page { size: letter portrait; margin: 0.5in; }
       html, body { background: #fff !important; }
       body > *:not(#print-report) { display: none !important; }
+      /* A sign print shows only the sign. These outrank the line above, (1,1,2) and (1,1,1)
+         against its (1,0,1), so that line needs no change and a dashboard print is untouched. */
+      html.printing-sign body > *:not(#sign-print) { display: none !important; }
+      html.printing-sign #sign-print { display: block !important; }
+      #sign-print svg { display: block; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       #print-report {
         display: block !important;
         color: #14110a;
@@ -833,6 +841,9 @@
       #print-report .pr-ft { display: flex; justify-content: space-between; font-size: 5.8pt; color: #6b6453; margin-top: 12px; border-top: 0.5pt solid #d6d3ca; padding-top: 5px; }
     }
   </style>
+  <!-- Sign Studio's paper size, written by ssPrint and emptied by ssEndPrint. It comes AFTER
+       the app's @page rule (letter portrait, 0.5 in) so that, while it holds a rule, it wins. -->
+  <style id="sign-print-page"></style>
   <script>
     // Apply the theme before paint to prevent flash.
     //
@@ -1048,6 +1059,10 @@
             <div id="nav-merch-scan" class="nav-item nav-subitem" data-page="merch-scan" onclick="navigateToPage('merch-scan')">
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="8" x2="7" y2="16"/><line x1="10.5" y1="8" x2="10.5" y2="16"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="17" y1="8" x2="17" y2="16"/></svg></span>
               <span class="nav-label">Price Scan</span>
+            </div>
+            <div id="nav-merch-signs" class="nav-item nav-subitem" data-page="merch-signs" onclick="navigateToPage('merch-signs')">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M7 9h6M7 13h10"/></svg></span>
+              <span class="nav-label">Sign Studio</span>
             </div>
             <div id="nav-merch-coverage" class="nav-item nav-subitem" data-page="merch-coverage" data-menu-hint="Desktop" onclick="navigateToPage('merch-coverage')">
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
@@ -5110,6 +5125,193 @@
       </div>
     </div>
 
+    <!-- ── Merchandising: Sign Studio ───────────────────────────────────────────
+         Prints the store's sale signs in three steps: what's on sale, which sale,
+         print. The sign itself is drawn by window.SignRender (the #sign-render script);
+         this page is the form around it. Layout C of docs/sign-studio-preview.html,
+         the design Brian picked (24 Sep). #ss-root holds ONLY what ssRender owns
+         (DESIGN.md §4.8 trap 7), and no id inside this page starts with "page-":
+         showOnlyPage toggles every one of those. -->
+    <div id="page-merch-signs" class="hidden">
+      <style>
+        /* DESIGN.md §4.8 panel anatomy. Every colour is a token, stated on the page for each
+           theme (trap 3): light from opl-*, dark from the --op-* variables so pure black
+           follows them (§2.1), and html.oled restates the hairline and border, which are not
+           variables. Green, amber and red TEXT take the light-safe values of §4.8 (#166534,
+           #92400e, #a93226); fills keep the brand hex. The SIGN is paper: white in every
+           theme, drawn by SignRender, never styled here. */
+        #page-merch-signs{--ss-panel:#ffffff;--ss-panelHi:#fafaf6;--ss-ink:#14110a;--ss-inkDim:#6b6453;
+          --ss-hairline:rgba(20,16,8,.10);--ss-border:rgba(20,16,8,.18);
+          --ss-accent:#166534;--ss-greenWash:rgba(34,197,94,.10);--ss-greenEdge:rgba(22,101,52,.30);
+          --ss-amber:#92400e;--ss-amberWash:rgba(245,158,11,.16);--ss-amberEdge:rgba(180,83,9,.45);
+          --ss-bad:#a93226;--ss-badWash:rgba(192,57,43,.10);--ss-badEdge:rgba(192,57,43,.40);
+          --ss-blue:#1d4ed8;--ss-blueWash:rgba(29,78,216,.08);--ss-blueEdge:rgba(29,78,216,.32);
+          --ss-paperEdge:rgba(20,16,8,.20);color:var(--ss-ink)}
+        .dark #page-merch-signs{--ss-panel:rgb(var(--op-panel));--ss-panelHi:rgb(var(--op-panelHi));
+          --ss-ink:rgb(var(--op-ink));--ss-inkDim:rgb(var(--op-inkDim));
+          --ss-hairline:rgba(255,255,255,.09);--ss-border:rgba(255,255,255,.16);
+          --ss-accent:#22c55e;--ss-greenEdge:rgba(34,197,94,.30);
+          --ss-amber:#f59e0b;--ss-amberWash:rgba(245,158,11,.14);--ss-amberEdge:rgba(245,158,11,.45);
+          --ss-bad:#f87171;--ss-badWash:rgba(239,68,68,.12);--ss-badEdge:rgba(239,68,68,.42);
+          --ss-blue:#60a5fa;--ss-blueWash:rgba(96,165,250,.12);--ss-blueEdge:rgba(96,165,250,.38);
+          --ss-paperEdge:rgba(255,255,255,.18);color-scheme:dark}   /* trap 4: UA-drawn controls, this page only */
+        html.oled #page-merch-signs{--ss-hairline:rgba(255,255,255,.14);--ss-border:rgba(255,255,255,.22)}
+        #ss-root{scroll-margin-top:140px}
+        #page-merch-signs button{font-family:inherit}
+        .ss-steps{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+        .ss-step{display:flex;align-items:center;gap:8px;min-height:40px;padding:6px 14px 6px 8px;border-radius:999px;
+          border:1px solid var(--ss-border);background:var(--ss-panel);color:var(--ss-inkDim);font-size:13px;font-weight:600;cursor:pointer}
+        .ss-step .ss-n{width:24px;height:24px;border-radius:50%;display:grid;place-content:center;font-size:12px;font-weight:700;
+          background:var(--ss-panelHi);border:1px solid var(--ss-border);color:var(--ss-ink)}
+        .ss-step[aria-current="step"]{color:var(--ss-ink);border-color:#22c55e}
+        .ss-step[aria-current="step"] .ss-n{background:#22c55e;border-color:#22c55e;color:#06210f}
+        .ss-step.done .ss-n{background:var(--ss-greenWash);border-color:var(--ss-greenEdge);color:var(--ss-accent)}
+        .ss-grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
+        .ss-panel{background:var(--ss-panel);border:1px solid var(--ss-hairline);border-radius:14px;overflow:hidden;color:var(--ss-ink)}
+        .ss-bar{background:var(--ss-panelHi);border-bottom:1px solid var(--ss-hairline);color:var(--ss-ink);padding:13px 18px;
+          display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+        .ss-lbl{font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--ss-inkDim)}
+        .ss-right{margin-left:auto;display:flex;gap:8px;align-items:center}
+        .ss-body{padding:16px 18px}
+        .ss-fld{display:flex;flex-direction:column;gap:5px;margin-bottom:14px;min-width:0}
+        .ss-fld-top{display:flex;align-items:baseline;gap:8px}
+        .ss-fld-l{font-size:13px;font-weight:600;color:var(--ss-ink)}
+        .ss-req{color:var(--ss-inkDim);font-weight:500}
+        .ss-count{margin-left:auto;font-size:12px;color:var(--ss-inkDim);font-variant-numeric:tabular-nums}
+        .ss-count.near{color:var(--ss-amber);font-weight:700}
+        /* 16px on every input: anything smaller and iOS Safari zooms the page on focus. */
+        .ss-inp{width:100%;font-family:inherit;font-size:16px;color:var(--ss-ink);background:var(--ss-panelHi);
+          border:1px solid var(--ss-border);border-radius:10px;padding:10px 12px;min-height:44px;outline:none;min-width:0}
+        .ss-inp::placeholder{color:var(--ss-inkDim);opacity:1}
+        .ss-inp:focus{border-color:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.18)}
+        .ss-inp.bad{border-color:var(--ss-badEdge);background:var(--ss-badWash)}
+        .ss-money,.ss-pct{position:relative}
+        .ss-money .ss-inp{padding-left:26px;font-variant-numeric:tabular-nums}
+        .ss-money::before{content:'$';position:absolute;left:12px;top:50%;transform:translateY(-50%);
+          color:var(--ss-inkDim);font-weight:600;pointer-events:none}
+        .ss-pct .ss-inp{padding-right:60px;font-variant-numeric:tabular-nums}
+        .ss-pct::after{content:'% off';position:absolute;right:12px;top:50%;transform:translateY(-50%);
+          color:var(--ss-inkDim);font-weight:600;pointer-events:none}
+        .ss-msg{font-size:12.5px;line-height:1.45;color:var(--ss-bad)}
+        .ss-msg:empty{display:none}
+        .ss-hint{font-size:12px;color:var(--ss-inkDim);line-height:1.45}
+        .ss-row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+        /* The worked-out discount (Us vs Them) reads as a result, not a field. */
+        .ss-calc{font-size:13px;line-height:1.5;padding:9px 12px;border-radius:10px;margin:-2px 0 14px;
+          background:var(--ss-panelHi);border:1px dashed var(--ss-border);color:var(--ss-ink)}
+        .ss-calc b{color:var(--ss-accent);font-weight:700}
+        .ss-calc-d{color:var(--ss-inkDim)}
+        .ss-grp{border:1px solid var(--ss-hairline);border-radius:12px;padding:12px 12px 0;margin-bottom:12px;
+          background:var(--ss-panel);color:var(--ss-ink)}
+        .ss-grp-h{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ss-inkDim);margin-bottom:10px}
+        .ss-chips{display:flex;flex-wrap:wrap;gap:6px}
+        .ss-chip{font-size:13px;font-weight:600;padding:8px 14px;min-height:40px;border-radius:999px;cursor:pointer;
+          background:var(--ss-panelHi);color:var(--ss-ink);border:1px solid var(--ss-border)}
+        .ss-chip[aria-pressed="true"]{background:#22c55e;border-color:#22c55e;color:#06210f}
+        .ss-chk{display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;color:var(--ss-ink);
+          cursor:pointer;margin-bottom:12px;min-height:40px}
+        .ss-chk input{width:20px;height:20px;margin:0;accent-color:#22c55e}
+        .ss-dot{width:14px;height:14px;border-radius:50%;background:#ffd200;border:2px solid #111111;flex-shrink:0}
+        .ss-btn{font-weight:700;border-radius:11px;cursor:pointer;border:1px solid transparent;font-size:14px;padding:10px 16px;
+          min-height:44px;display:inline-flex;align-items:center;gap:7px;justify-content:center;white-space:nowrap}
+        .ss-btn svg{width:16px;height:16px}
+        .ss-primary{background:#22c55e;color:#06210f}
+        .ss-ghost{background:transparent;color:var(--ss-ink);border-color:var(--ss-border)}
+        .ss-link{background:transparent;border:0;color:var(--ss-accent);padding:8px 2px;font-weight:700;font-size:13.5px;
+          min-height:40px;cursor:pointer}
+        .ss-btn:disabled{opacity:.45;cursor:not-allowed}
+        .ss-disclose{border-top:1px dashed var(--ss-border);margin:4px 0 14px;padding-top:10px}
+        .ss-disclose summary{cursor:pointer;font-size:13px;font-weight:700;color:var(--ss-accent);list-style:none;
+          min-height:36px;display:flex;align-items:center}
+        .ss-disclose summary::-webkit-details-marker{display:none}
+        .ss-disclose summary::before{content:'+';display:inline-block;width:14px}
+        .ss-disclose[open] summary::before{content:'−'}
+        .ss-disclose[open] summary{margin-bottom:10px}
+        .ss-note{display:flex;gap:9px;align-items:flex-start;padding:10px 12px;border-radius:10px;font-size:13px;line-height:1.5;
+          background:var(--ss-blueWash);border:1px solid var(--ss-blueEdge);color:var(--ss-ink)}
+        .ss-note svg{width:16px;height:16px;flex-shrink:0;margin-top:2px;color:var(--ss-blue)}
+        .ss-note.err{background:var(--ss-badWash);border-color:var(--ss-badEdge)}
+        .ss-note.err svg{color:var(--ss-bad)}
+        .ss-note.warn{background:var(--ss-amberWash);border-color:var(--ss-amberEdge)}
+        .ss-note.warn svg{color:var(--ss-amber)}
+        .ss-note b{font-weight:700}
+        .ss-errlist{margin:4px 0 0 18px;list-style:disc}
+        .ss-pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:11.5px;
+          font-weight:700;white-space:nowrap}
+        .ss-pill i{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
+        .ss-pill.ok{background:var(--ss-greenWash);border:1px solid var(--ss-greenEdge);color:var(--ss-accent)}
+        .ss-pill.no{background:var(--ss-badWash);border:1px solid var(--ss-badEdge);color:var(--ss-bad)}
+        .ss-pill.wait{background:var(--ss-panel);border:1px solid var(--ss-border);color:var(--ss-inkDim)}
+        .ss-pill.part{background:var(--ss-amberWash);border:1px solid var(--ss-amberEdge);color:var(--ss-amber)}
+        .ss-seg{display:inline-flex;border:1px solid var(--ss-border);border-radius:9px;overflow:hidden;background:var(--ss-panel)}
+        .ss-seg button{background:transparent;border:0;color:var(--ss-inkDim);cursor:pointer;font-size:12px;font-weight:600;
+          padding:0 10px;min-height:36px;white-space:nowrap}
+        .ss-seg button+button{border-left:1px solid var(--ss-border)}
+        .ss-seg button[aria-pressed="true"]{background:#22c55e;color:#06210f}
+        .ss-bar .ss-seg{margin-left:auto}
+        /* The sign's paper: white in every theme; only its outline is the theme's. */
+        .ss-sheet{position:relative;background:#ffffff;border-radius:4px;outline:1px solid var(--ss-paperEdge);overflow:hidden;width:100%}
+        .ss-sheet.land{aspect-ratio:11/8.5}
+        .ss-sheet.port{aspect-ratio:8.5/11}
+        .ss-sheet svg{display:block;width:100%;height:100%}
+        .ss-skel{position:absolute;inset:0;background:linear-gradient(100deg,#f1f1f1 30%,#e6e6e6 50%,#f1f1f1 70%);
+          background-size:200% 100%;animation:ss-skel 1.6s linear infinite}
+        @keyframes ss-skel{to{background-position:-200% 0}}
+        @media (prefers-reduced-motion:reduce){.ss-skel{animation:none}}
+        .ss-fail{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
+          padding:12px;text-align:center;background:#fafafa;color:#3d3d3d;font-size:13px;line-height:1.45}
+        .ss-fail b{color:#a93226}
+        .ss-fail .ss-btn{background:#111111;color:#ffffff;min-height:40px}
+        .ss-cap-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}
+        .ss-cap{font-size:12px;color:var(--ss-inkDim);font-variant-numeric:tabular-nums}
+        .ss-cap b{color:var(--ss-ink);font-weight:600}
+        .ss-readout{font-size:12px;color:var(--ss-inkDim);margin-top:4px;font-variant-numeric:tabular-nums}
+        .ss-readout b{color:var(--ss-ink);font-weight:600}
+        .ss-readout .bad{color:var(--ss-bad);font-weight:700}
+        .ss-tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px}
+        /* A label tile shows the label as it prints: on paper, in the sign's face and green. */
+        .ss-tile{border:1px solid var(--ss-border);border-radius:12px;background:#ffffff;cursor:pointer;padding:0;height:100px;
+          display:flex;flex-direction:column;overflow:hidden;text-align:left}
+        .ss-tile .tv{flex:1;display:flex;align-items:center;justify-content:flex-end;padding:8px 12px}
+        .ss-tile .tn{font-size:12px;font-weight:600;padding:7px 10px;background:var(--ss-panelHi);color:var(--ss-ink);
+          border-top:1px solid var(--ss-hairline)}
+        .ss-tile[aria-pressed="true"]{outline:3px solid #22c55e;outline-offset:1px;border-color:#22c55e}
+        .ss-tile .lbl-t{font-family:'SS Poppins Black Italic',sans-serif;color:#20792B;line-height:.95;text-align:right;
+          text-transform:uppercase;font-size:19px;overflow-wrap:anywhere}
+        .ss-tile .none-t{font-size:12.5px;color:#6b6453;font-weight:600}
+        .ss-acts{margin-left:auto;display:flex;gap:6px}
+        .ss-pdfnote{font-size:12px;color:var(--ss-inkDim);margin-top:6px}
+        .ss-pdfnote.bad{color:var(--ss-bad)}
+        .ss-pdfnote:empty{display:none}
+        .ss-sm{min-height:40px;padding:8px 13px;font-size:13px}
+        .ss-review{display:grid;grid-template-columns:1.3fr 1fr;gap:16px;align-items:end}
+        .ss-nav{display:flex;gap:10px;justify-content:space-between;align-items:center;margin-top:8px;flex-wrap:wrap}
+        .ss-mini .ss-sheet{margin-bottom:6px}
+        @media (max-width:759px){
+          .ss-grid,.ss-review{grid-template-columns:1fr}
+          .ss-mini{order:-1}
+          .ss-mini .ss-sheet.port{max-width:280px;margin-left:auto;margin-right:auto}
+          .ss-tiles{grid-template-columns:repeat(2,1fr)}
+          .ss-body{padding:14px}
+        }
+        /* A phone: the three steps as three equal cells, number over name, so none wraps alone. */
+        @media (max-width:480px){
+          .ss-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
+          .ss-step{flex-direction:column;justify-content:center;gap:4px;padding:8px 4px;border-radius:12px;font-size:12px;
+            text-align:center;line-height:1.2}
+        }
+      </style>
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-5xl mx-auto">
+          <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Sign Studio</h1>
+          <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Three quick steps to a printed sign.</p>
+        </div>
+      </div>
+      <div class="max-w-5xl mx-auto px-4 sm:px-6 pt-4 pb-10">
+        <div id="ss-root"></div>
+      </div>
+    </div>
+
     <!-- ── Merchandising: Velocity & Reach ─────────────────────────────────────
          Units alone cannot say whether a slow category is the wrong PRODUCT or the wrong
          CUSTOMER — store size confounds it. Rates per transaction, basket reach, and both
@@ -7509,6 +7711,8 @@
        #app on purpose: the print stylesheet hides every other body child, so
        this must not live inside #app. Filled by buildPrintReport() on click. -->
   <div id="print-report" aria-hidden="true"></div>
+  <!-- Sign Studio's print (ssPrint): the sign alone. Body-level for the same reason. -->
+  <div id="sign-print" aria-hidden="true"></div>
 
   <!-- ─────────── What's New popup (shown on open until dismissed) ─────────── -->
   <div id="whatsnew-modal" class="hidden fixed inset-0 z-[70] flex items-center justify-center p-4">
@@ -7546,6 +7750,806 @@
       </div>
     </div>
   </div>
+
+  <script id="sign-render">
+  /* ═══════════════════════════════════════════════════════════════════════
+     SIGN STUDIO RENDERER: window.SignRender
+     The sign itself: the prices, the fit rules that keep it readable from
+     across a store, the four layouts, validation, and two drawers fed the
+     same list of items: SVG (the preview and Print) and jsPDF (the PDF).
+     Ported from docs/sign-studio-preview.html, the design Brian approved.
+
+     Rules for this block, checked by scripts/test-sign-render.mjs:
+     - ONE IIFE, NO TOP-LEVEL BINDINGS. The main script declares
+       `const COLORS` and a global `el()`. A clash here would stop the app
+       loading.
+     - NO DOM. Nothing runs at load time but definitions. The only document
+       is the one a caller hands to drawSVG, and the Node test runs this
+       block with none at all.
+     - USER TEXT reaches the SVG only through textContent and setAttribute.
+     - TEXT IS MEASURED FROM THE FONT FILES (readFont), never from the page,
+       so the preview, the PDF and the tests get the same widths everywhere.
+       The fonts carry no kerning, so neither the browser nor jsPDF adjusts
+       a pair (fonts/README.md).
+     - EVERY TEXT ITEM IS DRAWN FROM ITS LEFT EDGE. The layout works out
+       each item's x. Neither drawer uses text-anchor or jsPDF's align, so
+       the two can't centre by different widths.
+     ═══════════════════════════════════════════════════════════════════════ */
+  (function () {
+    'use strict';
+
+    /* ── 1. The vocabulary ───────────────────────────────────────────────── */
+    const SALE_LABELS = [
+      { id: 'none',    name: 'None',            lines: [] },
+      { id: 'sale',    name: 'Sale',            lines: ['SALE'] },
+      { id: 'flash',   name: 'Flash Sale',      lines: ['FLASH', 'SALE'] },
+      { id: 'manager', name: 'Manager Special', lines: ['MANAGER', 'SPECIAL'] },
+      { id: 'blowout', name: 'Blow Out',        lines: ['BLOW', 'OUT'] },
+      { id: 'custom',  name: 'Custom',          lines: null },
+    ];
+    const TEMPLATES = [{ id: 'price', name: 'Price sign' }, { id: 'pct', name: '% Off' }, { id: 'uvt', name: 'Us vs Them' }];
+    const UNITS = [{ id: '', name: 'None' }, { id: 'each', name: 'Each' }, { id: 'pair', name: 'Per pair' }];
+    const UNIT_TEXT = { each: 'EACH', pair: 'PER PAIR' };
+    const LIMIT = { name: 22, qual: 32, custom: 12 };   // name: 22 (Brian, 24 Sep)
+    const ORIENTS = ['landscape', 'portrait'];
+
+    /* The faces (Brian, 24 Sep): Poppins for words, Luckiest Guy for numbers.
+       Each file is its own family, drawn at weight 400 and style normal, so a
+       browser has nothing to synthesise. */
+    const FACES = {
+      word:  { fam: 'SS Poppins Black',        file: 'fonts/poppins-900.ttf' },                       // names, OFF
+      label: { fam: 'SS Poppins Black Italic', file: 'fonts/poppins-900-italic.ttf', italic: true },  // sale label, YOU PAY
+      small: { fam: 'SS Poppins Bold',         file: 'fonts/poppins-700.ttf' },                       // unit, note, row labels
+      num:   { fam: 'SS Luckiest Guy',         file: 'fonts/luckiest-guy-400.ttf', num: true },       // prices, $, ¢, %
+    };
+    // green: 5.5:1 on white (the logo keeps its own #3BB54A). dim: THEIR PRICE, 9.1:1.
+    const COLORS = { ink: '#111111', dim: '#4a4a4a', green: '#20792B', rule: '#c9c9c9', dot: '#FFD200', paper: '#ffffff' };
+    const LOGO = { file: 'sign-logo.png', ar: 1711 / 497 };
+
+    /* What the Poppins files can draw: Basic Latin, Latin-1 and a little
+       punctuation (fonts/README.md). A character is judged in CAPITALS, as it
+       prints: µ uppercases to a Greek capital the font doesn't have. Control
+       and format characters (U+00AD, a bidi override) never print. */
+    const TEXT_CHARS = /^[\u0020-\u007E\u00A0-\u00AC\u00AE-\u00FF\u0152\u0153\u0178\u2013\u2014\u2018\u2019\u201C\u201D\u2022\u2026\u20AC\u2122]$/;
+    const nfc = s => String(s == null ? '' : s).normalize('NFC');
+    const clean = s => nfc(s).trim().replace(/\s+/g, ' ');
+    const caps = s => s.toUpperCase().normalize('NFC');
+    function unsupportedChars(text) {
+      const bad = [];
+      for (const ch of clean(text))
+        if (![...caps(ch)].every(u => TEXT_CHARS.test(u)) && !bad.includes(ch)) bad.push(ch);
+      return bad;
+    }
+    // How a refused character is named in a message: itself if it has a shape,
+    // otherwise its code, so an invisible or direction-changing one can't hide.
+    const charName = ch => /^[\p{L}\p{N}\p{P}\p{S}]$/u.test(ch) ? `“${ch}”`
+      : 'U+' + ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0');
+
+    /* ── 2. Prices: integer cents from a string, never a float, never a round ── */
+    function parsePrice(raw) {
+      const s = String(raw == null ? '' : raw).trim();
+      if (!s) return { err: 'Enter a price.' };
+      const t = s.replace(/^\$\s*/, '');
+      if (/^-/.test(t)) return { err: 'A price has to be more than $0.' };
+      if (/^[\d,]*\.\d{3,}$/.test(t)) return { err: 'Use at most two decimal places. Nothing is rounded for you.' };
+      if (!/^(\d{1,4}|\d{1,3},\d{3})?(\.\d{1,2})?$/.test(t) || t === '.') return { err: 'Type a price like 2, 2.50 or 1,299.99.' };
+      const [d, c = ''] = t.replace(/,/g, '').split('.');
+      const cents = Number(d || 0) * 100 + Number((c + '00').slice(0, 2));
+      if (cents <= 0) return { err: 'A price has to be more than $0.' };
+      if (cents > 999999) return { err: 'Prices go up to $9,999.99.' };
+      return { cents };
+    }
+    const thousands = d => String(d).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    /* → { lead:'$', dollars:'1,299', cents:'99', tail:'' }. Cents are raised, and
+       under $1 the price is 99 with a raised ¢. */
+    function priceParts(cents) {
+      const d = Math.floor(cents / 100), c = cents % 100;
+      if (d === 0) return { lead: '', dollars: String(c), cents: '', tail: '¢' };
+      return { lead: '$', dollars: thousands(d), cents: c ? String(c).padStart(2, '0') : '', tail: '' };
+    }
+    function priceText(cents) {
+      const d = Math.floor(cents / 100), c = cents % 100;
+      return '$' + thousands(d) + (c ? '.' + String(c).padStart(2, '0') : '');
+    }
+    /* % Off: a whole number from 1 to 99. "20", "20%" and "20 % off" all mean 20. */
+    function parsePct(raw) {
+      const s = String(raw == null ? '' : raw).trim();
+      if (!s) return { err: 'Enter the percent off, like 20.' };
+      const t = s.replace(/\s*%?\s*(off)?$/i, '');
+      if (!/^-?\d+$/.test(t)) return { err: 'Use a whole number, like 20.' };
+      const n = Number(t);
+      return n >= 1 && n <= 99 ? { n } : { err: 'Percent off goes from 1 to 99.' };
+    }
+    /* Us vs Them: the discount is WORKED OUT, never typed, and rounded DOWN, so
+       it can't disagree with the prices or overstate the saving. */
+    function discountPct(themC, ourC) {
+      return themC > 0 && ourC > 0 && ourC < themC ? Math.floor((themC - ourC) * 100 / themC) : null;
+    }
+
+    /* ── 3. The sign being made, and the model the layout reads ──────────── */
+    const blankGroup = () => ({ name: '', price: '', pct: '', unit: '', qual: '', dot: false });
+    const blankSign = () => ({ template: 'price', sale: 'none', custom: '', two: false, them: '', groups: [blankGroup(), blankGroup()] });
+    /* Anything that claims to be a sign (a saved draft, a stale version of one)
+       becomes a well-formed one: known ids only, strings for text, capped so
+       a planted value can't stall the fit loop. Lengths over the limits are
+       KEPT, so validate says so rather than the sign quietly changing. */
+    function normalizeSign(raw) {
+      const r = raw && typeof raw === 'object' ? raw : {};
+      const str = v => (typeof v === 'string' ? v : typeof v === 'number' && isFinite(v) ? String(v) : '').slice(0, 200);
+      const pick = (list, v, dflt) => list.some(x => x.id === v) ? v : dflt;
+      const template = pick(TEMPLATES, r.template, 'price');
+      const groups = [0, 1].map(k => {
+        const g = Array.isArray(r.groups) && r.groups[k] && typeof r.groups[k] === 'object' ? r.groups[k] : {};
+        return { name: str(g.name), price: str(g.price), pct: str(g.pct), unit: pick(UNITS, g.unit, ''),
+                 qual: str(g.qual), dot: g.dot === true };
+      });
+      if (groups[0].dot && groups[1].dot) groups[1].dot = false;   // one dot, one group
+      return { template, sale: pick(SALE_LABELS, r.sale, 'none'), custom: str(r.custom),
+               two: template !== 'uvt' && r.two === true, them: str(r.them), groups };
+    }
+    function signModel(sign) {
+      const sg = normalizeSign(sign), tpl = sg.template, pct = tpl === 'pct';
+      const n = tpl !== 'uvt' && sg.two ? 2 : 1;
+      const groups = sg.groups.slice(0, n).map((g, i) => {
+        const rawName = clean(g.name), rawQual = clean(g.qual);
+        // On % Off the price is not on the sign ({}: neither cents nor an
+        // error), and neither is the unit: a percentage has nothing to count.
+        return { i, kind: pct ? 'pct' : 'price', name: caps(rawName), rawName,
+                 price: pct ? {} : parsePrice(g.price), pct: pct ? parsePct(g.pct) : null, unit: pct ? '' : g.unit,
+                 qual: caps(rawQual), rawQual, dot: g.dot };
+      });
+      let label = null;
+      if (sg.sale === 'custom') { const raw = clean(sg.custom); label = { custom: true, text: caps(raw), raw }; }
+      else {
+        const L = SALE_LABELS.find(x => x.id === sg.sale);
+        if (L && L.lines.length) label = { custom: false, lines: L.lines };
+      }
+      return { template: tpl, groups, label, them: tpl === 'uvt' ? parsePrice(sg.them) : null };
+    }
+    /* What a group's hero shows: its price, or on % Off its percentage. */
+    function heroParts(g) {
+      if (g.kind === 'pct') return g.pct.n ? { kind: 'pct', lead: '', dollars: String(g.pct.n), cents: '', tail: '' } : null;
+      return g.price.cents ? priceParts(g.price.cents) : null;
+    }
+
+    /* ── 4. Fonts: widths and heights read from the file itself ───────────
+       A TrueType file has what the fit rules need: each glyph's advance
+       (hmtx) and ink box (glyf), found through the Unicode map (cmap). */
+    function readFont(bytes) {
+      const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+      const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+      if (dv.getUint32(0) !== 0x00010000) throw new Error('Not a TrueType font.');
+      const tables = {};
+      for (let i = 0, n = dv.getUint16(4); i < n; i++) {
+        const o = 12 + 16 * i;
+        tables[String.fromCharCode(u8[o], u8[o + 1], u8[o + 2], u8[o + 3])] = dv.getUint32(o + 8);
+      }
+      const at = t => { if (tables[t] == null) throw new Error(`The font has no ${t} table.`); return tables[t]; };
+      const head = at('head'), upm = dv.getUint16(head + 18), longLoca = dv.getInt16(head + 50) === 1;
+      const nMetrics = dv.getUint16(at('hhea') + 34), hmtx = at('hmtx'), loca = at('loca'), glyf = at('glyf');
+      const cmap = at('cmap'), map = new Map();
+      let sub = null;
+      for (let i = 0, n = dv.getUint16(cmap + 2); i < n; i++) {
+        const pid = dv.getUint16(cmap + 4 + 8 * i), eid = dv.getUint16(cmap + 6 + 8 * i);
+        const off = cmap + dv.getUint32(cmap + 8 + 8 * i), fmt = dv.getUint16(off);
+        if ((pid === 0 || (pid === 3 && (eid === 1 || eid === 10))) && (fmt === 12 || (fmt === 4 && !sub))) sub = { off, fmt };
+      }
+      if (!sub) throw new Error('The font has no Unicode map.');
+      if (sub.fmt === 4) {
+        const o = sub.off, segX2 = dv.getUint16(o + 6), ends = o + 14, starts = ends + segX2 + 2;
+        const deltas = starts + segX2, ranges = deltas + segX2;
+        for (let s = 0; s < segX2; s += 2) {
+          const end = dv.getUint16(ends + s), start = dv.getUint16(starts + s);
+          const delta = dv.getInt16(deltas + s), ro = dv.getUint16(ranges + s);
+          for (let c = start; c <= end && c !== 0xFFFF; c++) {
+            let g = ro ? dv.getUint16(ranges + s + ro + 2 * (c - start)) : c;
+            if (g) g = (g + delta) & 0xFFFF;
+            if (g) map.set(c, g);
+          }
+        }
+      } else {
+        for (let i = 0, n = dv.getUint32(sub.off + 12); i < n; i++) {
+          const p = sub.off + 16 + 12 * i, first = dv.getUint32(p), last = dv.getUint32(p + 4), g0 = dv.getUint32(p + 8);
+          for (let c = first; c <= last; c++) map.set(c, g0 + c - first);
+        }
+      }
+      const glyph = ch => map.get(ch.codePointAt(0)) || 0;
+      const advance = g => dv.getUint16(hmtx + 4 * Math.min(g, nMetrics - 1));
+      const box = g => {
+        const a = longLoca ? dv.getUint32(loca + 4 * g) : 2 * dv.getUint16(loca + 2 * g);
+        const b = longLoca ? dv.getUint32(loca + 4 * g + 4) : 2 * dv.getUint16(loca + 2 * g + 2);
+        if (b <= a) return { xMin: 0, yMin: 0, xMax: advance(g), yMax: 0 };   // an empty glyph: the space
+        return { xMin: dv.getInt16(glyf + a + 2), yMin: dv.getInt16(glyf + a + 4), xMax: dv.getInt16(glyf + a + 6), yMax: dv.getInt16(glyf + a + 8) };
+      };
+      return {
+        upm,
+        has: ch => map.has(ch.codePointAt(0)),
+        codepoints: () => [...map.keys()],
+        // Advance width at font size 100, glyph by glyph: what jsPDF draws.
+        w100(str) { let w = 0; for (const ch of str) w += advance(glyph(ch)); return w * 100 / upm; },
+        // Ink above and below the baseline, in em, from the glyph's box.
+        up: ch => box(glyph(ch)).yMax / upm,
+        down: ch => -box(glyph(ch)).yMin / upm,
+        // Ink left of the glyph's origin (negative when it hangs out), and past its advance on
+        // the right (positive when it hangs out, as an italic's top-right corner does), in em.
+        inkLeft: ch => box(glyph(ch)).xMin / upm,
+        inkRight: ch => { const g = glyph(ch); return (box(g).xMax - advance(g)) / upm; },
+      };
+    }
+
+    /* ── 5. The layout, in print points (1 pt = 1/72 in) ──────────────────
+       US Letter. 0.25 in safe margin; the border's outer edge sits on it. */
+    const PT = 72;
+    const PAGE = { landscape: [792, 612], portrait: [612, 792] };
+    const G = { safe: 18, border: 13, pad: 20, gapHead: 28,
+                logoH: { landscape: 62, portrait: 60 }, labelBlock: 1.18, lineGap: 0.24,
+                // Name capitals top out near the store's own signs (0.85–1.1 in) so
+                // the price can be the hero; the name never takes over ~30% of the body.
+                product: { landscape: 76, portrait: 82 }, groupMax: { landscape: 62, portrait: 56 },
+                nameShare: { landscape: 0.30, portrait: 0.30 },
+                nameShareTwo: { landscape: 0.40, portrait: 0.42 },   // a half-height row needs more for two lines at 0.6 in
+                minCap: 0.6 * PT, labelMin: 0.3 * PT, qualCap: 17, qualMin: 0.2 * PT, unitCap: 18,
+                priceOverName: 2.0,     // target: price capitals ≥ 2× the name's (the name shrinks, never below 0.6 in)
+                priceFloorRatio: 1.1 }; // hard rule: under this the price is not the biggest text, so it can't print
+    /* Us vs Them. THEIR PRICE is never bigger than 40% of YOU PAY's capitals,
+       so a three-second glance lands on what the customer pays. */
+    G.uvt = { nameMax: { landscape: 60, portrait: 68 }, nameShare: 0.22,
+              rowCap: { landscape: 30, portrait: 30 }, rowMin: 18, labelR: 0.72, rowGapR: 0.5,
+              axisGap: 14, gapRows: 14, divider: 24, themRatio: 0.40, labelGap: 26,
+              youLabel: { landscape: 0.42, portrait: 0.30 }, youLabelMin: 0.3 * PT,
+              youLabelMax: { landscape: 60, portrait: 44 }, youGapR: 0.38 };
+    const PCT = { sup: 0.6, off: 0.44, gap: 0.06 };   // % size, OFF size, gap before their column (em)
+    /* Score = cap height, discounted a little per extra line, so ALL CEREAL stays
+       on one line unless breaking buys real height. Labels break freely, so a
+       two-word custom label stacks like FLASH / SALE. */
+    const PER_LINE = { name: 0.16, label: 0, small: 0.25 };
+
+    /* The fit engine, bound to the four fonts readFont returned:
+       { word, label, small, num }. */
+    function engine(fonts) {
+      for (const k of Object.keys(FACES)) if (!fonts || !fonts[k]) throw new Error(`Missing the ${k} font.`);
+      const w100 = (str, kind) => fonts[kind].w100(str);
+      const METRICS = {};
+      function metricsOf(kind) {
+        if (METRICS[kind]) return METRICS[kind];
+        const f = fonts[kind];
+        // Luckiest Guy's digits bounce, so a number's cap is its TALLEST digit:
+        // no price can poke above the height it was given.
+        const cap = FACES[kind].num ? Math.max(...[...'0123456789'].map(f.up)) : f.up('H');
+        return (METRICS[kind] = { cap: cap || 0.7,
+          dUp: Math.max(f.up('$'), 0.7), dDown: Math.max(f.down('$'), 0.05),
+          comma: Math.max(f.down(','), 0.1),     // $9,999: the comma dips lowest
+          pctUp: f.up('%') || 0.64 });           // a raised % hangs from its top
+      }
+
+      /* FIT: for each way of breaking the words (up to maxLines), the tallest
+         capitals that fit the box; take the best score. In points of CAP
+         HEIGHT, which is what "0.6 inch letters" means. */
+      function splits(words, maxLines) {
+        const out = [[words.join(' ')]];
+        if (maxLines >= 2) for (let i = 1; i < words.length; i++) out.push([words.slice(0, i).join(' '), words.slice(i).join(' ')]);
+        return out;
+      }
+      function fitText(text, o) {
+        // o: { font, boxW, boxH, maxCap, minCap, maxLines, gap, lines (fixed), perLine }
+        const m = metricsOf(o.font), perLine = o.perLine == null ? PER_LINE.name : o.perLine;
+        const cands = o.lines ? [o.lines] : splits(text.split(/\s+/).filter(Boolean), o.maxLines || 1);
+        let best = null;
+        for (const lines of cands) {
+          const widest = Math.max(...lines.map(l => w100(l, o.font)));
+          const n = lines.length, cap = Math.min(o.boxW / (widest / 100) * m.cap, o.boxH / (n + (n - 1) * o.gap), o.maxCap);
+          const c = { lines, cap, n, score: cap * (1 - perLine * (n - 1)), feasible: cap >= o.minCap - 0.01 };
+          if (!best || (c.feasible && !best.feasible) || (c.feasible === best.feasible && c.score > best.score)) best = c;
+        }
+        best.size = best.cap / m.cap;
+        best.h = best.n * best.cap + (best.n - 1) * o.gap * best.cap;
+        best.ok = best.feasible;
+        return best;
+      }
+      /* The same text at a GIVEN cap (to make two groups match): fewest lines. */
+      function atCap(text, cap, o) {
+        const m = metricsOf(o.font), size = cap / m.cap;
+        const cands = o.lines ? [o.lines] : splits(text.split(/\s+/).filter(Boolean), o.maxLines || 1);
+        for (const lines of cands.slice().sort((a, b) => a.length - b.length))
+          if (Math.max(...lines.map(l => w100(l, o.font))) * size / 100 <= o.boxW + 0.01)
+            return { lines, cap, size, n: lines.length, h: lines.length * cap + (lines.length - 1) * o.gap * cap, ok: cap >= o.minCap - 0.01 };
+        return fitText(text, Object.assign({}, o, { maxCap: cap }));
+      }
+      /* The hero, in Luckiest Guy: '$' + dollars with cents raised at half size
+         (or a raised ¢ under $1), or a percentage with % raised over OFF.
+         Widths per 100 units of size, heights in em; drawPrice uses the same gaps. */
+      function heroMeasure(parts) {
+        const m = metricsOf('num');
+        if (parts.kind === 'pct') {
+          const wMain = w100(parts.dollars, 'num');
+          const wCol = Math.max(w100('%', 'num') * PCT.sup, w100('OFF', 'word') * PCT.off);
+          return { wMain, w: wMain + PCT.gap * 100 + wCol, up: m.cap, down: 0.04 };
+        }
+        const wMain = w100(parts.lead + parts.dollars, 'num');
+        const wC = parts.cents ? w100(parts.cents, 'num') * 0.5 + 6 : 0;
+        const wT = parts.tail ? w100(parts.tail, 'num') * 0.6 + 4 : 0;
+        return { wMain, w: wMain + wC + wT, up: parts.lead ? Math.max(m.dUp, m.cap) : m.cap * 1.02,   // a raised ¢ tops the digits a hair
+                 down: Math.max(parts.lead ? m.dDown : 0.04, parts.dollars.includes(',') ? m.comma : 0) };
+      }
+      const heroAt = (M, size, m) => ({ size, cap: size * m.cap, up: M.up * size, down: M.down * size,
+                                        w: M.w / 100 * size, wMain: M.wMain / 100 * size });
+      function fitPrice(parts, o) {
+        const m = metricsOf('num'), M = heroMeasure(parts);
+        return heroAt(M, Math.min(o.boxW / (M.w / 100), o.boxH / (M.up + M.down), o.maxCap / m.cap), m);
+      }
+      function priceAtCap(parts, cap, o) {
+        const m = metricsOf('num'), M = heroMeasure(parts), size = cap / m.cap;
+        if (M.w / 100 * size <= o.boxW + 0.01) return heroAt(M, size, m);
+        return fitPrice(parts, Object.assign({}, o, { maxCap: cap }));
+      }
+
+      function layoutSign(model, orient) {
+        const [W, H] = PAGE[orient];
+        const inset = G.safe + G.border + G.pad;
+        const box = { x: inset, y: inset, w: W - 2 * inset, h: H - 2 * inset };
+        const out = { W, H, orient, items: [], report: { groups: [], label: null } };
+        // Border: a stroke centred on a rect whose OUTER edge is the safe margin.
+        out.items.push({ t: 'border', x: G.safe + G.border / 2, y: G.safe + G.border / 2,
+                         w: W - 2 * G.safe - G.border, h: H - 2 * G.safe - G.border, sw: G.border });
+        const logoH = G.logoH[orient], logoW = logoH * LOGO.ar;
+        out.items.push({ t: 'logo', x: box.x, y: box.y, w: logoW, h: logoH });
+        // Sale label, top right: ONE shared cap for every preset label.
+        let headH = logoH;
+        const labelCap = logoH * G.labelBlock / (2 + G.lineGap);
+        if (model.label && (!model.label.custom || model.label.text)) {
+          const o = { font: 'label', boxW: box.w - logoW - 24, boxH: logoH * G.labelBlock, maxCap: labelCap,
+                      minCap: model.label.custom ? G.labelMin : labelCap * 0.98, maxLines: 2, gap: G.lineGap,
+                      lines: model.label.custom ? null : model.label.lines, perLine: PER_LINE.label };
+          const fit = model.label.custom ? fitText(model.label.text, o) : atCap(null, labelCap, o);
+          const top = box.y + Math.max(0, (logoH - fit.h) / 2) * (fit.n === 1 ? 1 : 0);
+          // Each line ends where its INK ends: an italic's last letter leans past its own
+          // advance (V by 0.075 em), so the line is pulled in by that letter's overhang.
+          fit.lines.forEach((ln, k) => out.items.push({ t: 'text', role: 'label', text: ln, anchor: 'end',
+            x: box.x + box.w - fit.size * Math.max(0, fonts.label.inkRight([...ln].pop())), y: top + fit.cap + k * fit.cap * (1 + G.lineGap),
+            size: fit.size, font: 'label', fill: 'green' }));
+          headH = Math.max(logoH, fit.h);
+          out.report.label = { cap: fit.cap, ok: fit.ok };
+        }
+        const y0 = box.y + headH + G.gapHead, area = { x: box.x, y: y0, w: box.w, h: box.y + box.h - y0 };
+        if (model.template === 'uvt') layoutUvT(out, model, area, orient);
+        else if (model.groups.length === 1) layoutSingle(out, model.groups[0], area, orient);
+        else layoutTwo(out, model.groups, area, orient);
+        // Every text item gets its LEFT edge and its width, from the same widths
+        // the fit used. Letter spacing goes between letters, not after the last.
+        for (const it of out.items) if (it.t === 'text') {
+          it.ls = it.spacing ? it.size * it.spacing : 0;
+          it.w = w100(it.text, it.font) * it.size / 100 + it.ls * Math.max(0, [...it.text].length - 1);
+          if (it.anchor === 'middle') it.x -= it.w / 2; else if (it.anchor === 'end') it.x -= it.w;
+          delete it.anchor; delete it.spacing;
+        }
+        return out;
+      }
+
+      /* Unit and note, under a price. Shared by every template. */
+      function planExtras(g, width) {
+        const extras = [];
+        if (g.unit) extras.push({ kind: 'unit', h: G.unitCap });
+        let qfit = null;
+        if (g.qual) {
+          const dotW = g.dot ? G.qualCap * 1.5 + 8 : 0;
+          qfit = fitText(g.qual, { font: 'small', boxW: width - dotW, boxH: G.qualCap * 2.3, maxCap: G.qualCap,
+                                   minCap: G.qualMin, maxLines: 2, gap: 0.3, perLine: PER_LINE.small });
+          qfit.dotW = dotW;
+          // With a dot the row is as tall as the dot. A one-line note (17 pt) is shorter than
+          // it (25.5 pt), and budgeting only the text let the dot poke out of a full sign.
+          qfit.rowH = g.dot ? Math.max(qfit.h, G.qualCap * 1.5) : qfit.h;
+          extras.push({ kind: 'qual', h: qfit.rowH });
+        }
+        const gapE = 12;
+        return { extras, qfit, gapE, h: extras.reduce((a, e) => a + e.h + gapE, 0) };
+      }
+      function drawExtras(out, g, X, cx, y) {
+        for (const e of X.extras) {
+          y += X.gapE;
+          if (e.kind === 'unit') {
+            out.items.push({ t: 'text', role: 'unit', group: g.i, text: UNIT_TEXT[g.unit], anchor: 'middle',
+              x: cx, y: y + G.unitCap, size: G.unitCap / metricsOf('small').cap, font: 'small', fill: 'ink', spacing: 0.08 });
+          } else {
+            const q = X.qfit, widest = Math.max(...q.lines.map(l => w100(l, 'small'))) * q.size / 100;
+            const left = cx - (widest + q.dotW) / 2, top = y + (q.rowH - q.h) / 2;   // the text centred in its row
+            if (g.dot) out.items.push({ t: 'dot', cx: left + G.qualCap * 0.75, cy: y + q.rowH / 2, r: G.qualCap * 0.75 });
+            q.lines.forEach((ln, k) => out.items.push({ t: 'text', role: 'qual', group: g.i, text: ln, anchor: 'middle',
+              x: left + q.dotW + widest / 2, y: top + q.cap + k * q.cap * 1.3, size: q.size, font: 'small', fill: 'ink' }));
+          }
+          y += e.h;
+        }
+        return y;
+      }
+      /* A hero at a fitted size F, from its left edge x on baseline `base`:
+         '$' + dollars, then raised cents or a raised ¢; or the percentage with
+         % hung from the digits' top and OFF on their baseline, in one column. */
+      function drawPrice(out, parts, F, x, base, roles, gi, fill) {
+        const m = metricsOf('num');
+        out.items.push({ t: 'text', role: roles[0], group: gi, text: parts.lead + parts.dollars, anchor: 'start',
+          x, y: base, size: F.size, font: 'num', fill });
+        const x2 = x + F.wMain;
+        if (parts.kind === 'pct') {
+          const ps = F.size * PCT.sup, colX = x2 + F.size * PCT.gap, mid = colX + (x + F.w - colX) / 2;
+          out.items.push({ t: 'text', role: 'pct', group: gi, text: '%', anchor: 'middle',
+            x: mid, y: base - F.cap + ps * m.pctUp, size: ps, font: 'num', fill });
+          out.items.push({ t: 'text', role: 'off', group: gi, text: 'OFF', anchor: 'middle',
+            x: mid, y: base, size: F.size * PCT.off, font: 'word', fill });
+          return;
+        }
+        if (parts.cents) {
+          const cs = F.size * 0.5;
+          out.items.push({ t: 'text', role: roles[1], group: gi, text: parts.cents, anchor: 'start',
+            x: x2 + F.size * 0.06, y: base - F.cap + cs * m.cap, size: cs, font: 'num', fill });
+        }
+        if (parts.tail) {
+          const ts = F.size * 0.6;
+          out.items.push({ t: 'text', role: roles[1], group: gi, text: parts.tail, anchor: 'start',
+            x: x2 + F.size * 0.04, y: base - F.cap + ts * m.cap, size: ts, font: 'num', fill });
+        }
+      }
+
+      /* One group's column: name → price → unit → note. `forced` = { nameCap,
+         priceCap } makes two groups match. */
+      function planGroup(g, area, orient, { maxName, forced, two }) {
+        const X = planExtras(g, area.w), avail = area.h - X.h;
+        const nameO = { font: 'word', boxW: area.w, boxH: avail * (two ? G.nameShareTwo : G.nameShare)[orient],
+                        maxCap: maxName, minCap: G.minCap, maxLines: 2, gap: G.lineGap, perLine: PER_LINE.name };
+        let name = g.name ? (forced && forced.nameCap ? atCap(g.name, forced.nameCap, nameO) : fitText(g.name, nameO)) : null;
+        const parts = heroParts(g);
+        const priceBox = () => ({ boxW: area.w, boxH: avail - (name ? name.h + name.cap * 0.45 : 0), maxCap: 400 });
+        let price = parts ? (forced && forced.priceCap ? priceAtCap(parts, forced.priceCap, priceBox()) : fitPrice(parts, priceBox())) : null;
+        // The price is the hero: shrink the NAME toward half the price, never
+        // below 0.6 in. Each pass frees height, so the price grows back.
+        if (!(forced && forced.nameCap) && name && price) {
+          for (let k = 0; k < 4 && price.cap < name.cap * G.priceOverName && name.cap > G.minCap + 0.5; k++) {
+            name = atCap(g.name, Math.max(price.cap / G.priceOverName, G.minCap), nameO);
+            price = fitPrice(parts, priceBox());
+          }
+        }
+        return { g, name, price, parts, qfit: X.qfit, extras: X.extras, gapE: X.gapE, X };
+      }
+      function placeGroup(out, P, area, alignTop) {
+        const cx = area.x + area.w / 2;
+        const nameGap = P.name ? P.name.cap * 0.45 : 0;
+        const stackH = (P.name ? P.name.h + nameGap : 0) + (P.price ? P.price.up + P.price.down : 0) + P.X.h;
+        let y = alignTop != null ? alignTop : area.y + Math.max(0, (area.h - stackH) * 0.46);
+        if (P.name) {
+          P.name.lines.forEach((ln, k) => out.items.push({ t: 'text', role: 'name', group: P.g.i, text: ln, anchor: 'middle',
+            x: cx, y: y + P.name.cap + k * P.name.cap * (1 + G.lineGap), size: P.name.size, font: 'word', fill: 'ink' }));
+          y += P.name.h + nameGap;
+        }
+        if (P.price) {
+          const base = y + P.price.up;
+          drawPrice(out, P.parts, P.price, cx - P.price.w / 2, base, ['price', 'cents'], P.g.i, 'ink');
+          y = base + P.price.down;
+        }
+        drawExtras(out, P.g, P.X, cx, y);
+      }
+      /* nameOk comes from the group's OWN fit (freeP): in a two-price sign the
+         shorter name is only small because it matches the longer one, so only
+         the name that caused it is told to change. */
+      function reportGroup(out, P, freeP) {
+        const own = freeP || P;
+        out.report.groups[P.g.i] = { nameCap: P.name ? P.name.cap : null, nameOk: own.name ? own.name.ok : true,
+          priceCap: P.price ? P.price.cap : null, qualOk: P.qfit ? P.qfit.ok : true, name: P.g.name,
+          priceOk: !(P.name && P.price) || P.price.cap >= P.name.cap * G.priceFloorRatio };
+      }
+      function layoutSingle(out, g, area, orient) {
+        const P = planGroup(g, area, orient, { maxName: G.product[orient], two: false });
+        placeGroup(out, P, area);
+        reportGroup(out, P);
+      }
+      function layoutTwo(out, groups, area, orient) {
+        const land = orient === 'landscape', gut = land ? 40 : 30;
+        const cells = land
+          ? [{ x: area.x, y: area.y, w: (area.w - gut) / 2, h: area.h }, { x: area.x + (area.w + gut) / 2, y: area.y, w: (area.w - gut) / 2, h: area.h }]
+          : [{ x: area.x, y: area.y, w: area.w, h: (area.h - gut) / 2 }, { x: area.x, y: area.y + (area.h + gut) / 2, w: area.w, h: (area.h - gut) / 2 }];
+        out.items.push(land ? { t: 'rule', sw: 2, x1: area.x + area.w / 2, y1: area.y + 8, x2: area.x + area.w / 2, y2: area.y + area.h - 8 }
+                            : { t: 'rule', sw: 2, x1: area.x + 30, y1: area.y + area.h / 2, x2: area.x + area.w - 30, y2: area.y + area.h / 2 });
+        // Fit each alone; give BOTH the smaller name cap; refit the prices with
+        // the height that frees; then give both the smaller price cap.
+        const plan = (k, forced) => planGroup(groups[k], cells[k], orient, { maxName: G.groupMax[orient], forced, two: true });
+        const free = [0, 1].map(k => plan(k));
+        const nameCaps = free.filter(P => P.name).map(P => P.name.cap);
+        const nameCap = nameCaps.length ? Math.min(...nameCaps) : 0;
+        const named = [0, 1].map(k => plan(k, { nameCap }));
+        const priceCaps = named.filter(P => P.price).map(P => P.price.cap);
+        const priceCap = priceCaps.length ? Math.min(...priceCaps) : 0;
+        const plans = [0, 1].map(k => plan(k, { nameCap, priceCap }));
+        // Landscape: names start on one line across both columns, so prices line up too.
+        if (land) {
+          const heights = plans.map(P => (P.name ? P.name.h + P.name.cap * 0.45 : 0) + (P.price ? P.price.up + P.price.down : 0) + P.extras.reduce((a, e) => a + e.h + P.gapE, 0));
+          const nameHs = plans.map(P => P.name ? P.name.h : 0), maxNameH = Math.max(...nameHs);
+          const top = area.y + Math.max(0, (area.h - Math.max(...heights) - (maxNameH - Math.min(...nameHs))) * 0.46);
+          plans.forEach((P, k) => placeGroup(out, P, cells[k], top + (maxNameH - nameHs[k])));
+        } else plans.forEach((P, k) => placeGroup(out, P, cells[k]));
+        plans.forEach((P, k) => reportGroup(out, P, free[k]));
+      }
+
+      /* Us vs Them: the name; THEIR PRICE and OUR DISCOUNT as two small rows
+         about a centre line; a green rule; then YOU PAY with the price as the
+         hero. Their price is another seller's, not our old one, so it is never
+         struck through. */
+      function discAt(pct, cap, boxW) {   // "70% OFF" on one baseline at one cap height
+        const mN = metricsOf('num'), mW = metricsOf('word'), sp = 0.3;
+        const wN = w100(pct + '%', 'num') / 100 / mN.cap, wW = w100('OFF', 'word') / 100 / mW.cap;   // width per point of cap
+        const c = Math.min(cap, boxW / (wN + sp + wW));
+        return { cap: c, sizeN: c / mN.cap, sizeW: c / mW.cap, wN: wN * c, gap: sp * c };
+      }
+      function layoutUvT(out, model, area, orient) {
+        const U = G.uvt, land = orient === 'landscape', cx = area.x + area.w / 2;
+        const g = model.groups[0], X = planExtras(g, area.w), avail = area.h - X.h;
+        const ml = metricsOf('label');
+        // 1. Name.
+        const nameO = { font: 'word', boxW: area.w, boxH: avail * U.nameShare, maxCap: U.nameMax[orient],
+                        minCap: G.minCap, maxLines: 2, gap: G.lineGap, perLine: PER_LINE.name };
+        let name = g.name ? fitText(g.name, nameO) : null;
+        // 2. The comparison rows, at one shared cap (labels at 72% of it).
+        const themParts = model.them && model.them.cents ? priceParts(model.them.cents) : null;
+        const pct = model.them && model.them.cents && g.price.cents ? discountPct(model.them.cents, g.price.cents) : null;
+        const colW = area.w / 2 - U.axisGap;
+        const one = (t, cap) => atCap(null, cap, { font: 'small', boxW: colW, boxH: 1000, maxLines: 1, gap: 0, lines: [t], minCap: 0 });
+        const rowsAt = cap => {
+          const want = [];
+          if (themParts) want.push(['them', 'THEIR PRICE']);
+          if (pct != null && pct >= 1) want.push(['disc', 'OUR DISCOUNT']);
+          const rows = want.map(([kind, t]) => ({ kind, label: one(t, cap * U.labelR),
+            value: kind === 'them' ? priceAtCap(themParts, cap, { boxW: colW, boxH: 1000 }) : discAt(pct, cap, colW) }));
+          return { rows, cap, h: rows.length ? rows.length * cap + (rows.length - 1) * cap * U.rowGapR : 0 };
+        };
+        let R = rowsAt(U.rowCap[orient]);
+        const fitted = R.rows.length ? Math.min(...R.rows.map(r => r.value.cap)) : R.cap;
+        if (fitted < R.cap - 0.01) R = rowsAt(fitted);
+        // 3. YOU PAY and the price.
+        const parts = g.price.cents ? priceParts(g.price.cents) : null;
+        const nameBlock = () => name ? name.h + name.cap * 0.5 : 0;
+        const rowsBlock = () => R.rows.length ? R.h + U.gapRows : 0;
+        const hero = () => {
+          const Hh = avail - nameBlock() - rowsBlock() - U.divider;
+          if (land) {            // YOU / PAY beside the price, like the store's own sign
+            let P = parts ? fitPrice(parts, { boxW: area.w * 0.66, boxH: Hh, maxCap: 400 }) : null, Lc = 0, lw = 0;
+            for (let k = 0; k < 3; k++) {
+              Lc = Math.min(Math.max((P ? P.cap : 80) * U.youLabel.landscape, U.youLabelMin), U.youLabelMax.landscape, Hh / (2 + G.lineGap));
+              lw = Math.max(w100('YOU', 'label'), w100('PAY', 'label')) * (Lc / ml.cap) / 100;
+              if (!parts) break;
+              P = fitPrice(parts, { boxW: area.w - lw - U.labelGap, boxH: Hh, maxCap: 400 });
+            }
+            return { P, Lc, lw, h: Math.max(P ? P.up + P.down : 0, Lc * (2 + G.lineGap)) };
+          }
+          let Lc = U.youLabelMax.portrait, P = null;   // portrait: YOU PAY over the price
+          for (let k = 0; k < 2; k++) {
+            P = parts ? fitPrice(parts, { boxW: area.w, boxH: Hh - Lc * (1 + U.youGapR), maxCap: 400 }) : null;
+            Lc = Math.min(Math.max((P ? P.cap : 80) * U.youLabel.portrait, U.youLabelMin), U.youLabelMax.portrait);
+          }
+          const lwp = w100('YOU PAY', 'label') * (Lc / ml.cap) / 100;
+          if (lwp > area.w) Lc *= area.w / lwp;
+          return { P, Lc, h: Lc * (1 + U.youGapR) + (P ? P.up + P.down : 0) };
+        };
+        let HR = hero();
+        // The price is the hero: 2× the name (never below 0.6 in), their price ≤ 40% of it.
+        for (let k = 0; k < 4 && HR.P; k++) {
+          let changed = false;
+          if (name && HR.P.cap < name.cap * G.priceOverName && name.cap > G.minCap + 0.5) {
+            name = atCap(g.name, Math.max(HR.P.cap / G.priceOverName, G.minCap), nameO); changed = true;
+          }
+          if (R.rows.length && R.cap > HR.P.cap * U.themRatio + 0.01 && R.cap > U.rowMin + 0.01) {
+            R = rowsAt(Math.max(HR.P.cap * U.themRatio, U.rowMin)); changed = true;
+          }
+          if (!changed) break;
+          HR = hero();
+        }
+        // 4. Place, top to bottom, the stack centred a little high.
+        const total = nameBlock() + rowsBlock() + U.divider + HR.h + X.h;
+        let y = area.y + Math.max(0, (area.h - total) * 0.46);
+        if (name) {
+          name.lines.forEach((ln, k) => out.items.push({ t: 'text', role: 'name', group: 0, text: ln, anchor: 'middle',
+            x: cx, y: y + name.cap + k * name.cap * (1 + G.lineGap), size: name.size, font: 'word', fill: 'ink' }));
+          y += nameBlock();
+        }
+        R.rows.forEach((r, k) => {
+          const base = y + R.cap + k * R.cap * (1 + U.rowGapR), them = r.kind === 'them';
+          out.items.push({ t: 'text', role: them ? 'them-label' : 'disc-label', text: r.label.lines[0], anchor: 'end',
+            x: cx - U.axisGap, y: base, size: r.label.size, font: 'small', fill: them ? 'dim' : 'ink' });
+          if (them) drawPrice(out, themParts, r.value, cx + U.axisGap, base, ['them', 'them-cents'], 0, 'dim');
+          else {
+            out.items.push({ t: 'text', role: 'disc', text: pct + '%', anchor: 'start',
+              x: cx + U.axisGap, y: base, size: r.value.sizeN, font: 'num', fill: 'ink' });
+            out.items.push({ t: 'text', role: 'disc-off', text: 'OFF', anchor: 'start',
+              x: cx + U.axisGap + r.value.wN + r.value.gap, y: base, size: r.value.sizeW, font: 'word', fill: 'ink' });
+          }
+        });
+        y += rowsBlock();
+        out.items.push({ t: 'rule', green: true, sw: 3, x1: area.x + area.w * 0.12, y1: y + U.divider / 2 - 4, x2: area.x + area.w * 0.88, y2: y + U.divider / 2 - 4 });
+        y += U.divider;
+        const P = HR.P;
+        if (land) {
+          const blockW = HR.lw + U.labelGap + (P ? P.w : 0), x0 = cx - blockW / 2;
+          const base = y + Math.max(0, (HR.h - (P ? P.up + P.down : 0)) / 2) + (P ? P.up : 0);
+          const mid = P ? base - P.cap / 2 : y + HR.h / 2, top = mid - HR.Lc * (2 + G.lineGap) / 2;
+          ['YOU', 'PAY'].forEach((t, k) => out.items.push({ t: 'text', role: 'youpay', text: t, anchor: 'start',
+            x: x0, y: top + HR.Lc + k * HR.Lc * (1 + G.lineGap), size: HR.Lc / ml.cap, font: 'label', fill: 'green' }));
+          if (P) drawPrice(out, parts, P, x0 + HR.lw + U.labelGap, base, ['price', 'cents'], 0, 'ink');
+          y += HR.h;
+        } else {
+          out.items.push({ t: 'text', role: 'youpay', text: 'YOU PAY', anchor: 'middle', x: cx, y: y + HR.Lc,
+            size: HR.Lc / ml.cap, font: 'label', fill: 'green' });
+          y += HR.Lc * (1 + U.youGapR);
+          if (P) { const base = y + P.up; drawPrice(out, parts, P, cx - P.w / 2, base, ['price', 'cents'], 0, 'ink'); y = base + P.down; }
+        }
+        drawExtras(out, g, X, cx, y);
+        out.report.groups[0] = { nameCap: name ? name.cap : null, nameOk: name ? name.ok : true, name: g.name,
+          priceCap: P ? P.cap : null, qualOk: X.qfit ? X.qfit.ok : true,
+          priceOk: !(name && P) || P.cap >= name.cap * G.priceFloorRatio };
+        out.report.uvt = { pct, rowCap: R.rows.length ? R.cap : null,
+          themOk: !R.rows.length || !P || R.cap <= P.cap * U.themRatio + 0.01 };
+      }
+
+      return { layoutSign, metricsOf, w100 };
+    }
+
+    /* ── 6. Validation: messages that name the field AND the orientation ──
+       → { msgs, blocked: { landscape, portrait }, layouts }. A field error (a
+       missing name, a bad price, a character the font can't print) stops
+       both orientations. A fit failure stops only the orientation it happens
+       in, and the other still prints (Brian, 24 Sep). With no fonts (E null)
+       nothing can be measured, so nothing prints. The Print and PDF buttons,
+       and both print paths, read `blocked` from here. */
+    function inches(pt) { return (pt / PT).toFixed(2).replace(/0$/, '') + ' in'; }
+    function validate(model, E) {
+      const errs = {};
+      const add = (k, m) => { if (!errs[k]) errs[k] = m; };
+      const chars = (k, what, raw) => {
+        const bad = unsupportedChars(raw);
+        if (bad.length) add(k, `${what}: the sign can't print ${bad.map(charName).join(', ')}. Remove ${bad.length > 1 ? 'them' : 'it'}.`);
+      };
+      model.groups.forEach(g => {
+        const nm = model.groups.length > 1 ? (g.i ? 'Second name' : 'First name') : 'Product name';
+        if (!g.name) add(`name-${g.i}`, `${nm}: required.`);
+        else if (g.rawName.length > LIMIT.name) add(`name-${g.i}`, `${nm}: ${LIMIT.name} characters at most.`);   // not only the input's maxlength
+        else chars(`name-${g.i}`, nm, g.rawName);
+        if (g.kind === 'pct') { if (g.pct.err) add(`pct-${g.i}`, g.pct.err); }
+        else if (g.price.err) add(`price-${g.i}`, g.price.err);
+        if (g.dot && !g.qual) add(`qual-${g.i}`, 'Say what the dot means, for example: Yellow dot on bottom.');
+        else if (g.rawQual.length > LIMIT.qual) add(`qual-${g.i}`, `Note: ${LIMIT.qual} characters at most.`);
+        else chars(`qual-${g.i}`, 'Note', g.rawQual);
+      });
+      if (model.label && model.label.custom) {
+        if (!model.label.text) add('custom', 'Type the label, or pick another one.');
+        else if (model.label.raw.length > LIMIT.custom) add('custom', `Label: ${LIMIT.custom} characters at most.`);
+        else chars('custom', 'Label', model.label.raw);
+      }
+      if (model.template === 'uvt') {
+        const t = model.them, g0 = model.groups[0];
+        if (t.err) add('them', t.err === 'Enter a price.' ? 'Enter their price: what it sells for elsewhere.' : t.err);
+        else if (g0.price.cents) {
+          if (g0.price.cents >= t.cents) add('price-0', 'Has to be lower than their price, or there is no saving to show.');
+          else if (discountPct(t.cents, g0.price.cents) < 1) add('price-0', 'The saving is under 1%. Use a price sign instead.');
+        }
+      }
+      const whole = Object.keys(errs).length > 0 || !E;
+      const blocked = { landscape: whole, portrait: whole }, layouts = {};
+      if (!E) return { msgs: errs, blocked, layouts };
+      // Fit, per orientation.
+      const fails = {}, hero = model.template === 'pct' ? 'pct' : 'price';
+      for (const o of ORIENTS) {
+        const L = layouts[o] = E.layoutSign(model, o);
+        L.report.groups.forEach((r, i) => {
+          if (!r || r.nameCap == null) return;
+          if (!r.nameOk) (fails[`name-${i}`] = fails[`name-${i}`] || []).push({ o, cap: r.nameCap });
+          else if (!r.priceOk) (fails[`${hero}-${i}`] = fails[`${hero}-${i}`] || []).push({ o });
+          if (!r.qualOk) (fails[`qual-${i}`] = fails[`qual-${i}`] || []).push({ o });
+        });
+        if (L.report.label && !L.report.label.ok) (fails.custom = fails.custom || []).push({ o });
+        if (L.report.uvt && !L.report.uvt.themOk) (fails.them = fails.them || []).push({ o });
+      }
+      for (const [k, list] of Object.entries(fails)) {
+        list.forEach(x => { blocked[x.o] = true; });
+        const where = list.length === 2 ? 'both signs' : `the ${list[0].o} sign`;
+        if (k.startsWith('name')) {
+          const worst = Math.min(...list.map(x => x.cap));
+          const cut = charsToCut(model, +k.split('-')[1], list.map(x => x.o), E);
+          add(k, `Too long for ${where}: letters would be ${inches(worst)} tall, and the minimum is 0.6 in.` + (cut ? ` Cut about ${cut} character${cut > 1 ? 's' : ''}.` : ''));
+        } else if (k === 'custom') add(k, `Too long for the corner of ${where}. Shorten the label.`);
+        else if (k.startsWith(hero)) add(k, `Too wide to stay the biggest text on ${where}. Use the other orientation, or one ${hero === 'pct' ? 'group' : 'price'} per sign.`);
+        else if (k === 'them') add(k, `Their price would crowd what they pay on ${where}. Shorten the product name.`);
+        else add(k, `The note doesn't fit ${where} legibly. Shorten it.`);
+      }
+      return { msgs: errs, blocked, layouts };
+    }
+    function charsToCut(model, gi, orients, E) {
+      const g = model.groups[gi];
+      for (let cut = 1; cut < g.name.length; cut++) {
+        const m2 = Object.assign({}, model, { groups: model.groups.map(x => x.i === gi ? Object.assign({}, x, { name: g.name.slice(0, -cut).trim() }) : x) });
+        if (orients.every(o => { const r = E.layoutSign(m2, o).report.groups[gi]; return r && r.nameOk; })) return cut;
+      }
+      return 0;
+    }
+    function describe(model) {
+      if (model.template === 'uvt') {
+        const g0 = model.groups[0];
+        return `Us vs Them sign: ${g0.rawName || 'no name'}, their price ${model.them.cents ? priceText(model.them.cents) : 'missing'}, you pay ${g0.price.cents ? priceText(g0.price.cents) : 'missing'}`;
+      }
+      const offer = x => x.kind === 'pct' ? (x.pct.n ? `${x.pct.n}% off` : 'no percent') : (x.price.cents ? priceText(x.price.cents) : 'no price');
+      const g = model.groups.map(x => `${x.rawName || 'no name'} ${offer(x)}`).join(' and ');
+      const lab = model.label ? (model.label.custom ? model.label.text : model.label.lines.join(' ')) : 'no label';
+      return `${model.template === 'pct' ? '% Off sign' : 'Sign'}: ${g}, ${lab}`;
+    }
+
+    /* ── 7. The drawers. Same items, same order, same numbers ─────────────── */
+    const n2 = v => String(Math.round(v * 100) / 100);
+    /* SVG, node by node, into the `doc` the caller passes. opts: { label,
+       logoHref, print } (print sizes it in inches for the paper). */
+    function drawSVG(L, doc, opts) {
+      opts = opts || {};
+      const node = (tag, attrs, text) => {
+        const n = doc.createElementNS('http://www.w3.org/2000/svg', tag);
+        for (const k of Object.keys(attrs)) n.setAttribute(k, attrs[k]);
+        if (text != null) n.textContent = text;
+        return n;
+      };
+      const svg = node('svg', { viewBox: `0 0 ${L.W} ${L.H}`, role: 'img', 'aria-label': opts.label || 'Sign', 'text-rendering': 'geometricPrecision',
+        style: 'font-kerning:none;font-variant-ligatures:none;font-synthesis:none' });
+      if (opts.print) { svg.setAttribute('width', L.W / PT + 'in'); svg.setAttribute('height', L.H / PT + 'in'); }
+      svg.appendChild(node('rect', { x: 0, y: 0, width: L.W, height: L.H, fill: COLORS.paper }));
+      for (const it of L.items) {
+        if (it.t === 'border') svg.appendChild(node('rect', { x: n2(it.x), y: n2(it.y), width: n2(it.w), height: n2(it.h),
+          fill: 'none', stroke: COLORS.green, 'stroke-width': n2(it.sw) }));
+        else if (it.t === 'logo') svg.appendChild(node('image', { href: opts.logoHref || '', x: n2(it.x), y: n2(it.y),
+          width: n2(it.w), height: n2(it.h), preserveAspectRatio: 'none' }));
+        else if (it.t === 'rule') svg.appendChild(node('line', { x1: n2(it.x1), y1: n2(it.y1), x2: n2(it.x2), y2: n2(it.y2),
+          stroke: it.green ? COLORS.green : COLORS.rule, 'stroke-width': n2(it.sw), 'stroke-linecap': 'round' }));
+        else if (it.t === 'dot') svg.appendChild(node('circle', { cx: n2(it.cx), cy: n2(it.cy), r: n2(it.r),
+          fill: COLORS.dot, stroke: COLORS.ink, 'stroke-width': '2.2' }));
+        else if (it.t === 'text') {
+          const a = { x: n2(it.x), y: n2(it.y), 'font-family': FACES[it.font].fam, 'font-size': n2(it.size),
+                      fill: COLORS[it.fill] || COLORS.ink, 'data-role': it.role };
+          if (it.ls) a['letter-spacing'] = n2(it.ls);
+          svg.appendChild(node('text', a, it.text));
+        }
+      }
+      return svg;
+    }
+    /* jsPDF, onto the current page of `pdf` (unit pt, the layout's size). The
+       four fonts are registered under FACES[k].fam first (loadFontsInto). A
+       missing one would fall back to Times, so each setFont is checked. */
+    function drawPDF(L, pdf, opts) {
+      pdf.setCharSpace(0);   // so every text() below writes its own Tc
+      for (const it of L.items) {
+        if (it.t === 'border') { pdf.setDrawColor(COLORS.green); pdf.setLineWidth(it.sw); pdf.rect(it.x, it.y, it.w, it.h, 'S'); }
+        else if (it.t === 'logo') pdf.addImage(opts.logo, 'PNG', it.x, it.y, it.w, it.h, 'sign-logo');
+        else if (it.t === 'rule') { pdf.setDrawColor(it.green ? COLORS.green : COLORS.rule); pdf.setLineWidth(it.sw); pdf.setLineCap('round'); pdf.line(it.x1, it.y1, it.x2, it.y2); }
+        else if (it.t === 'dot') { pdf.setFillColor(COLORS.dot); pdf.setDrawColor(COLORS.ink); pdf.setLineWidth(2.2); pdf.circle(it.cx, it.cy, it.r, 'FD'); }
+        else if (it.t === 'text') {
+          const fam = FACES[it.font].fam;
+          pdf.setFont(fam, 'normal');
+          if (pdf.getFont().fontName !== fam) throw new Error(`The PDF has no ${fam} font.`);
+          pdf.setFontSize(it.size);
+          pdf.setTextColor(COLORS[it.fill] || COLORS.ink);
+          pdf.text(it.text, it.x, it.y, { charSpace: it.ls, baseline: 'alphabetic' });
+        }
+      }
+    }
+    /* Register the four TTFs with a jsPDF document. bytes: { word, label, small,
+       num } as Uint8Array, the same bytes readFont measured. */
+    function loadFontsInto(pdf, bytes) {
+      for (const k of Object.keys(FACES)) {
+        const f = FACES[k], file = f.file.split('/').pop();
+        let bin = '';
+        for (let i = 0; i < bytes[k].length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes[k].subarray(i, i + 0x8000));
+        pdf.addFileToVFS(file, bin);
+        pdf.addFont(file, f.fam, 'normal');
+      }
+    }
+
+    window.SignRender = Object.freeze({
+      SALE_LABELS, TEMPLATES, UNITS, LIMIT, ORIENTS, FACES, COLORS, LOGO, PT, PAGE, G,
+      parsePrice, parsePct, priceParts, priceText, discountPct, unsupportedChars,
+      blankGroup, blankSign, normalizeSign, signModel,
+      readFont, engine, validate, describe, inches,
+      drawSVG, drawPDF, loadFontsInto,
+    });
+  })();
+  </script>
 
   <script>
   // ═══════════════════════════════════════════════════════════════
@@ -11907,6 +12911,8 @@
     // navigateToPage (oppbuys-mos-2, merch-price-scan-8).
     if (name !== 'mos' && typeof mosStopScan === 'function') mosStopScan();
     if (name !== 'merch-scan' && typeof psStopScan === 'function') psStopScan();
+    // …and a sign readied for print must not become the next page's printout.
+    if (name !== 'merch-signs' && typeof ssEndPrint === 'function') ssEndPrint();
   }
   window.showOnlyPage = showOnlyPage;
   // 🛑 NOR MAY A CAMERA OUTLIVE THE PAGE BEING SEEN (merch-price-scan-20). Switching apps or
@@ -11972,6 +12978,16 @@
     // Shelf Count is the one Merchandising surface a store manager needs. The worker
     // scopes the write to their own stores; this only decides whether the shell opens.
     if (page === 'merch-shelf-count') {
+      const role = currentUser && currentUser.role;
+      const allowed = ['superuser','admin','district_manager','manager'];
+      if (!allowed.includes(role)) return;
+    }
+    // Sign Studio: managers, admins and superusers, the PRD's list (a district manager is a
+    // manager with more stores since migration-029; the old name stays to mirror merchRoles).
+    // Not executives, who get Price Scan, and not an associate by page grant: the role is
+    // the gate. Nothing here reaches the worker, so this is the only one, and the sidebar
+    // item in applyRoleUI carries the same list.
+    if (page === 'merch-signs') {
       const role = currentUser && currentUser.role;
       const allowed = ['superuser','admin','district_manager','manager'];
       if (!allowed.includes(role)) return;
@@ -12114,6 +13130,9 @@
     }
     if (page === 'merch-scan') {
       if (typeof initPriceScan === 'function') initPriceScan();
+    }
+    if (page === 'merch-signs') {
+      if (typeof initSignStudio === 'function') initSignStudio();
     }
     if (page === 'merch-products') {
       if (typeof initMerchProducts === 'function') initMerchProducts();
@@ -15387,14 +16406,16 @@
   }
 
   async function downloadWrsAsPdf() {
-    // Lazy-load jsPDF + autotable only when the user first requests a PDF
-    if (!(window.jspdf?.jsPDF || window.jsPDF)) {
-      try {
+    // Lazy-load jsPDF + autotable only when the user first requests a PDF. Each is checked on
+    // its own: Sign Studio loads jsPDF WITHOUT autotable, and skipping both because jsPDF was
+    // already there left doc.autoTable undefined, so this export threw.
+    try {
+      if (!(window.jspdf?.jsPDF || window.jsPDF))
         await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+      if (!(window.jspdf?.jsPDF || window.jsPDF)?.API?.autoTable)
         await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js');
-      } catch (e) {
-        uiAlert('Failed to load PDF library. Check your connection and try again.'); return;
-      }
+    } catch (e) {
+      uiAlert('Failed to load PDF library. Check your connection and try again.'); return;
     }
     const jsPDFCtor = window.jspdf?.jsPDF || window.jsPDF;
     if (!jsPDFCtor) { uiAlert('PDF library failed to initialize — please try again.'); return; }
@@ -30902,6 +31923,539 @@
   window.scSave = scSave;
 
   // ═══════════════════════════════════════════════════════════════
+  //  SIGN STUDIO — Merchandising ▸ Sign Studio
+  // ═══════════════════════════════════════════════════════════════
+  // The form around the sign, in three steps: what's on sale, which sale, print. Layout C
+  // of docs/sign-studio-preview.html (Brian's pick, 24 Sep). What the sign looks like, what
+  // fits and what may print all come from window.SignRender (the #sign-render script):
+  // nothing here measures text or decides a rule.
+  // Inputs are built once per ssRender, which runs only when the form's SHAPE changes (a
+  // step, the sign type, a second price). Typing runs ssRefresh, which redraws the previews
+  // and messages and never an input, so focus and the caret stay put.
+  let ssSign = null;                           // the sign being made: SignRender.normalizeSign's shape
+  const ssView = { step: 1, orient: 'landscape' };
+  let ssAssets = 'idle';                       // idle | loading | ready | failed
+  let ssKit = null;                            // { engine, fontBytes, logoBytes, logoUrl } once ready
+  const ssOpenDisclose = new Set();            // which "Note and yellow dot" boxes are open
+  const ssFacesAdded = new Set();              // FontFace families already given to the page
+
+  function ssH(tag, attrs, ...kids) {
+    const n = document.createElement(tag);
+    if (attrs) for (const k in attrs) {
+      const v = attrs[k];
+      if (k === 'class') n.className = v;
+      else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
+      else if (v === true) n.setAttribute(k, '');
+      else if (v !== false && v != null) n.setAttribute(k, v);
+    }
+    for (const c of kids.flat(Infinity)) if (c != null && c !== false) n.append(c.nodeType ? c : String(c));
+    return n;
+  }
+  // Static markup only: no value from a person or a server ever reaches these.
+  const SS_ICON = {
+    print: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>',
+    info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>',
+    pdf: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>',
+    alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>',
+  };
+  function ssIcon(k) { const s = document.createElement('span'); s.innerHTML = SS_ICON[k]; return s.firstChild; }
+
+  function initSignStudio() {
+    const root = el('ss-root');
+    if (!root) return;
+    if (!window.SignRender) {   // its own <script>: a failure there must not look like an empty page
+      root.replaceChildren(ssH('div', { class: 'ss-note err', role: 'alert' }, ssIcon('alert'),
+        ssH('div', null, "Sign Studio didn't load. Close the app and open it again.")));
+      return;
+    }
+    if (!ssSign) {
+      const d = ssLoadDraft();
+      ssSign = SignRender.normalizeSign(d ? d.sign : null);
+      if (d) {
+        ssView.step = [1, 2, 3].includes(d.step) ? d.step : 1;
+        ssView.orient = SignRender.ORIENTS.includes(d.orient) ? d.orient : 'landscape';
+      }
+      ssDraftJson = ssDraftBody();   // restoring is not a change: the draft keeps its age
+    }
+    if (ssAssets === 'idle') ssLoadAssets();
+    ssRender();
+  }
+  window.initSignStudio = initSignStudio;
+
+  /* The sign in progress survives an app update, a reload or a closed tab: every change is
+     saved here, and the page comes back to it for 12 hours, for the same person only (a store
+     device is shared). A restored sign goes through normalizeSign and validate like a typed
+     one, so an old or edited draft can only ever raise messages, never print past a rule.
+     localStorage can be missing or full (private mode): then the sign still works, it just
+     is not kept. */
+  const SS_DRAFT = 'sign-studio-draft', SS_DRAFT_TTL = 12 * 3600 * 1000;
+  let ssDraftJson = null;
+  const ssDraftUser = () => (currentUser && currentUser.email) || null;
+  const ssDraftBody = () => JSON.stringify({ sign: ssSign, step: ssView.step, orient: ssView.orient });
+  const ssIsBlank = sign => JSON.stringify(SignRender.normalizeSign(sign)) === JSON.stringify(SignRender.blankSign());
+  function ssLoadDraft() {
+    let d = null;
+    try { d = JSON.parse(localStorage.getItem(SS_DRAFT) || 'null'); } catch (e) {}
+    const now = Date.now();
+    const usable = d && typeof d === 'object' && d.v === 1 && d.user === ssDraftUser() && typeof d.savedAt === 'number'
+      && now - d.savedAt < SS_DRAFT_TTL && d.savedAt < now + 60000;   // and not stamped in the future, which would never expire
+    if (usable) return d;
+    try { localStorage.removeItem(SS_DRAFT); } catch (e) {}
+    return null;
+  }
+  function ssSaveDraft() {
+    const user = ssDraftUser(), body = ssDraftBody();
+    if (!user || !ssSign || body === ssDraftJson) return;   // nothing changed: keep its age
+    ssDraftJson = body;
+    try {
+      if (ssIsBlank(ssSign)) localStorage.removeItem(SS_DRAFT);   // nothing to keep, so nothing kept
+      else localStorage.setItem(SS_DRAFT, JSON.stringify({ v: 1, savedAt: Date.now(), user, sign: ssSign, step: ssView.step, orient: ssView.orient }));
+    } catch (e) {}
+  }
+  // For the service worker's reload (DOMContentLoaded): a sign half-made on screen waits.
+  window.ssIsDirty = () => !!ssSign && !ssIsBlank(ssSign);
+
+  /* The fonts and the logo, fetched once and used three ways: FontFace draws the preview,
+     SignRender.readFont measures, and the same bytes go into the PDF. Nothing is measured
+     or printed until all of them have loaded, so a sign can never fit or print in a
+     fallback face. All five files are precached (sw.js), so this works offline. */
+  async function ssLoadAssets() {
+    const R = window.SignRender;
+    ssAssets = 'loading';
+    ssRefresh();
+    const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 20000);
+    try {
+      const get = async u => {
+        const r = await fetch(u, { signal: ctl.signal });
+        if (!r.ok) throw new Error(`${u}: HTTP ${r.status}`);
+        return new Uint8Array(await r.arrayBuffer());
+      };
+      const keys = Object.keys(R.FACES);
+      const [logoBytes, ...files] = await Promise.all([get(R.LOGO.file), ...keys.map(k => get(R.FACES[k].file))]);
+      const fonts = {}, fontBytes = {};
+      keys.forEach((k, i) => { fontBytes[k] = files[i]; fonts[k] = R.readFont(files[i]); });
+      for (const k of keys) {
+        if (ssFacesAdded.has(k)) continue;
+        const ff = new FontFace(R.FACES[k].fam, files[keys.indexOf(k)]);
+        await ff.load();
+        document.fonts.add(ff);
+        ssFacesAdded.add(k);
+      }
+      ssKit = { engine: R.engine(fonts), fontBytes, logoBytes,
+                logoUrl: URL.createObjectURL(new Blob([logoBytes], { type: 'image/png' })) };
+      ssAssets = 'ready';
+    } catch (e) {
+      console.warn('Sign Studio: the sign files did not load', e);
+      ssAssets = 'failed';
+    } finally {
+      clearTimeout(timer);
+    }
+    ssRefresh();
+  }
+  function ssRetry() { ssAssets = 'loading'; ssLoadAssets(); }
+
+  /* Print: the sign alone, at its own paper size. #sign-print gets the preview's drawing sized
+     in inches; html.printing-sign lets only it print, and #sign-print-page sets the paper.
+     That state stays until the sign changes or the page is left, NOT until afterprint: iOS
+     returns from print() at once and nothing promises its afterprint waits for the print sheet
+     to draw, and a timer (the preview's) has the same race. Nothing on screen reads the state,
+     so leaving it set costs nothing, and a dashboard print needs a page change first. */
+  function ssPrint(orient) {
+    const R = window.SignRender;
+    if (ssAssets !== 'ready') return;
+    const model = R.signModel(ssSign), v = R.validate(model, ssKit.engine);
+    if (v.blocked[orient]) return;   // the button is off as well; this is the gate
+    el('sign-print').replaceChildren(R.drawSVG(v.layouts[orient], document,
+      { print: true, label: `${R.describe(model)} (${orient})`, logoHref: ssKit.logoUrl }));
+    el('sign-print-page').textContent = `@page { size: ${orient === 'landscape' ? '11in 8.5in' : '8.5in 11in'}; margin: 0; }`;
+    document.documentElement.classList.add('printing-sign');
+    window.print();
+  }
+  function ssEndPrint() {
+    document.documentElement.classList.remove('printing-sign');
+    const paper = el('sign-print-page'), host = el('sign-print');
+    if (paper) paper.textContent = '';
+    if (host) host.replaceChildren();
+  }
+  window.ssEndPrint = ssEndPrint;
+
+  /* jsPDF, loaded on demand: 364 KB that only a PDF needs, so not a <script> tag in the page.
+     sw.js precaches it, so this is a cache hit and works with no signal. One load at a time,
+     and a failure clears the promise so the next tap tries again. If the WRS export loaded
+     the same 2.5.1 from cdnjs first, that copy is used. */
+  let ssPdfLibPromise = null, ssPdfWarm = false, ssPdfBusy = false;
+  const ssPdfLib = () => (window.jspdf && window.jspdf.jsPDF) || null;
+  function ssLoadPdfLib() {
+    if (ssPdfLib()) return Promise.resolve(ssPdfLib());
+    if (ssPdfLibPromise) return ssPdfLibPromise;
+    ssPdfLibPromise = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      const fail = () => { ssPdfLibPromise = null; s.remove(); reject(new Error("The PDF maker didn't load.")); };
+      s.src = 'jspdf-2.5.1.umd.min.js';
+      s.onload = () => { if (ssPdfLib()) resolve(ssPdfLib()); else fail(); };
+      s.onerror = fail;
+      document.head.appendChild(s);
+    });
+    return ssPdfLibPromise;
+  }
+  function ssPdfNote(orient, text, bad) {
+    const n = el('ss-root') && el('ss-root').querySelector(`[data-pdfnote="${orient}"]`);
+    if (n) { n.textContent = text; n.classList.toggle('bad', !!bad); }
+  }
+  const ssPdfName = (model, orient) => 'sign-' + (model.groups.map(g => g.rawName).join(' ').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'untitled') + `-${orient}.pdf`;
+  /* PDF: the same layout, drawn by jsPDF with the four fonts embedded, so its words are real
+     text. Where the device has a share sheet it goes there (an iPhone's has Print, Files and
+     AirDrop); anywhere else it downloads. Once jsPDF has loaded, making it runs in the tap's
+     own task, which is what lets iOS open the share sheet from it. */
+  async function ssPdf(orient) {
+    const R = window.SignRender;
+    if (ssAssets !== 'ready' || ssPdfBusy) return;
+    const model = R.signModel(ssSign), v = R.validate(model, ssKit.engine);
+    if (v.blocked[orient]) return;   // the button is off as well; this is the gate
+    ssPdfBusy = true;
+    ssPdfNote(orient, 'Making the PDF…');
+    try {
+      const jsPDF = ssPdfLib() || await ssLoadPdfLib();
+      const L = v.layouts[orient];
+      const doc = new jsPDF({ unit: 'pt', format: [L.W, L.H], orientation: orient, compress: true, putOnlyUsedFonts: true });
+      doc.setProperties({ title: R.describe(model), creator: 'RETJG HUB Sign Studio' });
+      R.loadFontsInto(doc, ssKit.fontBytes);
+      R.drawPDF(L, doc, { logo: ssKit.logoBytes });
+      const name = ssPdfName(model, orient);
+      const file = new File([doc.output('blob')], name, { type: 'application/pdf' });
+      let shared = false;
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try { await navigator.share({ files: [file], title: name }); shared = true; }
+        catch (e) { if (e && e.name === 'AbortError') shared = true; }   // closed the sheet: nothing to save
+      }
+      if (!shared) {
+        const a = ssH('a', { href: URL.createObjectURL(file), download: name });
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 60000);   // long after the download has its bytes
+      }
+      ssPdfNote(orient, shared ? '' : `Saved ${name}`);
+    } catch (e) {
+      console.warn('Sign Studio: the PDF failed', e);
+      ssPdfNote(orient, `The PDF didn't finish: ${(e && e.message) || 'unknown error'} Tap PDF to try again.`, true);
+    } finally {
+      ssPdfBusy = false;
+    }
+  }
+
+  /* ── The fields ─────────────────────────────────────────────────── */
+  const ssReq = () => ssH('span', { class: 'ss-req' }, ' · required');
+  const ssMsg = key => ssH('div', { class: 'ss-msg', id: `ss-m-${key}`, 'data-msg': key, 'aria-live': 'polite' });
+  function ssInput(key, attrs, value, onInput) {
+    const inp = ssH('input', Object.assign({ type: 'text', class: 'ss-inp', id: `ss-f-${key}`, autocomplete: 'off',
+      'aria-describedby': `ss-m-${key}`, oninput: e => { onInput(e.target.value); ssRefresh(); } }, attrs));
+    inp.value = value;
+    return inp;
+  }
+  function ssNameField(gi) {
+    const two = ssSign.two;
+    const inp = ssInput(`name-${gi}`, { maxlength: SignRender.LIMIT.name,
+      placeholder: two ? (gi ? 'e.g. Premium shoes' : 'e.g. Shoes') : 'e.g. All cereal' },
+      ssSign.groups[gi].name, v => { ssSign.groups[gi].name = v; });
+    return ssH('div', { class: 'ss-fld' },
+      ssH('div', { class: 'ss-fld-top' }, ssH('label', { class: 'ss-fld-l', for: inp.id },
+        two ? (gi ? 'Second group name' : 'First group name') : 'Product name', ssReq()),
+        ssH('span', { class: 'ss-count', 'data-count': `name-${gi}` })),
+      inp, ssMsg(`name-${gi}`),
+      two ? null : ssH('div', { class: 'ss-hint' }, 'Printed in capitals, on up to two lines. Letters never go under 0.6 in.'));
+  }
+  function ssPriceField(gi) {
+    const inp = ssInput(`price-${gi}`, { inputmode: 'decimal', placeholder: '2.50' },
+      ssSign.groups[gi].price, v => { ssSign.groups[gi].price = v; });
+    return ssH('div', { class: 'ss-fld' },
+      ssH('div', { class: 'ss-fld-top' }, ssH('label', { class: 'ss-fld-l', for: inp.id }, ssSign.template === 'uvt' ? 'You pay' : 'Price', ssReq())),
+      ssH('div', { class: 'ss-money' }, inp), ssMsg(`price-${gi}`));
+  }
+  /* % Off: the percentage takes the price's place. */
+  function ssPctField(gi) {
+    const inp = ssInput(`pct-${gi}`, { inputmode: 'numeric', maxlength: 10, placeholder: '20' },
+      ssSign.groups[gi].pct, v => { ssSign.groups[gi].pct = v; });
+    return ssH('div', { class: 'ss-fld' },
+      ssH('div', { class: 'ss-fld-top' }, ssH('label', { class: 'ss-fld-l', for: inp.id }, 'Percent off', ssReq())),
+      ssH('div', { class: 'ss-pct' }, inp), ssMsg(`pct-${gi}`));
+  }
+  /* Us vs Them: the other seller's price. The discount is worked out from it, never typed. */
+  function ssThemField() {
+    const inp = ssInput('them', { inputmode: 'decimal', placeholder: '100' }, ssSign.them, v => { ssSign.them = v; });
+    return ssH('div', { class: 'ss-fld' },
+      ssH('div', { class: 'ss-fld-top' }, ssH('label', { class: 'ss-fld-l', for: inp.id }, 'Their price', ssReq())),
+      ssH('div', { class: 'ss-money' }, inp), ssMsg('them'),
+      ssH('div', { class: 'ss-hint' }, "What it sells for elsewhere. Price Scan's retail price is a good source."));
+  }
+  const ssDiscountLine = () => ssH('div', { class: 'ss-calc', 'data-discount': '', 'aria-live': 'polite' });
+  function ssChipGroup(label, items, current, onPick, key) {
+    return ssH('div', { class: 'ss-fld', role: 'group', 'aria-label': label },
+      ssH('div', { class: 'ss-fld-top' }, ssH('span', { class: 'ss-fld-l' }, label)),
+      ssH('div', { class: 'ss-chips', 'data-chips': key }, items.map(it =>
+        ssH('button', { type: 'button', class: 'ss-chip', 'data-v': it.id, 'aria-pressed': String(it.id === current),
+          onclick: () => onPick(it.id) }, it.name))));
+  }
+  function ssTemplateField() {
+    return ssChipGroup('Sign type', SignRender.TEMPLATES, ssSign.template, v => {
+      if (v === ssSign.template) return;
+      ssSign.template = v;
+      if (v === 'uvt') ssSign.two = false;   // Us vs Them is one product
+      ssRender();
+    }, 'template');
+  }
+  function ssUnitField(gi) {
+    return ssChipGroup('Unit', SignRender.UNITS, ssSign.groups[gi].unit,
+      v => { ssSign.groups[gi].unit = v; ssSyncChips(); ssRefresh(); }, `unit-${gi}`);
+  }
+  function ssCustomField() {
+    const inp = ssInput('custom', { maxlength: SignRender.LIMIT.custom, placeholder: 'e.g. Weekend deal' },
+      ssSign.custom, v => { ssSign.custom = v; ssSyncTiles(); });
+    return ssH('div', { class: 'ss-fld' },
+      ssH('div', { class: 'ss-fld-top' }, ssH('label', { class: 'ss-fld-l', for: inp.id }, 'Custom label'),
+        ssH('span', { class: 'ss-count', 'data-count': 'custom' })),
+      inp, ssMsg('custom'),
+      ssH('div', { class: 'ss-hint' }, 'Up to 12 characters, in the same corner and style as the other labels.'));
+  }
+  function ssExtrasField(gi) {
+    const g = ssSign.groups[gi];
+    const q = ssInput(`qual-${gi}`, { maxlength: SignRender.LIMIT.qual, placeholder: 'e.g. Yellow dot on bottom' },
+      g.qual, v => { ssSign.groups[gi].qual = v; });
+    const dot = ssH('input', { type: 'checkbox', id: `ss-f-dot-${gi}`, onchange: e => {
+      ssSign.groups[gi].dot = e.target.checked;
+      if (e.target.checked) {
+        ssSign.groups.forEach((o, k) => { if (k !== gi) o.dot = false; });   // one dot, one group
+        if (!ssSign.groups[gi].qual.trim()) ssSign.groups[gi].qual = 'Yellow dot on bottom';
+        ssRender(); return;
+      }
+      ssRefresh();
+    } });
+    dot.checked = g.dot;
+    const d = ssH('details', { class: 'ss-disclose' }, ssH('summary', null, 'Note and yellow dot'),
+      ssH('div', { class: 'ss-fld' },
+        ssH('div', { class: 'ss-fld-top' }, ssH('label', { class: 'ss-fld-l', for: q.id }, 'Note under the price'),
+          ssH('span', { class: 'ss-count', 'data-count': `qual-${gi}` })),
+        q, ssMsg(`qual-${gi}`)),
+      ssH('label', { class: 'ss-chk', for: dot.id }, dot, ssH('span', { class: 'ss-dot', 'aria-hidden': 'true' }), 'Show a yellow dot beside the note'));
+    if (g.qual || g.dot || ssOpenDisclose.has(gi)) d.open = true;
+    d.addEventListener('toggle', () => { if (d.open) ssOpenDisclose.add(gi); else ssOpenDisclose.delete(gi); });
+    return d;
+  }
+  function ssSecondToggle() {
+    const what = ssSign.template === 'pct' ? 'group' : 'price';
+    return ssH('button', { type: 'button', class: 'ss-link', 'data-two': '', onclick: () => {
+      ssSign.two = !ssSign.two;
+      ssRender();
+      const f = el(ssSign.two ? 'ss-f-name-1' : 'ss-f-name-0');
+      if (f) f.focus();
+    } }, ssSign.two ? `− Remove the second ${what}` : `+ Add a second ${what}`);
+  }
+  function ssGroupBlock(gi) {
+    const pct = ssSign.template === 'pct';
+    const offer = pct ? [ssPctField(gi)] : [ssPriceField(gi), ssUnitField(gi)];   // a percentage has no unit
+    if (!ssSign.two) return [ssNameField(gi), ...offer, ssExtrasField(gi)];
+    return ssH('div', { class: 'ss-grp' },
+      ssH('div', { class: 'ss-grp-h' }, (gi ? 'Second ' : 'First ') + (pct ? 'group' : 'price')),
+      ssNameField(gi), ...offer, ssExtrasField(gi));
+  }
+  /* Step 2: every label as it prints, on paper, in the sign's own face. */
+  function ssLabelTiles() {
+    return ssH('div', { class: 'ss-tiles', role: 'group', 'aria-label': 'Sale label' }, SignRender.SALE_LABELS.map(L =>
+      ssH('button', { type: 'button', class: 'ss-tile', 'data-v': L.id, 'aria-pressed': String(ssSign.sale === L.id),
+        onclick: () => { ssSign.sale = L.id; ssRender(); } },
+        ssH('span', { class: 'tv' }, L.id === 'none' ? ssH('span', { class: 'none-t' }, 'No label: the corner stays empty')
+          : ssH('span', { class: 'lbl-t', 'data-tile-text': L.id })),
+        ssH('span', { class: 'tn' }, L.id === 'custom' ? 'Custom (12 characters)' : L.name))));
+  }
+  function ssSyncTiles() {
+    const root = el('ss-root');
+    if (!root) return;
+    root.querySelectorAll('[data-tile-text]').forEach(n => {
+      const id = n.getAttribute('data-tile-text'), L = SignRender.SALE_LABELS.find(x => x.id === id);
+      const lines = id === 'custom' ? [ssSign.custom.trim() || 'Your words'] : L.lines;
+      n.replaceChildren(...lines.flatMap((t, k) => k ? [ssH('br'), t] : [t]));
+    });
+  }
+  function ssOrientSeg() {
+    return ssH('div', { class: 'ss-seg', role: 'group', 'aria-label': 'Orientation' },
+      SignRender.ORIENTS.map(o => ssH('button', { type: 'button', 'data-orient': o, 'aria-pressed': String(ssView.orient === o),
+        onclick: () => { ssView.orient = o; ssRender(); } }, o === 'landscape' ? 'Landscape' : 'Portrait')));
+  }
+  const ssSheet = key => ssH('div', { class: 'ss-sheet', 'data-preview': key });
+  function ssPreviewCard(orient) {
+    return ssH('div', null, ssSheet(orient),
+      ssH('div', { class: 'ss-cap-row' },
+        ssH('span', { class: 'ss-cap' }, ssH('b', null, orient === 'landscape' ? 'Landscape' : 'Portrait'),
+          orient === 'landscape' ? ' · 11 × 8.5 in' : ' · 8.5 × 11 in'),
+        ssH('span', { class: 'ss-acts' },
+          ssH('button', { type: 'button', class: 'ss-btn ss-primary ss-sm', 'data-print': orient, onclick: () => ssPrint(orient) },
+            ssIcon('print'), 'Print'),
+          ssH('button', { type: 'button', class: 'ss-btn ss-ghost ss-sm', 'data-pdf': orient, onclick: () => ssPdf(orient) },
+            ssIcon('pdf'), 'PDF'))),
+      ssH('div', { class: 'ss-readout', 'data-readout': orient }),
+      ssH('div', { class: 'ss-pdfnote', 'data-pdfnote': orient, 'aria-live': 'polite' }));
+  }
+  function ssPanel(label, right, ...body) {
+    return ssH('section', { class: 'ss-panel' },
+      ssH('div', { class: 'ss-bar' }, ssH('span', { class: 'ss-lbl' }, label), right),
+      ssH('div', { class: 'ss-body' }, body));
+  }
+
+  /* ── Layout C: one decision per screen ─────────────────────────────── */
+  function ssGo(step) {
+    ssView.step = step;
+    ssRender();
+    const root = el('ss-root');
+    if (root && root.getBoundingClientRect().top < 0) root.scrollIntoView({ block: 'start' });
+  }
+  function ssStartOver() {
+    ssSign = SignRender.blankSign();
+    ssOpenDisclose.clear();
+    ssGo(1);
+  }
+  function ssLayoutC() {
+    const st = ssView.step;
+    const steps = ssH('nav', { class: 'ss-steps', 'aria-label': 'Steps' },
+      [["What's on sale", 1], ['Which sale', 2], ['Print', 3]].map(([t, n]) =>
+        ssH('button', { type: 'button', class: 'ss-step' + (n < st ? ' done' : ''), 'data-step': n,
+          'aria-current': n === st ? 'step' : null, onclick: () => ssGo(n) },
+          ssH('span', { class: 'ss-n' }, n < st ? '✓' : String(n)), t)));
+    const nav = (back, next) => ssH('div', { class: 'ss-nav' }, back || ssH('span'), next);
+    const btn = (cls, label, onclick, attrs) => ssH('button', Object.assign({ type: 'button', class: 'ss-btn ' + cls, onclick }, attrs), label);
+    let card;
+    if (st === 1) card = ssPanel("1 · What's on sale", null, ssTemplateField(),
+      ssSign.template === 'uvt'
+        ? [ssNameField(0), ssH('div', { class: 'ss-row2' }, ssThemField(), ssPriceField(0)), ssDiscountLine(), ssUnitField(0), ssExtrasField(0)]
+        : [ssSign.two ? [ssGroupBlock(0), ssGroupBlock(1)] : ssGroupBlock(0), ssSecondToggle()],
+      nav(null, btn('ss-primary', 'Next: pick the sale →', () => ssGo(2), { 'data-next': '' })));
+    else if (st === 2) card = ssPanel('2 · Which sale', null, ssLabelTiles(), ssSign.sale === 'custom' ? ssCustomField() : null,
+      nav(btn('ss-ghost', '← Back', () => ssGo(1)), btn('ss-primary', 'Next: print →', () => ssGo(3), { 'data-next': '' })));
+    else card = ssPanel('3 · Print', ssH('span', { class: 'ss-right' }, ssH('span', { class: 'ss-pill wait', 'data-status': '' })),
+      ssH('div', { class: 'ss-review' }, ssPreviewCard('landscape'), ssPreviewCard('portrait')),
+      ssH('div', { style: 'margin-top:14px;display:grid;gap:10px' }, ssH('div', { 'data-summary': '' }),
+        ssH('div', { class: 'ss-note', 'data-reminder': '' }, ssIcon('info'), ssH('span', { 'data-reminder-text': '' }))),
+      nav(btn('ss-ghost', '← Back', () => ssGo(2)), btn('ss-ghost', 'Start a new sign', ssStartOver, { 'data-new': '' })));
+    const mini = st === 3 ? null : ssH('aside', { class: 'ss-mini' },
+      ssH('div', { class: 'ss-panel' }, ssH('div', { class: 'ss-bar' }, ssH('span', { class: 'ss-lbl' }, 'As it will print'), ssOrientSeg()),
+        ssH('div', { class: 'ss-body' }, ssSheet('current'), ssH('div', { class: 'ss-readout', 'data-readout': ssView.orient }))));
+    return [steps, ssH('div', { class: st === 3 ? '' : 'ss-grid' }, card, mini)];
+  }
+  function ssRender() {
+    const root = el('ss-root');
+    if (!root || !ssSign) return;
+    const active = document.activeElement && document.activeElement.id;
+    root.replaceChildren(...ssLayoutC());
+    if (active && active.startsWith('ss-f-') && el(active)) el(active).focus();
+    ssSyncTiles();
+    ssRefresh();
+  }
+  function ssSyncChips() {
+    const root = el('ss-root');
+    if (!root) return;
+    root.querySelectorAll('[data-chips]').forEach(g => {
+      const key = g.getAttribute('data-chips');
+      const cur = key === 'template' ? ssSign.template : ssSign.groups[+key.split('-')[1]].unit;
+      g.querySelectorAll('.ss-chip').forEach(c => c.setAttribute('aria-pressed', String(c.getAttribute('data-v') === cur)));
+    });
+  }
+
+  /* ── After every keystroke: previews, messages, what may print ──────── */
+  function ssRefresh() {
+    const R = window.SignRender, root = el('ss-root');
+    if (!R || !root || !ssSign) return;
+    const t0 = performance.now();
+    ssEndPrint();   // the sign is changing: a print readied from it is stale
+    const ready = ssAssets === 'ready', failed = ssAssets === 'failed';
+    const model = R.signModel(ssSign);
+    const v = R.validate(model, ready ? ssKit.engine : null), errs = v.msgs;
+    const nErr = Object.keys(errs).length;
+    const can = { landscape: !v.blocked.landscape, portrait: !v.blocked.portrait };
+    const only = can.landscape !== can.portrait ? (can.landscape ? 'landscape' : 'portrait') : null;   // one orientation prints
+
+    root.querySelectorAll('[data-msg]').forEach(n => {
+      const k = n.getAttribute('data-msg'), m = errs[k] || '';
+      n.textContent = m;
+      const inp = el('ss-f-' + k);
+      if (inp) { inp.classList.toggle('bad', !!m); inp.setAttribute('aria-invalid', String(!!m)); }
+    });
+    root.querySelectorAll('[data-count]').forEach(n => {
+      const [kind, gi] = n.getAttribute('data-count').split('-');
+      const val = kind === 'custom' ? ssSign.custom : ssSign.groups[+gi][kind];
+      const lim = R.LIMIT[kind];
+      n.textContent = `${val.length}/${lim}`;
+      n.classList.toggle('near', val.length >= lim - 3);
+    });
+    // Previews: each orientation drawn once, from the layout validate has just measured.
+    const svgs = {};
+    const draw = o => svgs[o] || (svgs[o] = R.drawSVG(v.layouts[o], document, { label: `${R.describe(model)} (${o})`, logoHref: ssKit.logoUrl }));
+    root.querySelectorAll('[data-preview]').forEach(box => {
+      const k = box.getAttribute('data-preview'), o = k === 'current' ? ssView.orient : k;
+      box.classList.toggle('land', o === 'landscape'); box.classList.toggle('port', o === 'portrait');
+      if (failed) {
+        box.replaceChildren(ssH('div', { class: 'ss-fail', role: 'alert' }, ssH('b', null, "The sign font didn't load."),
+          ssH('span', null, 'Print and PDF stay off until it does, so a sign never prints in the wrong type.'),
+          ssH('button', { type: 'button', class: 'ss-btn', 'data-retry': '', onclick: ssRetry }, 'Retry')));
+        return;
+      }
+      if (!ready) { box.replaceChildren(ssH('div', { class: 'ss-skel', role: 'img', 'aria-label': 'Loading the sign' })); return; }
+      const svg = draw(o);
+      box.replaceChildren(svg.isConnected ? svg.cloneNode(true) : svg);
+    });
+    // Letter heights, in inches: the three-second rule, read back.
+    root.querySelectorAll('[data-readout]').forEach(n => {
+      const o = n.getAttribute('data-readout');
+      n.replaceChildren();
+      if (!ready) return;
+      const r = v.layouts[o].report.groups.filter(Boolean);
+      const nc = r.map(x => x.nameCap).filter(x => x != null), pc = r.map(x => x.priceCap).filter(x => x != null);
+      if (!nc.length && !pc.length) return;
+      const bad = nc.some(c => c < R.G.minCap - 0.01);
+      n.append('Letters: name ', ssH(bad ? 'span' : 'b', bad ? { class: 'bad' } : null, nc.length ? R.inches(Math.min(...nc)) : '—'),
+        model.template === 'pct' ? ' · percent ' : ' · price ', ssH('b', null, pc.length ? R.inches(Math.min(...pc)) : '—'));
+    });
+    root.querySelectorAll('[data-status]').forEach(n => {
+      n.className = 'ss-pill ' + (!ready ? 'wait' : only ? 'part' : nErr ? 'no' : 'ok');
+      n.replaceChildren(ssH('i'), ssAssets === 'failed' ? 'Sign font missing' : !ready ? 'Loading the sign font'
+        : only ? (only === 'landscape' ? 'Landscape only' : 'Portrait only')
+        : nErr ? `${nErr} thing${nErr > 1 ? 's' : ''} to fix` : 'Ready to print');
+    });
+    root.querySelectorAll('[data-summary]').forEach(n => {
+      n.replaceChildren();
+      if (!nErr) return;
+      const other = only === 'landscape' ? 'portrait' : 'landscape';
+      n.append(ssH('div', { class: 'ss-note ' + (only ? 'warn' : 'err'), role: 'status' }, ssIcon(only ? 'info' : 'alert'),
+        ssH('div', null, ssH('b', null, only ? `Only the ${only} sign can print. To print the ${other} sign too:` : `Fix ${nErr === 1 ? 'this' : 'these'} to print:`),
+          ssH('ul', { class: 'ss-errlist' }, Object.values(errs).map(m => ssH('li', null, m))))));
+    });
+    root.querySelectorAll('[data-discount]').forEach(n => {
+      const t = model.them, g0 = model.groups[0];
+      const pct = t && t.cents && g0.price.cents ? R.discountPct(t.cents, g0.price.cents) : null;
+      n.replaceChildren();
+      if (pct != null && pct >= 1)
+        n.append('Our discount: ', ssH('b', null, `${pct}% off`), `, saving ${R.priceText(t.cents - g0.price.cents)}. `,
+          ssH('span', { class: 'ss-calc-d' }, 'Worked out from the two prices and rounded down, so the sign can never disagree with itself.'));
+      else n.append(ssH('span', { class: 'ss-calc-d' }, 'Our discount is worked out from the two prices once both are in.'));
+    });
+    const pctSign = model.template === 'pct';
+    const offers = model.groups.map(g => pctSign ? (g.pct.n ? `${g.pct.n}% off` : '') : (g.price.cents ? R.priceText(g.price.cents) : '')).filter(Boolean);
+    root.querySelectorAll('[data-reminder-text]').forEach(n => {
+      n.replaceChildren(pctSign ? 'Before you hang it, check the register takes ' : 'Before you hang it, check the register rings up ',
+        ssH('b', null, offers.length ? offers.join(' and ') : pctSign ? 'the discount' : 'the price'),
+        pctSign ? '. The sign does not set up the discount in Clover.' : '. The sign does not change the price in Clover.');
+    });
+    root.querySelectorAll('[data-print],[data-pdf]').forEach(b => {
+      const o = b.getAttribute('data-print') || b.getAttribute('data-pdf');
+      b.disabled = !can[o];
+      b.title = can[o] ? '' : !ready ? "The sign font hasn't loaded" : only ? `The ${o} sign doesn't fit. The ${only} one prints.` : 'Fix the fields above first';
+    });
+    ssSaveDraft();
+    if (ready && ssView.step === 3 && !ssPdfWarm) {   // so the first PDF does not wait for 364 KB
+      ssPdfWarm = true;
+      (window.requestIdleCallback || (f => setTimeout(f, 300)))(() => ssLoadPdfLib().catch(() => {}));
+    }
+    window.__ssLastRenderMs = performance.now() - t0;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
   //  SIDEBAR
   // ═══════════════════════════════════════════════════════════════
   function initSidebar() {
@@ -33616,6 +35170,7 @@
     'nav-merch-chev': 'bl',
     'nav-merch-sub': 'bl',
     'nav-merch-scan': 'bl',
+    'nav-merch-signs': 'bl',
     'nav-merch-coverage': 'bl',
     'nav-merch-products': 'bl',
     'nav-merch-velocity': 'bl',
@@ -34040,6 +35595,7 @@
     // here is a row that navigateToPage refuses.
     el('nav-merch-group').classList.toggle('hidden', !merchRoles.includes(user.role) && !canScan);
     el('nav-merch-shelf-count').classList.toggle('hidden', !merchRoles.includes(user.role));
+    el('nav-merch-signs').classList.toggle('hidden', !merchRoles.includes(user.role));   // executives see the group, not this
     el('nav-merch-scan').classList.toggle('hidden', !canScan);
     el('nav-merch-coverage').classList.toggle('hidden', !isAdmin);
     el('nav-merch-products').classList.toggle('hidden', !isAdmin);
@@ -35438,6 +36994,12 @@
           if (typeof window.ctIsDirty === 'function' && window.ctIsDirty()) {
             const pc = document.getElementById('page-content');
             if (pc && !pc.classList.contains('hidden')) return;
+          }
+          // Sign Studio, the same way: a sign in progress is saved on every change, so a
+          // reload would bring it back, but not out from under the person typing it.
+          if (typeof window.ssIsDirty === 'function' && window.ssIsDirty()) {
+            const ps = document.getElementById('page-merch-signs');
+            if (ps && !ps.classList.contains('hidden')) return;
           }
           swRefreshing = true;
           window.location.reload();

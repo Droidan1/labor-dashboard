@@ -53,7 +53,7 @@ const URL_ = 'http://127.0.0.1:8096/index.html';
 const BL = { id: 'bl', name: 'Bargain Lane' }, ECOM = { id: 'ecom', name: 'E-Commerce' };
 const STORE = ['dashboard', 'weekly-summary', 'labor', 'supply-request'];
 const MARKETING = ['marketing', 'flow-calendar', 'comments', 'content', 'submit-photos'];
-const MERCH = ['merch-scan', 'merch-coverage', 'merch-products', 'merch-velocity', 'merch-manifests', 'merch-criteria', 'merch-shelf-count'];
+const MERCH = ['merch-scan', 'merch-signs', 'merch-coverage', 'merch-products', 'merch-velocity', 'merch-manifests', 'merch-criteria', 'merch-shelf-count'];
 const INVENTORY = ['inventory-add', 'inventory-viewer', 'inventory-sale', 'bin-dump', 'inventory-receiver', 'mos', 'opportunity-buys'];
 // Each role's phone, written down. '@switch' / '@signout' are the two action rows.
 const EXPECT = {
@@ -69,10 +69,10 @@ const EXPECT = {
   // admin-only in the router, and was a dead sidebar item for every manager until now.
   manager: { role: 'manager', businesses: [BL], biz: 'bl',
     bar: ['Dashboard', 'Retail', 'Submit', 'Supply', 'Menu'],
-    menu: [['Store', STORE], ['Marketing', ['submit-photos']], ['Merchandising', ['merch-scan', 'merch-shelf-count']],
+    menu: [['Store', STORE], ['Marketing', ['submit-photos']], ['Merchandising', ['merch-scan', 'merch-signs', 'merch-shelf-count']],
            ['Inventory', ['bin-dump', 'inventory-receiver', 'mos', 'opportunity-buys']], ['Account', ['settings', '@signout']]] },
-  // The router admits an executive to Price Scan but not Shelf Count; the Merchandising
-  // header used to hide both from them. No Supply, so four tabs, not five.
+  // The router admits an executive to Price Scan but not Shelf Count or Sign Studio; the
+  // Merchandising header used to hide both from them. No Supply, so four tabs, not five.
   executive: { role: 'executive', businesses: [BL], biz: 'bl',
     bar: ['Dashboard', 'Retail', 'Submit', 'Menu'],
     menu: [['Store', ['dashboard', 'weekly-summary', 'labor']], ['Marketing', ['submit-photos']], ['Merchandising', ['merch-scan']],
@@ -233,11 +233,18 @@ for (const key of Object.keys(EXPECT)) {
   await page.fill('#menu-search', 'zzz');
   eq(await menuState(page), [], 'no match hides every section');
   check(await page.$eval('#menu-empty', e => !e.hidden && e.textContent.includes('zzz')), '...and says nothing matches');
-  await page.fill('#menu-search', 'sign');
-  eq(await menuState(page), [['Account', ['@signout']]], 'search "sign" leaves only Sign out');
+  await page.fill('#menu-search', 'sign out');
+  eq(await menuState(page), [['Account', ['@signout']]], 'search "sign out" leaves only Sign out');
   await page.press('#menu-search', 'Enter');
   await page.waitForTimeout(150);
   eq(await visiblePages(page), ['page-menu'], '🛑 Enter does NOT press Sign out');
+  // "sign" now also finds Sign Studio, above Sign out. Enter opens the page, never the action.
+  await page.fill('#menu-search', 'sign');
+  eq(await menuState(page), [['Merchandising', ['merch-signs']], ['Account', ['@signout']]], 'search "sign" finds Sign Studio and Sign out');
+  await page.press('#menu-search', 'Enter');
+  await page.waitForTimeout(150);
+  eq(await visiblePages(page), ['page-merch-signs'], '🛑 …and Enter opens Sign Studio, not Sign out');
+  await page.evaluate(() => navigateToPage('menu'));
   await page.fill('#menu-search', 'velo');
   await page.press('#menu-search', 'Enter');
   await page.waitForTimeout(150);
