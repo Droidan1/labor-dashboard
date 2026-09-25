@@ -5280,6 +5280,9 @@
           text-transform:uppercase;font-size:19px;overflow-wrap:anywhere}
         .ss-tile .none-t{font-size:12.5px;color:#6b6453;font-weight:600}
         .ss-acts{margin-left:auto;display:flex;gap:6px}
+        .ss-pdfnote{font-size:12px;color:var(--ss-inkDim);margin-top:6px}
+        .ss-pdfnote.bad{color:var(--ss-bad)}
+        .ss-pdfnote:empty{display:none}
         .ss-sm{min-height:40px;padding:8px 13px;font-size:13px}
         .ss-review{display:grid;grid-template-columns:1.3fr 1fr;gap:16px;align-items:end}
         .ss-nav{display:flex;gap:10px;justify-content:space-between;align-items:center;margin-top:8px;flex-wrap:wrap}
@@ -16403,14 +16406,16 @@
   }
 
   async function downloadWrsAsPdf() {
-    // Lazy-load jsPDF + autotable only when the user first requests a PDF
-    if (!(window.jspdf?.jsPDF || window.jsPDF)) {
-      try {
+    // Lazy-load jsPDF + autotable only when the user first requests a PDF. Each is checked on
+    // its own: Sign Studio loads jsPDF WITHOUT autotable, and skipping both because jsPDF was
+    // already there left doc.autoTable undefined, so this export threw.
+    try {
+      if (!(window.jspdf?.jsPDF || window.jsPDF))
         await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+      if (!(window.jspdf?.jsPDF || window.jsPDF)?.API?.autoTable)
         await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js');
-      } catch (e) {
-        uiAlert('Failed to load PDF library. Check your connection and try again.'); return;
-      }
+    } catch (e) {
+      uiAlert('Failed to load PDF library. Check your connection and try again.'); return;
     }
     const jsPDFCtor = window.jspdf?.jsPDF || window.jsPDF;
     if (!jsPDFCtor) { uiAlert('PDF library failed to initialize — please try again.'); return; }
@@ -31950,6 +31955,7 @@
   const SS_ICON = {
     print: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>',
     info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>',
+    pdf: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>',
     alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>',
   };
   function ssIcon(k) { const s = document.createElement('span'); s.innerHTML = SS_ICON[k]; return s.firstChild; }
@@ -32031,6 +32037,70 @@
     if (host) host.replaceChildren();
   }
   window.ssEndPrint = ssEndPrint;
+
+  /* jsPDF, loaded on demand: 364 KB that only a PDF needs, so not a <script> tag in the page.
+     sw.js precaches it, so this is a cache hit and works with no signal. One load at a time,
+     and a failure clears the promise so the next tap tries again. If the WRS export loaded
+     the same 2.5.1 from cdnjs first, that copy is used. */
+  let ssPdfLibPromise = null, ssPdfWarm = false, ssPdfBusy = false;
+  const ssPdfLib = () => (window.jspdf && window.jspdf.jsPDF) || null;
+  function ssLoadPdfLib() {
+    if (ssPdfLib()) return Promise.resolve(ssPdfLib());
+    if (ssPdfLibPromise) return ssPdfLibPromise;
+    ssPdfLibPromise = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      const fail = () => { ssPdfLibPromise = null; s.remove(); reject(new Error("The PDF maker didn't load.")); };
+      s.src = 'jspdf-2.5.1.umd.min.js';
+      s.onload = () => { if (ssPdfLib()) resolve(ssPdfLib()); else fail(); };
+      s.onerror = fail;
+      document.head.appendChild(s);
+    });
+    return ssPdfLibPromise;
+  }
+  function ssPdfNote(orient, text, bad) {
+    const n = el('ss-root') && el('ss-root').querySelector(`[data-pdfnote="${orient}"]`);
+    if (n) { n.textContent = text; n.classList.toggle('bad', !!bad); }
+  }
+  const ssPdfName = (model, orient) => 'sign-' + (model.groups.map(g => g.rawName).join(' ').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'untitled') + `-${orient}.pdf`;
+  /* PDF: the same layout, drawn by jsPDF with the four fonts embedded, so its words are real
+     text. Where the device has a share sheet it goes there (an iPhone's has Print, Files and
+     AirDrop); anywhere else it downloads. Once jsPDF has loaded, making it runs in the tap's
+     own task, which is what lets iOS open the share sheet from it. */
+  async function ssPdf(orient) {
+    const R = window.SignRender;
+    if (ssAssets !== 'ready' || ssPdfBusy) return;
+    const model = R.signModel(ssSign), v = R.validate(model, ssKit.engine);
+    if (v.blocked[orient]) return;   // the button is off as well; this is the gate
+    ssPdfBusy = true;
+    ssPdfNote(orient, 'Making the PDF…');
+    try {
+      const jsPDF = ssPdfLib() || await ssLoadPdfLib();
+      const L = v.layouts[orient];
+      const doc = new jsPDF({ unit: 'pt', format: [L.W, L.H], orientation: orient, compress: true, putOnlyUsedFonts: true });
+      doc.setProperties({ title: R.describe(model), creator: 'RETJG HUB Sign Studio' });
+      R.loadFontsInto(doc, ssKit.fontBytes);
+      R.drawPDF(L, doc, { logo: ssKit.logoBytes });
+      const name = ssPdfName(model, orient);
+      const file = new File([doc.output('blob')], name, { type: 'application/pdf' });
+      let shared = false;
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try { await navigator.share({ files: [file], title: name }); shared = true; }
+        catch (e) { if (e && e.name === 'AbortError') shared = true; }   // closed the sheet: nothing to save
+      }
+      if (!shared) {
+        const a = ssH('a', { href: URL.createObjectURL(file), download: name });
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 60000);   // long after the download has its bytes
+      }
+      ssPdfNote(orient, shared ? '' : `Saved ${name}`);
+    } catch (e) {
+      console.warn('Sign Studio: the PDF failed', e);
+      ssPdfNote(orient, `The PDF didn't finish: ${(e && e.message) || 'unknown error'} Tap PDF to try again.`, true);
+    } finally {
+      ssPdfBusy = false;
+    }
+  }
 
   /* ── The fields ─────────────────────────────────────────────────── */
   const ssReq = () => ssH('span', { class: 'ss-req' }, ' · required');
@@ -32177,8 +32247,11 @@
           orient === 'landscape' ? ' · 11 × 8.5 in' : ' · 8.5 × 11 in'),
         ssH('span', { class: 'ss-acts' },
           ssH('button', { type: 'button', class: 'ss-btn ss-primary ss-sm', 'data-print': orient, onclick: () => ssPrint(orient) },
-            ssIcon('print'), 'Print'))),
-      ssH('div', { class: 'ss-readout', 'data-readout': orient }));
+            ssIcon('print'), 'Print'),
+          ssH('button', { type: 'button', class: 'ss-btn ss-ghost ss-sm', 'data-pdf': orient, onclick: () => ssPdf(orient) },
+            ssIcon('pdf'), 'PDF'))),
+      ssH('div', { class: 'ss-readout', 'data-readout': orient }),
+      ssH('div', { class: 'ss-pdfnote', 'data-pdfnote': orient, 'aria-live': 'polite' }));
   }
   function ssPanel(label, right, ...body) {
     return ssH('section', { class: 'ss-panel' },
@@ -32328,11 +32401,15 @@
         ssH('b', null, offers.length ? offers.join(' and ') : pctSign ? 'the discount' : 'the price'),
         pctSign ? '. The sign does not set up the discount in Clover.' : '. The sign does not change the price in Clover.');
     });
-    root.querySelectorAll('[data-print]').forEach(b => {
-      const o = b.getAttribute('data-print');
+    root.querySelectorAll('[data-print],[data-pdf]').forEach(b => {
+      const o = b.getAttribute('data-print') || b.getAttribute('data-pdf');
       b.disabled = !can[o];
       b.title = can[o] ? '' : !ready ? "The sign font hasn't loaded" : only ? `The ${o} sign doesn't fit. The ${only} one prints.` : 'Fix the fields above first';
     });
+    if (ready && ssView.step === 3 && !ssPdfWarm) {   // so the first PDF does not wait for 364 KB
+      ssPdfWarm = true;
+      (window.requestIdleCallback || (f => setTimeout(f, 300)))(() => ssLoadPdfLib().catch(() => {}));
+    }
     window.__ssLastRenderMs = performance.now() - t0;
   }
 

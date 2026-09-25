@@ -38,12 +38,15 @@ if (!fs.existsSync(path.join(root, 'index.html'))) { console.error('No dist/ —
 const types = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.json': 'application/json',
   '.png': 'image/png', '.svg': 'image/svg+xml', '.ttf': 'font/ttf', '.txt': 'text/plain' };
 const PORT = 8094;
-// A path in `fail` answers 404, so a check can take one file away.
-const fail = new Set();
+// A path in `fail` answers 503, the way a struggling CDN or a dead store connection does, so a
+// check can take one file away. `served` counts what was asked for.
+const fail = new Set(), served = {};
 const srv = http.createServer((q, s) => {
   const u = q.url.split('?')[0];
+  served[u] = (served[u] || 0) + 1;
   const f = path.join(root, u === '/' ? 'index.html' : u);
-  if (fail.has(u) || !f.startsWith(root) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { s.writeHead(404); return s.end('no'); }
+  if (fail.has(u)) { s.writeHead(503); return s.end('down'); }
+  if (!f.startsWith(root) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { s.writeHead(404); return s.end('no'); }
   s.writeHead(200, { 'Content-Type': types[path.extname(f)] || 'application/octet-stream' });
   fs.createReadStream(f).pipe(s);
 });
@@ -131,6 +134,7 @@ async function makeSign(page, s) {
   const two = await page.evaluate(() => !!document.getElementById('ss-f-name-1'));
   if (!!s.two !== two) { await page.click('[data-two]'); await settle(page); }
   for (const [k, v] of Object.entries(s.fields || {})) await type(page, `#ss-f-${k}`, v);
+  for (const [gi, u] of Object.entries(s.units || {})) { await page.click(`[data-chips="unit-${gi}"] [data-v="${u}"]`); await settle(page); }
   await page.click('[data-step="2"]'); await settle(page);
   await page.click(`.ss-tile[data-v="${s.sale || 'none'}"]`); await settle(page);
   if (s.custom != null) await type(page, '#ss-f-custom', s.custom);
@@ -418,7 +422,9 @@ function pdfFacts(buf, name) {
   const f = path.join(PDIR, name);
   fs.writeFileSync(f, buf);
   const info = poppler('pdfinfo', f), size = (info.match(/Page size:\s+([\d.]+) x ([\d.]+) pts/) || []).slice(1).map(Number);
-  const fonts = poppler('pdffonts', f).split('\n').slice(2).filter(Boolean).map(l => ({ name: l.split(/\s+/)[0].replace(/^[A-Z]{6}\+/, ''), emb: / yes /.test(l) }));
+  // pdffonts prints fixed-width columns, and a name may hold spaces ("SS Poppins Black").
+  const rows = poppler('pdffonts', f).split('\n'), typeAt = rows[0].indexOf('type'), embAt = rows[0].indexOf('emb');
+  const fonts = rows.slice(2).filter(Boolean).map(l => ({ name: l.slice(0, typeAt).trim().replace(/^[A-Z]{6}\+/, ''), emb: l.slice(embAt, embAt + 3) === 'yes' }));
   return { pages: +(info.match(/Pages:\s+(\d+)/) || [])[1], size, fonts, text: execFileSync('pdftotext', [f, '-'], { encoding: 'utf8' }) };
 }
 await section('5. print', async () => {
@@ -467,6 +473,94 @@ await section('5. print', async () => {
   await page.evaluate(() => { const b = document.querySelector('[data-print="landscape"]'); b.disabled = false; b.click(); });
   eq((await state()).on, false, '🛑 a forced click on the disabled landscape Print readies nothing: the print path checks too');
   check(!errs.length, `no page errors (${errs.slice(0, 2).join(' | ')})`);
+});
+
+// ── 6. PDF: the same sign, as real text with its fonts inside ────────────
+// Made under ×4 CPU throttling, a mid-range phone's speed, and read back: size and timing,
+// fonts, the one image, and every text object's position against the layout it came from.
+const zlib = await import('node:zlib');
+function pdfStreams(buf) {   // every stream, inflated where it is Flate-compressed
+  const src = buf.toString('latin1'), out = [];
+  for (const m of src.matchAll(/<<([^]*?)>>\s*stream\r?\n/g)) {
+    const start = m.index + m[0].length, len = +((m[1].match(/\/Length (\d+)/) || [])[1]);
+    const raw = buf.subarray(start, start + len);
+    try { out.push({ dict: m[1], data: /FlateDecode/.test(m[1]) ? zlib.inflateSync(raw).toString('latin1') : raw.toString('latin1') }); } catch (e) {}
+  }
+  return out;
+}
+async function makePdf(page, orient) {
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 15000 }), page.click(`[data-pdf="${orient}"]`)]);
+  return { name: dl.suggestedFilename(), buf: fs.readFileSync(await dl.path()) };
+}
+await section('6. pdf', async () => {
+  const { page, errs } = await open();
+  const cdp = await page.context().newCDPSession(page);
+  await makeSign(page, { template: 'uvt', fields: { 'name-0': 'Stand mixer', them: '59.99', 'price-0': '19.99' }, units: { 0: 'each' }, sale: 'flash' });
+  // The layout this sign should have, worked out independently of the page's own state: the
+  // same sign given to SignRender with an engine built here from the served fonts.
+  await page.evaluate(async () => {
+    const R = window.SignRender, fonts = {};
+    for (const [k, f] of Object.entries(R.FACES)) fonts[k] = R.readFont(new Uint8Array(await (await fetch(f.file)).arrayBuffer()));
+    window.__ssCheckEngine = R.engine(fonts);
+  });
+  eq(await page.$$eval('[data-pdf]', bs => bs.map(b => b.disabled)), [false, false], 'a sign that fits both ways: both PDF buttons are on');
+  await page.waitForFunction(() => window.jspdf && window.jspdf.jsPDF, null, { timeout: 8000 }).catch(() => {});
+  check(await page.evaluate(() => !!(window.jspdf && window.jspdf.jsPDF)), 'step 3 warms jsPDF up in idle time, before any tap');
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+  for (const orient of ['landscape', 'portrait']) {
+    const t0 = Date.now();
+    const { name, buf } = await makePdf(page, orient);
+    const ms = Date.now() - t0;
+    check(ms < 3000, `${orient}: the PDF arrives in ${ms} ms under ×4 CPU throttling (target 3 s)`);
+    eq(name, `sign-stand-mixer-${orient}.pdf`, `${orient}: named after the product and the orientation`);
+    check(buf.length < 150 * 1024, `${orient}: ${Math.round(buf.length / 1024)} KB, under 150 KB`);
+    const facts = pdfFacts(buf, `sign-${orient}.pdf`);
+    eq([facts.pages, facts.size], [1, orient === 'landscape' ? [792, 612] : [612, 792]], `${orient}: one page, US Letter`);
+    eq(facts.fonts.map(f => f.name + (f.emb ? '' : ' (not embedded)')).sort(), ['SS Luckiest Guy', 'SS Poppins Black', 'SS Poppins Black Italic', 'SS Poppins Bold'],
+       `${orient}: the sign's four fonts, every one embedded, and no other`);
+    const text = facts.text.replace(/\s+/g, ' ');
+    check(/STAND MIXER/.test(text) && /YOU PAY/.test(text) && /66% OFF/.test(text), `${orient}: its words are real text (${text.trim().slice(0, 50)})`);
+    const imgs = execFileSync('pdfimages', ['-list', path.join(PDIR, `sign-${orient}.pdf`)], { encoding: 'utf8' }).split('\n').slice(2).filter(Boolean);
+    check(imgs.length === 1 && / rgb /.test(imgs[0]) && !/smask/.test(imgs[0]), `${orient}: one image, the RGB logo, with no mask (${imgs.map(l => l.replace(/\s+/g, ' ')).join(' / ')})`);
+    // Every text object at the layout's left edge, baseline and size, to 0.01 pt.
+    const layout = await page.evaluate(o => {
+      const R = window.SignRender;
+      const model = R.signModel(R.normalizeSign({ template: 'uvt', sale: 'flash', them: '59.99', groups: [{ name: 'Stand mixer', price: '19.99', unit: 'each' }] }));
+      return window.__ssCheckEngine.layoutSign(model, o).items;
+    }, orient).catch(() => null);
+    const content = pdfStreams(buf).filter(x => /\bBT\b/.test(x.data)).map(x => x.data).join('\n');
+    const bts = [...content.matchAll(/BT\n([^]*?)ET/g)].map(m => {
+      const tf = m[1].match(/\/F\d+ (\S+) Tf/), td = m[1].match(/(\S+) (\S+) Td/);
+      return tf && td ? [+(+tf[1]).toFixed(2), +(+td[1]).toFixed(2), +(+td[2]).toFixed(2)] : null;
+    });
+    if (layout) {
+      const want = layout.filter(i => i.t === 'text').map(i => [+i.size.toFixed(2), +i.x.toFixed(2), +((orient === 'landscape' ? 612 : 792) - i.y).toFixed(2)]);
+      const off = want.filter((w, k) => !bts[k] || Math.abs(bts[k][0] - w[0]) > 0.011 || Math.abs(bts[k][1] - w[1]) > 0.011 || Math.abs(bts[k][2] - w[2]) > 0.011);
+      eq([bts.length, off.length], [want.length, 0], `${orient}: every text is at the layout's size, left edge and baseline (${want.length} texts)`);
+    } else check(false, `${orient}: the page's layout could not be read for comparison`);
+  }
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+  check(!errs.length, `no page errors (${errs.slice(0, 2).join(' | ')})`);
+  // The jsPDF file fails once, then comes back: the next tap tries again and works.
+  fail.add('/jspdf-2.5.1.umd.min.js');   // down before step 3, so the idle warm-up meets it too
+  const P = await open();
+  await makeSign(P.page, { fields: { 'name-0': 'All cereal', 'price-0': '2' } });
+  await P.page.waitForTimeout(800);
+  await P.page.click('[data-pdf="landscape"]');
+  await P.page.waitForFunction(() => /didn't finish/.test(document.querySelector('[data-pdfnote="landscape"]').textContent), null, { timeout: 8000 });
+  eq(await P.page.$eval('[data-pdfnote="landscape"]', n => [n.className, n.textContent]),
+     ['ss-pdfnote bad', "The PDF didn't finish: The PDF maker didn't load. Tap PDF to try again."], 'jsPDF down: the PDF says so, in the error colour');
+  fail.delete('/jspdf-2.5.1.umd.min.js');
+  const again = await makePdf(P.page, 'landscape');
+  check(again.buf.length > 10000 && again.name === 'sign-all-cereal-landscape.pdf', 'back up: the next tap makes the PDF');
+  eq(await P.page.$eval('[data-pdfnote="landscape"]', n => n.textContent), 'Saved sign-all-cereal-landscape.pdf', '…and says where it went');
+  check(await P.page.evaluate(() => document.querySelectorAll('script[src="jspdf-2.5.1.umd.min.js"]').length === 1), '…with one script tag left, not one per attempt');
+  // A blocked orientation: its PDF button is off, and a forced click makes nothing.
+  await makeSign(P.page, { two: true, fields: { 'name-0': 'Work boots', 'price-0': '20', 'name-1': 'Premium work boots', 'price-1': '35' }, sale: 'blowout' });
+  eq(await P.page.$$eval('[data-pdf]', bs => bs.map(b => b.disabled)), [true, false], 'portrait only: the landscape PDF button is off');
+  const forced = P.page.waitForEvent('download', { timeout: 1500 }).then(() => true, () => false);
+  await P.page.evaluate(() => { const b = document.querySelector('[data-pdf="landscape"]'); b.disabled = false; b.click(); });
+  eq(await forced, false, '🛑 a forced click on it makes no PDF: the PDF path checks too');
 });
 
 // ── 8. Contrast: every word readable, in all three themes ────────────────
@@ -523,7 +617,70 @@ await section('9. font failure', async () => {
   await page.click('#ss-root [data-retry]');
   await page.waitForFunction(() => document.querySelectorAll('#ss-root [data-preview] svg').length === 2, null, { timeout: 8000 });
   eq(await pill(page), { cls: 'ok', text: 'Ready to print' }, 'Retry, once the font is there: both signs draw and it is ready');
-  check(errs.filter(e => !/luckiest-guy|404/.test(e)).length === 0, `no other page errors (${errs.slice(0, 2).join(' | ')})`);
+  check(errs.filter(e => !/luckiest-guy|503/.test(e)).length === 0, `no other page errors (${errs.slice(0, 2).join(' | ')})`);
+});
+
+// ── 11. Speed, and the WRS export beside it ──────────────────────────────
+// The preview must follow the keys within 300 ms on a mid-range phone (×4 CPU throttling),
+// on the costliest sign there is: one that fails to fit, which runs the "cut about N" search.
+// And a Sign Studio PDF loads jsPDF without autotable; the WRS export must still load it.
+// autotable comes from cdnjs, which this harness refuses, so a stand-in answers that URL:
+// enough plugin for the export to run, and a count of how often it was fetched.
+const AUTOTABLE = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js';
+const AUTOTABLE_STANDIN = `(function () {
+  var J = window.jspdf && window.jspdf.jsPDF;
+  J.API.autoTable = function (o) {
+    window.__autoTables = (window.__autoTables || 0) + 1;
+    this.lastAutoTable = { finalY: ((o && o.startY) || 40) + 20 };
+    return this;
+  };
+})();`;
+await section('11. timing and WRS', async () => {
+  const { page, errs } = await open();
+  let autotableFetches = 0;
+  // Registered after open()'s refuse-everything route, so it is matched first.
+  await page.route(AUTOTABLE, r => { autotableFetches++; r.fulfill({ contentType: 'text/javascript', body: AUTOTABLE_STANDIN }); });
+  const cdp = await page.context().newCDPSession(page);
+  await makeSign(page, { two: true, fields: { 'name-0': 'Work boots', 'price-0': '20', 'name-1': 'Premium work boots', 'price-1': '35' }, sale: 'blowout' });
+  await page.click('[data-step="1"]'); await settle(page);
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+  const keys = await page.evaluate(async () => {
+    const n = document.getElementById('ss-f-name-1'), out = [];
+    for (const ch of ' xyz') {
+      const t0 = performance.now();
+      n.value += ch;
+      n.dispatchEvent(new Event('input', { bubbles: true }));
+      const handled = performance.now() - t0;
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));   // …and painted
+      out.push([handled, performance.now() - t0]);
+    }
+    return out;
+  });
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+  const worst = Math.max(...keys.map(k => k[1]));
+  check(worst < 300, `a keystroke is drawn within 300 ms under ×4 throttling, on a sign that does not fit (worst ${Math.round(worst)} ms; handler ${Math.round(Math.max(...keys.map(k => k[0])))} ms)`);
+  eq(await page.$eval('#ss-m-name-1', n => /Too long for the landscape sign/.test(n.textContent)), true, '…and the fit message kept up with it');
+  // WRS after a Sign Studio PDF.
+  await type(page, '#ss-f-name-1', 'Premium boots');
+  await page.click('[data-step="3"]'); await settle(page);
+  await makePdf(page, 'portrait');
+  eq(await page.evaluate(() => [!!window.jspdf.jsPDF, !!window.jspdf.jsPDF.API.autoTable]), [true, false], 'after a Sign Studio PDF: jsPDF is loaded, autotable is not');
+  await page.evaluate(() => window.navigateToPage('weekly-summary'));
+  await page.waitForTimeout(400);
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 15000 }), page.evaluate(() => {
+    const pane = document.getElementById('wrs-pane-summary'), h = document.createElement('h3'), t = document.createElement('table');
+    h.textContent = 'By store';
+    const row = (tag, cells) => { const tr = document.createElement('tr'); cells.forEach(c => { const x = document.createElement(tag); x.textContent = c; tr.appendChild(x); }); return tr; };
+    t.createTHead().appendChild(row('th', ['Store', 'Sales'])); t.createTBody().appendChild(row('td', ['Coliseum', '$1,000']));   // the export reads tHead/tBodies
+    pane.append(h, t);
+    return window.downloadWrsAsPdf();
+  })]);
+  eq(autotableFetches, 1, '🛑 the WRS export fetches autotable although jsPDF was already loaded');
+  check(await page.evaluate(() => window.__autoTables > 0), '…and draws its table with it');
+  const wrs = pdfFacts(fs.readFileSync(await dl.path()), 'wrs.pdf');
+  check(wrs.pages >= 1 && wrs.fonts.some(f => /Helvetica/.test(f.name)) && !wrs.fonts.some(f => /SS |Poppins|Luckiest/.test(f.name)),
+        `the WRS PDF is its own: its Helvetica, none of the sign's fonts (${wrs.fonts.map(f => f.name).slice(0, 4).join(', ')}…)`);
+  check(!errs.length, `no page or console errors (${errs.slice(0, 2).join(' | ')})`);
 });
 
 await b.close();
@@ -531,6 +688,7 @@ srv.close();
 fs.rmSync(PDIR, { recursive: true, force: true });
 if (measured.length) console.log('Painted contrast:\n  ' + measured.join('\n  '));
 const bad = results.filter(r => !r[0]);
+if (process.env.VERBOSE) for (const [okk, m] of results) if (okk) console.log('  ok   ' + m);   // VERBOSE=1 shows the figures
 for (const [okk, m] of results) if (!okk) console.log('  FAIL ' + m);
 console.log(`\n${results.length - bad.length} passed, ${bad.length} failed`);
 process.exit(bad.length ? 1 : 0);

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'dashboard-cache-v243';
+const CACHE_NAME = 'dashboard-cache-v244';
 
 // Pre-fetched and cached on install
 const PRECACHE_ASSETS = [
@@ -22,6 +22,9 @@ const PRECACHE_ASSETS = [
   './fonts/poppins-900.ttf',
   './fonts/poppins-900-italic.ttf',
   './fonts/luckiest-guy-400.ttf',
+  // …and jsPDF, for its PDF button (364 KB). Loaded on demand like jsqr.min.js, never
+  // parsed at app start; precached so a PDF can still be made with no signal.
+  './jspdf-2.5.1.umd.min.js',
 ];
 
 // CDN + font hosts: versioned/immutable — serve cache-first
