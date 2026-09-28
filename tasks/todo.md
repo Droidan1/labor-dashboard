@@ -1,3 +1,52 @@
+# Midnight Eastern is exact on the clock-change Sundays (2026-09-28)
+
+**Request (Brian):** *"Fix getStartOfDayET for the DST Sundays too"*
+
+## The bug
+
+`getStartOfDayET(date)` starts every sales-day window. It is the lower bound of the Clover
+`createdTime` filter, and the next day's value is the upper bound. It read the UTC offset at
+**noon** on the day. But the clocks change at 2 am, so on the two Sundays a year they do,
+midnight still has Saturday's offset:
+
+- **Spring forward (2026-03-08):** it returned 04:00Z, not 05:00Z. Saturday 11 pm–midnight EST
+  counted in Sunday, making Saturday a 23-hour day and Sunday 24.
+- **Fall back (2026-11-01):** it returned 05:00Z, not 04:00Z. Sunday 12–1 am EDT counted in
+  Saturday, making Saturday 25 hours and Sunday 24.
+
+`getETToday().startOfDay` read the offset at the current instant, which is the same hour wrong
+for the rest of those Sundays after 2 am.
+
+Checked against a minute-by-minute ground truth over 2025–2028: it is wrong on exactly the eight
+clock-change Sundays and right on every other day.
+
+`?action=items-hour` builds an hour as midnight plus H hours. With a correct midnight, that is an
+hour off from 2 am on those Sundays: spring has no 2 am, and fall has two 1 ams. The old wrong
+midnight happened to cancel that out after 2 am, so fixing only `getStartOfDayET` would move this
+error rather than remove it.
+
+## Plan
+
+- [ ] 1. `getStartOfDayET`: midnight is 04:00Z or 05:00Z, whichever the ET calendar reads as that
+      date. `getETToday().startOfDay` and #297's `etDayStartIso` call it, so there is one rule.
+- [ ] 2. `etHourWindow(date, hour)` returns the instants `etHourSlot` labels as that hour.
+      `items-hour` uses it.
+- [ ] 3. Tests:
+      - `test-et-day-start.mjs`:
+        - every day of 2025–2028 against the ground truth;
+        - day lengths;
+        - `getETToday` under a fixed clock;
+        - the hour windows tile every day of 2026–2027;
+      - one real endpoint's Clover window on a clock-change Sunday.
+- [ ] 4. Blast radius:
+      - every caller, and whether it only reads or writes stored history;
+      - a read-only D1 check of stored history in the affected hours;
+      - **no date is re-pulled** (Destructive Operations rule 1).
+- [ ] 5. Verify:
+      - `npm test`;
+      - mutations: the old noon rule, the offset-at-now rule, and the old hour arithmetic.
+- [ ] 6. Commit onto PR #297, which needs the same worker deploy; retitle it and report.
+
 # The photo library's retail week runs on Eastern time (2026-09-28)
 
 **Request (Brian):** *"Fix ctCurrentWeekNo with etTodayStr too"*. After I showed him that
