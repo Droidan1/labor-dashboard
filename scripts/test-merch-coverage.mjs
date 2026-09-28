@@ -44,9 +44,13 @@ const SNACKS = 'FG BL CONSUMABLES - FOOD - SNACKS';
 const NONCORE = '__non_core__';
 const OTHER_FOOD = '__other__:' + FOOD;
 
-// ET date strings the endpoint will look for: yesterday backwards.
-const etDay = (back) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })
-  .format(new Date(Date.now() - (back + 1) * 86400e3));
+// ET date strings the endpoint will look for: yesterday backwards, by the calendar as the
+// worker counts them (getETYesterday), not in 24-hour steps, which slip a day near a clock change.
+const etDay = (back) => {
+  const d = new Date(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()) + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() - (back + 1));
+  return d.toISOString().slice(0, 10);
+};
 
 // One day's item snapshot for a store, in the shape mergeItemSnapshots expects.
 function snap(store, day, l2rows) {

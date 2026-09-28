@@ -48,8 +48,13 @@ const FOOD = 'Consumable Food';
 const SNACKS = 'FG BL CONSUMABLES - FOOD - SNACKS';
 const CANDY  = 'FG BL CONSUMABLES - FOOD - CANDY';
 
-const etDay = (back) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })
-  .format(new Date(Date.now() - (back + 1) * 86400e3));
+// The ET dates the endpoint reads: yesterday and back, by the calendar as the worker counts
+// them (getETYesterday), not in 24-hour steps, which slip a day near a clock change.
+const etDay = (back) => {
+  const d = new Date(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()) + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() - (back + 1));
+  return d.toISOString().slice(0, 10);
+};
 
 // One store-day, in the shape mergeItemSnapshots expects — including the basket-touch
 // counters, which the velocity view is built on and which coverage never reads.

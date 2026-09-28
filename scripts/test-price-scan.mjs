@@ -124,8 +124,12 @@ env.SALES_SNAPSHOTS.put('category-costs:global', JSON.stringify({ costs: { [SNAC
 // has genuinely nothing to price from — which is correct behaviour, but not the case
 // Bargain Lane is ever in: they have four years of till data for snacks.
 {
-  const etDay = (back) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })
-    .format(new Date(Date.now() - (back + 1) * 86400e3));
+  // Yesterday and back, by the calendar as the worker counts them (getETYesterday).
+  const etDay = (back) => {
+    const d = new Date(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()) + 'T12:00:00Z');
+    d.setUTCDate(d.getUTCDate() - (back + 1));
+    return d.toISOString().slice(0, 10);
+  };
   for (let d = 0; d < 10; d++) {
     for (const st of ['bl1', 'bl2']) {
       env.SALES_SNAPSHOTS.put(`items:${st}:${etDay(d)}`, JSON.stringify({

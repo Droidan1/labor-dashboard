@@ -1,3 +1,91 @@
+# "Yesterday" is the calendar day before today, on the clock-change Sundays too (2026-09-28)
+
+**Request (Brian):** *"Fix the "yesterday" now − 24h dates for DST too"*
+
+## The bug
+
+Seven places in the worker take yesterday as the Eastern date of "now minus 24 hours". Five of
+them step further back in 24-hour jumps:
+
+| Where (worker.js) | What the dates decide |
+|---|---|
+| `manifestAspVelocity` (11828) | the cache key of the 28-day ASP-velocity table |
+| `manifestAspVelocityCompute` (11851–11853) | the 28 days whose item snapshots build that table |
+| `?action=send-weekly-digest` (21722–21723) | its default week: yesterday and the 6 days before |
+| `?action=merch-velocity` (26398–26400) | its 7-, 28-, 91- or 364-day window |
+| `?action=merch-coverage` (26498–26503) | its 7- or 28-day window |
+| cron `0 12 * * *` (28332) | the daily summary's date |
+| cron `0 11 * * 1` (28344–28345) | the weekly digest's Sunday–Saturday |
+
+A clock-change Sunday is 23 or 25 hours long, so 24 hours back from a time near midnight can land
+on the wrong date. Measured over 2026–2027:
+- **Yesterday is wrong for 4 hours in all:** midnight to 1 am on the Monday after spring forward
+  (it gives Saturday), and 11 pm to midnight on fall-back Sunday (it gives Sunday itself).
+- **A list built in 24-hour steps skips or repeats a date** once it reaches back past a clock
+  change, for that hour of every day the window covers one:
+  - a 7-day window on 28 days;
+  - a 28-day window on 112 days;
+  - a 364-day window on 728 of the 730 days.
+- **The two crons** run at 7–8 am, where this pattern gives the right date. They use it all the
+  same, so they change too, and nothing is left to copy.
+
+## Plan
+
+- [x] 1. `addDaysYmd(dateStr, n)`: calendar arithmetic on a `YYYY-MM-DD` date.
+      `getETYesterday()`: the day before `getETToday().dateStr`. Both go next to `getETToday`.
+- [x] 2. The seven sites use them: yesterday by the calendar, and each earlier date as
+      `addDaysYmd(end, -i)`.
+- [x] 3. Tests:
+      - the helpers, every quarter hour of 2025–2028, against the calendar;
+      - end to end through `worker.fetch()` with the clock pinned at the edge hours: the
+        item-snapshot dates that `merch-velocity`, `merch-coverage` and the ASP table read, and
+        the week `send-weekly-digest` picks;
+      - the crons at their fire times give the same dates as before.
+      - *Changed while building:*
+        - The yesterday sweep is every hour of 2026, both clock changes included. Each call
+          builds two date formatters, so 2026–2027 took 7 of the suite's 9 seconds.
+        - `addDaysYmd` is checked over every date of 2025–2028.
+        - The four suites that built fixture dates the old way now count by the calendar too:
+          `test-merch-velocity`, `test-merch-coverage`, `test-price-scan` and
+          `test-manifest-scorer`. Otherwise their fixtures would slip a day off the worker's
+          dates at the edge hours.
+- [x] 4. Mutations: each site back to now − 24 hours.
+- [x] 5. Nothing stored is rewritten, so no data check is needed:
+      - the ASP key is a two-day cache;
+      - the merchandising windows only read;
+      - the digest and the summary go out for a date that changes only at the edge hours,
+        never at the crons' fire times.
+
+      Then verify with `npm test`, ship as a new PR from the fast-forwarded branch, and report.
+
+## Review
+
+**Done.** Every place the worker needs yesterday takes the calendar day before today's Eastern
+date, and counts earlier days by the calendar. No "now minus 24 hours" date is left in
+`worker.js`.
+
+**Verification:**
+- `npm test`: 6,507 assertions across 88 suites (6,470 before), all passing.
+- **The new `test-et-yesterday.mjs`:** 37 checks.
+  - The helpers at seven named instants, every hour of 2026, and `addDaysYmd` over every date
+    of 2025–2028.
+  - **End to end,** with the clock pinned at 12:30 am after spring forward, 11:30 pm after fall
+    back, and the crons' own fire times:
+    - the item-snapshot days `merch-velocity` (7, 28 and 364 days) and `merch-coverage` read;
+    - the ASP table's cache key and its 28 days, through `furniture-bands`;
+    - the dates bound into the sales query by `send-weekly-digest` and both crons.
+- **Mutations,** each in its own scratch copy, each restoring the old line. All are caught:
+  - the helper: 11 failures;
+  - `merch-velocity`: 7;
+  - `merch-coverage`: 4;
+  - the manual digest: 2;
+  - the ASP table's days: 2;
+  - the ASP cache key: 1;
+  - the daily-summary cron: 1;
+  - the weekly-digest cron: 1.
+- **The two crons at their fire times give the same dates as before.** Their mutants are
+  caught only when a cron runs just after midnight, as a manual trigger can.
+
 # Scheduled posts go out at the Eastern time picked, on the clock-change Sundays too (2026-09-28)
 
 **Request (Brian):** *"Fix etWallClockToUtc for the DST Sundays too"*
