@@ -27,25 +27,93 @@ error rather than remove it.
 
 ## Plan
 
-- [ ] 1. `getStartOfDayET`: midnight is 04:00Z or 05:00Z, whichever the ET calendar reads as that
+- [x] 1. `getStartOfDayET`: midnight is 04:00Z or 05:00Z, whichever the ET calendar reads as that
       date. `getETToday().startOfDay` and #297's `etDayStartIso` call it, so there is one rule.
-- [ ] 2. `etHourWindow(date, hour)` returns the instants `etHourSlot` labels as that hour.
+- [x] 2. `etHourWindow(date, hour)` returns the instants `etHourSlot` labels as that hour.
       `items-hour` uses it.
-- [ ] 3. Tests:
+- [x] 3. Tests:
       - `test-et-day-start.mjs`:
         - every day of 2025–2028 against the ground truth;
         - day lengths;
         - `getETToday` under a fixed clock;
         - the hour windows tile every day of 2026–2027;
       - one real endpoint's Clover window on a clock-change Sunday.
-- [ ] 4. Blast radius:
+- [x] 4. Blast radius:
       - every caller, and whether it only reads or writes stored history;
       - a read-only D1 check of stored history in the affected hours;
       - **no date is re-pulled** (Destructive Operations rule 1).
-- [ ] 5. Verify:
+- [x] 4a. *Added after the mapping in step 4, which proved the plan's assumption wrong: that every
+      caller takes the day's end from the next day's midnight.* Two ended it at "start + 24
+      hours": `bankTransactionsDay`, which writes `payment_archive`, and `?action=transactions`.
+      With the right midnight each would have been an hour off at the END on a clock-change
+      Sunday, instead of at the start. The `bank-transactions` day list stepped 24 hours from the
+      first midnight, so it dropped the range's last day across spring forward. So:
+      - both end at the next day's midnight, as every other caller does;
+      - the day list counts calendar dates with `enumDatesInclusive`;
+      - the end-to-end test covers all three.
+- [x] 5. Verify:
       - `npm test`;
-      - mutations: the old noon rule, the offset-at-now rule, and the old hour arithmetic.
-- [ ] 6. Commit onto PR #297, which needs the same worker deploy; retitle it and report.
+      - mutations: the old noon rule, the offset-at-now rule, and the old hour arithmetic;
+        plus one per step-4a fix.
+- [x] 6. Commit onto PR #297, which needs the same worker deploy; retitle it and report.
+      *Brian merged #297 at 13:32 with steps 1–3, before step 4a existed, so 4a ships as its own
+      PR from the merged `main`.*
+
+## Review
+
+**Done.** Every sales-day window starts and ends at Eastern midnight on the clock-change Sundays.
+So does every hour `items-hour` asks for. Steps 1–3 are in #297 (merged); step 4a is the
+follow-up PR. Until 4a is merged and deployed, `main`'s worker ends a clock-change Sunday an hour
+off in `bank-transactions` and `transactions`.
+
+- **Worker:**
+  - `getStartOfDayET` reads the Eastern date at 04:00Z: if it is that day, midnight is 04:00Z,
+    otherwise 05:00Z. `getETToday` and `etDayStartIso` both call it.
+  - `etHourWindow` gives `items-hour` its hour. Spring's 2 am is empty; fall's 1 am is two
+    hours long.
+  - `bankTransactionsDay` and `transactions` end at the next day's midnight.
+  - `bank-transactions` builds its day list by calendar date.
+- **Frontend:** no change. `CACHE_NAME` stays at v249.
+
+**Verification:**
+- `npm test`: 6,448 assertions across 86 suites (6,418 before), all passing.
+- **`test-et-day-start.mjs`:** 64 checks.
+  - §1–§5: the values against a minute-by-minute ground truth.
+  - §6, 30 new checks: it drives the real worker through `worker.fetch()` with the clock pinned
+    and Clover stubbed, and reads the `createdTime` window off every Clover URL. It covers:
+    - `sales-diag` across both clock-change weekends;
+    - `items-hour`;
+    - a dry-run `bank-transactions`, both its windows and its day counts;
+    - `transactions`;
+    - today's `items`.
+- **Against `main`:** the same endpoint checks fail 15 of 30, and pass 30 of 30 here.
+- **Mutations,** each in its own scratch copy. All are caught.
+  - the old noon rule: 30 failures;
+  - `etHourWindow` as midnight + H: 13;
+  - `items-hour` back to midnight + H: 6;
+  - `getETToday` reading the offset now: 4;
+  - `bankTransactionsDay` ending at start + 24 h: 2;
+  - `transactions` ending at start + 24 h: 2;
+  - the old 24-hour-step day list: 3.
+- **Production D1, read only** (three SELECTs; D1 reported 0 changes, 0 rows written):
+  - `daily_sales` holds two clock-change-weekend dates, 2026-03-07 and 2026-03-08. A backfill
+    wrote both on 2026-05-21 under the old window. None exist for 2025. Both are past
+    Clover's retention, so they can't be re-pulled, and rule 1 forbids it anyway.
+  - `payment_archive_days` runs from 2026-06-18 to 2026-09-24 for every store, so the archive
+    holds no clock-change day. Its first one will be 2026-11-01, banked by the cron on 11-04.
+  - The hours the old window misfiled are 11 pm on Saturday (spring) and midnight on Sunday
+    (fall). They're nearly empty. Across the 99 archived days and six stores:
+    - 0 transactions of any kind at 11 pm;
+    - 2 payments in the midnight hour;
+    - no refund or manual refund outside 8 am–9 pm.
+  - So the stored 2026-03-07 and 03-08 totals are almost certainly right, and there is nothing
+    to repair.
+- **Deploy before Saturday 31 October ends.** Sunday 1 November is the next day the old code
+  gets wrong:
+  - the snapshot sweep would count that Sunday's first hour of refunds in Saturday, and its
+    orders in neither day;
+  - on 4 November the banking cron would archive Sunday without that hour, and Saturday's
+    archive doesn't hold it either. The archive is permanent once Clover forgets the day.
 
 # The photo library's retail week runs on Eastern time (2026-09-28)
 
