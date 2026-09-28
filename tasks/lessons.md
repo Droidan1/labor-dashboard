@@ -144,7 +144,7 @@ but both the number and half the diagnosis were invented.
    the italic lean I had assumed.
 </rules>
 
-## The third one today: my escalation lost a seven-second race (2026-09-21) · rule 6: re-read a PR's state before pushing to it (recurred 2026-09-25)
+## The third one today: my escalation lost a seven-second race (2026-09-21) · rule 6: re-read a PR's state before pushing to it (recurred 2026-09-25) · rule 7: push only verified work, because a merge can come before the verification (2026-09-28)
 
 Same trap as the entry below, and as 2026-09-18's. This time I did everything that entry
 says to do short of the one thing that would have worked.
@@ -237,6 +237,18 @@ own attention around the merge, which is the one moment I do not control.
      - A squash or rebase merge slips past this test. Read the PR's `merged` field then.
      - Before editing a PR description, read that PR in the same turn and require
        `merged: false`.
+7. **Push a change only once the check that could change its diff has finished (2026-09-28).**
+   - **What happened:** I pushed c43816a (midnight on the clock-change Sundays) to #297 at 13:27
+     while an agent was still mapping every caller. The description said: "being mapped now…
+     I'll update this section when it's done." Brian merged #297 at 13:32.
+   - **What the map then found:** three callers take a day to be 24 hours long, and one of them
+     writes the permanent payment archive. With the right midnight, their hour of error moved
+     from the start of those Sundays to the end. `main` carried that until the follow-up, #298.
+   - **Why:** a "still checking" line in a PR body is rule 1's wording-as-mechanism again, and
+     it plans around rule 3's merge click. A draft flag doesn't gate it either: Brian takes PRs
+     out of draft and merges them.
+   - **The rule:** while a caller map, a data check or a mutation run could still change the
+     diff, commit locally and don't push. Push when it's done.
 </rules>
 
 ## Five copies in one store: I wrote the note the lesson says does not work (2026-09-21)
