@@ -118,10 +118,13 @@ const live = async () => {
      'no callable isBinItem left in index.html — one bin classifier, in the worker');
   ok(!/BIN_PATTERNS\s*=/.test(srcNoComments), 'the client no longer defines its own bin patterns');
 
+  // The Eastern date moves on WHILE the request is out, so a stamp taken from
+  // the response side would read the next day.
+  const clock = { day: '2026-09-28' };
   const build = (response) => new Function(
-    'cachedFetch', 'WORKER_BASE',
+    'cachedFetch', 'WORKER_BASE', 'etTodayStr',
     `${fnSrc}\n return fetchLiveCloverSales;`
-  )(async () => response, 'https://api.example/');
+  )(async () => { const r = response; clock.day = '2026-09-29'; return r; }, 'https://api.example/', () => clock.day);
 
   const agg = { total: 90, retail: 50, bin: 40, avgCart: 45, avgItems: 2, orderCount: 2, avgTxnSec: 30, avgASP: 22.5 };
   const r = await build({ aggregate: agg, channels: { retail: {}, bin: {}, mixed: 1 } })('BL1');
@@ -129,6 +132,10 @@ const live = async () => {
   ok(r.orderCount === 2 && r.avgCart === 45 && r.avgASP === 22.5, 'passes the metrics through unchanged');
   ok(r.channels?.mixed === 1, 'passes channels through for the matrix tiles');
   ok(Math.abs(r.total - (r.retail + r.bin)) < 0.005, 'what the client returns still reconciles');
+  // loadAll drops a payload stamped with an earlier day before it re-fetches
+  // (scripts/browser-channel-matrix.mjs, scenario C), so the stamp is the day
+  // the request was made for.
+  ok(r.day === '2026-09-28', `stamps the payload with the Eastern date it was requested on, got ${r.day}`);
 
   // A worker with no orders today.
   const zero = await build({ aggregate: null, channels: null })('BL1');
