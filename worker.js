@@ -15350,20 +15350,35 @@ async function publishDraft(env, { draftId, published, token }) {
 }
 
 // Interpret an ET wall-clock string ("YYYY-MM-DDTHH:MM", from <input type=datetime-local>)
-// as a UTC instant. DST-safe: the tz offset is computed at that actual date.
+// as a UTC instant.
+//
+// The offset that applies is tz's at the instant itself, which is the thing being solved for.
+// So this tries the offsets in force a day either side, and keeps the instant tz actually shows
+// as that wall time. The two differ only across a clock change. Reading the offset once, at the
+// wall time taken as UTC, looked 4–5 hours too early: on the clock-change Sundays a post set
+// for 3–6:59 am in spring went out an hour late, and 2–5:59 am in fall an hour early. Where a
+// wall time is not exactly one instant, it resolves as JavaScript's own Date does:
+//   - fall's 1 am happens twice: the first, EDT;
+//   - spring's 2 am never happens: it takes the offset from before the change, so 2:30
+//     becomes 3:30 EDT.
 function etWallClockToUtc(wall, tz) {
   tz = tz || 'America/New_York';
   const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(String(wall || ''));
   if (!m) return null;
   const [, Y, Mo, D, H, Mi] = m.map(Number);
   const asUtc = Date.UTC(Y, Mo - 1, D, H, Mi);              // pretend the wall time is UTC
-  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+  const fmt = new Intl.DateTimeFormat('en-US', {
     timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', hour12: false,
-  }).formatToParts(new Date(asUtc)).map(p => [p.type, p.value]));
-  const shownMs = Date.UTC(+parts.year, +parts.month - 1, +parts.day, (+parts.hour) % 24, +parts.minute);
-  const offset = shownMs - asUtc;                            // how far tz leads UTC at this instant
-  const utc = new Date(asUtc - offset);
+  });
+  // The wall time tz shows at instant t, pretending it is UTC.
+  const shown = t => {
+    const parts = Object.fromEntries(fmt.formatToParts(new Date(t)).map(p => [p.type, p.value]));
+    return Date.UTC(+parts.year, +parts.month - 1, +parts.day, (+parts.hour) % 24, +parts.minute);
+  };
+  const withOffsetAt = t => asUtc - (shown(t) - t);          // wall time read with tz's offset at t
+  const before = withOffsetAt(asUtc - 86400000), after = withOffsetAt(asUtc + 86400000);
+  const utc = new Date(shown(before) === asUtc ? before : shown(after) === asUtc ? after : before);
   return isNaN(utc.getTime()) ? null : utc;
 }
 
