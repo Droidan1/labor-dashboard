@@ -8666,16 +8666,17 @@
   // Dashboard Matrix channel filter: null = all stores blended; 'retail' | 'bin'
   // shows that channel's per-order metrics (from item-level L2 data).
   let dashChannel = null;
-  // Keyed by RANGE, not by date — the split follows the selected range, and a
-  // key mismatch is what makes a range change refetch instead of showing the
-  // previous range's numbers.
-  let dashChannelData = null;        // { key, retail:{net,units,orders,avgCart,avgItems,asp}, bin:{...} }
+  // Only the STORED days of the split are cached, keyed by those days, so a
+  // range change refetches instead of showing the previous range's numbers.
+  // Today's half is never cached: it is read from liveCloverData at paint time
+  // (see chLiveOf).
+  let dashChannelData = null;        // { key, past: chZero()-shaped sums of the stored days }
   let dashChannelLoading = false;
   let dashChannelLoadKey = null;     // range key currently in flight, or null
   let _dashMxBlended = null;         // saved "All" matrix tile strings, to restore
   // Per-store-card channel filter (same idea, keyed by store code).
   let dashCardCh = {};               // code → 'retail' | 'bin' | null
-  let dashCardChData = {};           // code → { key, retail:{...}, bin:{...} }
+  let dashCardChData = {};           // code → { key, past }, as dashChannelData
   let dashCardChLoading = {};        // code → bool
   let dashCardChLoadKey = {};        // code → range key in flight, or null
   let dashCardBlended = {};          // code → { cart, items, orders, asp }
@@ -9230,6 +9231,7 @@
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     const workerUrl = `${WORKER_BASE}?store=${storeKey}&since=${startOfToday}`;
+    const day = etTodayStr();   // the Eastern date this payload is "today" for; see loadAll
     try {
       const data = await cachedFetch(workerUrl, { credentials: 'include' });
       // An older worker has no `aggregate` key at all. Return null rather than
@@ -9241,6 +9243,7 @@
         orderCount: 0, avgTxnSec: null, avgASP: null,
       };
       return {
+        day,
         total: a.total, retail: a.retail, bin: a.bin,
         avgCart: a.avgCart, avgItems: a.avgItems, orderCount: a.orderCount,
         avgTxnSec: a.avgTxnSec, avgASP: a.avgASP,
@@ -9386,6 +9389,15 @@
       else el("last-updated").textContent = `Loading stores… (${loaded}/${histRoster.length})`;
     }));
 
+    // 🔑 A live payload is only ever today's. After a day change (an installed
+    // app resumed on a new morning) the one still in memory is the previous
+    // session's, and every card and the hero would paint it under today's label
+    // until the fetch below replaces it. Dropped, they show what a fresh launch
+    // shows while it loads.
+    const liveDay = etTodayStr();
+    for (const s of STORES) {
+      if (liveCloverData[s] && liveCloverData[s].day !== liveDay) delete liveCloverData[s];
+    }
     liveDataLoading = true;
 
     // Start loading Clover API data concurrently
@@ -10603,14 +10615,33 @@
   // there is one answer to "which period is this split for".
   //
   // Past days come from the nightly `items:` KV snapshots in ONE request
-  // (?action=channel-range); today, when the range includes it, comes from the
-  // live ?action=items call — mirroring exactly how the cards already blend
-  // stored + live dollars.
+  // (?action=channel-range), fetched once per range and cached. Today, when the
+  // range includes it, is NOT cached: it is read at paint time from
+  // liveCloverData, the same payload the Retail / BIN dollars beside the tiles
+  // are painted from. That mirrors how the cards blend stored + live dollars.
+  //
+  // 🔑 Today used to be copied into the cache with the past days, and the copy
+  // went stale two ways. ↻ fetched new dollars under an unchanged range key, so
+  // the tiles kept the first load's split all day. And ↻ on a new day rebuilt
+  // the split as soon as the D1 rows landed, while liveCloverData still held
+  // the previous session's payload, and cached that. On Monday 2026-09-28 three
+  // cards showed BIN at $11.66 to $12.00 a unit, which is Friday's bin price;
+  // the Monday before, bins sold at $2 (tasks/todo.md).
+  // Read at paint time, the tiles and the dollars read the same object.
 
-  // Cache key. The live flag belongs in it: the same dates with and without
-  // today's live contribution are genuinely different answers.
+  // The stored days of the selected range: all of them, or all but today when
+  // the range includes it (today is live, and counting it here too would count
+  // it twice). null when the range is today alone.
+  function chPastRange() {
+    const to = selIncludesToday() ? ymdShift(etTodayStr(), -1) : dateRange.to;
+    return dateRange.from <= to ? { from: dateRange.from, to } : null;
+  }
+
+  // Cache key: the stored days themselves. Today is not in it, because today
+  // is not cached.
   function chRangeKey() {
-    return `${dateRange.from}..${dateRange.to}${selIncludesToday() ? '+live' : ''}`;
+    const p = chPastRange();
+    return p ? `${p.from}..${p.to}` : 'none';
   }
 
   // 🔑 Averages are re-derived from SUMMED totals. Averaging the per-day
@@ -10651,41 +10682,42 @@
 
   const storeNameForCode = (code) => STORES.find(s => s.split('/')[0] === code);
 
-  // Summed channel totals for one store across the selected range.
-  async function fetchStoreChannels(storeKey) {
-    const out = chZero();
-    const add = (src) => {
-      if (!src) return;
-      for (const k of ['retail', 'bin']) {
-        out[k].net    += src[k]?.net    || 0;
-        out[k].units  += src[k]?.units  || 0;
-        out[k].orders += src[k]?.orders || 0;
-      }
-      out.mixed += src.mixed || 0;
-      out.combinedOrders += chOrdersOf(src);
-    };
-    const live = selIncludesToday();
-    // Mirror the card's own accumulation: when live covers today, the stored
-    // range must stop at yesterday or today gets counted twice.
-    const pastTo = live ? ymdShift(etTodayStr(), -1) : dateRange.to;
-    const jobs = [];
-    if (dateRange.from <= pastTo) {
-      jobs.push(cachedFetch(
-        `${WORKER_BASE}?action=channel-range&store=${storeKey}&from=${dateRange.from}&to=${pastTo}`,
-        { credentials: 'include' }).then(add).catch(() => {}));
+  // Add one payload's channel totals into `out` (a chZero()) and return it.
+  // Takes a channel-range response, a live `channels` payload, or another sum.
+  function chAdd(out, src) {
+    if (!src) return out;
+    for (const k of ['retail', 'bin']) {
+      out[k].net    += src[k]?.net    || 0;
+      out[k].units  += src[k]?.units  || 0;
+      out[k].orders += src[k]?.orders || 0;
     }
-    if (live) {
-      // Today's split rides along on the live sales fetch the card already
-      // made — the worker computes it there anyway, so this costs no request.
-      // Only fall back to a dedicated call if live hasn't landed yet.
-      const nm = storeNameForCode(storeKey);
-      const fromLive = nm ? liveCloverData[nm]?.channels : null;
-      if (fromLive) add(fromLive);
-      else jobs.push(cachedFetch(`${WORKER_BASE}?action=items&store=${storeKey}`,
-        { credentials: 'include' }).then(d => add(d && d.channels)).catch(() => {}));
-    }
-    await Promise.all(jobs);
+    out.mixed += src.mixed || 0;
+    out.combinedOrders += chOrdersOf(src);
     return out;
+  }
+
+  // Summed channel totals for one store across the stored days (chPastRange).
+  // A failed request throws rather than adding zero: a split missing some of
+  // its days, shown under the range's label, is the wrong-math bug again.
+  async function fetchStorePastChannels(storeKey, past) {
+    const out = chZero();
+    if (!past) return out;
+    return chAdd(out, await cachedFetch(
+      `${WORKER_BASE}?action=channel-range&store=${storeKey}&from=${past.from}&to=${past.to}`,
+      { credentials: 'include' }));
+  }
+
+  // Today's half of one store's split: the `channels` that came back on the
+  // live sales fetch, so the payload the card's Retail / BIN dollars are
+  // painted from. The worker computes both from one aggregation, so this costs
+  // no request. null = nothing to add (the range excludes today, the fetch
+  // failed, no sales yet); undefined = the fetch is still out, so wait for it.
+  function chLiveOf(code) {
+    if (!selIncludesToday()) return null;
+    const nm = storeNameForCode(code);
+    const live = nm ? liveCloverData[nm] : null;
+    if (live === undefined) return liveDataLoading ? undefined : null;
+    return live?.channels || null;
   }
 
   function setDashChannel(ch) {
@@ -10731,18 +10763,27 @@
     };
     if (lbl) lbl.textContent = 'Matrix · ' + period +
       (dashChannel ? ' · ' + (dashChannel === 'retail' ? 'Retail' : 'BIN') : '');
+    // Stored days + each store's live payload. STORES is already scoped to what
+    // this user may see, so the hero covers exactly the stores whose dollars are
+    // in the strip above it.
+    const past = (dashChannelData && dashChannelData.key === chRangeKey()) ? dashChannelData.past : null;
+    const lives = STORES.map(s => chLiveOf(s.split('/')[0]));
+    const livePending = lives.includes(undefined);
+    let t = null;
+    if (past && !livePending) {
+      t = chAdd(chZero(), past);
+      for (const l of lives) chAdd(t, l);
+    }
     // No selection → combined (retail + bin), which is what the four tiles
     // describe by default now.
-    const d = (dashChannelData && dashChannelData.key === chRangeKey())
-      ? (dashChannel ? dashChannelData[dashChannel] : dashChannelData.combined)
-      : null;
+    const d = t ? chDerive(dashChannel ? t[dashChannel] : chCombined(t)) : null;
     if (!d) {
       // Pre-load: keep the figures the dashboard was rendered with rather than
       // blanking. daily_sales-derived and retail-weighted, so slightly high
       // against the combined values that replace them. Transient only.
       if (!dashChannel && _dashMxBlended) {
         set4(_dashMxBlended.cart, _dashMxBlended.items, _dashMxBlended.orders, _dashMxBlended.asp);
-      } else if (dashChannelLoading) { set4('…', '…', '…', '…'); }
+      } else if (dashChannelLoading || livePending) { set4('…', '…', '…', '…'); }
       else { set4('—', '—', '—', '—'); }
       return;
     }
@@ -10763,22 +10804,13 @@
     // Every commit below is guarded on the range not having moved on. Without
     // it a slow load for the old range lands last and clobbers the new one.
     const current = () => dashChannelLoadKey === key;
+    const pastRange = chPastRange();
     try {
-      // STORES is already scoped to what this user may see, so the hero total
-      // covers exactly the stores whose dollars are in the strip above it.
-      const per = await Promise.all(STORES.map(s => fetchStoreChannels(s.split('/')[0])));
-      const sum = chZero();
-      for (const p of per) {
-        for (const k of ['retail', 'bin']) {
-          sum[k].net += p[k].net; sum[k].units += p[k].units; sum[k].orders += p[k].orders;
-        }
-        sum.mixed += p.mixed || 0;
-        sum.combinedOrders += p.combinedOrders || 0;
-      }
-      if (current()) dashChannelData = {
-        key, retail: chDerive(sum.retail), bin: chDerive(sum.bin), combined: chDerive(chCombined(sum)),
-      };
-    } catch (_) { if (current()) dashChannelData = null; }
+      const per = await Promise.all(STORES.map(s => fetchStorePastChannels(s.split('/')[0], pastRange)));
+      const past = chZero();
+      for (const p of per) chAdd(past, p);
+      if (current()) dashChannelData = { key, past };
+    } catch (_) { if (current()) dashChannelData = null; }   // not cached: the next render asks again
     finally {
       if (current()) { dashChannelLoadKey = null; dashChannelLoading = false; applyDashChannel(); }
     }
@@ -10816,8 +10848,11 @@
     });
     const set = (k, v) => { const e = card.querySelector(`[data-mx="${k}"]`); if (e) e.textContent = v; };
     const data = dashCardChData[code];
+    const past = (data && data.key === chRangeKey()) ? data.past : null;
+    const live = chLiveOf(code);
+    const t = (past && live !== undefined) ? chAdd(chAdd(chZero(), past), live) : null;
     // ch null → combined (retail + bin), the default view.
-    const d = (data && data.key === chRangeKey()) ? (ch ? data[ch] : data.combined) : null;
+    const d = t ? chDerive(ch ? t[ch] : chCombined(t)) : null;
     if (!d) {
       // Until the split arrives, keep showing the figures the card was built
       // with rather than blanking. Those come from daily_sales and are
@@ -10825,7 +10860,7 @@
       // values that replace them — a transient, not a second source of truth.
       const b = !ch && dashCardBlended[code];
       if (b) { set('cart', b.cart); set('items', b.items); set('orders', b.orders); set('asp', b.asp); }
-      else if (dashCardChLoading[code]) { set('cart', '…'); set('items', '…'); set('orders', '…'); set('asp', '…'); }
+      else if (dashCardChLoading[code] || live === undefined) { set('cart', '…'); set('items', '…'); set('orders', '…'); set('asp', '…'); }
       else { set('cart', '—'); set('items', '—'); set('orders', '—'); set('asp', '—'); }
       return;
     }
@@ -10843,11 +10878,9 @@
     dashCardChLoading[code] = true; applyCardChannel(code);
     const current = () => dashCardChLoadKey[code] === key;
     try {
-      const t = await fetchStoreChannels(code);
-      if (current()) dashCardChData[code] = {
-        key, retail: chDerive(t.retail), bin: chDerive(t.bin), combined: chDerive(chCombined(t)),
-      };
-    } catch (_) { if (current()) dashCardChData[code] = { key }; }
+      const past = await fetchStorePastChannels(code, chPastRange());
+      if (current()) dashCardChData[code] = { key, past };
+    } catch (_) { if (current()) delete dashCardChData[code]; }   // not cached: the next render asks again
     finally {
       if (current()) { dashCardChLoadKey[code] = null; dashCardChLoading[code] = false; applyCardChannel(code); }
     }

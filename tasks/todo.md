@@ -1,3 +1,137 @@
+# The store cards' Cart / Items / Orders / ASP showed another day's BIN split (2026-09-28)
+
+**Request (Brian), with a screenshot of three store cards, BIN tapped on each:** *"Looks like the
+math isn't right on the metric boxes, especially when user clicks in Bin and the ASP amount"*
+
+## What the screenshot shows
+
+| Card | BIN tile | CART × ORDERS | ITEMS | ASP |
+|---|---|---|---|---|
+| Coliseum (BL1) | $2,122.00 | $36.00 × 116 = $4,176.00 | 3.1 | $11.66 |
+| South Bend (BL2) | $1,452.00 | $51.09 × 97 = $4,955.73 | 4.3 | $12.00 |
+| Dupont (BL4) | $1,423.00 | $34.72 × 75 = $2,604.00 | 2.9 | $12.00 |
+
+`chDerive` makes CART = net ÷ orders and ASP = net ÷ units, so each card's four tiles came from a
+split whose bin net was 1.8 to 3.4 times the BIN dollars beside it. At BL2 and BL4 that net is
+$12.00 a unit to the cent (413 and 217 units).
+
+## Where that split came from (read-only D1 queries)
+
+- **Today's rows match the dollars exactly.** `daily_sales` at 18:12Z: BL1 $4,440.69 with bin
+  $2,122; BL2 $2,082.41 with bin $1,452; BL4 $3,146.65 with bin $1,423.
+- **Bins mark down through the week.** Last week's payment archive (BL1, BL2, BL4) prices almost
+  every bin line at one price a day: Fri 9/18 $12, then $9 (BL2's last $12 order 13:40 ET, first
+  $9 order 13:51); Sat $6; Sun $4; Mon 9/21 $2; Tue $1; Wed $0.50. On that schedule today, a
+  Monday, is a $2 day, and $12.00 a unit is Friday's price before the $9 markdown.
+- **No stored day fits.** Since 9/1 the only `daily_sales` bin total within $8 of any of the three
+  is BL1's Sunday 9/27, $4,172.02, and Sunday is a $4 day, not an $11.66 one. No BL2 or BL4 row
+  ever has a bin total within $5 of theirs.
+- **Friday 9/25 fits as a mid-day snapshot.** Its full-day bin totals are BL1 $7,540.50, BL2
+  $6,942.58 and BL4 $4,143, each above the card's figure, as a snapshot taken before the $9
+  markdown would be.
+
+The payload itself can't be read back, so "Friday's live payload" is an inference. The code below
+produces it.
+
+## The mechanism
+
+The matrix split is a COPY of the live payload, cached per date range:
+
+1. `fetchStoreChannels` copies `liveCloverData[store].channels` once, and `dashCardChData` caches
+   the result under `chRangeKey()` (the range only). ↻ and pull-to-refresh re-fetch the dollars,
+   but the key doesn't change, so the four tiles keep the first load's split for the rest of the
+   day while the BIN dollars move on.
+2. After a day change, ↻ re-resolves Today to the new date and renders as soon as the D1 rows
+   land. The key changes, so the split is recomputed, but the Clover fetch is still in flight:
+   `liveCloverData` still holds the previous session's payload (Friday's), and that gets cached
+   under Monday's key for good.
+
+The hero's Matrix (`loadDashChannel`) shares `fetchStoreChannels` and has both defects.
+
+## Plan
+
+- [x] 1. Cache only the stored half of the split. Past days come from `?action=channel-range`
+      and don't change, so they stay cached per range. Today's half isn't cached: it is read at
+      paint time from `liveCloverData`, the same object the dollar tiles are painted from, so the
+      matrix and the dollars always describe the same fetch. Cards and hero both.
+- [x] 2. Drop the `?action=items` fallback. It only filled today's split before the live fetch
+      landed, which is exactly the copy that goes stale. The tiles show "…" until the live
+      payload they describe arrives, as they already do while loading.
+- [x] 3. `fetchLiveCloverSales` stamps its payload with the Eastern date it was asked for, and
+      `loadAll` drops any payload from an earlier date before it re-fetches. During a refresh
+      after a day change, nothing then paints the previous day's live figures under today's
+      label, dollars included.
+- [x] 4. A failed `channel-range` shows "—" instead of being summed as zero; a zero past half
+      under a range's label is this same wrong-math bug.
+      - *Changed while building:* the failure is no longer cached either (the card used to keep
+        `{ key }` for the range), so the next render or ↻ asks again.
+- [x] 5. `sw.js` `CACHE_NAME` v251 → v252 (main reached v251 while this was built), and
+      `scripts/fixtures/shell-cache.json` re-recorded.
+- [x] 6. `scripts/browser-channel-matrix.mjs`, a real browser against a stubbed API:
+      - a fresh load, BIN tapped: CART × ORDERS and ASP × units equal the BIN tile's payload;
+      - ↻ on the same day with more sales: the four tiles follow the new payload;
+      - load on a Friday, move the clock to Monday, ↻ with the live fetch held until the D1
+        rows land: BIN shows Monday's $2 split, not Friday's $12 one;
+      - the hero Matrix, same checks;
+      - `?action=items` is never called.
+      Must fail on `main` and pass on the branch.
+      - *Added while building:* scenario D, This Week (a stored Sunday + live Monday), and
+        scenario E, `channel-range` failing and then recovering on ↻.
+      - *Changed while building:* `test-live-sales-reconcile.mjs` runs `fetchLiveCloverSales` in
+        a sandbox, which now has to supply `etTodayStr`. It also asserts the new stamp is taken
+        when the request goes out, not when it comes back.
+- [x] 7. Mutations: put back each half of the old behaviour; the check must catch each.
+- [x] 8. `npm test`, then the build.
+
+## Review
+
+**Done.** The four tiles on a card, and the hero's, are now computed from the stored days'
+split plus the live payload the Retail / BIN dollars beside them come from, read when they are
+painted. With BIN tapped, CART × ORDERS comes back to the BIN tile on every scenario the check
+drives.
+
+**Verification:**
+- **`scripts/browser-channel-matrix.mjs`, light and dark:** 76 of 76 on the branch.
+  - On `main`'s `index.html` it fails 46. Scenario C, a Friday page refreshed on Monday, paints
+    South Bend's tiles exactly as the screenshot has them: CART $51.09, ITEMS 4.3, ORDERS 97,
+    ASP $12.00, beside a $1,452.00 BIN tile.
+  - It also fails on `main` for ↻ on the same day (the first load's split stays), for This Week
+    after ↻, for a failed `channel-range` (today's split under This Week's label), and for the
+    10 `?action=items` requests a cold load makes.
+- **Mutations**, one at a time in a separate worktree with its own `dist/`, each caught:
+
+  | Mutation | Failures (of 76) |
+  |---|---|
+  | `loadAll` keeps the previous day's payload | 6 |
+  | `chLiveOf` doesn't wait for a live fetch in flight | 6 |
+  | a failed `channel-range` adds zero again | 10 |
+  | the card caches a failed `channel-range` | 6 |
+  | the hero caches a failed `channel-range` | 2 |
+  | the card leaves today's half out | 36 |
+  | today's half copied once and kept (the old behaviour) | 30 |
+
+  And in `test-live-sales-reconcile.mjs`, stamping the day after the response: 1 failure.
+- `npm test`: 6,528 assertions across 88 suites, all passing, on the branch rebased onto
+  `main` at 3152e62.
+- `scripts/browser-holland-budget.mjs` (the dashboard's other browser check): 30 of 30.
+- Screenshots of the fixed cards and the hero in both themes, read by eye: BIN-tapped cards
+  read $2.00 ASP and tie back to their BIN tiles. No markup or colour changed.
+
+**Not verified:** the production payload behind the screenshot. It can't be read back; the D1
+evidence above makes it Friday's, and the code path that caches it is reproduced, not observed.
+
+**Found, not fixed:**
+- `fetchLiveCloverSales` asks for orders `since` the browser's own midnight, and the worker
+  saves the result as the Eastern day's `daily_sales` row. A browser west of Eastern, between
+  midnight Eastern and its own midnight, would write the previous day's orders into the new
+  day's row until a later fetch or the nightly job rewrites it. From reading the code; not
+  observed.
+- An installed app resumed on a later day shows the old day under "Today" until ↻, and picking a
+  range without ↻ reuses the old day's live payload. There's no refresh on resume.
+- Settings → Print dashboard takes Cart / Items / Orders / ASP from the `daily_sales` averages
+  the card is built with (`dashCardPrint`), not the split the tiles show, so the printout's four
+  figures differ from the screen's.
+
 # A scheduled sale starts on the exact Eastern minute picked, as the worker reads it (2026-09-28)
 
 **Request (Brian):** *"Fix etLocalToDate's stray seconds for DST too"*
