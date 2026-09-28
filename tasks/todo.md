@@ -1,3 +1,84 @@
+# Export filenames take the Eastern date, not UTC (2026-09-28)
+
+**Request (Brian):** *"Fix the UTC filename dates with etTodayStr"*
+
+## The bug
+
+Six exports name their file from `new Date().toISOString()`, which is UTC. The effect:
+- From 8 pm EDT (7 pm EST), a file is dated tomorrow.
+- On the last evening of a month, the supply report is named for the next month.
+
+Everywhere else, the app's "today" is `etTodayStr()`.
+
+| Export | Line | Name |
+|---|---|---|
+| Supply requests CSV | 14262 | `supply-requests-YYYY-MM-DD.csv` |
+| Supply report CSV | 14684 | `supply-report-YYYY-MM.csv` |
+| WRS PDF | 16597 | `WRS-<tab>-YYYY-MM-DD.pdf` |
+| WRS CSV | 16674 | `WRS-<tab>-YYYY-MM-DD.csv` |
+| Trucks CSV | 30568 | `trucks-<store>-YYYY-MM-DD.csv` |
+| MOS CSV | 31825 | `mos-<store>-YYYY-MM-DD.csv` |
+
+The two supply exports were not in the last report. That sweep searched for `slice(0, 10)` with a
+space, and these are written `slice(0,10)` and `slice(0,7)`. This sweep covered every download
+name in the file:
+- bin-dump names its file from the selected range;
+- Sign Studio's name has no date.
+
+## Plan
+
+- [x] 1. The six names take `etTodayStr()`; the month uses `etTodayStr().slice(0, 7)`.
+- [x] 2. `CACHE_NAME` v247 → v248, and the shell-cache fixture.
+- [x] 3. A new `scripts/browser-export-dates.mjs`:
+      - fix the clock at 03:30 UTC on 1 October, which is 11:30 pm on 30 September in New York;
+      - first assert that UTC and ET disagree on the date at that moment, so the check can tell
+        them apart;
+      - run each real export and read the name of the file it downloads.
+- [x] 4. Verify:
+      - `npm test`;
+      - the new script passes;
+      - against the old `index.html`, it fails for all six exports.
+- [x] 5. weekly-retail-19's status: the filename date is fixed.
+- [x] 6. Commit, push, draft PR, report.
+
+Not in scope: `ctCurrentWeekNo()` (`index.html:19810`) picks the current retail week from the UTC
+date. It is not a filename, so it is left under Found.
+
+## Review
+
+**Done.** All six names now take `etTodayStr()`; the supply report uses its first seven
+characters. Nothing else in those exports changes. There is no worker change and no migration;
+merging deploys it through Pages. `CACHE_NAME` goes from v247 to v248.
+
+**Verification:**
+- `npm test`: 6,360 assertions across 84 suites, all passing.
+- `scripts/browser-export-dates.mjs` (new): 8 of 8.
+  - It checks the clock first: UTC says 1 October, and `etTodayStr()` says 30 September.
+  - Then it checks each downloaded file:
+    - `WRS-Summary-2026-09-30.pdf`;
+    - `WRS-Summary-2026-09-30.csv`;
+    - `supply-requests-2026-09-30.csv`;
+    - `supply-report-2026-09.csv`;
+    - `trucks-BL1-2026-09-30.csv`;
+    - `mos-bl1-2026-09-30.csv`.
+  - Last, it checks there are no page or console errors.
+  - MOS first opens its page, so the name carries the store its picker holds, as it does for a
+    manager.
+- **Against the old `index.html`:** in its own copy of the tree, beside a control copy that
+  passes 8 of 8, exactly the six export checks fail. Each shows the UTC date: `2026-10-01`, or
+  `2026-10` for the month.
+- **Unchanged, on the pages these exports live on:**
+  - `browser-sign-studio.mjs` §11–14: 35 of 35;
+  - `browser-mos.mjs`: 83 of 83;
+  - `browser-inventory-receiver.mjs`: 154 of 154.
+- **UI:** nothing visible changes, only the names of downloaded files.
+
+**Found, not fixed:**
+- `ctCurrentWeekNo()` (`index.html:19810`) looks up the current retail week by the UTC date.
+  The Content Tracker's photo library uses it to always show "this week's" folder. So from
+  8 pm EDT on a week's last day, it shows next week's empty folder instead. It is a one-line
+  `etTodayStr()` fix, but it is not a filename.
+
 # The WRS PDF export retries a failed plugin load (weekly-retail-19) (2026-09-28)
 
 **Request (Brian):** *"Fix the loadScript retry bug (weekly-retail-19)"*
