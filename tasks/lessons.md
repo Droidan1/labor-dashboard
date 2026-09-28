@@ -912,7 +912,7 @@ suite built from the diff can only confirm the diff.
    panel colour". Sweep the rendered page for the outgoing value.
 </rules>
 
-## `getComputedStyle` during a `transition` returns the colour you just left (2026-09-10)
+## `getComputedStyle` during a `transition` returns the colour you just left (2026-09-10) · recurred: a print check read `body` mid-transition and I reported a phantom bug (2026-09-28)
 
 **Context:** Verifying the pure-black theme. 54 browser assertions, six failing — `body` and
 every app bar reported the LIGHT background in dark and oled mode, while the settings cards
@@ -946,6 +946,35 @@ have replaced every probe after it.
    "Cards fine, body and app bars wrong" was the whole answer — `transition-colors` is on the
    second set and not the first. I read it as "tokens broken, literals fine" because that
    split also fit, and never checked which split was real.
+</rules>
+
+### Recurred (2026-09-28): same element, same transition, and this time I published it
+
+- **What happened:** checking the printed dashboard for #303, I switched Playwright to print
+  media with `emulateMedia` and screenshotted straight away. The dark-theme page came out grey.
+  `getComputedStyle(body)` then read the app's own background, rgb(10, 15, 26), under a print
+  rule that sets `#fff !important`.
+- **What I did with it:** I reported "something overrides the print rule on `body`, not found"
+  in #303's description and in tasks/todo.md. Brian asked me to fix it.
+- **What was true:** switching media changes `body`'s background, so `transition-colors` starts
+  its 150 ms, and both reads were at t=0.
+  - Read 1 s later, `body` is rgb(255, 255, 255) in both themes.
+  - Real prints were white every time: `page.pdf()` in both themes, background graphics on and
+    off, media settled and switched at print time. All eight PDFs are pixel-identical when
+    rasterised at 2×.
+- **The rule above covered this.** Rule 1 says to settle the transition before measuring a
+  colour you just changed. I didn't treat a media switch as a change, and I skipped rule 3's
+  pure-red disproof before writing the finding down.
+
+<rules>
+5. **A media switch is a change.** `emulateMedia`, a theme toggle and a class toggle all
+   re-resolve `body`'s background and start its transition. Settle it before a screenshot or a
+   colour read.
+6. **To judge a print, print it.** A screenshot of emulated print media is a screen render of
+   print CSS. `page.pdf()` goes through the print pipeline; rasterise the page and read its
+   pixels.
+7. **A finding goes into a PR body or the task log only once it has survived its disproof.**
+   "Not found what overrides it" was the tell: there was no override to find.
 </rules>
 
 ## A surviving mutation is not automatically a hole in the tests (2026-09-10)
