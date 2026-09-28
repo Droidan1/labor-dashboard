@@ -39,8 +39,9 @@ const types = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascrip
   '.png': 'image/png', '.svg': 'image/svg+xml', '.ttf': 'font/ttf', '.txt': 'text/plain' };
 const PORT = 8094;
 // A path in `fail` answers 503, the way a struggling CDN or a dead store connection does, so a
-// check can take one file away. `served` counts what was asked for.
-const fail = new Set(), served = {};
+// check can take one file away. A path in `blank` answers 200 with a script that defines
+// nothing: it loads, and what it should have made is not there. `served` counts what was asked for.
+const fail = new Set(), blank = new Set(), served = {};
 let swDeploy = 0;   // section 10 bumps this to ship a "new deploy" of sw.js
 const srv = http.createServer((q, s) => {
   const u = q.url.split('?')[0];
@@ -51,6 +52,7 @@ const srv = http.createServer((q, s) => {
   }
   const f = path.join(root, u === '/' ? 'index.html' : u);
   if (fail.has(u)) { s.writeHead(503); return s.end('down'); }
+  if (blank.has(u)) { s.writeHead(200, { 'Content-Type': 'text/javascript' }); return s.end('/* not the file you asked for */'); }
   if (!f.startsWith(root) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { s.writeHead(404); return s.end('no'); }
   s.writeHead(200, { 'Content-Type': types[path.extname(f)] || 'application/octet-stream' });
   fs.createReadStream(f).pipe(s);
@@ -752,17 +754,18 @@ await section('9. font failure', async () => {
 // on the costliest sign there is: one that fails to fit, which runs the "cut about N" search.
 // And the WRS export shares Sign Studio's jsPDF and adds autotable to it. Both files are served
 // here, so the real plugin runs on the real jsPDF, whichever export loads jsPDF first.
+function wrsTable() {   // runs in the page: one small table for the export to draw
+  const pane = document.getElementById('wrs-pane-summary'), h = document.createElement('h3'), t = document.createElement('table');
+  h.textContent = 'By store';
+  const row = (tag, cells) => { const tr = document.createElement('tr'); cells.forEach(c => { const x = document.createElement(tag); x.textContent = c; tr.appendChild(x); }); return tr; };
+  t.createTHead().appendChild(row('th', ['Store', 'Sales'])); t.createTBody().appendChild(row('td', ['Coliseum', '$1,000']));   // the export reads tHead/tBodies
+  pane.append(h, t);
+}
 async function wrsPdf(page) {
   await page.evaluate(() => window.navigateToPage('weekly-summary'));
   await page.waitForTimeout(400);
-  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 15000 }), page.evaluate(() => {
-    const pane = document.getElementById('wrs-pane-summary'), h = document.createElement('h3'), t = document.createElement('table');
-    h.textContent = 'By store';
-    const row = (tag, cells) => { const tr = document.createElement('tr'); cells.forEach(c => { const x = document.createElement(tag); x.textContent = c; tr.appendChild(x); }); return tr; };
-    t.createTHead().appendChild(row('th', ['Store', 'Sales'])); t.createTBody().appendChild(row('td', ['Coliseum', '$1,000']));   // the export reads tHead/tBodies
-    pane.append(h, t);
-    return window.downloadWrsAsPdf();
-  })]);
+  await page.evaluate(wrsTable);
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 15000 }), page.evaluate(() => window.downloadWrsAsPdf())]);
   return pdfFacts(fs.readFileSync(await dl.path()), 'wrs.pdf');
 }
 const hits = f => served['/' + f] || 0;
@@ -828,6 +831,48 @@ await section('11. timing and WRS', async () => {
   eq([hits(JSPDF) - js1, await scriptTags(W.page, JSPDF)], [1, 1], '…without loading it again');
   const other = W.errs.filter(e => !/503/.test(e));
   check(!other.length, `no page or console errors but the 503 (${other.slice(0, 2).join(' | ')})`);
+});
+
+// ── 12–14. The WRS export's own plugin, when it does not arrive ──────────
+// Autotable is the one file the WRS export loads for itself (weekly-retail-19). A download
+// that fails, or a file that runs and attaches nothing, must not count as loaded: the next try
+// fetches it again. The loader used to find the dead tag and resolve, and every later export
+// said the library "failed to initialize" until the app was relaunched. One section per way
+// in, so each is checked even when another fails.
+async function pluginRetry(how, take) {
+  const { page, errs } = await open({ go: false });
+  await page.evaluate(() => window.navigateToPage('weekly-summary'));
+  const at0 = hits(AUTOTABLE);
+  take.add('/' + AUTOTABLE);
+  try { await page.evaluate(() => window.downloadWrsAsPdf()); } finally { take.delete('/' + AUTOTABLE); }
+  const alerted = page.locator('[role="dialog"]', { hasText: 'Failed to load PDF library' });   // the page has other dialogs
+  const told = await alerted.waitFor({ timeout: 8000 }).then(() => true, () => false);
+  check(told, `autotable answers ${how}: the WRS export says it could not load`);
+  if (told) await alerted.getByRole('button', { name: 'OK' }).click();
+  const again = await wrsPdf(page);
+  eq(hits(AUTOTABLE) - at0, 2, '…and the next try fetches it again, instead of trusting the tag that failed');
+  check(/Coliseum/.test(again.text) && /\$1,000/.test(again.text), '…and draws its table');
+  eq(await scriptTags(page, AUTOTABLE), 1, '…leaving one autotable tag, not a dead one beside it');
+  const other = errs.filter(e => !/503/.test(e));
+  check(!other.length, `…and no page or console errors but the 503 (${other.slice(0, 2).join(' | ')})`);
+}
+await section('12. WRS plugin: a 503', () => pluginRetry('503', fail));
+await section('13. WRS plugin: a file that defines nothing', () => pluginRetry('a script that defines nothing', blank));
+// Two exports at once, before autotable has arrived. The second used to find the first's tag
+// still loading, resolve at once, and say the library "failed to initialize".
+await section('14. two WRS exports at once', async () => {
+  const { page, errs } = await open({ go: false });
+  await page.evaluate(() => window.navigateToPage('weekly-summary'));
+  await page.waitForTimeout(400);
+  await page.evaluate(wrsTable);
+  const at0 = hits(AUTOTABLE), dls = [];
+  page.on('download', d => dls.push(d));
+  await page.evaluate(() => Promise.all([window.downloadWrsAsPdf(), window.downloadWrsAsPdf()]));
+  for (let i = 0; i < 50 && dls.length < 2; i++) await page.waitForTimeout(100);
+  eq(await page.locator('[role="dialog"]:visible', { hasText: 'PDF library' }).count(), 0, 'two WRS exports at once: neither says the library failed');
+  eq(dls.length, 2, '…both make their PDF');
+  eq(hits(AUTOTABLE) - at0, 1, '…and autotable is fetched once, for both');
+  check(!errs.length, `…and no page or console errors (${errs.slice(0, 2).join(' | ')})`);
 });
 
 await b.close();

@@ -1067,7 +1067,7 @@ The Retail Summary is carefully built. Worker store scoping and the fail-closed 
 | [weekly-retail-16](#weekly-retail-16) | low | minor | accessibility | Contrast: positive variance text-green-600 is 3.30:1 in light; the Categories ▼ figure uses #ef4444 as dark-theme text (3.88–4.29:1 on its grounds) | `index.html:17309` | unverified |
 | [weekly-retail-17](#weekly-retail-17) | low | minor | bug | Sign and rounding glitches: '$-1,234' and '$-0', negatives hidden as '—', '−0.0%', and '100%' in red while under budget | `index.html:20021` | unverified |
 | [weekly-retail-18](#weekly-retail-18) | low | minor | ui-ux | Pace colours use 95% for amber here but 80% everywhere else (DESIGN §2.1) | `index.html:21513` | unverified |
-| [weekly-retail-19](#weekly-retail-19) | low | minor | bug | A failed jsPDF download sticks: every later PDF attempt fails until the app is relaunched | `index.html:15274` | unverified |
+| [weekly-retail-19](#weekly-retail-19) | low | minor | bug | A failed jsPDF download sticks: every later PDF attempt fails until the app is relaunched | `index.html:15274` | **loader fixed 2026-09-28**; filename date open |
 | [weekly-retail-20](#weekly-retail-20) | low | minor | ui-ux | When budget is 0 the hero and leaderboard show '+$<net sales> of $0.00 budget' in green; the 'No budget set' branch never runs | `index.html:21509` | unverified |
 | [weekly-retail-21](#weekly-retail-21) | low | minor | ui-ux | Phone controls: the tab strip wraps to 4 rows, the Categories control bar is 360 px tall, controls are 27–29 px high, and an 11 px select triggers iOS zoom | `index.html:1913` | unverified |
 | [weekly-retail-22](#weekly-retail-22) | low | minor | ui-ux | On the Categories tab the page-level Date Range chip does nothing, but it stays visible next to a different range | `index.html:20128` | unverified |
@@ -1293,7 +1293,25 @@ For the net card, grandVals (22060-22063) is `T13_L2_CATS.reduce((s, cat) => s +
 <a id="weekly-retail-19"></a>
 #### weekly-retail-19 — A failed jsPDF download sticks: every later PDF attempt fails until the app is relaunched
 
-*low · minor · bug · confidence high · `index.html:15274` · unverified*
+*low · minor · bug · confidence high · `index.html:15274` · unverified · loader fixed 2026-09-28*
+
+**Status (2026-09-28).** The loader is fixed. `loadScript` now works like this:
+- It keeps one promise per file, shared while the file is still loading.
+- It resolves only once the script has run and the caller's `ready()` is true. For autotable,
+  that is `jsPDF.API.autoTable`.
+- A load that errors, or that runs without making `ready()` true, removes its tag and is
+  forgotten, so the next export fetches the file again.
+
+The other paths in the evidence were already closed:
+- #293 checks autotable on its own, instead of skipping both files when jsPDF is present.
+- #294 loads jsPDF through Sign Studio's `ssLoadPdfLib`, which retries.
+
+`scripts/browser-sign-studio.mjs` §12–14 cover three cases: a 503, a file that defines
+nothing, and two exports at once. The old loader fails all three.
+
+**Still open: the filename date.** The WRS PDF and CSV exports name the file with
+`new Date().toISOString().slice(0, 10)`, which is UTC. So an export after 8 pm ET is dated the
+next day (`index.html:16597`, `index.html:16674`).
 
 **Evidence.** loadScript (15272-15279): `if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }`. A <script> whose onerror fired stays in <head>, so the next attempt resolves immediately without loading anything. downloadWrsAsPdf then shows 'PDF library failed to initialize — please try again.' (15292) every time. If jspdf loaded but autotable failed, the next attempt skips loading entirely because `window.jspdf?.jsPDF` exists (15283), and throws 'PDF generation failed: doc.autoTable is not a function'. The filename date uses `new Date().toISOString().slice(0, 10)` (15455, 15532), which is UTC, so exports after 8 pm ET carry tomorrow's date.
 
