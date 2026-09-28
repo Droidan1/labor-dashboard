@@ -62,6 +62,13 @@ const results = [], measured = [];
 const check = (c, m) => { results.push([!!c, m]); };
 const eq = (got, want, m) => { const same = JSON.stringify(got) === JSON.stringify(want);
   check(same, `${m}${same ? '' : `  (got ${JSON.stringify(got)}, want ${JSON.stringify(want)})`}`); };
+// The two PDF libraries, by the names the built page loads them under, so an upgrade needs no
+// edit here. Sign Studio's PDF and the WRS export share the jsPDF; autotable is the WRS's.
+const shellHtml = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+const JSPDF = (shellHtml.match(/'(jspdf-[\d.]+\.umd\.min\.js)'/) || [])[1];
+const AUTOTABLE = (shellHtml.match(/'(jspdf-autotable-[\d.]+\.min\.js)'/) || [])[1];
+check(JSPDF && AUTOTABLE && fs.existsSync(path.join(root, JSPDF)) && fs.existsSync(path.join(root, AUTOTABLE)),
+      `the page names its jsPDF (${JSPDF}) and autotable (${AUTOTABLE}), and dist/ has both`);
 
 // ── the fake worker, run inside the page ─────────────────────────────────
 // auth-me is answered here; nothing else this page does reaches the worker. Every request
@@ -499,6 +506,7 @@ async function makePdf(page, orient) {
   const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 15000 }), page.click(`[data-pdf="${orient}"]`)]);
   return { name: dl.suggestedFilename(), buf: fs.readFileSync(await dl.path()) };
 }
+const scriptTags = (page, file) => page.evaluate(f => document.querySelectorAll(`script[src="${f}"]`).length, file);
 await section('6. pdf', async () => {
   const { page, errs } = await open();
   const cdp = await page.context().newCDPSession(page);
@@ -549,7 +557,7 @@ await section('6. pdf', async () => {
   await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
   check(!errs.length, `no page errors (${errs.slice(0, 2).join(' | ')})`);
   // The jsPDF file fails once, then comes back: the next tap tries again and works.
-  fail.add('/jspdf-2.5.1.umd.min.js');   // down before step 3, so the idle warm-up meets it too
+  fail.add('/' + JSPDF);   // down before step 3, so the idle warm-up meets it too
   const P = await open();
   await makeSign(P.page, { fields: { 'name-0': 'All cereal', 'price-0': '2' } });
   await P.page.waitForTimeout(800);
@@ -557,11 +565,11 @@ await section('6. pdf', async () => {
   await P.page.waitForFunction(() => /didn't finish/.test(document.querySelector('[data-pdfnote="landscape"]').textContent), null, { timeout: 8000 });
   eq(await P.page.$eval('[data-pdfnote="landscape"]', n => [n.className, n.textContent]),
      ['ss-pdfnote bad', "The PDF didn't finish: The PDF maker didn't load. Tap PDF to try again."], 'jsPDF down: the PDF says so, in the error colour');
-  fail.delete('/jspdf-2.5.1.umd.min.js');
+  fail.delete('/' + JSPDF);
   const again = await makePdf(P.page, 'landscape');
   check(again.buf.length > 10000 && again.name === 'sign-all-cereal-landscape.pdf', 'back up: the next tap makes the PDF');
   eq(await P.page.$eval('[data-pdfnote="landscape"]', n => n.textContent), 'Saved sign-all-cereal-landscape.pdf', '…and says where it went');
-  check(await P.page.evaluate(() => document.querySelectorAll('script[src="jspdf-2.5.1.umd.min.js"]').length === 1), '…with one script tag left, not one per attempt');
+  eq(await scriptTags(P.page, JSPDF), 1, '…with one script tag left, not one per attempt');
   // A blocked orientation: its PDF button is off, and a forced click makes nothing.
   await makeSign(P.page, { two: true, fields: { 'name-0': 'Work boots', 'price-0': '20', 'name-1': 'Premium work boots', 'price-1': '35' }, sale: 'blowout' });
   eq(await P.page.$$eval('[data-pdf]', bs => bs.map(b => b.disabled)), [true, false], 'portrait only: the landscape PDF button is off');
@@ -644,7 +652,8 @@ await section('10. service worker', async () => {
     return (await (await caches.open(name)).keys()).map(r => new URL(r.url).pathname);
   });
   const missing = want.filter(p => !cached.includes(p.replace(/^\.\//, '/')));
-  eq(missing, [], `the precache holds every listed path (${want.length}), fonts, logo and jsPDF included`);
+  eq([JSPDF, AUTOTABLE].filter(f => !want.includes('./' + f)), [], 'sw.js lists both PDF libraries for the precache');
+  eq(missing, [], `the precache holds every listed path (${want.length}), fonts, logo, jsPDF and autotable included`);
   // Offline: the page, the sign, Print and PDF all come from the cache.
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => typeof window.navigateToPage === 'function' && window.__ssAuthed, null, { timeout: 10000 });
@@ -741,23 +750,26 @@ await section('9. font failure', async () => {
 // ── 11. Speed, and the WRS export beside it ──────────────────────────────
 // The preview must follow the keys within 300 ms on a mid-range phone (×4 CPU throttling),
 // on the costliest sign there is: one that fails to fit, which runs the "cut about N" search.
-// And a Sign Studio PDF loads jsPDF without autotable; the WRS export must still load it.
-// autotable comes from cdnjs, which this harness refuses, so a stand-in answers that URL:
-// enough plugin for the export to run, and a count of how often it was fetched.
-const AUTOTABLE = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js';
-const AUTOTABLE_STANDIN = `(function () {
-  var J = window.jspdf && window.jspdf.jsPDF;
-  J.API.autoTable = function (o) {
-    window.__autoTables = (window.__autoTables || 0) + 1;
-    this.lastAutoTable = { finalY: ((o && o.startY) || 40) + 20 };
-    return this;
-  };
-})();`;
+// And the WRS export shares Sign Studio's jsPDF and adds autotable to it. Both files are served
+// here, so the real plugin runs on the real jsPDF, whichever export loads jsPDF first.
+async function wrsPdf(page) {
+  await page.evaluate(() => window.navigateToPage('weekly-summary'));
+  await page.waitForTimeout(400);
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 15000 }), page.evaluate(() => {
+    const pane = document.getElementById('wrs-pane-summary'), h = document.createElement('h3'), t = document.createElement('table');
+    h.textContent = 'By store';
+    const row = (tag, cells) => { const tr = document.createElement('tr'); cells.forEach(c => { const x = document.createElement(tag); x.textContent = c; tr.appendChild(x); }); return tr; };
+    t.createTHead().appendChild(row('th', ['Store', 'Sales'])); t.createTBody().appendChild(row('td', ['Coliseum', '$1,000']));   // the export reads tHead/tBodies
+    pane.append(h, t);
+    return window.downloadWrsAsPdf();
+  })]);
+  return pdfFacts(fs.readFileSync(await dl.path()), 'wrs.pdf');
+}
+const hits = f => served['/' + f] || 0;
 await section('11. timing and WRS', async () => {
   const { page, errs } = await open();
-  let autotableFetches = 0;
-  // Registered after open()'s refuse-everything route, so it is matched first.
-  await page.route(AUTOTABLE, r => { autotableFetches++; r.fulfill({ contentType: 'text/javascript', body: AUTOTABLE_STANDIN }); });
+  const offHost = [];
+  page.on('request', r => { if (!r.url().startsWith(ORIGIN)) offHost.push(r.url()); });
   const cdp = await page.context().newCDPSession(page);
   await makeSign(page, { two: true, fields: { 'name-0': 'Work boots', 'price-0': '20', 'name-1': 'Premium work boots', 'price-1': '35' }, sale: 'blowout' });
   await page.click('[data-step="1"]'); await settle(page);
@@ -783,22 +795,39 @@ await section('11. timing and WRS', async () => {
   await page.click('[data-step="3"]'); await settle(page);
   await makePdf(page, 'portrait');
   eq(await page.evaluate(() => [!!window.jspdf.jsPDF, !!window.jspdf.jsPDF.API.autoTable]), [true, false], 'after a Sign Studio PDF: jsPDF is loaded, autotable is not');
-  await page.evaluate(() => window.navigateToPage('weekly-summary'));
-  await page.waitForTimeout(400);
-  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 15000 }), page.evaluate(() => {
-    const pane = document.getElementById('wrs-pane-summary'), h = document.createElement('h3'), t = document.createElement('table');
-    h.textContent = 'By store';
-    const row = (tag, cells) => { const tr = document.createElement('tr'); cells.forEach(c => { const x = document.createElement(tag); x.textContent = c; tr.appendChild(x); }); return tr; };
-    t.createTHead().appendChild(row('th', ['Store', 'Sales'])); t.createTBody().appendChild(row('td', ['Coliseum', '$1,000']));   // the export reads tHead/tBodies
-    pane.append(h, t);
-    return window.downloadWrsAsPdf();
-  })]);
-  eq(autotableFetches, 1, '🛑 the WRS export fetches autotable although jsPDF was already loaded');
-  check(await page.evaluate(() => window.__autoTables > 0), '…and draws its table with it');
-  const wrs = pdfFacts(fs.readFileSync(await dl.path()), 'wrs.pdf');
+  const at0 = hits(AUTOTABLE);
+  const wrs = await wrsPdf(page);
+  eq(hits(AUTOTABLE) - at0, 1, '🛑 the WRS export loads autotable although jsPDF was already loaded');
+  eq(await scriptTags(page, JSPDF), 1, '…onto the jsPDF Sign Studio loaded, not a second copy');
+  check(/By store/.test(wrs.text) && /Coliseum/.test(wrs.text) && /\$1,000/.test(wrs.text),
+        `…and draws the table with it (${wrs.text.replace(/\s+/g, ' ').trim().slice(0, 70)})`);
   check(wrs.pages >= 1 && wrs.fonts.some(f => /Helvetica/.test(f.name)) && !wrs.fonts.some(f => /SS |Poppins|Luckiest/.test(f.name)),
         `the WRS PDF is its own: its Helvetica, none of the sign's fonts (${wrs.fonts.map(f => f.name).slice(0, 4).join(', ')}…)`);
+  eq(offHost.filter(u => /cdnjs/.test(u)), [], 'neither export asks cdnjs for anything');
   check(!errs.length, `no page or console errors (${errs.slice(0, 2).join(' | ')})`);
+  // WRS first, on a fresh page: it loads both files itself, and a Sign Studio PDF after it uses
+  // the same jsPDF. A jsPDF that fails to load is fetched again on the next try, as it is for
+  // a sign, because the two share one loader.
+  const W = await open({ go: false });
+  await W.page.evaluate(() => window.navigateToPage('weekly-summary'));
+  fail.add('/' + JSPDF);
+  await W.page.evaluate(() => window.downloadWrsAsPdf());
+  fail.delete('/' + JSPDF);
+  const alerted = W.page.locator('[role="dialog"]', { hasText: 'Failed to load PDF library' });   // the page has other dialogs
+  const told = await alerted.waitFor({ timeout: 8000 }).then(() => true, () => false);
+  check(told, 'WRS first, with jsPDF down: the export says it could not load');
+  if (told) await alerted.getByRole('button', { name: 'OK' }).click();
+  const js1 = hits(JSPDF), at1 = hits(AUTOTABLE);
+  const first = await wrsPdf(W.page);
+  eq([hits(JSPDF) - js1, hits(AUTOTABLE) - at1], [1, 1], '…and the next try fetches jsPDF again, then autotable, once each');
+  check(/Coliseum/.test(first.text) && /\$1,000/.test(first.text), '…and draws its table');
+  await enter(W.page);
+  await makeSign(W.page, { fields: { 'name-0': 'All cereal', 'price-0': '2' } });
+  const after = await makePdf(W.page, 'landscape');
+  check(after.buf.length > 10000 && after.name === 'sign-all-cereal-landscape.pdf', 'then a Sign Studio PDF works, on the jsPDF the WRS export loaded');
+  eq([hits(JSPDF) - js1, await scriptTags(W.page, JSPDF)], [1, 1], '…without loading it again');
+  const other = W.errs.filter(e => !/503/.test(e));
+  check(!other.length, `no page or console errors but the 503 (${other.slice(0, 2).join(' | ')})`);
 });
 
 await b.close();

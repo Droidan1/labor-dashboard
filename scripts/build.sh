@@ -12,7 +12,7 @@ mkdir -p dist/html
 # committed to the repo but NEVER reaches production, and 404s silently.
 # BLlogo.svg is still used by the Bargain Lane Hourly Snapshot panel.
 cp index.html sw.js manifest.json \
-   jsqr.min.js jspdf-2.5.1.umd.min.js \
+   jsqr.min.js jspdf-4.2.1.umd.min.js jspdf-autotable-5.0.8.min.js \
    retjg-logo.png retjg-logo-email.png sign-logo.png \
    BLlogo.svg icon-192.png icon-512.png apple-touch-icon.png \
    dist/

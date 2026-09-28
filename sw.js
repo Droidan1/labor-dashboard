@@ -1,4 +1,4 @@
-const CACHE_NAME = 'dashboard-cache-v245';
+const CACHE_NAME = 'dashboard-cache-v246';
 
 // Pre-fetched and cached on install
 const PRECACHE_ASSETS = [
@@ -22,9 +22,11 @@ const PRECACHE_ASSETS = [
   './fonts/poppins-900.ttf',
   './fonts/poppins-900-italic.ttf',
   './fonts/luckiest-guy-400.ttf',
-  // …and jsPDF, for its PDF button (364 KB). Loaded on demand like jsqr.min.js, never
-  // parsed at app start; precached so a PDF can still be made with no signal.
-  './jspdf-2.5.1.umd.min.js',
+  // …and jsPDF, for its PDF button (420 KB). Loaded on demand like jsqr.min.js, never
+  // parsed at app start; precached so a PDF can still be made with no signal. The Weekly
+  // Retail Summary's PDF loads the same copy, plus the autotable plugin (32 KB).
+  './jspdf-4.2.1.umd.min.js',
+  './jspdf-autotable-5.0.8.min.js',
 ];
 
 // CDN + font hosts: versioned/immutable — serve cache-first

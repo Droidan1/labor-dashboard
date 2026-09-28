@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import crypto from 'node:crypto';
+import zlib from 'node:zlib';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
@@ -30,13 +31,19 @@ const sliceOrNull = (src, from, to) => {
 console.log('Sign Studio assets');
 
 // jsPDF is vendored byte for byte from the npm tarball (registry integrity checked when it was
-// added), the same 2.5.1 the WRS export loads from cdnjs. A different build would measure and
-// embed differently, so any change to it is a decision, made here.
-const jspdf = read('jspdf-2.5.1.umd.min.js');
-eq(jspdf.length, 364463, 'jspdf-2.5.1.umd.min.js is the npm 2.5.1 build (size)');
+// added), and the WRS export loads the same copy. A different build would measure and embed
+// differently, so any change to it is a decision, made here. The autotable plugin the WRS
+// export adds to it is vendored and pinned the same way.
+const jspdf = read('jspdf-4.2.1.umd.min.js');
+eq(jspdf.length, 420165, 'jspdf-4.2.1.umd.min.js is the npm 4.2.1 build (size)');
 eq(crypto.createHash('sha256').update(jspdf).digest('hex'),
-   '98ccf17aa10c20bb1301762618fcc9b6ab3a4e7f26b6071d64d0b41154df3875',
-   'jspdf-2.5.1.umd.min.js is the npm 2.5.1 build (sha256)');
+   'e6551fcdc32f09d6853b2c5126d18d01d9447e0da618a41a11ebeee0f6c20d54',
+   'jspdf-4.2.1.umd.min.js is the npm 4.2.1 build (sha256)');
+const autotable = read('jspdf-autotable-5.0.8.min.js');
+eq(autotable.length, 32389, 'jspdf-autotable-5.0.8.min.js is the npm 5.0.8 build (size)');
+eq(crypto.createHash('sha256').update(autotable).digest('hex'),
+   'a65dff2c6a8296b16aff24e69f7683cd7dbaed4a4ec26b507d6840ee27d54649',
+   'jspdf-autotable-5.0.8.min.js is the npm 5.0.8 build (sha256)');
 
 // The fonts carry no layout tables. With GPOS or kern the browser would kern the preview and
 // jsPDF would not kern the PDF, so the two would disagree by a few points on every price.
@@ -333,7 +340,7 @@ const pdfRecorder = () => {
     setTextColor(c) { st.text = String(c).toLowerCase(); }, setLineWidth(w) { st.lw = w; }, setLineCap() {}, setCharSpace() {},
     setFont(f) { st.font = f; }, getFont() { return { fontName: st.font }; }, setFontSize(s) { st.size = s; },
     rect(x, y, w, h, style) { prims.push(['rect', r2(x), r2(y), r2(w), r2(h), st.draw, r2(st.lw)]); calls.push(style); },
-    addImage(d, fmt, x, y, w, h) { prims.push(['image', r2(x), r2(y), r2(w), r2(h)]); calls.push(fmt); },
+    addImage(d, fmt, x, y, w, h, alias, comp) { prims.push(['image', r2(x), r2(y), r2(w), r2(h)]); calls.push(`${fmt} ${comp}`); },
     line(x1, y1, x2, y2) { prims.push(['line', r2(x1), r2(y1), r2(x2), r2(y2), st.draw, r2(st.lw)]); },
     circle(x, y, r, style) { prims.push(['circle', r2(x), r2(y), r2(r), st.fill, st.draw]); calls.push(style); },
     text(t, x, y, o) { prims.push(['text', t, r2(x), r2(y), r2(st.size), st.font, st.text, r2(o && o.charSpace || 0), (o && o.align) || null]);
@@ -354,6 +361,7 @@ for (const s of SAMPLES) for (const o of R.ORIENTS) {
   ok(a === b, `${tag}: the SVG and the PDF draw the same primitives${a === b ? '' : `\n        svg ${a.slice(0, 300)}\n        pdf ${b.slice(0, 300)}`}`);
   eq(svgPrims(svg).length, L.items.length, `${tag}: one primitive per item`);
   ok(rec.calls.filter(c => c === 'no-cs').length === 0, `${tag}: every PDF text passes its letter spacing, even 0`);
+  eq(rec.calls.filter(c => /^PNG/.test(c)).join(), 'PNG FAST', `${tag}: the logo goes in as a PNG, with FAST compression`);
   ok(svgPrims(svg).every(p => p[0] !== 'text' || p[8] === null), `${tag}: no SVG text is anchored; each is drawn from its left edge`);
 }
 {
@@ -378,7 +386,7 @@ for (const s of SAMPLES) for (const o of R.ORIENTS) {
 
 // ── 8. Real jsPDF ────────────────────────────────────────────────────────────
 console.log('Real jsPDF');
-const { jsPDF } = createRequire(import.meta.url)(path.join(repo, 'jspdf-2.5.1.umd.min.js'));
+const { jsPDF } = createRequire(import.meta.url)(path.join(repo, 'jspdf-4.2.1.umd.min.js'));
 const newPdf = (W, H) => new jsPDF({ unit: 'pt', format: [W, H], orientation: W > H ? 'landscape' : 'portrait', compress: false, putOnlyUsedFonts: true });
 // The reader's widths are jsPDF's widths, character by character, for everything each face prints.
 const TEXT_SET = [];
@@ -431,6 +439,39 @@ for (const s of SAMPLES) for (const o of R.ORIENTS) {
     if (/ Tz| Tw|Tm\n/.test(bt)) bad.push(`${it.role} scaled or word-spaced`);
   });
   eq(bad.join('; '), '', `${tag}: every text is set at the layout's size, left edge, baseline and spacing`);
+}
+// The logo in the PDF is sign-logo.png, pixel for pixel. jsPDF decodes a PNG and compresses it
+// again (since 3.0.2; 3.0.3 had to fix a regression in exactly that), so both are read back:
+// inflated, and each row's PNG filter undone.
+{
+  const unfilter = (buf, width, bpp) => {
+    const stride = width * bpp, rows = buf.length / (stride + 1), out = Buffer.alloc(rows * stride);
+    for (let r = 0; r < rows; r++) {
+      const type = buf[r * (stride + 1)], src = r * (stride + 1) + 1, dst = r * stride;
+      for (let i = 0; i < stride; i++) {
+        const a = i >= bpp ? out[dst + i - bpp] : 0, b = r ? out[dst - stride + i] : 0, c = r && i >= bpp ? out[dst - stride + i - bpp] : 0;
+        const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+        out[dst + i] = (buf[src + i] + [0, a, b, (a + b) >> 1, pa <= pb && pa <= pc ? a : pb <= pc ? b : c][type]) & 255;
+      }
+    }
+    return out;
+  };
+  const idat = [];
+  for (let i = 8; i < png.length; ) { const len = png.readUInt32BE(i); if (png.toString('latin1', i + 4, i + 8) === 'IDAT') idat.push(png.subarray(i + 8, i + 8 + len)); i += 12 + len; }
+  const want = unfilter(zlib.inflateSync(Buffer.concat(idat)), 1711, 3);
+  const L = E.layoutSign(R.signModel(sign(OKSIGN)), 'landscape'), doc = newPdf(L.W, L.H);
+  R.loadFontsInto(doc, fontBytes);
+  R.drawPDF(L, doc, { logo: logoBytes });
+  const buf = Buffer.from(doc.output('arraybuffer')), pdf = buf.toString('latin1');
+  const at = pdf.indexOf('/Subtype /Image'), body = pdf.indexOf('stream\n', at) + 'stream\n'.length;
+  const dict = at < 0 ? '' : pdf.slice(pdf.lastIndexOf('<<', at), body);
+  const len = +((dict.match(/\/Length (\d+)/) || [])[1] || 0);
+  ok(/\/Filter \/FlateDecode/.test(dict) && len > 0 && len < 128 * 1024,
+     `the logo is compressed in the PDF (${len} bytes), not embedded raw (1711 × 497 × 3 = 2,551,101)`);
+  ok(/\/Width 1711\b/.test(dict) && /\/Height 497\b/.test(dict) && /\/BitsPerComponent 8\b/.test(dict), '…at its full 1711 × 497, 8 bits a channel');
+  let got = null;
+  try { got = unfilter(zlib.inflateSync(buf.subarray(body, body + len)), 1711, 3); } catch (e) {}
+  ok(got && got.equals(want), '…and it is sign-logo.png, pixel for pixel');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
