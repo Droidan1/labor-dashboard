@@ -1,3 +1,65 @@
+# The repair console's 30-day default counts calendar days in Eastern time (2026-09-28)
+
+**Request (Brian):** *"Fix the repair console's 30-day default range for DST too"*
+
+## The bug
+
+Opening Admin Settings fills the sales health check's empty range with the last 30 days
+(`index.html:24069–24072`). It takes today from the phone's own clock, then steps back
+29 × 24 hours. If a clock change falls inside those 29 days, a step back from near midnight
+lands on the wrong day:
+- **after spring forward, between midnight and 1 am:** the range starts a day early (31 days);
+- **after fall back, between 11 pm and midnight:** it starts a day late (29 days).
+
+It also uses the phone's calendar, not the stores'. Everywhere else the app's "today" is
+`etTodayStr()`, and its own **Last 30 Days** preset is `ymdShift(today, -29)` to `today`
+(`index.html:9565`).
+
+## Plan
+
+- [x] 1. The default becomes that preset's own two lines: `today = etTodayStr()`, and
+      `ymdShift(today, -29)` to `today`.
+      - On a phone set to Eastern time, which is every store's, the dates are the same except
+        at those edge hours.
+      - On a phone elsewhere, the range now follows the stores' calendar, like the rest of the
+        app.
+- [x] 2. `CACHE_NAME` v249 → v250, and the shell-cache fixture with it.
+- [x] 3. `browser-export-dates.mjs` gains the repair console, run against the real page:
+      - 12:30 am after spring forward;
+      - 11:30 pm after fall back;
+      - an ordinary evening;
+      - a phone in Los Angeles while New York is already on tomorrow.
+- [x] 4. Mutation: the old default restored.
+- [x] 5. Verify with `npm test` and the browser suite. Then ship as a new PR and report.
+
+## Review
+
+**Done.** The health check's default range is the stores' last 30 days, counted in calendar
+days: the same two lines as the app's Last 30 Days preset.
+
+**Verification:**
+- `npm test`: 6,507 assertions across 88 suites, all passing. `test-shell-cache` pins v250.
+- **`browser-export-dates.mjs`:** 13 of 13 in a real Chromium, 6 of them new. It opens Admin
+  Settings on the built page, with the clock pinned and the fields emptied first, and reads the
+  two inputs.
+  - **New York:**
+    - 12:30 am after spring forward gives 8 Feb–9 Mar;
+    - 11:30 pm after fall back gives 17 Oct–15 Nov;
+    - an ordinary evening gives 1–30 Sep.
+  - **A phone in Los Angeles** at 10:30 pm on 20 August, when New York is already on 21
+    August, gives 23 Jul–21 Aug.
+  - There were no page or console errors.
+- **Mutations,** each in its own copy of the tree, with its own build and port:
+  - **The old default** fails 3:
+    - it gives a 31-day range in spring (7 Feb);
+    - it gives a 29-day range in fall (18 Oct);
+    - it gives the phone's own date in Los Angeles.
+  - **Calendar days on the phone's calendar** fails 1, the Los Angeles check only. So the
+    clock-change cases need only calendar days; the Los Angeles check is what holds the stores'
+    calendar in place.
+- **No visual change:** only the two inputs' default values differ, so there's no contrast
+  check to run.
+
 # "Yesterday" is the calendar day before today, on the clock-change Sundays too (2026-09-28)
 
 **Request (Brian):** *"Fix the "yesterday" now − 24h dates for DST too"*

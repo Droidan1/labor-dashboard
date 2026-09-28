@@ -24064,12 +24064,14 @@
         stLoad();
         // Default the health check to the last 30 days. Populate only if blank
         // so a superuser mid-investigation doesn't lose the range they typed.
+        // The stores' calendar and calendar days, as the Last 30 Days preset counts
+        // them: 29 × 24 hours back from the phone's clock started a day out near
+        // midnight whenever a clock change fell inside the window.
         const rs = el('rh-start'), re = el('rh-end');
         if (rs && re && !rs.value && !re.value) {
-          const iso = d => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-          const today = new Date();
-          re.value = iso(today);
-          rs.value = iso(new Date(today.getTime() - 29 * 86400000));
+          const today = etTodayStr();
+          re.value = today;
+          rs.value = ymdShift(today, -29);
         }
         if (typeof loadRepairBackups === 'function') loadRepairBackups();
       }

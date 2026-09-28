@@ -15,6 +15,10 @@
 // 1 October it is 11:30 pm on 30 September in New York, so every file here must say
 // 2026-09-30, or 2026-09 for the month. The check reads the name of the file each real export
 // downloads; it does not read the source.
+//
+// The repair console's default health-check range is checked here too: the last 30 days by the
+// stores' calendar. It stepped 29 × 24 hours back from the phone's clock, which starts a day out
+// near midnight whenever a clock change falls inside the window.
 let chromium;
 try {
   ({ chromium } = await import('playwright-core'));
@@ -156,6 +160,41 @@ await page.evaluate(() => window.navigateToPage('mos'));
 await page.waitForTimeout(600);
 n = await exported('MOS CSV', () => window.mosExport(), 'Everything');
 eq(dated(n), DAY, `MOS CSV is dated the Eastern day (${n})`);
+
+// The repair console's default range: opening Admin Settings fills an empty health-check range
+// with the last 30 days. Emptied before each visit, as it only fills a blank one.
+async function repairRange(p, at) {
+  await p.clock.setFixedTime(new Date(at));
+  return p.evaluate(() => {
+    document.getElementById('rh-start').value = '';
+    document.getElementById('rh-end').value = '';
+    window.navigateToPage('admin-settings');
+    return [document.getElementById('rh-start').value, document.getElementById('rh-end').value];
+  });
+}
+for (const [at, start, end, why] of [
+  ['2026-03-09T04:30:00Z', '2026-02-08', '2026-03-09', '12:30 am on the Monday after spring forward'],
+  ['2026-11-16T04:30:00Z', '2026-10-17', '2026-11-15', '11:30 pm, two weeks after fall back'],
+  ['2026-10-01T03:30:00Z', '2026-09-01', '2026-09-30', 'an ordinary evening'],
+]) eq(await repairRange(page, at), [start, end], `the repair console's default range at ${at} (${why}) is the 30 days ending today`);
+
+// A phone set to Los Angeles, at 10:30 pm there, when New York is already on tomorrow: the range
+// follows the stores' calendar, as the rest of the app does.
+{
+  const laCtx = await b.newContext({ timezoneId: 'America/Los_Angeles', locale: 'en-US', serviceWorkers: 'block', viewport: { width: 1280, height: 900 } });
+  const la = await laCtx.newPage();
+  la.on('pageerror', e => errs.push('LA: ' + String(e)));
+  await la.route(u => !u.href.startsWith(ORIGIN), r => r.abort());
+  await la.addInitScript(pageMocks);
+  await la.goto(`${ORIGIN}/`, { waitUntil: 'domcontentloaded' });
+  await la.waitForFunction(() => typeof window.navigateToPage === 'function' && window.__authed, null, { timeout: 10000 });
+  await la.clock.setFixedTime(new Date('2026-08-21T05:30:00Z'));
+  eq(await la.evaluate(() => [new Date().toLocaleDateString('en-CA'), etTodayStr()]), ['2026-08-20', '2026-08-21'],
+     'the Los Angeles phone reads 20 August while New York is on 21 August');
+  eq(await repairRange(la, '2026-08-21T05:30:00Z'), ['2026-07-23', '2026-08-21'],
+     "on that phone the repair console's default range is the stores' last 30 days");
+  await laCtx.close();
+}
 
 check(!errs.length, `no page or console errors (${errs.slice(0, 2).join(' | ')})`);
 
