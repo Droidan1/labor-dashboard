@@ -14259,7 +14259,7 @@
       const csv = [headers,...rows].map(row=>row.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
       const a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
-      a.download = `supply-requests-${new Date().toISOString().slice(0,10)}.csv`;
+      a.download = `supply-requests-${etTodayStr()}.csv`;
       a.click();
     }
     window.srExportCSV = srExportCSV;
@@ -14681,7 +14681,7 @@
       const csv = rows.map(r=>r.join(',')).join('\n');
       const a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
-      a.download = `supply-report-${new Date().toISOString().slice(0,7)}.csv`;
+      a.download = `supply-report-${etTodayStr().slice(0, 7)}.csv`;
       a.click();
     }
     window.srExportReportsCSV = srExportReportsCSV;
@@ -16594,7 +16594,7 @@
         doc.text(`Page ${p} of ${pageCount}`, pageW - margin, pageH - 18, { align: 'right' });
       }
 
-      const filename = `WRS-${activeLabel.replace(/\s+/g, '_')}-${new Date().toISOString().slice(0, 10)}.pdf`;
+      const filename = `WRS-${activeLabel.replace(/\s+/g, '_')}-${etTodayStr()}.pdf`;
       doc.save(filename);
     } catch (err) {
       uiAlert('PDF generation failed: ' + err.message);
@@ -16671,7 +16671,7 @@
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `WRS-${activeLabel.replace(/\s+/g, '_')}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `WRS-${activeLabel.replace(/\s+/g, '_')}-${etTodayStr()}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -30565,7 +30565,7 @@
       const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `trucks-${irScanStore()}-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.download = `trucks-${irScanStore()}-${etTodayStr()}.csv`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 1000);
       // 🛑 A truncated export raises a MODAL, not a status line: somebody who misses it
@@ -31822,7 +31822,7 @@
       const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `mos-${store.toLowerCase()}-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.download = `mos-${store.toLowerCase()}-${etTodayStr()}.csv`;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 4000);
       mosSetLogStatus(`Exported ${rows.length} line${rows.length === 1 ? '' : 's'} · ${range.label.toLowerCase()}.`);
