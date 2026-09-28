@@ -1,3 +1,75 @@
+# A scheduled sale starts on the exact Eastern minute picked, as the worker reads it (2026-09-28)
+
+**Request (Brian):** *"Fix etLocalToDate's stray seconds for DST too"*
+
+## The bug
+
+`etLocalToDate` (`index.html:33655`) turns the start and end picked in the inventory sale scheduler
+into the instants sent to `?action=schedule-sale`. It also drives the preview's "Runs N days"
+line. It bisects towards the minute and returns the first instant it lands on inside it:
+- **Every sale starts and ends some seconds late:** 9:00 becomes 9:00:08.
+- **On spring-forward Sunday**, 2:30 (which never happens) lands at about 3:00:59.
+- **On fall-back Sunday**, 1:30 (which happens twice) takes the second one, EST. The worker's
+  `etWallClockToUtc` (#299) takes the first, so the page and the worker read the same time as
+  different instants.
+
+## Plan
+
+- [x] 1. `etLocalToDate` takes the worker's rule, so both sides read a time the same way:
+      - try New York's offsets a day either side, and keep the instant New York shows as that
+        wall time, to the exact minute;
+      - fall's repeated 1:30 is the first (EDT);
+      - spring's missing 2:30 is 3:30 EDT.
+      - The unused `utcGuess` goes.
+- [x] 2. `CACHE_NAME` v250 → v251, and the shell-cache fixture with it.
+- [x] 3. Tests, in `test-et-wall-clock.mjs`, with the page's own function sliced out of
+      `index.html`:
+      - named times on both Sundays;
+      - every hour of 2025–2028 against the ground truth, exact to the millisecond;
+      - equal to the worker's `etWallClockToUtc` for every hour of 2025–2028.
+      - *Changed while building:*
+        - The sweep is every hour of 2026–2027. Since the worker already matches the same ground
+          truth in §2, matching it means the two agree; checking against the worker as well
+          doubled the suite's time.
+        - Page against worker is compared outright on the named times.
+        - Measuring the old function found a worse bug: around New Year it sorted December 31
+          after January 1. Every minute from 8 pm on New Year's Eve to 4 am on New Year's Day is
+          now checked.
+- [x] 4. Mutations:
+      - the old bisection;
+      - the later 1:30;
+      - the missing 2:30 resolved backwards.
+- [x] 5. Verify with `npm test`. Re-read #301 (open, and page-only like this), then do a guarded push onto
+      it and report.
+
+## Review
+
+**Done.** The inventory sale scheduler reads a picked time as exactly the instant the worker
+would, on the minute, on every day of the year.
+
+**What the old function did, measured over every hour of 2025–2028:**
+- 35,060 of 35,064 hours came back 8.4 or 34.2 seconds late.
+- Spring's missing 2:30 came back as 3:00:59.
+- Fall's repeated 1:30 came back as the second one, EST, though 1:00 came back as the first.
+- **From 11:45 pm on New Year's Eve to 12:29 am on New Year's Day, 45 minutes were off by up
+  to two hours.** It weighed every month as 31 days, so 31 December scored above 1 January and
+  the search ran the wrong way. A sale set for midnight on New Year's Day started at 10 pm on
+  New Year's Eve.
+
+**Verification:**
+- `npm test`: 6,527 assertions across 88 suites (6,507 before), all passing.
+- **`test-et-wall-clock.mjs`: 42 checks, 20 of them new.** They run the page's own function:
+  - 8 named times, each to the millisecond and each equal to the worker's reading;
+  - an empty time;
+  - every hour of 2026–2027 against the ground truth;
+  - every minute from 8 pm on New Year's Eve to 4 am on New Year's Day.
+- **Mutations,** each in its own copy of the tree. All are caught:
+  - the old bisection: 16 failures, then it crashes on the empty time;
+  - the later 1:30: 3;
+  - the missing 2:30 resolved backwards: 3.
+- **`browser-export-dates.mjs`:** 13 of 13 on the rebuilt page. It boots with no page or console
+  errors.
+
 # The repair console's 30-day default counts calendar days in Eastern time (2026-09-28)
 
 **Request (Brian):** *"Fix the repair console's 30-day default range for DST too"*

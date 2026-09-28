@@ -33650,34 +33650,31 @@
     return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
-  // Parse a datetime-local string as if it were Eastern Time and return a UTC Date.
-  // Uses the same approach as the rest of the dashboard: rely on Intl for offset.
+  // Parse a datetime-local string ("YYYY-MM-DDTHH:MM") as Eastern Time and return that instant.
+  // The worker's etWallClockToUtc rule, so the page and the worker read a time as the same
+  // instant: try New York's offsets a day either side, and keep the instant New York actually
+  // shows as that wall time. Where a wall time is not exactly one instant it resolves as
+  // JavaScript's own Date does: fall's repeated 1 am is the first, EDT; spring's missing 2 am
+  // takes the offset from before the change, so 2:30 is 3:30 EDT.
+  // It used to bisect towards the minute and return the first instant it hit inside it: every
+  // sale started and ended seconds late (9:00 became 9:00:08), and around New Year, where its
+  // month-as-31-days arithmetic lost the order of the dates, up to two hours out.
   function etLocalToDate(localStr) {
-    // Try native TZ parse via UTC offset lookup
-    const utcGuess = new Date(localStr + ':00');
-    const etFmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12: false });
-    // Build date parts from localStr
-    const [datePart, timePart] = localStr.split('T');
-    const [yr, mo, da] = datePart.split('-').map(Number);
-    const [hr, mn] = timePart.split(':').map(Number);
-    // Bisect to find the UTC instant whose ET representation matches localStr.
-    // ET is UTC-4 (EDT) or UTC-5 (EST), so correct UTC = localStr-as-UTC + 4 or 5h.
-    // Bracket [local+3h, local+6h] covers both offsets with margin.
-    const localAsUtc = Date.UTC(yr, mo-1, da, hr, mn, 0);
-    let lo = localAsUtc + 3*3600*1000;
-    let hi = localAsUtc + 6*3600*1000;
-    for (let i = 0; i < 60; i++) {
-      const mid = Math.floor((lo + hi) / 2);
-      const d = new Date(mid);
-      const parts = {};
-      for (const p of etFmt.formatToParts(d)) parts[p.type] = p.value;
-      const dHr = parseInt(parts.hour), dMn = parseInt(parts.minute);
-      const dDa = parseInt(parts.day), dMo = parseInt(parts.month), dYr = parseInt(parts.year);
-      if (dYr === yr && dMo === mo && dDa === da && dHr === hr && dMn === mn) return new Date(mid);
-      const diff = (dYr*525600 + dMo*44640 + dDa*1440 + dHr*60 + dMn) - (yr*525600 + mo*44640 + da*1440 + hr*60 + mn);
-      if (diff < 0) lo = mid + 60000; else hi = mid - 60000;
-    }
-    return new Date(lo);
+    const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(localStr || ''));
+    if (!m) return null;
+    const asUtc = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);   // the wall time, as if it were UTC
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    });
+    // The wall time New York shows at instant t, as if it were UTC.
+    const shown = t => {
+      const parts = Object.fromEntries(fmt.formatToParts(new Date(t)).map(p => [p.type, p.value]));
+      return Date.UTC(+parts.year, +parts.month - 1, +parts.day, (+parts.hour) % 24, +parts.minute);
+    };
+    const withOffsetAt = t => asUtc - (shown(t) - t);          // the wall time read with the offset at t
+    const before = withOffsetAt(asUtc - 86400000), after = withOffsetAt(asUtc + 86400000);
+    return new Date(shown(before) === asUtc ? before : shown(after) === asUtc ? after : before);
   }
 
   function getSaleKind() {
