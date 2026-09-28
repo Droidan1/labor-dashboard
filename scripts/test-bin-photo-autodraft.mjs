@@ -19,10 +19,11 @@ const src = fs.readFileSync(path.join(REPO, 'worker.js'), 'utf8');
 // Pin inside F26 week 34 (Sunday 2026-08-16). Without this the week key drifts
 // and the suite rots.
 const PINNED = '2026-08-20T18:00:00Z';   // a Thursday
+let NOW = PINNED;                          // upload() moves it for one upload
 const RealDate = Date;
 globalThis.Date = class extends RealDate {
-  constructor(...a) { if (a.length === 0) super(PINNED); else super(...a); }
-  static now() { return new RealDate(PINNED).getTime(); }
+  constructor(...a) { if (a.length === 0) super(NOW); else super(...a); }
+  static now() { return new RealDate(NOW).getTime(); }
 };
 
 let assertions = 0, failures = 0;
@@ -112,17 +113,20 @@ function askedFor(sent) {
 }
 
 async function upload(env, store, type, { at = PINNED } = {}) {
-  const fd = new FormData();
-  fd.append('store', store);
-  fd.append('photo_type', type);
-  fd.append('photo', new File([new Uint8Array([1, 2, 3])], 'p.jpg', { type: 'image/jpeg' }));
-  const waits = [];
-  const res = await worker.fetch(
-    new Request('https://x/?action=photo-upload', { method: 'POST', body: fd, headers: { 'X-Snapshot-Secret': SECRET } }),
-    env, { waitUntil: p => waits.push(p) });
-  const body = await res.json().catch(() => ({}));
-  await Promise.allSettled(waits);          // let the caption fill land
-  return { res, body };
+  NOW = at;                                 // the instant this upload happens
+  try {
+    const fd = new FormData();
+    fd.append('store', store);
+    fd.append('photo_type', type);
+    fd.append('photo', new File([new Uint8Array([1, 2, 3])], 'p.jpg', { type: 'image/jpeg' }));
+    const waits = [];
+    const res = await worker.fetch(
+      new Request('https://x/?action=photo-upload', { method: 'POST', body: fd, headers: { 'X-Snapshot-Secret': SECRET } }),
+      env, { waitUntil: p => waits.push(p) });
+    const body = await res.json().catch(() => ({}));
+    await Promise.allSettled(waits);        // let the caption fill land
+    return { res, body };
+  } finally { NOW = PINNED; }
 }
 
 const drafts = db => db.prepare(`SELECT * FROM marketing_drafts ORDER BY id`).all();
@@ -334,6 +338,32 @@ console.log('bin-photo auto-draft (upload-triggered)');
   ok(good.body.ok, 'and reports ok');
   const cleared = await setPin('');
   eq(cleared.status, 200, 'and it can be cleared again');
+}
+
+// 19 — 🛑 the week is the STORES' week. It turns over at midnight Eastern on Saturday
+// night, not at midnight UTC (8 pm EDT, 7 pm EST), and the clock-change Sundays are no
+// exception: the clocks change at 2 am, so their midnight keeps Saturday's offset.
+{
+  const { env, db } = makeEnv();
+  const at = [
+    // [the instant (UTC), what it is in New York, the week it belongs to]
+    ['2026-08-23T00:30:00.000Z', 'Sat 22 Aug 8:30 pm EDT', '2026-08-16'],
+    ['2026-08-23T03:59:00.000Z', 'Sat 22 Aug 11:59 pm EDT', '2026-08-16'],
+    ['2026-08-23T04:00:00.000Z', 'Sun 23 Aug midnight EDT', '2026-08-23'],
+    ['2026-11-01T03:30:00.000Z', 'Sat 31 Oct 11:30 pm EDT (clocks go back that night)', '2026-10-25'],
+    ['2026-11-01T04:30:00.000Z', 'Sun 1 Nov 12:30 am EDT', '2026-11-01'],
+    ['2026-03-08T04:30:00.000Z', 'Sat 7 Mar 11:30 pm EST (clocks go forward that night)', '2026-03-01'],
+    ['2026-03-08T05:30:00.000Z', 'Sun 8 Mar 12:30 am EST', '2026-03-08'],
+  ];
+  for (const [iso, said, week] of at) {
+    const { body } = await upload(env, 'BL1', 'bins', { at: iso });
+    eq(body.auto_draft && body.auto_draft.week, week, `a photo at ${said} joins the post for the week of ${week}`);
+  }
+  // Each week's draft holds exactly its own photos, Eastern: the two late-Saturday
+  // photos are in the week that was ending, not the one that starts at midnight.
+  const held = drafts(db).map(d => `${d.auto_week}:${JSON.parse(d.photo_ids).length}`).sort().join(' ');
+  eq(held, '2026-03-01:1 2026-03-08:1 2026-08-16:2 2026-08-23:1 2026-10-25:1 2026-11-01:1',
+     "🛑 each week's post holds the photos taken in that week, Eastern");
 }
 
 // Tally in the shape scripts/test.sh counts: "<n> passed, <m> failed".

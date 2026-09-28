@@ -7564,10 +7564,22 @@ async function buildCaption(env, opts) {
 //      concurrent uploads converge on the same list instead of clobbering.
 // 🛑 The sync is gated on status='draft': once Brian schedules or publishes the
 // post, later uploads must not mutate it.
+//
+// The week is the STORES' week, on the rule binDumpWeekOf documents: the Eastern
+// calendar date, then its Sunday. Taken from the UTC date, the week turned over at
+// 8 pm on Saturday (7 pm in winter), so a closing shift's photos joined next week's
+// post, while the photo library now files them under this week.
 function autoWeekOf(d) {                       // Sunday that starts the retail week
-  const u = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-  u.setUTCDate(u.getUTCDate() - u.getUTCDay());
-  return u.toISOString().slice(0, 10);
+  return binDumpWeekOf(d);
+}
+
+// The instant a day begins in the stores' time: midnight Eastern, which is 04:00 or
+// 05:00 UTC. Read off the same Eastern calendar as the week itself, so the two agree
+// on the two Sundays a year the clocks change as well.
+function etDayStartIso(dateStr) {
+  const t = new Date(dateStr + "T04:00:00Z");
+  const onDay = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(t) === dateStr;
+  return new Date(t.getTime() + (onDay ? 0 : 3600000)).toISOString();
 }
 
 
@@ -7690,9 +7702,10 @@ const BIN_TAG_PROMPT = [
 
 // The week a pallet belongs to, anchored to the STORE's day rather than UTC.
 // Every store is Eastern, and a pallet dumped at 9pm ET on a Saturday is already
-// 01:00 UTC on Sunday — so autoWeekOf() would file it under a week the store had
-// not started working yet, and the Saturday evening of a truck would land in the
+// 01:00 UTC on Sunday — so the week of its UTC date is one the store had not
+// started working yet, and the Saturday evening of a truck would land in the
 // next week's total. Derive the ET calendar date first, then take its Sunday.
+// Bin photos' auto-drafts use the same rule (autoWeekOf).
 function binDumpWeekOf(iso) {
   const et = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date(iso));
   return _weekStartOf(et);
@@ -8021,7 +8034,9 @@ async function ensureAutoDraftForPhotos(env, store, now) {
   }
 
   // Recompute the photo list from source, so a burst converges. Only while the
-  // draft is still a draft — a scheduled or published post is off-limits.
+  // draft is still a draft — a scheduled or published post is off-limits. The
+  // week's photos run from midnight Eastern on its Sunday to midnight Eastern on
+  // the next, the same week autoWeekOf named.
   await env.DB.prepare(
     `UPDATE marketing_drafts
         SET photo_ids = COALESCE((SELECT json_group_array(id) FROM marketing_photos
@@ -8029,7 +8044,7 @@ async function ensureAutoDraftForPhotos(env, store, now) {
                                      AND created_at >= ? AND created_at < ?), '[]'),
             updated_at = ?
       WHERE store = ? AND origin = 'photos' AND auto_week = ? AND status = 'draft'`
-  ).bind(store, week + "T00:00:00.000Z", weekEnd + "T00:00:00.000Z", nowIso, store, week).run();
+  ).bind(store, etDayStartIso(week), etDayStartIso(weekEnd), nowIso, store, week).run();
 
   return { store, week, cover_id: coverId, created: createdNow };
 }
