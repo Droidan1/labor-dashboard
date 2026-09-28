@@ -58,8 +58,10 @@ const ORAL   = 'FG BL CONSUMABLES - HBA - ORAL';
 // A day of real item sales, so ASP is an actual number rather than absent. Without this
 // every ASP is null and the scoring assertions below test nothing.
 {
-  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })
-    .format(new Date(Date.now() - 86400e3));
+  // Yesterday, by the calendar as the worker counts it (getETYesterday).
+  const d0 = new Date(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()) + 'T12:00:00Z');
+  d0.setUTCDate(d0.getUTCDate() - 1);
+  const day = d0.toISOString().slice(0, 10);
   // What WE book as the cost of a unit in each category — prod keeps this in KV under
   // category-costs:global, and the scorer reads it from there.
   env.SALES_SNAPSHOTS.put('category-costs:global', JSON.stringify({

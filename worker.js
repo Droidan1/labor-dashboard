@@ -171,6 +171,22 @@ function getStartOfDayET(dateStr) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(t) === dateStr ? t : t + 3600000;
 }
 
+// The YYYY-MM-DD date `n` calendar days after `dateStr` (n < 0 for earlier ones).
+function addDaysYmd(dateStr, n) {
+  const d = new Date(dateStr + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+// Yesterday in Eastern time: the calendar day before today's Eastern date. Not the Eastern
+// date of "now minus 24 hours": the clock-change Sundays are 23 and 25 hours long, so near
+// midnight that lands a day out, and so does every further 24-hour step back from it. That
+// skipped or repeated a date in 7- to 364-day windows for an hour at a time. Count earlier
+// days from this with addDaysYmd. scripts/test-et-yesterday.mjs checks it.
+function getETYesterday() {
+  return addDaysYmd(getETToday().dateStr, -1);
+}
+
 // The ET hour an order was rung, as `YYYY-MM-DDTHH`. This is the key for every
 // hourly rollup, chosen so it sorts lexically, carries its own date, and cannot be
 // confused with a plain `YYYY-MM-DD` by anything downstream.
@@ -11824,8 +11840,7 @@ function manifestUpgradeMap(map, headers) {
 let ASP_MEMO = { key: null, value: null };
 
 async function manifestAspVelocity(env, days = 28) {
-  const et = d => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(d);
-  const endDay = et(new Date(Date.now() - 24 * 3600 * 1000));
+  const endDay = getETYesterday();
   const memoKey = `asp-velocity:${days}:${endDay}`;
 
   if (ASP_MEMO.key === memoKey && ASP_MEMO.value) return ASP_MEMO.value;
@@ -11847,10 +11862,9 @@ async function manifestAspVelocity(env, days = 28) {
 }
 
 async function manifestAspVelocityCompute(env, days = 28) {
-  const et = d => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(d);
-  const end = new Date(Date.now() - 24 * 3600 * 1000);
+  const end = getETYesterday();
   const dates = [];
-  for (let i = 0; i < days; i++) dates.push(et(new Date(end.getTime() - i * 24 * 3600 * 1000)));
+  for (let i = 0; i < days; i++) dates.push(addDaysYmd(end, -i));
   const perL3 = {};
   for (const store of ALL_STORES) {
     const lc = store.toLowerCase();
@@ -21718,12 +21732,10 @@ export default {
       if (!isAdminReq && (!currentUser || currentUser.role !== 'superuser')) {
         return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
       }
-      // Default: last Mon–Sun
-      const endD   = new Date(Date.now() - 24 * 3600 * 1000);
-      const startD = new Date(endD.getTime() - 6 * 24 * 3600 * 1000);
-      const etFmt  = d => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d);
-      const startDate = url.searchParams.get("start") || etFmt(startD);
-      const endDate   = url.searchParams.get("end")   || etFmt(endD);
+      // Default: the seven days ending yesterday
+      const yesterday = getETYesterday();
+      const startDate = url.searchParams.get("start") || addDaysYmd(yesterday, -6);
+      const endDate   = url.searchParams.get("end")   || yesterday;
       try {
         const result = await dispatchWeeklyDigest(env, startDate, endDate);
         return new Response(JSON.stringify(result), { headers: corsJson });
@@ -26394,10 +26406,9 @@ export default {
 
         // Ends YESTERDAY: today's snapshot is not written until the nightly cron, and
         // counting a partial day as a whole one understates every rate on the page.
-        const et = d => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(d);
-        const endD = new Date(Date.now() - 24 * 3600 * 1000);
+        const endD = getETYesterday();
         const dates = [];
-        for (let i = 0; i < win; i++) dates.push(et(new Date(endD.getTime() - i * 24 * 3600 * 1000)));
+        for (let i = 0; i < win; i++) dates.push(addDaysYmd(endD, -i));
         const start = dates[dates.length - 1], end = dates[0];
 
         // Latest entered week per store. A store that has never counted is NOT zero bays —
@@ -26494,13 +26505,9 @@ export default {
         // The window ends YESTERDAY: today's snapshot is not written until the nightly
         // cron runs, and counting a partial day as a real one is exactly the bug that
         // made the repair console's first run report $19,233 of phantom recoverable.
-        const et = d => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(d);
-        const endD = new Date(Date.now() - 24 * 3600 * 1000);
+        const endD = getETYesterday();
         const dates = [];
-        for (let i = 0; i < win; i++) {
-          const d = new Date(endD.getTime() - i * 24 * 3600 * 1000);
-          dates.push(et(d));
-        }
+        for (let i = 0; i < win; i++) dates.push(addDaysYmd(endD, -i));
         const start = dates[dates.length - 1], end = dates[0];
 
         // Latest entered week per store, read once for every store.
@@ -28329,8 +28336,7 @@ export default {
     // "0 12 * * *" — 8 AM ET daily summary (12:00 UTC = EDT; 7 AM during EST).
     // Runs after the 7 AM auction feeder so the email includes yesterday's auction.
     if (event.cron === "0 12 * * *") {
-      const yesterday = new Date(Date.now() - 24 * 3600 * 1000);
-      const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(yesterday);
+      const date = getETYesterday();
       ctx.waitUntil(superviseCronJob(env, "daily-summary", dispatchDailySummary(env, date)));
       return;
     }
@@ -28341,10 +28347,8 @@ export default {
     // Summarises the Sun–Sat week that just ended.
     if (event.cron === "0 11 * * 1") {
       // endDate = yesterday (Saturday), startDate = 6 days before that (Sunday)
-      const endD = new Date(Date.now() - 24 * 3600 * 1000);
-      const startD = new Date(endD.getTime() - 6 * 24 * 3600 * 1000);
-      const etFmt = d => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d);
-      ctx.waitUntil(superviseCronJob(env, "weekly-digest", dispatchWeeklyDigest(env, etFmt(startD), etFmt(endD))));
+      const endDate = getETYesterday();
+      ctx.waitUntil(superviseCronJob(env, "weekly-digest", dispatchWeeklyDigest(env, addDaysYmd(endDate, -6), endDate)));
       return;
     }
 
