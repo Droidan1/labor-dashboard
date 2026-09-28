@@ -13,11 +13,14 @@
 // hour wrong for the rest of those Sundays once the clocks have changed.
 //
 // This RUNS both functions, sliced out of worker.js, against a ground truth computed here
-// independently: the first minute whose Eastern calendar date is that day.
+// independently: the first minute whose Eastern calendar date is that day. Then (§6) it
+// drives the real worker and reads the window off every Clover URL it builds, because a
+// right midnight is worth nothing to a caller that adds 24 hours to it.
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
+import { loadWorker, makeEnv, ctx as workerCtx, req } from './lib/worker-harness.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -146,6 +149,96 @@ for (const [at, date, want, why] of [
     if (!broken.length && at !== start(dayAfter(d))) broken.push(`${d} end`);
   }
   eq(broken.join(' ') || 'none', 'none', "🛑 every day of 2026–2027: the 24 hours tile the day, midnight to midnight, with no gap or overlap");
+}
+
+// 6. End to end: the window the REAL worker asks Clover for. worker.js runs unmodified
+//    through worker.fetch() with the clock pinned and Clover stubbed; every createdTime
+//    filter it sends is recorded. Expected windows come from truth(), not from the worker.
+{
+  const worker = await loadWorker(process.argv[2] || repo);
+  const ETP = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit' });
+  const label = t => { const p = Object.fromEntries(ETP.formatToParts(t).map(x => [x.type, x.value])); return `${p.year}-${p.month}-${p.day}T${p.hour}`; };
+  // [first minute labelled that Eastern hour, the minute after its last]; null if the hour
+  // never happens (2 am on spring-forward Sunday).
+  function hourTruth(d, h) {
+    const want = `${d}T${String(h).padStart(2, '0')}`;
+    let a = null, b = null;
+    for (let t = truth(d); t < truth(dayAfter(d)); t += 60000) if (label(t) === want) { if (a === null) a = t; b = t + 60000; }
+    return a === null ? null : [a, b];
+  }
+  const span = w => w ? `${iso(w[0])}–${iso(w[1])}` : 'empty';
+  const dayWin = d => span([truth(d), truth(dayAfter(d))]);
+
+  let seen = [];
+  globalThis.fetch = async (u) => {
+    const s = decodeURIComponent(String(u));
+    if (!s.startsWith('https://api.clover.com/')) throw new Error('unexpected fetch ' + s.slice(0, 80));
+    const a = s.match(/createdTime>=(\d+)/), b = s.match(/createdTime<(\d+)/);
+    if (a) seen.push(b ? span([+a[1], +b[1]]) : `${iso(+a[1])}–`);
+    return new Response(JSON.stringify({ elements: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  // One request at a pinned instant. Sessions are minted at that instant too, since the
+  // worker checks their expiry against the same clock.
+  async function ask(now, url, opts) {
+    NOW = now; globalThis.Date = FixedDate;
+    const { env } = makeEnv(repo);
+    env.BL1_MERCHANT_ID = 'M'; env.BL1_API_TOKEN = 'T';
+    seen = [];
+    const r = await worker.fetch(req(url, typeof opts === 'function' ? opts(env) : opts), env, workerCtx);
+    let body = {}; try { body = await r.json(); } catch {}
+    return { status: r.status, body, windows: [...new Set(seen)] };
+  }
+  const THU = '2026-11-05T15:00:00.000Z';
+
+  // sales-diag: [midnight, next midnight), both bounds sent. The same three lines compute
+  // the window in snapshot, items-snapshot, backfill-category-orders and hourly.
+  for (const d of ['2026-03-07', '2026-03-08', '2026-03-09', '2026-10-31', '2026-11-01', '2026-11-02']) {
+    const r = await ask(THU, `/?action=sales-diag&store=BL1&date=${d}`, env => ({ secret: env.SNAPSHOT_SECRET }));
+    eq(`${r.status} ${r.windows.join(' ')}`, `200 ${dayWin(d)}`, `sales-diag asks Clover for ${d} midnight to midnight`);
+  }
+
+  // items-hour: one Eastern hour, as etHourSlot labels it.
+  for (const [d, h] of [['2026-03-08', 1], ['2026-03-08', 2], ['2026-03-08', 3], ['2026-03-08', 14],
+                        ['2026-11-01', 0], ['2026-11-01', 1], ['2026-11-01', 2], ['2026-11-01', 14]]) {
+    const r = await ask(THU, `/?action=items-hour&store=BL1&date=${d}&hour=${h}`, { user: 'u-su' });
+    const want = hourTruth(d, h), got = r.windows.map(w => { const [a, b] = w.split('–'); return a === b ? 'empty' : w; });
+    eq(`${r.status} ${got.join(' ')}`, `200 ${span(want)}`, `items-hour asks for hour ${h} of ${d} and nothing else`);
+  }
+
+  // 🛑 bank-transactions WRITES the archive, and a banked day is permanent once Clover has
+  // forgotten it. It used to end each day 24 hours after it began: an hour of Monday banked
+  // into spring-forward Sunday, and fall-back Sunday's last hour banked nowhere. Dry run.
+  {
+    const r = await ask(THU, '/?action=bank-transactions&store=BL1&start=2026-10-31&end=2026-11-02', { user: 'u-su', method: 'POST' });
+    eq(`${r.status} ${r.body.dry} ${r.body.days}`, '200 true 3', 'bank-transactions over the fall-back weekend: a dry run of 3 days');
+    eq(r.windows.join(' '), ['2026-10-31', '2026-11-01', '2026-11-02'].map(dayWin).join(' '),
+       '🛑 bank-transactions banks each day midnight to midnight across the fall-back weekend');
+    const s = await ask(THU, '/?action=bank-transactions&store=BL1&start=2026-03-07&end=2026-03-09', { user: 'u-su', method: 'POST' });
+    eq(s.windows.join(' '), ['2026-03-07', '2026-03-08', '2026-03-09'].map(dayWin).join(' '),
+       '🛑 bank-transactions banks each day midnight to midnight across the spring-forward weekend');
+    // Its day list stepped 24 hours from the first midnight: across spring forward the steps
+    // land at 1 am, past the last day's midnight, so that day was dropped.
+    for (const [a, b, n] of [['2026-03-08', '2026-03-10', 3], ['2026-03-01', '2026-03-10', 10], ['2026-10-25', '2026-11-03', 10]]) {
+      const q = await ask(THU, `/?action=bank-transactions&store=BL1&start=${a}&end=${b}`, { user: 'u-su', method: 'POST' });
+      eq(q.body.days, n, `bank-transactions ${a}…${b} covers all ${n} days`);
+    }
+  }
+
+  // transactions: the same day, read live while Clover still holds it.
+  for (const [now, d] of [['2026-03-12T15:00:00.000Z', '2026-03-07'], ['2026-03-12T15:00:00.000Z', '2026-03-08'],
+                          ['2026-03-12T15:00:00.000Z', '2026-03-09'], [THU, '2026-10-31'], [THU, '2026-11-01'], [THU, '2026-11-02']]) {
+    const r = await ask(now, `/?action=transactions&store=BL1&date=${d}`, { user: 'u-su' });
+    eq(`${r.status} ${r.windows.join(' ')}`, `200 ${dayWin(d)}`, `transactions reads ${d} midnight to midnight`);
+  }
+
+  // items for today: from getETToday().startOfDay, all day long on the clock-change Sundays.
+  for (const now of ['2026-03-08T06:30:00.000Z', '2026-03-08T20:00:00.000Z', '2026-11-01T05:30:00.000Z', '2026-11-01T20:00:00.000Z']) {
+    const r = await ask(now, '/?action=items&store=BL1', { user: 'u-su' });
+    const d = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new RealDate(now));
+    eq(`${r.status} ${r.windows.join(' ')}`, `200 ${iso(truth(d))}–`, `today's items at ${now} are counted from ${d} midnight`);
+  }
+  globalThis.Date = RealDate;
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

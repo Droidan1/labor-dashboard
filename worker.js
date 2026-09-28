@@ -2245,8 +2245,12 @@ function assessArchiveCompleteness(built, salesRow) {
 async function bankTransactionsDay(store, env, dateStr, { dry = false, force = false } = {}) {
   const out = { store, date: dateStr, rows: 0, payments: 0, complete: 0, wrote: false, skipped: null, note: null };
 
+  // The day ends where the next one starts, not 24 hours on: the clock-change Sundays are
+  // 23 and 25 hours long, and "start + 24 h" banked an hour of Monday or lost Sunday's last.
   const start = getStartOfDayET(dateStr);
-  const end = start + 86400000;
+  const nextDay = new Date(dateStr + 'T12:00:00Z');
+  nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+  const end = getStartOfDayET(nextDay.toISOString().slice(0, 10));
   const [orders, refunds, credits, tenderMap, employeeMap] = await Promise.all([
     fetchTransactionOrders(store, env, start, end),
     fetchRefundElements(store, env, start, end),
@@ -27788,13 +27792,10 @@ export default {
       const dry = url.searchParams.get("dry") !== "0";
       const force = url.searchParams.get("force") === "1";
 
+      // By calendar date, not 24-hour steps from a midnight: across a clock change the steps
+      // land an hour off midnight, and the range lost its last day.
       const { dateStr: bankToday } = getETToday();
-      const days = [];
-      for (let d = getStartOfDayET(start); d <= getStartOfDayET(end); d += 86400000) {
-        const iso = new Date(d).toISOString().slice(0, 10);
-        if (iso > bankToday) break;
-        days.push(iso);
-      }
+      const days = enumDatesInclusive(start, end).filter(d => d <= bankToday);
       // Each store-day costs ~3 Clover subrequests (orders, refunds, credits);
       // the two label maps cache. Refuse an over-wide request rather than
       // truncating it silently — the caller can run it in slices.
@@ -27914,8 +27915,11 @@ export default {
         return new Response(JSON.stringify({ error: "Store keys not found" }), { status: 404, headers: corsJson });
       }
 
+      // Up to the next day's midnight, not 24 hours on (see bankTransactionsDay).
       const txnStart = getStartOfDayET(dateParam);
-      const txnEnd = txnStart + 86400000;
+      const txnNext = new Date(dateParam + 'T12:00:00Z');
+      txnNext.setUTCDate(txnNext.getUTCDate() + 1);
+      const txnEnd = getStartOfDayET(txnNext.toISOString().slice(0, 10));
       try {
         const [orders, refunds, credits, tenderMap, employeeMap] = await Promise.all([
           fetchTransactionOrders(store, env, txnStart, txnEnd),
