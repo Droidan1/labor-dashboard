@@ -1,3 +1,90 @@
+# The printed dashboard's Operations figures match the screen's (2026-09-28)
+
+**Request (Brian):** *"fix the print dashboard numbers too"*, after #302, whose report listed
+this as found and not fixed.
+
+## The bug
+
+Settings → Print dashboard prints one chain-wide **Operations · all stores** row (Avg cart,
+Items / order, Orders, Avg selling price) and an "N orders" line under Net sales.
+`buildPrintReport` makes them from `dashCardPrint`, which `renderCards` fills with each card's
+`daily_sales` figures:
+
+- **Orders:** `daily_sales.order_count` plus the live `aggregate.orderCount`. That counts every
+  order, including ones with no line item in either channel.
+- **Avg cart, Items / order:** the `daily_sales` averages, which are retail-weighted
+  (tasks/channel-reconciliation.md, Defect 1), averaged again across stores by order count.
+- **Avg selling price:** the retail-only `avgASP`, averaged across stores by ORDER count, not
+  by units.
+
+The screen dropped those figures on 2026-08-10. The hero's Matrix, which is the chain-wide
+version of the same four figures, is the combined retail + bin split: one population, averages
+from summed totals. So the paper and the screen give different numbers for the same range.
+
+## Plan
+
+- [x] 1. `buildPrintReport` takes the four figures, and the "N orders" line, from the chain-wide
+      split the hero's Matrix paints unfiltered, through one shared `dashChannelTotals()`. No
+      third calculation. A channel tapped on screen doesn't change the paper: its row is "all
+      stores", so it prints retail + bin.
+- [x] 2. `printDashboard` waits for that split before building. The Settings picker can switch
+      the range just for the print, and the stored days then load asynchronously.
+      `ensureDashChannel()` returns the in-flight load. If the split isn't there (a live fetch
+      still out, or the stored days failed), the row prints "—" rather than a number from the
+      other population.
+- [x] 3. `dashCardPrint` loses `cart / items / orders / asp`, which nothing else reads, and its
+      "can never drift" comment is made true.
+- [x] 4. The section reads "Operations · all stores · retail + bins". Auction isn't rung through
+      the tills, so Avg cart × Orders is retail + bins, not the Net sales printed above it.
+- [x] 5. `sw.js` `CACHE_NAME` v252 → v253, and the shell-cache fixture.
+- [x] 6. A browser check, scenario F in `scripts/browser-channel-matrix.mjs`:
+      - print Today: the row equals the hero's unfiltered Matrix, and the fixture's own
+        combined split;
+      - print This Week from Settings while the dashboard shows Today: the row is Sunday's
+        stored split plus today's live one, and the dashboard is back on Today afterwards;
+      - with the hero's BIN tapped, the paper still prints retail + bin.
+      It must fail on `main` and pass on the branch.
+      - *Changed while building:* the fixture's till `orderCount` now carries 2 orders a store
+        with no line item in either channel, as production's does, so an Orders figure taken
+        from the till says so. And the stub answers the print's `channel-range` 400 ms late,
+        so a print that doesn't wait for the stored days is caught.
+- [x] 7. Mutations, `npm test`, build.
+
+## Review
+
+**Done.** The printed Operations row and its "N orders" are now the hero Matrix's figures,
+retail + bin as one population, for whatever range is printed.
+
+**Verification:**
+- **`scripts/browser-channel-matrix.mjs`, light and dark:** 100 of 100 on the branch.
+  - Against `main` (b1e48ed) it fails 14, all of them scenario F. Printing Today there gave Avg
+    cart $77.77, Items 7.7, Orders 687, ASP $66.66: the fixture's deliberately absurd
+    `daily_sales` averages and the till's order count. The hero showed $12.31, 5.4, 677 and
+    $2.27. This Week printed $66.31, 6.6, 1,419 and $55.20, where its split is $14.23, 4.8,
+    1,399 and $2.98.
+- **Mutations**, one at a time in a separate worktree with its own `dist/`, each caught:
+
+  | Mutation | Failures (of 100) |
+  |---|---|
+  | `printDashboard` doesn't wait for the split | 4 |
+  | `ensureDashChannel` resolves at once while a load is in flight | 4 |
+  | the paper follows the channel tapped on the hero | 2 |
+  | `dashChannelTotals` leaves today's live half out | 26 |
+  | the paper's Orders taken from the tills' order count | 12 |
+
+- `npm test`: 6,528 assertions across 88 suites, all passing.
+- **Looked at, not just asserted:** the printed page with print media emulated, in both themes.
+  The row reads $12.31 × 677 orders, which is $8,333.87 against the $8,331.65 of retail + bins
+  printed above it, within the half cent an order that rounding Avg cart allows. The longer
+  section label fits on one line.
+
+**Found, not fixed:**
+- In the dark theme the printed page renders grey in print emulation. The print stylesheet's
+  `html, body { background: #fff !important }` (index.html:804) is in force, yet `body`'s
+  computed background stays the app's own: rgb(10, 15, 26) dark, rgb(244, 243, 238) light. I
+  didn't find what overrides it. Whether it reaches paper depends on the browser printing
+  backgrounds; not checked on paper. Untouched by this change.
+
 # The store cards' Cart / Items / Orders / ASP showed another day's BIN split (2026-09-28)
 
 **Request (Brian), with a screenshot of three store cards, BIN tapped on each:** *"Looks like the

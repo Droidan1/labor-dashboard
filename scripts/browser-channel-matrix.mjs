@@ -19,6 +19,9 @@
 // days. Each asserts the four tiles describe the payload the BIN tile describes, and that
 // CART × ORDERS comes back to the BIN dollars.
 //
+// F is Settings → Print dashboard. Its Operations row is the chain-wide twin of the hero's
+// Matrix, and it used to print the daily_sales averages instead (tasks/todo.md, same date).
+//
 // 🔑 THE NUMBERS NAME THEIR SOURCE. Friday's payload prices bin at $12 and Monday's at $2, and
 // every phase has its own order counts, so a wrong tile does not just fail, it says which
 // payload it came from.
@@ -81,6 +84,7 @@ const PHASES = {
   MON2: { binUnits: 726, binOrders: 101, price: 2,  retailNet: 630.41,  retailUnits: 192, retailOrders: 80,  mixed: 12 },
   MON3: { binUnits: 900, binOrders: 130, price: 2,  retailNet: 800.10,  retailUnits: 250, retailOrders: 95,  mixed: 15 },
 };
+const NO_ITEM_ORDERS = 2;
 const LIVE = {};                                   // phase → store → ?store= payload
 const CH = {};                                     // phase → store → channels
 for (const [ph, p] of Object.entries(PHASES)) {
@@ -88,7 +92,11 @@ for (const [ph, p] of Object.entries(PHASES)) {
   for (const st of STORES) {
     const ch = split(st, p);
     CH[ph][st] = ch;
-    const orders = ch.retail.orders + ch.bin.orders - ch.mixed;
+    // + NO_ITEM_ORDERS: orders with no line item in either channel, e.g. a custom-amount sale.
+    // The till's orderCount includes them and the split cannot (MEMORY.md: BL2 on 2026-08-09
+    // counted 302 orders against 301 in the two channels), so a figure built from orderCount
+    // says so here.
+    const orders = ch.retail.orders + ch.bin.orders - ch.mixed + NO_ITEM_ORDERS;
     LIVE[ph][st] = {
       elements: [], refundCents: 0, binNet: ch.bin.net, retailNet: ch.retail.net, channels: ch,
       // The item pipeline's split IS the dollar split (worker.js ?store= handler). The
@@ -123,7 +131,7 @@ for (const st of STORES) {
     PAST[st][d] = ch;
     const total = r2(ch.retail.net + ch.bin.net);
     HIST[st][d] = { week, budget: r2(5000 * SCALE[st]), total, retail: ch.retail.net, bin: ch.bin.net,
-                    auction: 0, laborPct: 10, orderCount: ch.retail.orders + ch.bin.orders - ch.mixed,
+                    auction: 0, laborPct: 10, orderCount: ch.retail.orders + ch.bin.orders - ch.mixed + NO_ITEM_ORDERS,
                     avgCart: 55.55, avgItems: 5.5, avgTxnSec: 60, avgASP: 44.44 };
   }
 }
@@ -162,7 +170,8 @@ function stub({ HIST, LIVE, PAST, dark, live, hold }) {
     localStorage.setItem('dashHeroExpanded', '1');       // the hero's Matrix is on screen
     localStorage.setItem('coachTipsDisabled', '1');      // no coach marks over the tiles
   } catch (e) {}
-  const api = window.__api = { live, hold: !!hold, failRange: false, held: [], log: [] };
+  const api = window.__api = { live, hold: !!hold, failRange: false, rangeDelay: 0, held: [], log: [], printed: 0 };
+  window.print = () => { api.printed++; };          // no dialog; count the calls
   const J = (x) => new Response(JSON.stringify(x), { status: 200, headers: { 'content-type': 'application/json' } });
   const sumRange = (st, from, to) => {
     const o = { retail: { net: 0, units: 0, orders: 0 }, bin: { net: 0, units: 0, orders: 0 },
@@ -186,6 +195,7 @@ function stub({ HIST, LIVE, PAST, dark, live, hold }) {
     }
     if (q.get('history_d1') === 'true') return J(HIST[st] || {});
     if (q.get('action') === 'channel-range') {
+      if (api.rangeDelay) await new Promise(r => setTimeout(r, api.rangeDelay));
       if (api.failRange) return new Response('{"error":"boom"}', { status: 500, headers: { 'content-type': 'application/json' } });
       return J(sumRange(st, q.get('from'), q.get('to')));
     }
@@ -269,6 +279,28 @@ const refresh = async (page) => {
   await page.waitForSelector(card('BL2'), { timeout: 8000 });   // D1 rows landed, cards rebuilt
 };
 const release = (page) => page.evaluate(() => { window.__api.hold = false; window.__api.held.splice(0).forEach(f => f()); });
+// The paper, as buildPrintReport left it in #print-report.
+const readPrint = (page) => page.evaluate(() => {
+  const r = document.getElementById('print-report');
+  const tables = r ? r.querySelectorAll('table') : [];
+  const ops = tables.length ? [...tables[tables.length - 1].querySelectorAll('tbody td')].map(td => td.textContent.trim()) : [];
+  const t = (q) => (r?.querySelector(q)?.textContent || '').trim();
+  return {
+    range: t('.pr-meta b'), cart: ops[0], items: ops[1], orders: ops[2], asp: ops[3],
+    kpiOrders: t('.pr-kpi .pr-ks').replace(/\s*orders$/, ''),
+    opsLabel: [...(r?.querySelectorAll('.pr-sec') || [])].map(e => e.textContent.trim()).find(x => /^Operations/.test(x)) || '',
+  };
+});
+// Settings → Print dashboard, by the real controls: the sidebar, the range picker, the button.
+async function printFrom(page, range) {
+  const before = await page.evaluate(() => window.__api.printed);
+  await page.click('#nav-settings');
+  await page.waitForSelector('#print-range-select option', { state: 'attached' });
+  await page.selectOption('#print-range-select', range);
+  await page.click('#page-settings button[onclick^="printDashboard"]');
+  await until(page, (n) => window.__api.printed > n, before, `window.print() after printing ${range}`, 15000);
+  return readPrint(page);
+}
 
 const b = await chromium.launch({ executablePath: CHROME });
 
@@ -429,6 +461,50 @@ for (const scheme of ['light', 'dark']) {
     ok(same(eh2, wantHE), `E: and the hero's — want ${fmt4(wantHE)}, got ${fmt4(eh2)}`);
     // The failed request is caught by the loader, not left as an uncaught rejection.
     ok(errs.length === 0, 'E: no page errors: ' + errs.join(' | '));
+    await ctx.close();
+  }
+
+  // ── F. Settings → Print dashboard: the paper's Operations row is the hero's Matrix ──
+  // The row is chain-wide, so its screen twin is the hero's unfiltered Matrix, not a card.
+  {
+    const { ctx, page, errs } = await openDash(b, { scheme, time: at(MON, '14:12'), live: 'MON2' });
+    await page.waitForSelector(card('BL2'), { timeout: 30000 });
+    await cardShows(page, 'BL2', money(CH.MON2.BL2.bin.net));
+    await until(page, () => (document.getElementById('mx-asp')?.textContent || '').startsWith('$'), null,
+                "the hero's ASP to fill");
+    const screen = await readHero(page);
+    const wantToday = cardWant(pick(sumStores(CH.MON2), null));
+    ok(same(screen, heroWant(pick(sumStores(CH.MON2), null))),
+       `F: the hero's Matrix, unfiltered, is the chain's retail + bin — ${fmt4(screen)}`);
+
+    const p1 = await printFrom(page, 'today');
+    ok(p1.range === 'Today', `F: the paper is for Today, got "${p1.range}"`);
+    ok(same(p1, wantToday), `F: the paper's Operations row is the combined split — want ${fmt4(wantToday)}, got ${fmt4(p1)}`);
+    ok(same(p1, screen), `F: …which is what the hero's Matrix shows — screen ${fmt4(screen)}, paper ${fmt4(p1)}`);
+    ok(p1.kpiOrders === wantToday.orders,
+       `F: "N orders" under Net sales is the same count, want ${wantToday.orders}, got ${p1.kpiOrders}`);
+    ok(/retail \+ bins/.test(p1.opsLabel), `F: the section says whose orders these are, got "${p1.opsLabel}"`);
+
+    // A range picked in Settings for the paper only. Its stored days are not loaded yet, and
+    // they take a moment, as they do over a network: a print that doesn't wait for them
+    // builds the page first.
+    await page.evaluate(() => { window.__api.rangeDelay = 400; });
+    const pastAll = sumStores(Object.fromEntries(STORES.map(st => [st, PAST[st][SUN]])));
+    const wantWeek = cardWant(pick(add(pastAll, sumStores(CH.MON2)), null));
+    const p2 = await printFrom(page, 'thisWeek');
+    ok(p2.range === 'This Week', `F: the paper is for This Week, got "${p2.range}"`);
+    ok(same(p2, wantWeek), `F: This Week's row is Sunday's stored split + today's live one — want ${fmt4(wantWeek)}, got ${fmt4(p2)}`);
+    ok(p2.kpiOrders === wantWeek.orders, `F: and so is its "N orders", want ${wantWeek.orders}, got ${p2.kpiOrders}`);
+    ok(await page.evaluate(() => (document.getElementById('dash-matrix-label')?.textContent || '').trim()) === 'Matrix · Today',
+       'F: printing This Week put the dashboard back on Today');
+
+    // A channel tapped on screen is a view, not the paper's subject.
+    await page.click('.nav-item[data-page="dashboard"]');
+    await page.waitForSelector('#cm-bin-col', { state: 'visible' });
+    await setHeroBin(page, true);
+    const p3 = await printFrom(page, 'today');
+    ok(same(p3, wantToday), `F: with BIN tapped on the hero, the paper still prints retail + bin — want ${fmt4(wantToday)}, got ${fmt4(p3)}`);
+    ok(errs.length === 0, 'F: no page errors: ' + errs.join(' | '));
     await ctx.close();
   }
 }
