@@ -9,6 +9,10 @@
 //
 // This RUNS the function, sliced out of worker.js, against a ground truth computed here
 // by search (§1–§2), then drives the real endpoint and reads back what it stored (§3).
+//
+// §4 does the same for the page's own conversion, etLocalToDate, which turns a sale's start
+// and end in the inventory sale scheduler into instants. It must read a time exactly as the
+// worker does, to the millisecond.
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -113,6 +117,49 @@ eq(convert('nope'), null, 'a malformed time is refused, not guessed');
          `200 ${want} scheduled ${want}`, `a post scheduled for ${w} ET is stored to publish at ${want}`);
     }
   } finally { globalThis.Date = RealDate; }
+}
+
+// 4. The inventory sale scheduler: etLocalToDate, sliced out of index.html. It used to bisect
+//    towards the minute and return the first instant it hit inside it, so 9:00 became
+//    9:00:08; and near New Year, where it weighed every month as 31 days, December 31 sorted
+//    after January 1 and the search ran the wrong way, up to two hours.
+{
+  const html = fs.readFileSync(path.join(tree, 'index.html'), 'utf8');
+  const a = html.indexOf('\n  function etLocalToDate('), b = a < 0 ? -1 : html.indexOf('\n  }\n', a);
+  ok(a >= 0 && b > a, 'found etLocalToDate in index.html');
+  const pageCtx = vm.createContext({ Date, Intl });
+  vm.runInContext(a >= 0 && b > a ? html.slice(a + 1, b + 4) : '', pageCtx);
+  const page = w => { const d = pageCtx.etLocalToDate?.(w); return d ? d.getTime() : null; };
+  const exact = t => t == null ? 'null' : new Date(t).toISOString();   // to the millisecond
+  for (const [w, want, why] of [
+    ['2026-08-20T09:00', '2026-08-20T13:00:00.000Z', 'an ordinary summer morning, to the second'],
+    ['2026-01-20T09:00', '2026-01-20T14:00:00.000Z', 'an ordinary winter morning'],
+    ['2026-03-08T02:30', '2026-03-08T07:30:00.000Z', 'spring forward: the missing 2:30 is 3:30 EDT, as the worker reads it'],
+    ['2026-03-08T03:00', '2026-03-08T07:00:00.000Z', 'spring forward: 3 am EDT'],
+    ['2026-11-01T01:30', '2026-11-01T05:30:00.000Z', 'fall back: the repeated 1:30 is the first, EDT, as the worker reads it'],
+    ['2026-11-01T02:00', '2026-11-01T07:00:00.000Z', 'fall back: 2 am EST'],
+    ['2026-12-31T23:45', '2027-01-01T04:45:00.000Z', "11:45 pm on New Year's Eve"],
+    ['2027-01-01T00:00', '2027-01-01T05:00:00.000Z', "midnight on New Year's Day"],
+  ]) {
+    eq(exact(page(w)), want, `the sale scheduler reads ${w} ET as ${want} (${why})`);
+    eq(exact(page(w)), exact(convert(w)), `...the same instant the worker (etWallClockToUtc) reads ${w} as`);
+  }
+  eq(page(''), null, 'an empty time is refused, not guessed');
+
+  // Against the same ground truth the worker is held to in §2, so the two agree on every hour.
+  const wrong = [];
+  for (let t = Date.parse('2026-01-01T00:00:00Z'); t < Date.parse('2028-01-01T00:00:00Z'); t += 3600000) {
+    const w = new Date(t).toISOString().slice(0, 16), at = instantsShowing(w), got = page(w);
+    if (at.length ? got !== at[0] : shows(got) !== hourLater(w)) wrong.push(`${w}→${exact(got)}`);
+  }
+  eq(wrong.slice(0, 4).join(' ') || 'none', 'none', '🛑 every hour of 2026–2027: the sale scheduler reads the exact instant New York shows as that time, as the worker does');
+  const newYear = [];
+  for (let t = Date.parse('2026-12-31T20:00:00Z'); t < Date.parse('2027-01-01T04:00:00Z'); t += 60000) {
+    const w = new Date(t).toISOString().slice(0, 16), got = page(w);
+    if (shows(got) !== w || got % 60000) newYear.push(w);
+  }
+  eq(newYear.length ? `${newYear.length} from ${newYear[0]}` : 'none', 'none',
+     "every minute from 8 pm on New Year's Eve to 4 am on New Year's Day is read as itself, on the minute");
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
