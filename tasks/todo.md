@@ -1,3 +1,168 @@
+# Midnight Eastern is exact on the clock-change Sundays (2026-09-28)
+
+**Request (Brian):** *"Fix getStartOfDayET for the DST Sundays too"*
+
+## The bug
+
+`getStartOfDayET(date)` starts every sales-day window. It is the lower bound of the Clover
+`createdTime` filter, and the next day's value is the upper bound. It read the UTC offset at
+**noon** on the day. But the clocks change at 2 am, so on the two Sundays a year they do,
+midnight still has Saturday's offset:
+
+- **Spring forward (2026-03-08):** it returned 04:00Z, not 05:00Z. Saturday 11 pm–midnight EST
+  counted in Sunday, making Saturday a 23-hour day and Sunday 24.
+- **Fall back (2026-11-01):** it returned 05:00Z, not 04:00Z. Sunday 12–1 am EDT counted in
+  Saturday, making Saturday 25 hours and Sunday 24.
+
+`getETToday().startOfDay` read the offset at the current instant, which is the same hour wrong
+for the rest of those Sundays after 2 am.
+
+Checked against a minute-by-minute ground truth over 2025–2028: it is wrong on exactly the eight
+clock-change Sundays and right on every other day.
+
+`?action=items-hour` builds an hour as midnight plus H hours. With a correct midnight, that is an
+hour off from 2 am on those Sundays: spring has no 2 am, and fall has two 1 ams. The old wrong
+midnight happened to cancel that out after 2 am, so fixing only `getStartOfDayET` would move this
+error rather than remove it.
+
+## Plan
+
+- [ ] 1. `getStartOfDayET`: midnight is 04:00Z or 05:00Z, whichever the ET calendar reads as that
+      date. `getETToday().startOfDay` and #297's `etDayStartIso` call it, so there is one rule.
+- [ ] 2. `etHourWindow(date, hour)` returns the instants `etHourSlot` labels as that hour.
+      `items-hour` uses it.
+- [ ] 3. Tests:
+      - `test-et-day-start.mjs`:
+        - every day of 2025–2028 against the ground truth;
+        - day lengths;
+        - `getETToday` under a fixed clock;
+        - the hour windows tile every day of 2026–2027;
+      - one real endpoint's Clover window on a clock-change Sunday.
+- [ ] 4. Blast radius:
+      - every caller, and whether it only reads or writes stored history;
+      - a read-only D1 check of stored history in the affected hours;
+      - **no date is re-pulled** (Destructive Operations rule 1).
+- [ ] 5. Verify:
+      - `npm test`;
+      - mutations: the old noon rule, the offset-at-now rule, and the old hour arithmetic.
+- [ ] 6. Commit onto PR #297, which needs the same worker deploy; retitle it and report.
+
+# The photo library's retail week runs on Eastern time (2026-09-28)
+
+**Request (Brian):** *"Fix ctCurrentWeekNo with etTodayStr too"*. After I showed him that
+three things decide a photo's week, and that fixing one alone splits them, he chose *"All three
+to ET"*.
+
+## The bug
+
+A bin photo's retail week (Sunday to Saturday) was taken from the UTC date in three places. So
+from 8 pm Saturday EDT (7 pm EST), the week had already turned over:
+
+| Where | What it decides |
+|---|---|
+| `ctCurrentWeekNo()` (frontend) | which folder the photo library opens as "this week" |
+| `ctPhotoWeekOf()` (frontend) | which folder a photo is filed under (its `created_at` is a UTC instant) |
+| `autoWeekOf()` and its photo window (worker) | which week's automatic bin-photo post a photo joins |
+
+All three agreed, so nothing looked broken; the week just ended four or five hours early. Moving
+only the first would split them: a late-Saturday upload would land in next week's folder and
+post, not the open "this week" one.
+
+The worker already has the right rule. `binDumpWeekOf` takes the ET calendar date, then its
+Sunday, for exactly this reason (a pallet at 9 pm Saturday is 01:00 UTC Sunday).
+
+## Plan
+
+- [x] 1. **Worker:**
+      - `autoWeekOf` takes the ET date, then its Sunday, as `binDumpWeekOf` does;
+      - the draft's photo window runs from midnight ET that Sunday to midnight ET the next
+        Sunday, read off the same ET calendar so it is exact on clock-change Sundays;
+      - the comment on `binDumpWeekOf` that names `autoWeekOf` as the UTC example is reworded.
+- [x] 2. **Frontend:**
+      - `etDayOf(t)` beside `etTodayStr()`;
+      - `ctCurrentWeekNo` uses `etTodayStr()`;
+      - `ctPhotoWeekOf` files a photo by the ET date of its `created_at`.
+- [x] 3. **Tests that run the real code:**
+      - `test-bin-photo-autodraft.mjs` uploads at late Saturday, early Sunday, and both
+        clock-change weekends, then reads each draft's week and photo list;
+      - a new `test-ct-photo-weeks.mjs` runs `ctPhotoGroups()` from `index.html` under a fixed
+        clock: which folder is current, and where each photo lands.
+- [x] 4. `CACHE_NAME` v248 → v249, and the shell-cache fixture.
+- [x] 5. Verify:
+      - `npm test`;
+      - the old worker and the old frontend each fail the new checks, each in its own copy of
+        the tree;
+      - the Content Tracker browser checks, if any cover the library (none do; see the review).
+- [x] 6. Commit, push, draft PR, report, with the worker deploy ask.
+
+**Deploy:** Brian runs `npx wrangler deploy` for the worker. Neither side depends on the other, so
+order does not matter for correctness. Until both are out, only Saturday 8 pm to midnight can
+disagree. The deploy changes which draft a late-Saturday photo joins, including on the current
+week's next re-sync. That effect is spelled out in the PR.
+
+## Review
+
+**Done.** The photo library opens on this week, files each photo, and the worker files the
+week's automatic post, all by the Eastern calendar.
+
+- **Worker:**
+  - `autoWeekOf` now calls `binDumpWeekOf`, so the rule lives in one place;
+  - the draft's photo window runs from midnight ET on its Sunday to midnight ET on the next,
+    via `etDayStartIso`.
+- **Frontend:**
+  - `ctCurrentWeekNo` uses `etTodayStr()`;
+  - `ctPhotoWeekOf` files a photo by `etDayOf(created_at)`.
+- `CACHE_NAME` goes from v248 to v249.
+
+**Verification:**
+- `npm test`: 6,384 assertions across 85 suites (6,360 before), all passing.
+  - `test-bin-photo-autodraft.mjs` §19: 8 new checks. It uploads at Saturday 8:30 pm and
+    11:59 pm, midnight, and the Saturday and Sunday of both clock-change weekends, then reads
+    each draft's week and photo list.
+  - The new `test-ct-photo-weeks.mjs`: 16 checks. It runs the page's own functions under a
+    fixed clock and reads the folders `ctPhotoGroups()` returns: which is current, and which
+    photos each holds.
+- **Mutations**, each in its own scratch copy. All are caught.
+  - **Worker:**
+    - the old worker: 5 failures;
+    - `autoWeekOf` left on UTC: 5;
+    - the window left on UTC: 1. Late-Saturday photos would sit in no post for their week.
+    - boundaries from the day's noon offset, as `getStartOfDayET` does: 1. Both clock-change
+      weeks come out wrong.
+  - **Frontend:**
+    - the old `index.html`: 6 behaviour failures;
+    - only `ctCurrentWeekNo` moved: 4. This is the half-fix I warned about: a late-Saturday
+      photo lands in the folder after the open one.
+    - only `ctPhotoWeekOf` moved: 4.
+- **Browser:** no browser check covers the photo library. The app still boots and runs its
+  exports: `browser-export-dates.mjs` 8 of 8.
+- **Production data, read only** (three SELECTs; D1 reported 0 changes):
+  - no bin photo has ever been taken on a Saturday after 7 or 8 pm ET: 0 of all 1,604 since
+    9 July;
+  - there was none last Saturday night;
+  - last week's five automatic drafts are published, and this week has none yet.
+
+  So the worker deploy changes nothing already stored. It changes only where a future
+  late-Saturday photo goes.
+
+**Deploy:**
+- Frontend: Pages, on merge.
+- Worker: `npx wrangler deploy` from `main` at the merge commit.
+- Neither side depends on the other, so order does not matter for correctness. Until both are
+  out, only Saturday 8 pm to midnight can disagree.
+
+**Found, not fixed:**
+- **`getStartOfDayET` is an hour off on the two clock-change Sundays a year** (`worker.js:168`).
+  - It reads the UTC offset at noon on the day, but the clocks change at 2 am, so that day's
+    midnight still has Saturday's offset.
+  - Every sales-day window built on it (28 calls on 25 lines, e.g. `worker.js:2881`, `4806`,
+    `18778`) shifts one hour between Saturday and Sunday on those two dates. That hour is
+    11 pm–1 am, when stores are closed.
+  - The hourly endpoint (`worker.js:27433`) adds `hour × 3600000` to that midnight, so its hour
+    slots are also shifted across the change itself.
+  - Not changed here: sales-day windows are the data the Destructive Operations rules protect,
+    and it deserves its own look.
+
 # Export filenames take the Eastern date, not UTC (2026-09-28)
 
 **Request (Brian):** *"Fix the UTC filename dates with etTodayStr"*

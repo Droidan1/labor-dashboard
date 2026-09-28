@@ -8680,6 +8680,7 @@
   let dashCardChLoadKey = {};        // code → range key in flight, or null
   let dashCardBlended = {};          // code → { cart, items, orders, asp }
   function etTodayStr() { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()); }
+  function etDayOf(t) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(t)); }   // the stores' date of an instant
   let allWeeks       = [];
   let liveDataLoading = false;
   let historicalDataLoading = false;
@@ -19801,13 +19802,18 @@
     } catch (_) { ctFlowWeeks = []; }
     return ctFlowWeeks;
   }
+  // A photo's week, and the week the library opens on, are the STORES' weeks: the
+  // Eastern date, as the worker files the week's post (autoWeekOf). created_at is a UTC
+  // instant, and its first ten characters are the UTC date, which from 8 pm on a
+  // Saturday is already Sunday: the week used to turn over four or five hours early.
   function ctPhotoWeekOf(iso) {
-    const day = String(iso || '').slice(0, 10);
-    if (!day || !ctFlowWeeks) return null;
+    const t = iso ? Date.parse(iso) : NaN;
+    if (Number.isNaN(t) || !ctFlowWeeks) return null;
+    const day = etDayOf(t);
     return ctFlowWeeks.find(w => w.week_start <= day && day <= w.week_end) || null;
   }
   function ctCurrentWeekNo() {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = etTodayStr();
     const w = (ctFlowWeeks || []).find(x => x.week_start <= today && today <= x.week_end);
     return w ? w.retail_week : null;
   }

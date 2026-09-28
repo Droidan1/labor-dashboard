@@ -155,22 +155,20 @@ function wrsAssembleFromBundles(scopedStores, bundles) {
 
 // Get today's date and start-of-day timestamp in Eastern Time (all stores are ET)
 function getETToday() {
-  const now = new Date();
-  const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(now);
-  const tzParts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', timeZoneName: 'short' }).formatToParts(now);
-  const isDST = tzParts.find(p => p.type === 'timeZoneName')?.value === 'EDT';
-  const utcOffsetHours = isDST ? 4 : 5;
-  const startOfDay = new Date(dateStr + 'T00:00:00Z').getTime() + (utcOffsetHours * 3600000);
-  return { dateStr, startOfDay };
+  const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+  return { dateStr, startOfDay: getStartOfDayET(dateStr) };
 }
 
-// Get the Unix-ms timestamp for midnight ET on an arbitrary YYYY-MM-DD string
+// Get the Unix-ms timestamp for midnight ET on an arbitrary YYYY-MM-DD string.
+// Midnight Eastern is 04:00 UTC (EDT) or 05:00 UTC (EST), and which one is read off the
+// Eastern calendar AT that instant. The offset at any other time of day will not do: the
+// clocks change at 2 am, so on the two Sundays a year they do, midnight still has
+// Saturday's offset. Reading it at noon here (and at the current instant in getETToday)
+// put those Sundays' midnight an hour off, and moved an hour of orders between the
+// Saturday and the Sunday. scripts/test-et-day-start.mjs checks every day of 2025–2028.
 function getStartOfDayET(dateStr) {
-  const noon = new Date(dateStr + 'T16:00:00Z'); // guaranteed to be "that date" in ET
-  const tzParts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', timeZoneName: 'short' }).formatToParts(noon);
-  const isDST = tzParts.find(p => p.type === 'timeZoneName')?.value === 'EDT';
-  const utcOffsetHours = isDST ? 4 : 5;
-  return new Date(dateStr + 'T00:00:00Z').getTime() + (utcOffsetHours * 3600000);
+  const t = new Date(dateStr + 'T04:00:00Z').getTime();
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(t) === dateStr ? t : t + 3600000;
 }
 
 // The ET hour an order was rung, as `YYYY-MM-DDTHH`. This is the key for every
@@ -191,6 +189,23 @@ function etHourSlot(ms) {
   let h = parseInt(p.hour, 10);
   if (!Number.isFinite(h)) h = 0;
   return `${p.year}-${p.month}-${p.day}T${String(h % 24).padStart(2, '0')}`;
+}
+
+// The instants etHourSlot labels as one Eastern hour of a day: [since, until) in Unix ms.
+// Midnight plus `hour` hours is that hour on every day but the two clock-change Sundays:
+// in spring there is no 2 am (the window is empty), and in fall 1 am happens twice (the
+// window is two hours). Offsets are whole hours, so stepping through the UTC hours from
+// midnight finds both edges exactly.
+function etHourWindow(dateStr, hour) {
+  const want = `${dateStr}T${String(hour).padStart(2, '0')}`;
+  const day0 = getStartOfDayET(dateStr);
+  let since = null;
+  for (let t = day0; t <= day0 + 26 * 3600000; t += 3600000) {
+    const slot = etHourSlot(t);
+    if (since === null && slot >= want) since = t;
+    if (slot > want) return [since, t];
+  }
+  return [since, since];
 }
 
 // The instant a sale actually happened, preferring the register's own clock.
@@ -7564,10 +7579,19 @@ async function buildCaption(env, opts) {
 //      concurrent uploads converge on the same list instead of clobbering.
 // 🛑 The sync is gated on status='draft': once Brian schedules or publishes the
 // post, later uploads must not mutate it.
+//
+// The week is the STORES' week, on the rule binDumpWeekOf documents: the Eastern
+// calendar date, then its Sunday. Taken from the UTC date, the week turned over at
+// 8 pm on Saturday (7 pm in winter), so a closing shift's photos joined next week's
+// post, while the photo library now files them under this week.
 function autoWeekOf(d) {                       // Sunday that starts the retail week
-  const u = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-  u.setUTCDate(u.getUTCDate() - u.getUTCDay());
-  return u.toISOString().slice(0, 10);
+  return binDumpWeekOf(d);
+}
+
+// The instant a day begins in the stores' time, as an ISO string to compare with
+// created_at: midnight Eastern, the same instant every sales day starts at.
+function etDayStartIso(dateStr) {
+  return new Date(getStartOfDayET(dateStr)).toISOString();
 }
 
 
@@ -7690,9 +7714,10 @@ const BIN_TAG_PROMPT = [
 
 // The week a pallet belongs to, anchored to the STORE's day rather than UTC.
 // Every store is Eastern, and a pallet dumped at 9pm ET on a Saturday is already
-// 01:00 UTC on Sunday — so autoWeekOf() would file it under a week the store had
-// not started working yet, and the Saturday evening of a truck would land in the
+// 01:00 UTC on Sunday — so the week of its UTC date is one the store had not
+// started working yet, and the Saturday evening of a truck would land in the
 // next week's total. Derive the ET calendar date first, then take its Sunday.
+// Bin photos' auto-drafts use the same rule (autoWeekOf).
 function binDumpWeekOf(iso) {
   const et = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date(iso));
   return _weekStartOf(et);
@@ -8021,7 +8046,9 @@ async function ensureAutoDraftForPhotos(env, store, now) {
   }
 
   // Recompute the photo list from source, so a burst converges. Only while the
-  // draft is still a draft — a scheduled or published post is off-limits.
+  // draft is still a draft — a scheduled or published post is off-limits. The
+  // week's photos run from midnight Eastern on its Sunday to midnight Eastern on
+  // the next, the same week autoWeekOf named.
   await env.DB.prepare(
     `UPDATE marketing_drafts
         SET photo_ids = COALESCE((SELECT json_group_array(id) FROM marketing_photos
@@ -8029,7 +8056,7 @@ async function ensureAutoDraftForPhotos(env, store, now) {
                                      AND created_at >= ? AND created_at < ?), '[]'),
             updated_at = ?
       WHERE store = ? AND origin = 'photos' AND auto_week = ? AND status = 'draft'`
-  ).bind(store, week + "T00:00:00.000Z", weekEnd + "T00:00:00.000Z", nowIso, store, week).run();
+  ).bind(store, etDayStartIso(week), etDayStartIso(weekEnd), nowIso, store, week).run();
 
   return { store, week, cover_id: coverId, created: createdNow };
 }
@@ -27415,8 +27442,7 @@ export default {
         return new Response(JSON.stringify({ error: "Invalid hour param (must be 0-23)" }), { status: 400, headers: corsJson });
       }
 
-      const sinceTs = getStartOfDayET(dateParam) + hourParam * 3600000;
-      const untilTs = sinceTs + 3600000;
+      const [sinceTs, untilTs] = etHourWindow(dateParam, hourParam);
 
       try {
         const [elements, refundElements, manualRefundElements] = await Promise.all([
