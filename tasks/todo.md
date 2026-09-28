@@ -1,3 +1,84 @@
+# Scheduled posts go out at the Eastern time picked, on the clock-change Sundays too (2026-09-28)
+
+**Request (Brian):** *"Fix etWallClockToUtc for the DST Sundays too"*
+
+## The bug
+
+`etWallClockToUtc(wall, tz)` turns the time picked in the Content Tracker's "Schedule post" box
+(`?action=draft-schedule`) into the instant the cron publishes at. It reads New York's UTC
+offset at the wall time *taken as UTC*, which is 4–5 hours before the real instant. On the two
+Sundays a year the clocks change, that reading lands before the change for the first hours
+after it.
+
+Checked every half hour of 2025–2028 against a minute-by-minute search: it is wrong on exactly
+the eight clock-change Sundays.
+- **Spring forward:** a post set for 3:00–6:59 am goes out an hour late.
+- **Fall back:** a post set for 2:00–5:59 am goes out an hour early.
+
+The two times that aren't a single instant are already handled the conventional way, and stay so:
+- **Spring's 2:00–2:59 doesn't exist.** It becomes 3:00–3:59 EDT, as JavaScript's own `Date`
+  and Temporal's default do.
+- **Fall's 1:00–1:59 happens twice.** It takes the first, EDT.
+
+## Plan
+
+- [x] 1. `etWallClockToUtc`: try the offsets a day either side of the wall time, and keep the
+      instant that New York actually reads as that wall time:
+      - the earlier offset first, so the repeated 1 am takes EDT;
+      - when neither reads as it (spring's missing 2 am), keep the earlier offset, which moves
+        it forward an hour, as today.
+      - The comment's false claim, "DST-safe: the tz offset is computed at that actual date", is
+        replaced by what the function actually does.
+- [x] 2. Tests:
+      - every half hour of 2025–2028 against the minute-by-minute search;
+      - named cases for the missing and repeated hours;
+      - end to end: `POST ?action=draft-schedule` through `worker.fetch()`, reading back
+        `scheduled_at`.
+      - *Changed while building:* the suite sweeps every **hour** (the clocks only change on the
+        hour), and the ground truth reads New York's clock at every quarter-hour instant once.
+        The half-hourly minute search took 17 s; this takes 5 s.
+- [x] 3. Mutations:
+      - the old single reading;
+      - a naive second pass that moves the missing 2 am backwards;
+      - preferring the later of the two 1 ams.
+- [x] 4. Read-only D1 check (SELECT only) for posts already scheduled in the affected hours, and
+      for any published in them on past clock-change Sundays.
+- [x] 5. Verify with `npm test`. Re-read #298's state, then do a guarded push onto it if it is still open: it
+      is worker-only DST work needing the same deploy. Update its description and report.
+      *#298 was merged at 14:14, before this commit existed, and the re-read caught it before
+      any push. This ships as its own PR, rebased onto the merged `main`.*
+
+## Review
+
+**Done.** A scheduled post goes out at the Eastern time picked, on every day including the
+clock-change Sundays.
+- **The fix:** `etWallClockToUtc` tries the offsets in force a day either side of the wall time,
+  and keeps the instant New York actually shows as that time.
+- **The missing and repeated hours** resolve as JavaScript's own `Date` does, and as the
+  function already did: spring's missing 2:30 becomes 3:30 EDT, and fall's repeated 1:30 is
+  the first one, EDT. I checked `Date` under `TZ=America/New_York` to confirm this.
+
+**Verification:**
+- `npm test`: 6,470 assertions across 87 suites (6,448 before), all passing.
+- **The new `test-et-wall-clock.mjs`:** 22 checks.
+  - 12 named times across both 2026 clock-change Sundays, plus a malformed time.
+  - Every hour of 2025–2028 against the ground truth.
+  - The ground truth itself finds 2 am missing on exactly the four spring-forward Sundays,
+    and 1 am repeated on exactly the four fall-back ones.
+  - `POST ?action=draft-schedule` through the real worker, reading back the `scheduled_at` it
+    stored for five times.
+- **Before the fix:** 72 of the 70,128 half hours of 2025–2028 were wrong, all on the eight
+  clock-change Sundays.
+- **Mutations,** each in its own scratch copy. All are caught:
+  - the old single reading: 7 failures;
+  - a naive second pass, which moves the missing 2 am back to 1:30 EST: 3;
+  - preferring the later 1 am: 3;
+  - resolving the missing 2 am with the later offset: 3.
+- **Production D1, read only** (three SELECTs; 0 rows written):
+  - no post has ever been scheduled or published on a clock-change Sunday;
+  - none is scheduled now;
+  - the only 7 ever scheduled all went out on 21 August 2026. So nothing stored changes.
+
 # Midnight Eastern is exact on the clock-change Sundays (2026-09-28)
 
 **Request (Brian):** *"Fix getStartOfDayET for the DST Sundays too"*
