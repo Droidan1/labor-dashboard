@@ -8673,6 +8673,7 @@
   let dashChannelData = null;        // { key, past: chZero()-shaped sums of the stored days }
   let dashChannelLoading = false;
   let dashChannelLoadKey = null;     // range key currently in flight, or null
+  let dashChannelLoadP = Promise.resolve();   // that load, for a caller that waits (the print)
   let _dashMxBlended = null;         // saved "All" matrix tile strings, to restore
   // Per-store-card channel filter (same idea, keyed by store code).
   let dashCardCh = {};               // code → 'retail' | 'bin' | null
@@ -10730,12 +10731,27 @@
   // on tap AND on every dashboard render, so an active filter survives a range
   // change by refetching instead of sitting on the previous range's numbers.
   // Renders are frequent, so the in-flight key is what stops one tap turning
-  // into a fetch per render.
+  // into a fetch per render. Returns the load, for a caller that has to wait
+  // for it: the print, whose range may have been switched a moment ago.
   function ensureDashChannel() {
     const key = chRangeKey();
-    if (dashChannelData && dashChannelData.key === key) { applyDashChannel(); return; }
-    if (dashChannelLoadKey === key) { applyDashChannel(); return; }   // already in flight
-    loadDashChannel();
+    if (dashChannelData && dashChannelData.key === key) { applyDashChannel(); return Promise.resolve(); }
+    if (dashChannelLoadKey === key) { applyDashChannel(); return dashChannelLoadP; }   // already in flight
+    return (dashChannelLoadP = loadDashChannel());
+  }
+
+  // The whole chain's split for the selected range: the stored days plus every
+  // store's live payload. STORES is already scoped to what this user may see,
+  // so it covers exactly the stores whose dollars are in the strip above the
+  // Matrix. null while a half is still loading or failed. The hero's Matrix and
+  // the printed Operations row both read this, so they cannot disagree.
+  function dashChannelTotals() {
+    const past = (dashChannelData && dashChannelData.key === chRangeKey()) ? dashChannelData.past : null;
+    const lives = STORES.map(s => chLiveOf(s.split('/')[0]));
+    if (!past || lives.includes(undefined)) return null;
+    const t = chAdd(chZero(), past);
+    for (const l of lives) chAdd(t, l);
+    return t;
   }
 
   function applyDashChannel() {
@@ -10763,17 +10779,8 @@
     };
     if (lbl) lbl.textContent = 'Matrix · ' + period +
       (dashChannel ? ' · ' + (dashChannel === 'retail' ? 'Retail' : 'BIN') : '');
-    // Stored days + each store's live payload. STORES is already scoped to what
-    // this user may see, so the hero covers exactly the stores whose dollars are
-    // in the strip above it.
-    const past = (dashChannelData && dashChannelData.key === chRangeKey()) ? dashChannelData.past : null;
-    const lives = STORES.map(s => chLiveOf(s.split('/')[0]));
-    const livePending = lives.includes(undefined);
-    let t = null;
-    if (past && !livePending) {
-      t = chAdd(chZero(), past);
-      for (const l of lives) chAdd(t, l);
-    }
+    const t = dashChannelTotals();
+    const livePending = STORES.some(s => chLiveOf(s.split('/')[0]) === undefined);
     // No selection → combined (retail + bin), which is what the four tiles
     // describe by default now.
     const d = t ? chDerive(dashChannel ? t[dashChannel] : chCombined(t)) : null;
@@ -10957,7 +10964,8 @@
   // Builds a static one-page Letter report into #print-report from dashCardPrint
   // (stashed by renderCards) so the paper can never drift from the screen. The
   // Weekly/Monthly blocks are week/month-anchored rather than range-derived, so
-  // those two are read as already-formatted strings out of the live DOM.
+  // those two are read as already-formatted strings out of the live DOM. The
+  // Operations row is the hero Matrix's split, read through dashChannelTotals().
   let dashCardPrint = {};
   const prTxt = (id) => { const e = el(id); const t = e ? (e.textContent || '').trim() : ''; return t && t !== '—' ? t : '—'; };
   function prSigned(n) {
@@ -10987,16 +10995,22 @@
 
     const sum = (f) => rows.reduce((a, r) => a + (Number(r[f]) || 0), 0);
     const tNet = sum('net'), tBud = sum('budget'), tRetail = sum('retail'), tBin = sum('bin'),
-          tAuction = sum('auction'), tLY = sum('lyNet'), tOrders = sum('orders');
+          tAuction = sum('auction'), tLY = sum('lyNet');
     const tDelta = tNet - tBud;
     const tPace = tBud > 0 ? Math.round(tNet / tBud * 100) : null;
     // Chain-wide YoY on the same like-for-like basis as the rows: Retail + Bins.
     const tLYCmp = tRetail + tBin;
     const tLYPct = (tLY > 0 && tLYCmp > 0) ? (tLYCmp - tLY) / tLY * 100 : null;
     const reporting = rows.filter(r => r.hasData).length;
-    // Order-weighted so the ops figures match the blended totals.
-    const wAvg = (f) => { let n = 0, d = 0; for (const r of rows) { if (r[f] != null && r.orders > 0) { n += r[f] * r.orders; d += r.orders; } } return d > 0 ? n / d : null; };
-    const cart = wAvg('cart'), items = wAvg('items'), asp = wAvg('asp');
+    // Operations = the hero's Matrix with no channel picked: retail + bin as one
+    // population, averages from summed totals. These used to be the daily_sales
+    // averages (retail-only cart, items and ASP, every order counted, ASP
+    // averaged by orders), which the screen stopped showing on 2026-08-10, so the
+    // paper and the Matrix disagreed. Not loaded (a live fetch still out, the
+    // stored days failed) → "—", not a figure from the other population.
+    const t = dashChannelTotals();
+    const ops = t ? chDerive(chCombined(t)) : null;
+    const tOrders = ops ? ops.orders : 0;
     const pctOf = (v) => tNet > 0 ? (v / tNet * 100) : 0;
 
     const stamp = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'medium', timeStyle: 'short' });
@@ -11041,13 +11055,13 @@
         ${rows.map(r => `<tr><td class="pr-l">${escapeHtml(r.name)}</td>${cell(fmtDollar(r.net))}${cell(r.budget > 0 ? fmtDollar(r.budget) : '—')}${cell(r.budget > 0 ? prSigned(r.delta) : '—')}${cell(r.pct != null ? r.pct + '%' : '—')}${cell(fmtDollar(r.retail))}${cell(fmtDollar(r.bin))}${cell(r.auction ? fmtDollar(r.auction) : '—')}${cell(r.lyNet > 0 ? fmtDollar(r.lyNet) : '—')}${cell(prPct(r.lyPct))}</tr>`).join('')}
         <tr class="pr-tot"><td class="pr-l">All stores</td>${cell(fmtDollar(tNet))}${cell(tBud > 0 ? fmtDollar(tBud) : '—')}${cell(tBud > 0 ? prSigned(tDelta) : '—')}${cell(tPace != null ? tPace + '%' : '—')}${cell(fmtDollar(tRetail))}${cell(fmtDollar(tBin))}${cell(tAuction ? fmtDollar(tAuction) : '—')}${cell(tLY > 0 ? fmtDollar(tLY) : '—')}${cell(prPct(tLYPct))}</tr>
       </tbody></table>
-      <div class="pr-sec">Operations · all stores</div>
+      <div class="pr-sec">Operations · all stores · retail + bins</div>
       <table><thead><tr><th class="pr-l">Avg cart</th><th class="pr-l">Items / order</th><th class="pr-l">Orders</th><th class="pr-l">Avg selling price</th></tr></thead>
       <tbody><tr>
-        <td class="pr-l pr-num">${cart != null ? '$' + cart.toFixed(2) : '—'}</td>
-        <td class="pr-l pr-num">${items != null ? items.toFixed(1) : '—'}</td>
-        <td class="pr-l pr-num">${tOrders ? tOrders.toLocaleString('en-US') : '—'}</td>
-        <td class="pr-l pr-num">${asp != null ? '$' + asp.toFixed(2) : '—'}</td>
+        <td class="pr-l pr-num">${tOrders > 0 ? fmtDollar(ops.avgCart) : '—'}</td>
+        <td class="pr-l pr-num">${tOrders > 0 ? ops.avgItems.toFixed(1) : '—'}</td>
+        <td class="pr-l pr-num">${tOrders > 0 ? tOrders.toLocaleString('en-US') : '—'}</td>
+        <td class="pr-l pr-num">${ops && ops.units > 0 ? fmtDollar(ops.asp) : '—'}</td>
       </tr></tbody></table>
       <div class="pr-ft"><span>LY / vs LY compare Retail + Bins only — the last-year figures carry no auction channel.</span></div>
       <div class="pr-ft" style="border-top:none;margin-top:2px;padding-top:0"><span>www.retjghub.com · internal use only</span><span>Printed from the RETJG Hub dashboard</span></div>`;
@@ -11066,6 +11080,9 @@
     try {
       if (pid !== 'current' && pid !== prev.presetId) setDateRange(pid);
       await loadLYComparison();
+      // The Operations row is the channel split. A range switched just above has
+      // its stored days still loading; without this wait it would print "—".
+      await ensureDashChannel();
       if (!buildPrintReport()) {
         await uiAlert('Dashboard data hasn’t loaded yet. Open the Dashboard, let it finish loading, then print.', { title: 'Nothing to print' });
         return;
@@ -11327,12 +11344,13 @@
       // filter (the card was just rebuilt fresh in the blended state).
       // TY values for the async "vs last year" fill (loadLYComparison below).
       dashCardLY[cardCode] = { net: v1Total, retail: v1Retail, bin: v1Bin };
-      // Same numbers again for Settings → Print dashboard, so the printout is
-      // built from what the card just rendered and can never drift from it.
+      // Same dollars again for Settings → Print dashboard, so the printout's are
+      // the ones the card just rendered. Its Cart / Items / Orders / ASP are not
+      // here: the tiles are repainted from the channel split, and the paper
+      // takes that split too (buildPrintReport).
       dashCardPrint[cardCode] = {
         name: m.name, net: v1Total, budget: v1Budget, delta: v1Delta, pct: v1Pct,
         retail: v1Retail, bin: v1Bin, auction: v1Auction,
-        cart: v1Cart, items: v1Items, orders: v1Orders, asp: v1Asp,
         hasData: !v1Error && !v1OfflineNow,
       };
       dashCardBlended[cardCode] = {
