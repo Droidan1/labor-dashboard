@@ -1178,5 +1178,270 @@ function seedTruck(db, { store = 'BL1', bol = '7679', count = 40, closed = null 
   }
 }
 
+// ── 40. The photo reads: no stale photo, no hang, no lost form, nothing landing elsewhere ──
+// irPhoto reads the BOL and the pallet tag with Bin Dump's reader, and had the three bugs #280
+// fixed there (bin-dump-4, -13, -14): an undecodable photo showed — and uploaded — the previous
+// one, a read could hang with no way out, and Retake closed the form before the camera opened.
+// It had one of its own too: irOpenVerify and irSubmit read the operation LIVE, so a read still
+// running landed in whatever was started meanwhile, worst of all over a row being corrected.
+// 🔑 EXECUTED here, over fakes, so the order of things is what `npm test` guards — a source
+// pin cannot see a variable used before it is declared, or a check that runs one line late.
+// scripts/browser-inventory-receiver-read.mjs drives the same cases through a real page.
+{
+  const HTML = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  // A top-level function's own source, cut at its closing brace. Braces are counted naively, so
+  // every slice is bounded on BOTH sides (tasks/lessons.md, 2026-07-31): non-empty, under a cap,
+  // and holding no second top-level declaration or export. An over-capture comes back empty.
+  const fnSrc = (name) => {
+    const at = HTML.search(new RegExp(`\\n  (?:async )?function ${name}\\(`));
+    if (at < 0) return '';
+    let i = HTML.indexOf('{', HTML.indexOf(')', at)), depth = 0;
+    for (; i < HTML.length; i++) {
+      if (HTML[i] === '{') depth++;
+      else if (HTML[i] === '}' && --depth === 0) {
+        const src = HTML.slice(at + 1, i + 1);
+        return src.length < 7000 && !/\n  (?:async )?function |\n  window\./.test(src) ? src : '';
+      }
+    }
+    return '';
+  };
+  const src = {};
+  for (const n of ['irPhoto', 'irPost', 'irRetake', 'irEndRead', 'irAbandonRead', 'irCancelRead',
+                   'irCloseDetail', 'irSubmit', 'irOpenVerify', 'irBeginBol', 'irBeginPallet',
+                   'irManualPallet', 'irEditPallet']) {
+    src[n] = fnSrc(n);
+    ok(src[n] && src[n].trimEnd().endsWith('}'), `${n}: its source is found, and cut at its own end`);
+  }
+  const num = (re) => Number((HTML.match(re) || [])[1]);
+  const TIMEOUT = num(/const IR_READ_TIMEOUT_MS = (\d+);/);
+  const BOL_PX = num(/const IR_BOL_MAX_PX = (\d+);/), BOL_Q = num(/const IR_BOL_QUALITY = ([\d.]+);/);
+  eq(TIMEOUT, 45000, 'a read is given up after 45s, as on Bin Dump');
+
+  // ── Pinned: what the executed half below does not run ──
+  ok(/id="ir-reading"[\s\S]{0,900}id="ir-read-cancel"\s+onclick="irCancelRead\(\)"/.test(HTML),
+     'the dock\'s reading panel carries a Cancel (bin-dump-13)');
+  ok(/id="ir-det-readline"[\s\S]{0,300}id="ir-det-status"[\s\S]{0,300}id="ir-det-read-cancel" hidden\s+onclick="irCancelRead\(\)"/.test(HTML),
+     '...and so does the read-back\'s reading line, in the box irPhoto scrolls into view');
+  for (const fn of ['irBeginBol', 'irBeginPallet', 'irManualPallet', 'irEditPallet']) {
+    const s = src[fn], at = s.indexOf('irAbandonRead();');
+    ok(at > 0 && at < s.indexOf('irState.mode ='),
+       `🛑 ${fn} abandons a read in flight before it takes the operation over`);
+  }
+  ok(/if \(irState\.reading && irState\.reading\.detail\) irAbandonRead\(\);/.test(src.irCloseDetail),
+     'closing the read-back abandons a read made FOR it — and only that one: a dock read survives a tab switch');
+  ok(/el\('ir-m-retake'\)\.disabled = true;/.test(src.irSubmit)
+     && /finally \{[\s\S]*el\('ir-m-retake'\)\.disabled = false;/.test(src.irSubmit),
+     'Retake is locked while a submit posts, and always unlocked after');
+  ok(/el\('ir-m-shot'\)\.hidden = true;\s*\/\/[^\n]*\n\s*el\('ir-m-photo'\)\.removeAttribute\('src'\);/.test(src.irOpenVerify),
+     'a form with no photo keeps no src behind its hidden box, which irLbOpen() would enlarge');
+
+  // ── Executed: irPost hands the read's signal to fetch, and nobody else's ──
+  const sent = [];
+  const irPost = new Function('fetch', 'WORKER_BASE', 'irErr', `${src.irPost}; return irPost;`)(
+    async (u, o) => { sent.push(o); return { ok: true, status: 200, json: async () => ({ ok: true }) }; },
+    'https://api.example.test/', () => 'refused');
+  const sig = new AbortController().signal;
+  await irPost('truck-pallet-scan', { image_b64: 'x' }, sig);
+  await irPost('truck-open', { bol_no: '1' });
+  ok(sent[0].signal === sig, 'irPost gives fetch the read\'s signal, so a Cancel or the timer can abort it');
+  ok('signal' in sent[1] && sent[1].signal === undefined, '...and every other caller sends none');
+
+  // ── Executed: irPhoto, irEndRead, irAbandonRead, irCancelRead and irRetake, over fakes ──
+  const unhandled = [];
+  const onUnhandled = (e) => unhandled.push(e);
+  process.on('unhandledRejection', onUnhandled);
+  const flush = async () => { for (let k = 0; k < 6; k++) await new Promise(r => setImmediate(r)); };
+  const held = () => { let res, rej; const p = new Promise((a, b) => { res = a; rej = b; }); return { p, res, rej }; };
+  const aborted = () => Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
+  const input = () => ({ files: [{ name: 'tag.jpg' }], value: 'C:\\fakepath\\tag.jpg' });
+  // One fresh page per scenario. Elements are plain objects; everything irPhoto calls out to is
+  // recorded. It starts as the page does between reads, holding the LAST read's photo.
+  const harness = ({ mode = 'bol', opFrom = 'dock', truck = null } = {}) => {
+    const els = {};
+    const E = (id) => els[id] || (els[id] = { id, hidden: false, disabled: false, textContent: '', focused: 0, scrolled: 0,
+      focus() { this.focused++; }, scrollIntoView() { this.scrolled++; }, removeAttribute() {} });
+    for (const id of ['ir-reading', 'ir-det-read-cancel', 'ir-det-status']) E(id).hidden = true;
+    const state = { mode, opFrom, truck, manual: true, photo: 'LAST-PHOTO', mediaType: 'image/jpeg', readGen: 0, reading: null };
+    const log = { closed: 0, picks: 0, forms: [], det: [], shrink: [], posts: [], timers: [], cleared: [] };
+    const h = { E, state, log, shrinkNext: null, postNext: null };
+    const fakes = {
+      el: E, irState: state,
+      irCloseModal: () => { log.closed++; },
+      irPick: () => { log.picks++; },
+      irSetDetStatus: (msg) => { log.det.push(msg); E('ir-det-status').hidden = !msg; E('ir-det-status').textContent = msg || ''; },
+      irOpenVerify: (j, warn) => { log.forms.push({ j, warn, photo: state.photo }); },
+      psShrink: (f, max, q) => {
+        log.shrink.push({ args: [max, q], photo: state.photo });
+        const n = h.shrinkNext; h.shrinkNext = null;
+        return n ? n.p : Promise.resolve('B64');
+      },
+      irPost: (action, payload, signal) => {
+        log.posts.push({ action, payload, signal });
+        const n = h.postNext; h.postNext = null;
+        return n ? n.p : Promise.resolve({ ok: true, fields: { bol_no: '7702' }, read: 1, of: 10 });
+      },
+      setTimeout: (fn, ms) => { log.timers.push({ fn, ms }); return log.timers.length; },
+      clearTimeout: (t) => { log.cleared.push(t); },
+      document: { querySelector: () => E('receive-truck') },
+      IR_BOL_MAX_PX: BOL_PX, IR_BOL_QUALITY: BOL_Q, IR_READ_TIMEOUT_MS: TIMEOUT,
+      IR_BOL_FIELDS: new Array(10).fill({}), IR_TAG_FIELDS: new Array(8).fill({}),
+    };
+    const names = Object.keys(fakes);
+    Object.assign(h, new Function(...names,
+      `${src.irEndRead}\n${src.irAbandonRead}\n${src.irCancelRead}\n${src.irRetake}\n${src.irPhoto}\n` +
+      'return { irEndRead, irAbandonRead, irCancelRead, irRetake, irPhoto };')(...names.map(n => fakes[n])));
+    return h;
+  };
+
+  { // bin-dump-4: an undecodable photo, after a good one.
+    const h = harness(), s = held();
+    h.shrinkNext = s;
+    const run = h.irPhoto(input());
+    ok(h.log.closed === 1 && h.state.manual === false, 'a photo that arrives closes the form, and ends a typed entry');
+    ok(h.log.shrink[0] && h.log.shrink[0].photo === null && h.state.mediaType === null,
+       '🛑 the last photo is forgotten BEFORE this one is decoded (bin-dump-4)');
+    ok(h.E('ir-reading').hidden === false && h.E('ir-begin').hidden === true, 'the dock shows its reading panel');
+    s.rej(new Error('that image could not be opened'));
+    await run;
+    const f = h.log.forms[0];
+    ok(f && /^Couldn't read it — that image could not be opened\./.test(f.warn) && f.photo === null,
+       '🛑 ...so the photo that will not decode opens the empty form with NO photo, saying why');
+    ok(h.log.posts.length === 0, '...having sent nothing');
+    ok(h.E('ir-reading').hidden && !h.E('ir-begin').hidden && h.state.reading === null, 'the dock is put back');
+    ok(h.log.shrink[0] && h.log.shrink[0].args[0] === 1800 && h.log.shrink[0].args[1] === 0.88,
+       'a BOL is decoded at IR_BOL_MAX_PX / IR_BOL_QUALITY (1800px, q0.88)');
+  }
+  { // A tag: psShrink's defaults, and its own action.
+    const h = harness({ mode: 'pallet' });
+    await h.irPhoto(input());
+    ok(h.log.shrink[0] && h.log.shrink[0].args[0] === undefined && h.log.shrink[0].args[1] === undefined,
+       'a pallet tag is decoded at psShrink\'s own defaults');
+    ok(h.log.posts[0] && h.log.posts[0].action === 'truck-pallet-scan', '...and read by truck-pallet-scan');
+  }
+  { // A good read.
+    const h = harness();
+    await h.irPhoto(input());
+    const f = h.log.forms[0];
+    ok(f && f.warn === null && f.j.ok && f.photo === 'B64', 'a good read opens its form, with its own photo');
+    ok(h.log.timers.length === 1 && h.log.timers[0].ms === 45000, 'one timer, of IR_READ_TIMEOUT_MS');
+    ok(h.log.cleared.includes(1), '...cleared once the answer is in');
+    ok(h.log.posts[0].signal && h.log.posts[0].signal.aborted === false, 'the request carries a live signal');
+  }
+  { // The read-back: said where the manager is looking, and nothing left behind after.
+    const h = harness({ mode: 'pallet', opFrom: 'detail' }), p = held();
+    h.postNext = p;
+    const run = h.irPhoto(input());
+    await flush();
+    ok(h.log.det[0] === 'Reading tag…' && !h.E('ir-det-read-cancel').hidden && h.E('ir-det-readline').scrolled === 1,
+       'a read-back read shows "Reading tag…" and its Cancel there, scrolled into view');
+    ok(h.E('ir-reading').hidden === true, '...not on the Receive pane, which is off screen');
+    p.res({ ok: true, fields: {}, read: 0, of: 8 });
+    await run;
+    ok(h.log.forms.length === 1 && h.E('ir-det-status').hidden && h.E('ir-det-read-cancel').hidden,
+       '🛑 ...and once it has answered, neither the line nor its Cancel is left behind');
+  }
+  { // Cancel while the photo decodes (psShrink cannot be aborted).
+    const h = harness(), s = held();
+    h.shrinkNext = s;
+    const run = h.irPhoto(input());
+    h.irCancelRead();
+    ok(h.E('ir-reading').hidden && !h.E('ir-begin').hidden && h.E('receive-truck').focused === 1,
+       'Cancel puts Receive Truck back, focused (bin-dump-13)');
+    s.res('B64');
+    await run;
+    ok(h.log.posts.length === 0 && h.log.forms.length === 0 && h.state.photo === null,
+       '🛑 a read cancelled while it decoded sends nothing, opens nothing, keeps nothing');
+    ok(h.log.timers.length === 0, '🛑 ...and never started its clock: the clock starts at the request');
+  }
+  { // Cancel, then the late answer, while a newer read is under way.
+    const h = harness(), p1 = held(), p2 = held();
+    h.postNext = p1;
+    const first = h.irPhoto(input());
+    await flush();
+    const sig1 = h.log.posts[0].signal;
+    h.irCancelRead();
+    ok(sig1.aborted, 'Cancel aborts the request');
+    h.postNext = p2;
+    const second = h.irPhoto(input());
+    await flush();
+    p1.res({ ok: true, fields: {}, read: 0, of: 10 });            // the cancelled read answers anyway
+    await first;
+    ok(h.log.forms.length === 0, '🛑 a cancelled read\'s late answer opens nothing');
+    ok(!h.E('ir-reading').hidden && h.state.reading !== null,
+       '🛑 ...and does not put the page back under the read that replaced it');
+    p2.res({ ok: true, fields: {}, read: 0, of: 10 });
+    await second;
+    ok(h.log.forms.length === 1 && h.E('ir-reading').hidden, 'the newer read opens its own form, and puts the page back');
+  }
+  { // A cancelled read whose request honours the abort, and rejects.
+    const h = harness(), p = held();
+    h.postNext = p;
+    const run = h.irPhoto(input());
+    await flush();
+    h.irCancelRead();
+    p.rej(aborted());
+    await run;
+    ok(h.log.forms.length === 0, '🛑 a cancelled read that rejects reports nothing either');
+  }
+  for (const how of ['an empty body', 'an AbortError']) { // The timeout, however the abort surfaces.
+    const h = harness(), p = held();
+    h.postNext = p;
+    const run = h.irPhoto(input());
+    await flush();
+    const t = h.log.timers[0], s = h.log.posts[0] && h.log.posts[0].signal;
+    ok(t && t.ms === 45000, `(${how}) the timer is set as the request goes out`);
+    if (t) t.fn();                                                // 45s pass
+    ok(s && s.aborted, `(${how}) ...and firing it aborts the request`);
+    if (how === 'an empty body') p.res({}); else p.rej(aborted());
+    await run;
+    const f = h.log.forms[0];
+    ok(f && /^The reader took too long/.test(f.warn) && f.photo === 'B64',
+       `🛑 (${how}) a timeout opens the form saying so, with the photo kept — the flag decides, not the error (bin-dump-13)`);
+  }
+  { // A 200 that is not the reader's answer.
+    const h = harness();
+    h.postNext = { p: Promise.resolve({}) };
+    await h.irPhoto(input());
+    ok(h.log.forms[0] && /the answer from the reader was cut off/.test(h.log.forms[0].warn),
+       'a 200 without ok:true is a body that never arrived, and the form says so');
+  }
+  { // Abandoned by another operation starting: like Cancel, without the focus.
+    const h = harness(), p = held();
+    h.postNext = p;
+    const run = h.irPhoto(input());
+    await flush();
+    const r = h.irAbandonRead();
+    ok(r && h.log.posts[0].signal.aborted && h.state.reading === null && h.state.photo === null,
+       'abandoning a read aborts it and keeps nothing');
+    ok(h.E('receive-truck').focused === 0, '...and moves no focus: the operation replacing it does that');
+    p.res({ ok: true, fields: {}, read: 0, of: 10 });
+    await run;
+    ok(h.log.forms.length === 0, '🛑 ...and its answer opens nothing');
+    ok(h.irAbandonRead() === null, 'with no read in flight it does nothing');
+  }
+  { // With a truck on the dock, Cancel leaves the truck's controls.
+    const h = harness({ mode: 'pallet', truck: { id: 1 } }), p = held();
+    h.postNext = p;
+    const run = h.irPhoto(input());
+    await flush();
+    h.irCancelRead();
+    ok(h.E('ir-begin').hidden === true && h.E('ir-btn-pallet').focused === 1,
+       'with a truck on the dock, Cancel leaves Receive Truck hidden and focuses Scan Pallet Tag');
+    p.res({ ok: true });
+    await run;
+  }
+  { // bin-dump-14: Retake leaves the form open behind the camera.
+    const h = harness();
+    h.irRetake();
+    ok(h.log.picks === 1 && h.log.closed === 0, '🛑 Retake opens the camera and leaves the form open behind it (bin-dump-14)');
+    h.state.mode = null;
+    h.irRetake();
+    ok(h.log.picks === 1, '...and does nothing with no operation under way');
+  }
+  await flush();
+  process.off('unhandledRejection', onUnhandled);
+  ok(unhandled.length === 0, `no read leaves a rejection unhandled (${unhandled.map(String).join(' | ')})`);
+}
+
 console.log(`\n${assertions} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

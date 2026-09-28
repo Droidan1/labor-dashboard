@@ -3448,6 +3448,11 @@
             <div class="ir-spin"></div>
             <div class="ir-cap-t" id="ir-reading-t">Reading Bill of Lading…</div>
             <div class="ir-cap-d" id="ir-reading-sub">Sending the photo to Claude</div>
+            <!-- A read that stalls must not trap the dock: Cancel abandons it and puts back what
+                 the read took away — Receive Truck, or the truck's own controls. 44px — it is
+                 thumbed. -->
+            <button type="button" class="ir-btn ir-ghost ir-sm" id="ir-read-cancel"
+                    onclick="irCancelRead()" style="margin-top:14px;min-height:44px;min-width:120px">Cancel</button>
           </div>
           <div id="ir-status" class="ir-status ok" hidden></div>
         </div>
@@ -3606,7 +3611,15 @@
           <div class="ir-sub" id="ir-det-sub">Loading…</div>
           <!-- 🛑 Its own line. #ir-status is on the Receive pane, so a correction made from
                here would report into a pane nobody is looking at. -->
-          <div id="ir-det-status" class="ir-status ok" style="margin:10px 15px 0" hidden></div>
+          <!-- A tag being read shows here, with its Cancel, in one box irPhoto scrolls into view:
+               Scan Tag sits in the sticky bar, and the manager may be deep in the pallet list
+               below. The margin keeps that bar off the box: it wraps on a phone, to about 90px
+               tall, and to about 130px at 320px wide. -->
+          <div id="ir-det-readline" style="scroll-margin-top:150px">
+            <div id="ir-det-status" class="ir-status ok" style="margin:10px 15px 0" hidden></div>
+            <button type="button" class="ir-btn ir-ghost ir-sm" id="ir-det-read-cancel" hidden
+                    onclick="irCancelRead()" style="margin:8px 15px 0;min-height:44px;min-width:120px">Cancel</button>
+          </div>
           <div id="ir-det-pallets" class="mt-2"></div>
           <div class="ir-legend">
             <span><span class="ir-sw ir-sw-plain"></span>Received clean</span>
@@ -29741,6 +29754,9 @@
     manual: false,                  // typed by hand: no camera, no scan, no photo
     photo: null, mediaType: null, fields: {}, editId: null,
     pending: null,                 // the submit waiting on a manager approval
+    // The photo read in flight, and its number. Every read, Cancel and abandon moves the
+    // number on, and a read whose number is no longer current writes nothing (irPhoto).
+    readGen: 0, reading: null,
   };
 
   function irCanDelete() {
@@ -29840,11 +29856,13 @@
   }
   window.initInventoryReceiver = initInventoryReceiver;
 
-  async function irPost(action, payload) {
+  // `signal` comes only from irPhoto's two reads, which a Cancel or the timeout can abort.
+  async function irPost(action, payload, signal) {
     const r = await fetch(`${WORKER_BASE}?action=${action}`, {
       method: 'POST', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+      signal,
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) {
@@ -29880,12 +29898,14 @@
     }
   }
   function irBeginBol() {
+    irAbandonRead();
     irState.mode = 'bol'; irState.editId = null; irState.opFrom = 'dock'; irState.manual = false;
     irCloseModal(); irSetStatus(null); irPick();
   }
   // `from` is 'dock' or 'detail'. editId is cleared because this is an ADD: leaving a stale
   // one behind would turn the next scan into a correction of whatever was last edited.
   function irBeginPallet(from) {
+    irAbandonRead();
     irState.mode = 'pallet'; irState.editId = null; irState.manual = false;
     irState.opFrom = from === 'detail' ? 'detail' : 'dock';
     irCloseModal();
@@ -29896,6 +29916,7 @@
   // A pallet that was missed is usually recorded days later, when the cardboard is long gone,
   // so this is the likelier path for a truck that is already down rather than a fallback.
   function irManualPallet(from) {
+    irAbandonRead();
     irState.mode = 'pallet'; irState.editId = null; irState.manual = true;
     irState.opFrom = from === 'detail' ? 'detail' : 'dock';
     irState.photo = null; irState.mediaType = null;
@@ -29905,43 +29926,117 @@
   }
   window.irManualPallet = irManualPallet;
 
-  // Reaching for the camera from a typed entry stops it being one.
-  function irRetake() { if (irState.mode) { irState.manual = false; irCloseModal(); irPick(); } }
+  // Reaching for the camera from a typed entry stops it being one — once a photo arrives.
+  // 🔑 The form stays open behind the camera: irPhoto closes it only when a photo comes back,
+  // so a camera that is dismissed loses nothing typed (bin-dump-14, fixed the same way).
+  function irRetake() { if (irState.mode) irPick(); }
   window.irBeginBol = irBeginBol; window.irBeginPallet = irBeginPallet; window.irRetake = irRetake;
+
+  // No read may hang the page (bin-dump-13, fixed the same way): the request is abandoned
+  // after this long, and the form opens empty so the paperwork can be typed in.
+  const IR_READ_TIMEOUT_MS = 45000;
 
   async function irPhoto(input) {
     const f = input.files && input.files[0];
     input.value = '';
     if (!f) return;
+    // A photo has arrived, so what it replaces can go — and not before (irRetake): any read
+    // still in flight, and the form.
+    irAbandonRead();
+    irCloseModal();
+    irState.manual = false;
+    // 🛑 Forget the last photo BEFORE decoding this one. psShrink rejects a file it cannot
+    // decode, and the empty form that follows must not show — or upload — the previous one
+    // (bin-dump-4, fixed the same way).
+    irState.photo = null; irState.mediaType = null;
     const isBol = irState.mode === 'bol';
     // 🛑 #ir-reading lives on the RECEIVE pane. A manager adding a pallet to a truck they
     // are reading back is on the Trucks tab, so that spinner is off screen: they would
     // photograph a tag and watch nothing happen for the seconds the read takes, which is the
     // dead-button failure irPick's own error path exists for. Say it where they are looking.
     const detail = irState.opFrom === 'detail';
+    const gen = ++irState.readGen;
+    const read = irState.reading = { ctl: null, why: '', detail };
     if (detail) irSetDetStatus('Reading tag…', 'ok');
+    el('ir-det-read-cancel').hidden = !detail;
+    if (detail) el('ir-det-readline').scrollIntoView({ block: 'nearest' });
     el('ir-begin').hidden = true;
     el('ir-reading').hidden = detail;
     el('ir-reading-t').textContent = isBol ? 'Reading Bill of Lading…' : 'Reading tag…';
+    let timer = null;
     try {
       const b64 = isBol ? await psShrink(f, IR_BOL_MAX_PX, IR_BOL_QUALITY) : await psShrink(f);
+      if (gen !== irState.readGen) return;          // cancelled while it decoded
       irState.photo = b64;
       irState.mediaType = 'image/jpeg';
+      // 🔑 The clock starts at the request, and `why` is how the catch below knows it was the
+      // timer: an abort that lands while the body downloads comes back from irPost as an empty
+      // `j`, not as an error, so no error's name can say so. A Cancel needs no flag — it moves
+      // the read's number on. One controller serves both; AbortSignal.timeout could only be
+      // cancelled too through AbortSignal.any, which Safari has only from 17.4.
+      read.ctl = (typeof AbortController === 'function') ? new AbortController() : null;
+      if (read.ctl) timer = setTimeout(() => { read.why = 'timeout'; read.ctl.abort(); }, IR_READ_TIMEOUT_MS);
       const j = await irPost(isBol ? 'truck-bol-scan' : 'truck-pallet-scan',
-        { image_b64: b64, media_type: 'image/jpeg' });
+        { image_b64: b64, media_type: 'image/jpeg' }, read.ctl ? read.ctl.signal : undefined);
+      if (gen !== irState.readGen) return;          // cancelled or abandoned: it answered late
+      // Both readers answer ok:true on every 200, "could not read it" included, so a 200
+      // without it is a body that never arrived — the `{}` of an abort mid-body among them —
+      // not "Read 0 of 10 fields".
+      if (!j.ok) throw new Error('the answer from the reader was cut off');
       irOpenVerify(j, null);
     } catch (e) {
+      if (gen !== irState.readGen) return;          // cancelled or abandoned: nothing to report
       // ⚠️ A failed read must not cost the truck. Open the form empty and editable so a
       // torn BOL or a glare-blown tag can still be keyed in by hand, and say what broke.
       const list = isBol ? IR_BOL_FIELDS : IR_TAG_FIELDS;
       irOpenVerify({ fields: {}, read: 0, of: list.length },
-        `Couldn't read it — ${(e && e.message) || e}. Type it in, or retake the photo.`);
+        read.why === 'timeout'
+          ? 'The reader took too long — type it in, or retake the photo.'
+          : `Couldn't read it — ${(e && e.message) || e}. Type it in, or retake the photo.`);
     } finally {
-      el('ir-reading').hidden = true;
-      el('ir-begin').hidden = !!irState.truck;
+      clearTimeout(timer);
+      // Only the read that is still current may put the page back: one cancelled or replaced
+      // that finishes late must not hide the spinner of the read after it.
+      if (gen === irState.readGen) irEndRead(detail);
     }
   }
   window.irPhoto = irPhoto;
+
+  // Put back what a read took away: the dock's spinner, or the read-back's line and Cancel.
+  function irEndRead(detail) {
+    irState.reading = null;
+    el('ir-reading').hidden = true;
+    el('ir-begin').hidden = !!irState.truck;
+    el('ir-det-read-cancel').hidden = true;
+    if (detail) irSetDetStatus(null);
+  }
+
+  // Abandon the read in flight, if there is one: whatever it sends back later is ignored, and
+  // nothing it took is kept. Cancel does this, and so does starting anything else (Receive
+  // Truck, Scan, Enter Manually, Edit) or closing the read-back a tag is being read for.
+  // 🛑 irOpenVerify and irSubmit read the operation LIVE, so a read left running lands in
+  // whatever was started meanwhile — and a scanned tag landing on an Edit, still captioned
+  // "Correct pallet", would be saved over that row.
+  function irAbandonRead() {
+    const read = irState.reading;
+    if (!read) return null;
+    irState.readGen++;
+    if (read.ctl) read.ctl.abort();
+    irState.photo = null; irState.mediaType = null;
+    irEndRead(read.detail);
+    return read;
+  }
+
+  // Cancel on "Reading…" — the dock's panel or the read-back's line (bin-dump-13, fixed the
+  // same way). Focus goes back to the button that started the read: the one tapped is gone.
+  function irCancelRead() {
+    const read = irAbandonRead();
+    if (!read) return;
+    const back = read.detail ? el('ir-det-scan')
+      : irState.truck ? el('ir-btn-pallet') : document.querySelector('#ir-begin .ir-primary');
+    try { back.focus(); } catch (e) { /* not focusable */ }
+  }
+  window.irCancelRead = irCancelRead;
 
   // ── Verify popup ──────────────────────────────────────────────────────────
   // 🛑 `manual` decides whether a BLANK means anything. An empty field is a failure only
@@ -29999,6 +30094,8 @@
       el('ir-m-shot').hidden = false;
     } else {
       el('ir-m-shot').hidden = true;
+      // Not only hidden: irLbOpen() enlarges whatever this src still holds.
+      el('ir-m-photo').removeAttribute('src');
     }
     const w = el('ir-m-warn');
     const hint = (j && j.truck_hint) || null;
@@ -30030,6 +30127,9 @@
     irState.busy = true;
     const btn = el('ir-m-submit');
     btn.disabled = true;
+    // Retake too: a photo taken now would start a read inside an operation that is finishing,
+    // and irAfterSend clears that operation (opFrom, photo) out from under it.
+    el('ir-m-retake').disabled = true;
     try {
       const v = irReadFields();
       const isBol = irState.mode === 'bol';
@@ -30054,6 +30154,7 @@
     } finally {
       irState.busy = false;
       btn.disabled = false;
+      el('ir-m-retake').disabled = false;
     }
   }
   window.irSubmit = irSubmit;
@@ -30306,6 +30407,7 @@
     const list = (detail ? (irState.detail && irState.detail.pallets) : irState.pallets) || [];
     const p = list.find(x => x.id === id);
     if (!p) return;
+    irAbandonRead();
     irState.mode = 'pallet';
     irState.editId = id;
     irState.opFrom = detail ? 'detail' : 'dock';
@@ -30501,7 +30603,11 @@
   }
   window.irOpenTruck = irOpenTruck;
 
-  function irCloseDetail() { el('ir-det').style.display = 'none'; }
+  // A tag being read FOR this truck goes with it (irAbandonRead); a dock read carries on.
+  function irCloseDetail() {
+    if (irState.reading && irState.reading.detail) irAbandonRead();
+    el('ir-det').style.display = 'none';
+  }
   window.irCloseDetail = irCloseDetail;
 
   function irRenderDetail(t, pallets) {
