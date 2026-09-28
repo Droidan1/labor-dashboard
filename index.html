@@ -16400,13 +16400,24 @@
   // Render the currently visible WRS pane to a true native PDF using
   // jsPDF + jspdf-autotable. Walks the on-screen tables and KPI cards to
   // emit vector text (selectable, crisp at any zoom). No html-to-image.
-  function loadScript(src) {
-    return new Promise((resolve, reject) => {
-      if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }
+  //
+  // loadScript resolves once `src` has run and `ready()` is true. One load per file: a call
+  // while it is in flight waits on that load. A load that errors, or runs without making
+  // `ready()` true, removes its tag and is forgotten, so the next call fetches the file again.
+  // It used to resolve whenever a tag with that src was in the page, and a failed tag stays
+  // there: after one failed download, every later WRS PDF said the library "failed to
+  // initialize" until the app was relaunched (weekly-retail-19).
+  const scriptLoads = new Map();
+  function loadScript(src, ready = () => true) {
+    if (!scriptLoads.has(src)) scriptLoads.set(src, new Promise((resolve, reject) => {
       const s = document.createElement('script');
-      s.src = src; s.onload = resolve; s.onerror = reject;
+      const fail = () => { scriptLoads.delete(src); s.remove(); reject(new Error(`${src} did not load`)); };
+      s.src = src;
+      s.onload = () => (ready() ? resolve() : fail());
+      s.onerror = fail;
       document.head.appendChild(s);
-    });
+    }));
+    return scriptLoads.get(src);
   }
 
   async function downloadWrsAsPdf() {
@@ -16417,11 +16428,10 @@
     let jsPDFCtor;
     try {
       jsPDFCtor = await ssLoadPdfLib();
-      if (!jsPDFCtor.API.autoTable) await loadScript('jspdf-autotable-5.0.8.min.js');
+      if (!jsPDFCtor.API.autoTable) await loadScript('jspdf-autotable-5.0.8.min.js', () => jsPDFCtor.API.autoTable);
     } catch (e) {
       uiAlert('Failed to load PDF library. Check your connection and try again.'); return;
     }
-    if (!jsPDFCtor.API.autoTable) { uiAlert('PDF library failed to initialize — please try again.'); return; }
 
     let activeLabel = 'Summary';
     const activeBtn = document.querySelector('#wrs-tabs .wrs-tab.text-\\[\\#3BB54A\\]')

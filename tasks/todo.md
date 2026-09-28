@@ -1,3 +1,106 @@
+# The WRS PDF export retries a failed plugin load (weekly-retail-19) (2026-09-28)
+
+**Request (Brian):** *"Fix the loadScript retry bug (weekly-retail-19)"*
+
+## The bug
+
+`loadScript`, in the WRS section of `index.html`, resolves at once whenever a `<script>` with that
+`src` is in the document. A tag whose download failed stays in `<head>`. So after one failed load
+of `jspdf-autotable-5.0.8.min.js`, every later WRS PDF says "PDF library failed to initialize —
+please try again." until the app is relaunched. Since #294 it loads only autotable: jsPDF comes
+through `ssLoadPdfLib`, which already retries.
+
+Two more paths have the same cause, "a tag is there" taken to mean "the script ran":
+- **A second export while autotable is still downloading** finds the tag, resolves before the
+  plugin exists, and says "failed to initialize" while the first export carries on.
+- **A load that runs but attaches no `autoTable`** (a wrong file) resolves, and every later try
+  reuses it. `ssLoadPdfLib` already treats this as a failure for jsPDF.
+
+## Plan
+
+- [x] 1. `loadScript(src, ready)`:
+      - keep one promise per file, shared while it is in flight;
+      - resolve only once the script has run and `ready()` is true;
+      - on an error, or when it runs and `ready()` is false, remove the tag and forget the
+        promise, so the next call fetches the file again.
+
+      `downloadWrsAsPdf` passes `() => jsPDFCtor.API.autoTable`. Its "failed to initialize"
+      check can then never fire, so it goes.
+- [x] 2. `browser-sign-studio.mjs`, each case on a fresh page (sections 12–14; see the review):
+      - autotable answers 503: the export says so, and the next try fetches it again and draws
+        the table;
+      - autotable answers 200 with a script that defines nothing: the same;
+      - two exports at once fetch autotable once, and neither says it failed.
+- [x] 3. `CACHE_NAME` v246 → v247, and the shell-cache fixture.
+- [x] 4. Verify:
+      - `npm test`;
+      - `build.sh`, then `browser-sign-studio.mjs` in full;
+      - mutations, each in its own copy of the tree: the old `loadScript`; no `ready()` check;
+        the promise kept after a failure; no sharing while in flight.
+- [x] 5. Add a status line to weekly-retail-19 in `docs/code-review-2026-09-22.md`.
+- [x] 6. Commit, push, draft PR, report.
+
+Not in scope: the finding's other half. The WRS PDF and CSV filenames take the date in UTC, so
+an export after 8 pm ET is named for tomorrow. That is a separate bug, left under Found.
+
+## Review
+
+**Done.** `loadScript` now:
+- resolves only once the script has run and `ready()` is true;
+- shares a load that is still in flight;
+- forgets a load that fails, and removes its tag.
+
+The WRS export passes `() => jsPDFCtor.API.autoTable`. Its "failed to initialize" check could no
+longer fire, so it is gone.
+
+After a failed load, the next export now fetches autotable again and works. The message for the
+failure itself is unchanged: "Failed to load PDF library. Check your connection and try again."
+
+There is no worker change and no migration; merging deploys it through Pages. `CACHE_NAME` goes
+from v246 to v247.
+
+**Verification:**
+- `npm test`: 6,360 assertions across 84 suites, all passing. The new checks are in the browser
+  suite.
+- `browser-sign-studio.mjs`: 202 of 202 in full (185 before). The three new cases were then
+  split into sections 12–14 and rerun: 18 of 18. The split didn't change the checks.
+  - §12: autotable answers 503.
+  - §13: autotable answers 200 with a script that defines nothing.
+  - §14: two exports at once.
+  - Sections 1–11 are unchanged, except that `wrsPdf` now builds its table with a shared
+    `wrsTable()`. The contrast lows are the same as before.
+- **Mutations**, each in its own copy of the tree and `dist/` on its own port. A control copy
+  passes 18 of 18.
+  - The loader and its caller as they were: caught by all three sections, with 5 failures.
+    - On a file that defines nothing, it said "failed to initialize" rather than "Failed to load".
+    - After a 503 it never produced a PDF.
+    - With two exports at once, the second said it failed, and only one PDF was made.
+  - No `ready()` check in the loader: caught by §13.
+  - The caller passing no `ready()`: caught by §13.
+  - A failed load's promise kept: caught by §12 and §13.
+  - The failed tag left in the page: caught by the tag count in §12 and §13. That is tidiness
+    only; the retry still works.
+  - **Survived: no sharing while in flight.**
+    - Chromium merges a second request for a URL that is still loading, so the server still
+      sees one fetch. A probe counted 2 tags and 1 fetch.
+    - Both exports work; the plugin runs twice, which is harmless.
+    - It is an equivalent mutant here, so no assertion was added to kill it. §14's "fetched
+      once" is true either way.
+- **UI:** nothing visible changes. The only dialog on this path is the existing "Failed to load
+  PDF library", so no new contrast check was needed.
+
+**Changed while building:**
+- The three cases became their own sections, not additions to section 11. In one section, the
+  first failure stopped the rest, and a mutant could not show each case catching its own bug.
+- The first old-code mutant did not apply. `execSync`'s default buffer is 1 MB and `index.html`
+  is 2.3 MB. The runner's guard refused to run it, and the rerun used a 64 MB buffer.
+
+**Found, not fixed:**
+- **The WRS export filenames take the date in UTC:** the PDF at `index.html:16597` and the CSV
+  at `index.html:16674`. An export after 8 pm ET is named for the next day. This is the other
+  half of weekly-retail-19, and a two-line change with `etTodayStr()`.
+- **The trucks CSV (`index.html:30568`) and MOS CSV (`index.html:31825`) are named the same way.**
+
 # The PDF exports: jsPDF 2.5.1 → 4.2.1, and autotable 3.8.2 → 5.0.8 (2026-09-25)
 
 **Request (Brian):** move both PDF exports (Weekly Retail Summary, Sign Studio) from jsPDF 2.5.1
