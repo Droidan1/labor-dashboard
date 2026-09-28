@@ -1,3 +1,44 @@
+# The dark-theme printout was never grey: my check read a transition (2026-09-28)
+
+**Request (Brian):** *"fix the dark mode print background too"*, after #303, whose report listed
+a grey dark-theme printout as found and not fixed.
+
+## What I found
+
+There is no bug, and no product code changes. The finding was a measurement error of mine.
+
+- **What #303 reported:** I had switched Playwright to print media and screenshotted straight
+  away. The dark-theme page came out grey, and `getComputedStyle(body)` read rgb(10, 15, 26)
+  under a print rule that sets `#fff !important` (index.html:804).
+- **Why:** `<body class="… transition-colors">` (index.html:869). A media switch changes
+  `body`'s background, so a 150 ms transition starts, and both reads landed on its first frame.
+  This is tasks/lessons.md's 2026-09-10 lesson, on the same element.
+- **Measured now,** on `main` at 6a947e5, with the same fixture as
+  `scripts/browser-channel-matrix.mjs` and the report built by Settings → Print:
+
+  | Check | Light | Dark |
+  |---|---|---|
+  | `body` background in print media, read at once | rgb(244, 243, 238) | rgb(10, 15, 26) |
+  | the same, read 1 s later | rgb(255, 255, 255) | rgb(255, 255, 255) |
+
+  **Real prints:** Chromium's print pipeline (`page.pdf()`), each rasterised at 2×:
+  - light and dark;
+  - background graphics on and off;
+  - print media settled first, or switched at print time, as `window.print()` does.
+
+  All eight pages are pixel-identical: the white report page, whatever the theme.
+
+## Not verified
+
+- Safari / iOS printing. This container has only Chromium; the installed app on an iPhone
+  prints through WebKit.
+
+## Changed
+
+- `tasks/lessons.md`: the 2026-09-10 transition lesson gets this recurrence and three rules, and
+  its heading names it.
+- #303's entry below marks its "Found" item as retracted.
+
 # The printed dashboard's Operations figures match the screen's (2026-09-28)
 
 **Request (Brian):** *"fix the print dashboard numbers too"*, after #302, whose report listed
@@ -79,11 +120,14 @@ retail + bin as one population, for whatever range is printed.
   section label fits on one line.
 
 **Found, not fixed:**
-- In the dark theme the printed page renders grey in print emulation. The print stylesheet's
+- ~~In the dark theme the printed page renders grey in print emulation. The print stylesheet's
   `html, body { background: #fff !important }` (index.html:804) is in force, yet `body`'s
   computed background stays the app's own: rgb(10, 15, 26) dark, rgb(244, 243, 238) light. I
   didn't find what overrides it. Whether it reaches paper depends on the browser printing
-  backgrounds; not checked on paper. Untouched by this change.
+  backgrounds; not checked on paper. Untouched by this change.~~
+  **Retracted, same day:** nothing overrides it. Both reads caught `body`'s 150 ms
+  `transition-colors` at its first frame, and a real print is white in both themes. See the
+  entry above this one.
 
 # The store cards' Cart / Items / Orders / ASP showed another day's BIN split (2026-09-28)
 
