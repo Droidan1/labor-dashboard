@@ -100,7 +100,8 @@ gutter, pad or tracking.
   - [x] mutations, each in an isolated copy (with its own `dist/` for the browser ones);
   - [x] `npm test`;
   - [x] `browser-sign-studio.mjs` in full, contrast sections included (no colour changed).
-- [ ] **Ship:** a new draft PR from the branch at `main`, with before and after images.
+- [x] **Ship:** draft PR #309 from the branch at `main` (beb036d), commit 657807e. The before
+      and after images went to Brian in the session; a PR body can't carry local files.
 
 ## Review
 
