@@ -81,6 +81,28 @@ Found only because a scan for invisible characters ran on the new files.
    Visible accented letters are fine; an invisible one in code is a defect even when it works.
 </rules>
 
+### Recurred (2026-09-29, saved signs): the same list, copied into worker.js
+
+I copied SignRender's `TEXT_CHARS` into the worker as `SAVED_SIGN.chars`, typing the `\u`
+escapes into an Edit, which is the exact thing rule 1 forbids. The file got the literal
+characters, a no-break space included. The test file got the same treatment: two literal
+U+202E and a soft hyphen inside strings, and two combining accents that look exactly like a
+composed é.
+
+**The 174-check suite passed throughout, including a parity test that runs the page's rules
+and the worker's against the same 431 signs.** It could not fail: a literal character and its
+escape match the same text. Reading the worker diff found it (`chars: /^[ -~ -¬…`); the scan in
+rule 2 then found the test file's.
+
+<rules>
+3. **A copy of a pattern is pinned by its SPELLING, not only by its behaviour.** Where a regex or
+   list is duplicated between the page and the worker, a test compares the two source texts
+   (test-saved-signs.mjs §4b does, for `TEXT_CHARS`). A behavioural parity test proves the two
+   agree today; it is blind to how the copy is written.
+4. **Run rule 2's scan right after any Write or Edit whose content held a `\u`, before the tests.**
+   The tests will pass, and a green suite makes the scan feel optional.
+</rules>
+
 ## The rationale in the comment was a factual claim, and it was false (2026-09-21) · recurred in a commit message (2026-09-25)
 
 Building the OB manifest, I wrote a comment explaining why `ob_price` lives in an OB-only
