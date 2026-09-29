@@ -1,3 +1,109 @@
+# Inventory Receiver's photo reads get Bin Dump's three fixes (2026-09-28)
+
+**Request (Brian):** Inventory Receiver reuses Bin Dump's pallet-tag reader and has the three
+bugs #280 fixed there (bin-dump-4, -13, -14). Fix all three, modelled on `bdPhoto` /
+`bdCancelRead`. Leave the manager name + PIN duplicate path alone. Bump `CACHE_NAME` with the
+shell-cache fixture. Done means: `npm test` is green, a browser check proves each case, and each
+fix has been reverted once.
+
+## The bugs (on `main` at 4896eee)
+
+1. **Retake loses what was typed.** `irRetake()` closes the form before the camera opens, so a
+   dismissed camera loses every correction.
+2. **Stale photo.** `irPhoto` stores the photo only after `psShrink` succeeds. An undecodable
+   file therefore opens the empty form showing, and uploading, the previous read's photo.
+3. **No timeout, no Cancel.** Neither `irPost` nor the dock's `#ir-reading` panel has a way out,
+   and neither does the read-back's "Reading tag…" line. A slow read's `finally` can hide a
+   newer read's spinner.
+
+**Found in design review (same class).** A read still in flight lands in whatever was started
+meanwhile. The worst case is a row Edit on the dock, whose Save would write the scanned tag over
+that row.
+
+## Plan
+
+- [x] Write `scripts/browser-inventory-receiver-read.mjs` first, and watch it fail on `main`.
+- [x] `irState.readGen` / `reading`; `IR_READ_TIMEOUT_MS = 45000`; `irPost(action, payload,
+      signal)`.
+- [x] `irRetake()` → `if (irState.mode) irPick();`, so the form stays open behind the camera.
+- [x] `irPhoto`, on `bdPhoto`'s shape:
+  - [x] close the form and clear the photo only once a photo arrives;
+  - [x] a gen check after `psShrink`;
+  - [x] an AbortController + `setTimeout` started at the request;
+  - [x] ~~`why` checked before `j.ok`~~: dropped. The mutation run proved it equivalent (see
+        Review);
+  - [x] a gen-gated catch and `finally`.
+- [x] `irEndRead`, `irAbandonRead` and `irCancelRead`.
+- [x] Starting anything else abandons the read: Begin, Scan, Enter Manually, Edit, and closing
+      the read-back.
+- [x] Two 44px Cancels: one on `#ir-reading`, one beside the read-back's line, which scrolls into
+      view.
+- [x] `irSubmit` locks Retake while posting.
+- [x] `irOpenVerify` drops a stale `src`.
+- [x] `scripts/test-inventory-receiver.mjs` §40: pins, plus executed `irPost` / `irPhoto` /
+      `irCancelRead` / `irRetake`.
+- [x] `npm test`; after a build, the new check plus `browser-inventory-receiver.mjs` and
+      `browser-bin-dump.mjs`.
+- [x] Mutations, each reverted once, in an isolated copy.
+- [x] `sw.js` v254 plus the fixture, last. Scan for invisible characters.
+
+## Review
+
+**Changed** (`index.html`; frontend only):
+- **Retake (bin-dump-14).** `irRetake()` → `if (irState.mode) irPick();`. `irPhoto` closes the
+  form, and ends a typed entry, only once a photo arrives.
+- **Stale photo (bin-dump-4).** `irPhoto` clears `photo` and `mediaType` before `psShrink`, and
+  `irOpenVerify` removes the hidden image's `src`, which `irLbOpen()` reads.
+- **Timeout and Cancel (bin-dump-13):**
+  - `IR_READ_TIMEOUT_MS = 45000`; an AbortController + `setTimeout` started at the request;
+    `irPost(action, payload, signal)`.
+  - `readGen` is checked after `psShrink`, after the request and in the catch, and gates
+    `finally`.
+  - The timeout message is chosen by `read.why`, which only the timer sets.
+  - A 200 without `ok:true` says "cut off"; so does the `{}` of an abort mid-body.
+  - Cancels:
+    - `#ir-read-cancel` on the dock panel;
+    - `#ir-det-read-cancel` under the read-back's line, in `#ir-det-readline`. `irPhoto`
+      scrolls that line into view, with `scroll-margin-top:150px`.
+- **Abandoning:**
+  - `irAbandonRead()` runs at the top of `irBeginBol`, `irBeginPallet` and `irManualPallet`;
+    after the lookup in `irEditPallet`; and in `irCloseDetail`, for read-back reads only.
+  - `irSubmit` locks Retake while posting.
+- `sw.js` v254 + `scripts/fixtures/shell-cache.json`.
+
+**Plan revised mid-run.** The first mutation round caught 30 of 32. The two it missed, each
+reproduced alone, were equivalent mutants:
+- **`if (read.why) throw` before the `j.ok` check.** The catch decides by `read.why` whichever
+  error reaches it.
+- **`read.why = 'cancel'` in the abandon.** It made the gen check after the request redundant.
+
+Both lines are removed. The second round, on the final code, caught 32 of 32.
+
+**Verified:**
+- **`scripts/browser-inventory-receiver-read.mjs`**, new, port 8100:
+  - on `main`, 27 of 48 checks failed, covering every section;
+  - on the branch, 68/68.
+- **The existing browser checks:** `browser-inventory-receiver.mjs` 154/154 and
+  `browser-bin-dump.mjs` 113/113, rerun on the final build.
+- **Unit tests:** `npm test` passes 6592 assertions across 88 suites.
+  `test-inventory-receiver.mjs` has 379, of which 64 are new in §40.
+- **Contrast**, composited down to the painted panel: both Cancels read 18.85:1 in light,
+  14.98:1 in dark and 17.68:1 in OLED.
+- **The sticky bar**, measured with an empty truck, is 89px tall at 360-414px wide and 128px at
+  320px. In the check's fixture at 390px it is 92px, and "Reading tag…" lands 58px below it.
+- **Mutations:** 32, run in four isolated copies, each with its own `dist/` and port, and judged
+  by FAIL lines. `abandon-keeps-photo` is caught by §40 only, since no UI path reaches it.
+
+**Found, not fixed:**
+- **Bin Dump has the same pair.** `bdPhoto` / `bdCancelRead` (index.html:28937, 28971) carry the
+  same two lines. By the same reasoning they look redundant there too, but Bin Dump was not
+  mutation-tested here.
+- **A Retake whose read fails or times out reopens the form empty,** losing what was typed
+  before. Bin Dump behaves the same.
+- **`#ir-reading-sub`** (index.html:3450) never changes from "Sending the photo to Claude".
+- **A dock read left running when the person leaves the page** opens its form on the hidden page.
+  Bin Dump behaves the same.
+
 # The dark-theme printout was never grey: my check read a transition (2026-09-28)
 
 **Request (Brian):** *"fix the dark mode print background too"*, after #303, whose report listed
