@@ -79,16 +79,40 @@ be enforced by a note").
   - each new check fails on `main`;
   - mutations, in isolated copies;
   - `npm test`.
-- [ ] **Ship PR 1 (draft). Ask Brian to:**
+- [x] **Ship PR 1 (draft). Ask Brian to:**
   1. run the migration on staging (a dry run of the SQL);
   2. run it on production, after an explicit go with a summary;
   3. merge;
   4. `git pull && npx wrangler deploy` from `main`, then read back the bindings and crons.
 
   **No staging worker deploy** (lesson 2026-08-19).
-- [ ] **Verify the deploy read-only, three passes:**
-  - `pragma_table_info('saved_signs')` on production D1;
-  - the deployed worker contains the four actions.
+
+  Shipped as #310 and merged by Brian at 16:19Z, as `e4bbc00`: step 3 came first. Brian then
+  ran the rest from his Mac:
+  - the two migrations and `npx wrangler deploy`, done by about 17:05Z;
+  - his first try at 16:57Z stopped at "Unable to read SQL text file", because the commands I
+    gave put `git pull` after the migrations (lessons.md, rule 29). Nothing ran on that try.
+
+  Claude was asked to run them, and the session's permission check refused `wrangler`, so
+  Brian ran them.
+- [x] **Verify the deploy read-only, three passes** (17:08Z, 17:09:56Z, 17:11:15Z):
+  - **Both D1s**, production and staging: `saved_signs` has the 11 columns in order, the two
+    folder indexes, and 0 rows.
+  - **The deployed `clover-sales-api` bundle**, fetched fresh each pass and grepped, never read
+    in. It carries:
+    - `saved-sign-` ×8 (the bundle strips the 4 comment mentions), `savedSignAccess`,
+      `saved_signs`;
+    - the other fixes the deploy shipped: `addDaysYmd`, `etDayStartIso`, `withOffsetAt`,
+      `isCloverId`, `ONE_STORE_PER_DELETE`;
+    - the untouched older features, still present: `fetchTransactionOrders`, `payment_archive`,
+      `truck_review_email`, `barcode_matches`, `obSheetName`, `dispatchCronFailureAlert`.
+  - **The three downloads were complete and byte-identical** (body sha256 0399c306…), apart
+    from the upload boundary.
+  - **Not probed:** a signed-in request. Every action sits behind the session check, so a request
+    with no session proves nothing (lesson 2026-09-16, rule 28). The browser suite ran the page
+    against this same worker code.
+  - **The live bundle before this deploy predated 24 Sep**, so it also shipped #289, #290,
+    #297–#300 and #308.
 
 ### Review: PR 1
 
@@ -133,25 +157,73 @@ be enforced by a note").
 
 ## Plan: PR 2 (after PR 1 is live)
 
-- [ ] **SignRender `DESIGN_VERSION`**, with an append-only layout pin in `test-sign-render.mjs`.
-- [ ] **Step 3: Save sign.**
+- [x] **SignRender `DESIGN_VERSION`**, with an append-only layout pin in `test-sign-render.mjs`.
+- [x] **Step 3: Save sign.**
   - It shows its state and a note that says where the sign goes.
   - The id is minted per content and kept in the draft, so a retry or a reload never duplicates.
   - "Saved" shows only on server `ok`.
   - Errors are mapped the `bdErr` way, including the old-worker message.
-- [ ] **Header button: Saved signs.**
+- [x] **Header button: Saved signs.**
   - Managers get All stores and their own three type folders; admins get All stores' type
     folders.
   - Then month → sign rows with Open (confirm if unsaved) and Delete (confirm, only when
     `can_delete`).
   - It is built with `ssH` and `--ss-*` styles in all three themes.
-- [ ] **Browser section** with a stateful stub and a second manager. `CACHE_NAME` bump.
-- [ ] **Verify:**
+- [x] **Browser sections** with a second manager, against the REAL worker rather than a stub
+      (changed from the plan: see the review). `CACHE_NAME` bump.
+- [x] **Verify:**
   - `npm test`;
   - the full browser suite;
   - contrast in three themes;
   - mutations.
 - [ ] **Ship PR 2.** Brian checks it on the phone.
+
+### Review: PR 2
+
+**Changed from the plan** (each found while building or verifying):
+- **The browser sections drive the REAL worker, not a stub.**
+  - `scripts/lib/worker-harness.mjs` runs `worker.js` over SQLite with migration-075.
+  - Playwright routes the page's saved-sign requests to it, as the session's user.
+  - Two managers and an admin share one database, so privacy is checked end to end, not
+    against a copy of the rules.
+  - Playwright answers the CORS preflight itself (measured before relying on it).
+- **"Unchanged" means the page's exact sign JSON.** The worker stores the sign exactly as
+  sent and compares it the same way on a retry, so a looser key could turn a retry into a 409.
+- **A failure promises a retry only when one can help:** no signal, a lost or garbled
+  answer, or a 5xx. An old worker's refusal says what is missing and nothing more.
+- **Found on re-reading the diff: the header button's `hidden` did nothing.**
+  - `.ss-btn{display:inline-flex}` is author CSS, so it beats the browser's own `[hidden]`
+    rule.
+  - With the renderer missing, a dead "Saved signs" button would have shown.
+  - Fixed with `#ss-lib-btn[hidden]{display:none}`, and a check that removes the renderer.
+- **Kept off the branch until #310 is live.**
+  - Every push to `claude/sign-maker-studio-447gwx` lands in #310, and a merge deploys the page
+    at once.
+  - So the page half is a local branch (`page-half-local`) in a worktree. The designated
+    branch stays equal to what #310 holds.
+
+**Verified:**
+- **`test-sign-render.mjs`: 416 passed.**
+  - The design version is pinned.
+  - Three design mutants each fail the pin: a colour one digit off, "PER PAIR" as "A PAIR", and
+    the version bumped with no pin.
+  - v1 (`beb036d`) and v2 differ in exactly the two landscape signs that narrow; the other 18
+    drawings match to the byte.
+- **`browser-sign-studio.mjs`: 355 passed, 0 failed**, all 17 sections.
+  - Sections 15–17 are new.
+  - Against the page without this change they stop at once: no Save button, no header button.
+- **Contrast** in every saved-signs state, 171 texts per theme:
+  - lowest 5.62:1 in light, 5.21:1 in dark and 6.82:1 in pure black;
+  - the whole page's lowest is still 5.07:1, a placeholder on step 1.
+- **390 px:** no sideways scroll; every button at least 40 px, folder rows at least 48.
+- **Client mutants, each in its own copy with its own `dist/`: 17 of 17 caught by assertions.**
+  An unmutated control passes 92 of 92.
+  - The first run caught 13 by assertion. Three more (Open and Delete without asking, and an
+    ok naming another id) were caught only by a wait timing out; they are assertions now.
+  - The first run missed one: a delete that doesn't lower the month's count. The test had
+    re-opened the library, which reloads fresh counts. It now steps up by breadcrumb, on the
+    counts already loaded.
+- **`npm test`: 7,419 assertions across 92 suites, all passed.**
 
 # Sign Studio: a name that misses 0.6 in at full width narrows, up to 10%, instead of refusing (2026-09-29)
 

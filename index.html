@@ -5300,6 +5300,47 @@
         .ss-review{display:grid;grid-template-columns:1.3fr 1fr;gap:16px;align-items:end}
         .ss-nav{display:flex;gap:10px;justify-content:space-between;align-items:center;margin-top:8px;flex-wrap:wrap}
         .ss-mini .ss-sheet{margin-bottom:6px}
+        /* Saved signs (29 Sep): Save on step 3, and the folders it saves into. One §4.8 panel;
+           folder rows 52 px and every other control at least 40 px, for a thumb. */
+        .ss-save{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;margin-top:14px;padding-top:14px;
+          border-top:1px dashed var(--ss-border)}
+        .ss-savenote{flex:1 1 240px;min-width:0;font-size:12.5px;line-height:1.45;color:var(--ss-inkDim)}
+        .ss-savenote.ok{color:var(--ss-accent);font-weight:600}
+        .ss-savenote.bad{color:var(--ss-bad)}
+        #ss-lib-btn{flex-shrink:0;margin-top:2px}
+        #ss-lib-btn[hidden]{display:none}   /* .ss-btn's display would beat the browser's own [hidden] */
+        .ss-crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:0 2px;margin:-6px 0 10px}
+        .ss-crumb{background:transparent;border:0;padding:8px 6px;min-height:40px;display:inline-flex;align-items:center;
+          font-size:13.5px;font-weight:700;color:var(--ss-accent);cursor:pointer}
+        .ss-crumb[aria-current]{color:var(--ss-ink);cursor:default}
+        .ss-crumb-sep{color:var(--ss-inkDim);font-size:13.5px}
+        .ss-libnote{margin:0 0 10px;font-size:12.5px;font-weight:600;color:var(--ss-accent)}
+        .ss-libnote:empty{display:none}
+        .ss-lib-list{list-style:none;margin:0;padding:0;border:1px solid var(--ss-hairline);border-radius:12px;overflow:hidden}
+        .ss-lib-list>li+li{border-top:1px solid var(--ss-hairline)}
+        .ss-folder{display:flex;align-items:center;gap:12px;width:100%;min-height:52px;padding:10px 14px;border:0;
+          background:var(--ss-panel);color:var(--ss-ink);font-size:14px;font-weight:600;text-align:left;cursor:pointer}
+        .ss-folder:hover{background:var(--ss-panelHi)}
+        .ss-folder svg{width:18px;height:18px;flex-shrink:0;color:var(--ss-accent)}
+        .ss-folder-t{display:flex;flex-direction:column;min-width:0}
+        .ss-folder-sub{font-size:12px;font-weight:500;color:var(--ss-inkDim)}
+        .ss-folder-n{margin-left:auto;padding-left:8px;font-size:12.5px;font-weight:500;color:var(--ss-inkDim);
+          white-space:nowrap;font-variant-numeric:tabular-nums}
+        .ss-signrow{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;padding:12px 14px;background:var(--ss-panel)}
+        .ss-sr-main{flex:1 1 220px;min-width:0}
+        .ss-sr-name{font-size:14px;font-weight:700;color:var(--ss-ink);overflow-wrap:anywhere}
+        .ss-sr-meta{margin-top:2px;font-size:12.5px;line-height:1.45;color:var(--ss-inkDim);overflow-wrap:anywhere}
+        .ss-sr-acts{display:flex;gap:6px;margin-left:auto}
+        .ss-danger{background:transparent;color:var(--ss-bad);border-color:var(--ss-badEdge)}
+        .ss-lib-skel{min-height:52px;padding:12px 14px;display:flex;flex-direction:column;justify-content:center;gap:7px;
+          background:var(--ss-panel)}
+        .ss-lib-skel i{display:block;height:9px;width:38%;border-radius:5px;background:var(--ss-border);
+          animation:ss-pulse 1.4s ease-in-out infinite}
+        .ss-lib-skel i+i{width:22%}
+        @keyframes ss-pulse{50%{opacity:.45}}
+        @media (prefers-reduced-motion:reduce){.ss-lib-skel i{animation:none}}
+        .ss-lib-empty{margin:0;padding:6px 2px;font-size:13px;line-height:1.5;color:var(--ss-inkDim)}
+        .ss-lib-foot{margin:10px 0 0;font-size:12px;color:var(--ss-inkDim)}
         @media (max-width:759px){
           .ss-grid,.ss-review{grid-template-columns:1fr}
           .ss-mini{order:-1}
@@ -5315,13 +5356,19 @@
         }
       </style>
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
-        <div class="max-w-5xl mx-auto">
-          <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Sign Studio</h1>
-          <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Three quick steps to a printed sign.</p>
+        <div class="max-w-5xl mx-auto flex items-start gap-3">
+          <div class="min-w-0 flex-1">
+            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Sign Studio</h1>
+            <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Three quick steps to a printed sign.</p>
+          </div>
+          <!-- A page-level action, so it lives here and not in #ss-root, which every render
+               replaces whole (DESIGN.md §4.8 trap 7). initSignStudio wires and shows it. -->
+          <button type="button" id="ss-lib-btn" class="ss-btn ss-ghost ss-sm" aria-controls="ss-root" hidden>Saved signs</button>
         </div>
       </div>
       <div class="max-w-5xl mx-auto px-4 sm:px-6 pt-4 pb-10">
         <div id="ss-root"></div>
+        <div id="ss-live" class="sr-only" aria-live="polite"></div>
       </div>
     </div>
 
@@ -7805,6 +7852,13 @@
     const UNIT_TEXT = { each: 'EACH', pair: 'PER PAIR' };
     const LIMIT = { name: 22, qual: 32, custom: 12 };   // name: 22 (Brian, 24 Sep)
     const ORIENTS = ['landscape', 'portrait'];
+    /* The design version. A saved sign records the one it was saved under,
+       for audit; a reprint always draws with the current design (PRD). Any
+       change that moves what a printed sign shows bumps it by one, and
+       appends a pin to DESIGN_PINS in scripts/test-sign-render.mjs.
+       1: the design approved 24 Sep. 2: a name that misses 0.6 in narrows,
+       up to 10% (29 Sep). */
+    const DESIGN_VERSION = 2;
 
     /* The faces (Brian, 24 Sep): Poppins for words, Luckiest Guy for numbers.
        Each file is its own family, drawn at weight 400 and style normal, so a
@@ -8580,7 +8634,7 @@
     }
 
     window.SignRender = Object.freeze({
-      SALE_LABELS, TEMPLATES, UNITS, LIMIT, ORIENTS, FACES, COLORS, LOGO, PT, PAGE, G,
+      SALE_LABELS, TEMPLATES, UNITS, LIMIT, ORIENTS, FACES, COLORS, LOGO, PT, PAGE, G, DESIGN_VERSION,
       parsePrice, parsePct, priceParts, priceText, discountPct, unsupportedChars,
       blankGroup, blankSign, normalizeSign, signModel,
       readFont, engine, validate, describe, inches,
@@ -13082,8 +13136,9 @@
     // Sign Studio: managers, admins and superusers, the PRD's list (a district manager is a
     // manager with more stores since migration-029; the old name stays to mirror merchRoles).
     // Not executives, who get Price Scan, and not an associate by page grant: the role is
-    // the gate. Nothing here reaches the worker, so this is the only one, and the sidebar
-    // item in applyRoleUI carries the same list.
+    // the gate. Making and printing a sign never reaches the worker, so for that this is the
+    // only one; saved signs do, and the worker's savedSignAccess refuses every other role on
+    // its own. The sidebar item in applyRoleUI carries the same list.
     if (page === 'merch-signs') {
       const role = currentUser && currentUser.role;
       const allowed = ['superuser','admin','district_manager','manager'];
@@ -32214,7 +32269,7 @@
   // step, the sign type, a second price). Typing runs ssRefresh, which redraws the previews
   // and messages and never an input, so focus and the caret stay put.
   let ssSign = null;                           // the sign being made: SignRender.normalizeSign's shape
-  const ssView = { step: 1, orient: 'landscape' };
+  const ssView = { step: 1, orient: 'landscape', mode: 'make', folder: null };   // mode 'saved' is the Saved signs view
   let ssAssets = 'idle';                       // idle | loading | ready | failed
   let ssKit = null;                            // { engine, fontBytes, logoBytes, logoUrl } once ready
   const ssOpenDisclose = new Set();            // which "Note and yellow dot" boxes are open
@@ -32238,6 +32293,10 @@
     info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>',
     pdf: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>',
     alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>',
+    save: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>',
+    folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
+    shared: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l1.5-5h15L21 9"/><path d="M4 9v11h16V9"/><path d="M9 20v-6h6v6"/></svg>',
+    back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>',
   };
   function ssIcon(k) { const s = document.createElement('span'); s.innerHTML = SS_ICON[k]; return s.firstChild; }
 
@@ -32255,11 +32314,15 @@
       if (d) {
         ssView.step = [1, 2, 3].includes(d.step) ? d.step : 1;
         ssView.orient = SignRender.ORIENTS.includes(d.orient) ? d.orient : 'landscape';
+        ssSave = ssSaveFromDraft(d.save);   // a save cut off by a reload retries with the same id
       }
       ssDraftJson = ssDraftBody();   // restoring is not a change: the draft keeps its age
     }
+    const lib = el('ss-lib-btn');
+    if (lib) { lib.onclick = ssToggleLibrary; lib.hidden = false; ssSyncLibBtn(); }
     if (ssAssets === 'idle') ssLoadAssets();
     ssRender();
+    if (ssView.mode === 'saved') ssLibReload();   // back on the page: the folders may have changed
   }
   window.initSignStudio = initSignStudio;
 
@@ -32272,7 +32335,7 @@
   const SS_DRAFT = 'sign-studio-draft', SS_DRAFT_TTL = 12 * 3600 * 1000;
   let ssDraftJson = null;
   const ssDraftUser = () => (currentUser && currentUser.email) || null;
-  const ssDraftBody = () => JSON.stringify({ sign: ssSign, step: ssView.step, orient: ssView.orient });
+  const ssDraftBody = () => JSON.stringify({ sign: ssSign, step: ssView.step, orient: ssView.orient, save: ssSave });
   const ssIsBlank = sign => JSON.stringify(SignRender.normalizeSign(sign)) === JSON.stringify(SignRender.blankSign());
   function ssLoadDraft() {
     let d = null;
@@ -32290,7 +32353,7 @@
     ssDraftJson = body;
     try {
       if (ssIsBlank(ssSign)) localStorage.removeItem(SS_DRAFT);   // nothing to keep, so nothing kept
-      else localStorage.setItem(SS_DRAFT, JSON.stringify({ v: 1, savedAt: Date.now(), user, sign: ssSign, step: ssView.step, orient: ssView.orient }));
+      else localStorage.setItem(SS_DRAFT, JSON.stringify({ v: 1, savedAt: Date.now(), user, sign: ssSign, step: ssView.step, orient: ssView.orient, save: ssSave }));
     } catch (e) {}
   }
   // For the service worker's reload (DOMContentLoaded): a sign half-made on screen waits.
@@ -32422,6 +32485,297 @@
     } finally {
       ssPdfBusy = false;
     }
+  }
+
+  /* ── Saved signs (Brian, 29 Sep) ───────────────────────────────────────
+     Saving is optional: Print and PDF never wait for it (PRD). The worker decides where a sign
+     goes and who sees it (savedSignAccess, migration-075): a manager saves to their own
+     folders and also sees All stores; an admin or superuser saves to, and sees, All stores
+     only. Folders are the sign type, then the month in Eastern time. The page mirrors the
+     role only to word things.
+     🔑 The id is minted HERE, once per sign, and kept in the draft BEFORE the request goes
+     out, so a retry, or a reload mid-save, sends the same id and the worker keeps one row.
+     Any change to the sign drops it: the next save is a new sign, and the saved one never
+     changes. "Saved" shows only when the worker answers ok and names this id. */
+  const SS_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  const SS_TYPE_FOLDER = { price: 'Price signs', pct: '% Off signs', uvt: 'Us vs Them signs' };
+  const SS_TYPE_NOUN = { price: 'price signs', pct: '% Off signs', uvt: 'Us vs Them signs' };
+  const SS_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  let ssSave = null;       // { id, sign, where }: sign is the JSON the id was minted for; where, once the worker confirmed it
+  let ssSaveFail = null;   // { sign, text, used, retry }: the last failed save, which applies to that JSON only
+  let ssSaving = false;
+  const ssMonthName = ym => `${SS_MONTHS[+ym.slice(5, 7) - 1]} ${ym.slice(0, 4)}`;
+  const ssWhere = w => (w.scope === 'all' ? 'All stores › ' : '') + `${SS_TYPE_FOLDER[w.template]} › ${ssMonthName(w.month)}`;
+  const ssSavesTo = () => (currentUser && ['admin', 'superuser'].includes(currentUser.role) ? 'all' : 'own');
+  const ssIsWhere = w => !!w && typeof w === 'object' && ['own', 'all'].includes(w.scope)
+    && SignRender.TEMPLATES.some(t => t.id === w.template) && typeof w.month === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(w.month);
+  function ssNewId() {
+    if (window.crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+    const b = crypto.getRandomValues(new Uint8Array(16));   // iOS before 15.4 has no randomUUID
+    b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+    const h = [...b].map(x => x.toString(16).padStart(2, '0')).join('');
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+  }
+  // The draft's copy, read back like everything else in it: a planted value is dropped.
+  function ssSaveFromDraft(x) {
+    if (!x || typeof x !== 'object' || typeof x.id !== 'string' || !SS_UUID.test(x.id) || typeof x.sign !== 'string') return null;
+    return { id: x.id, sign: x.sign, where: ssIsWhere(x.where) ? { scope: x.where.scope, template: x.where.template, month: x.where.month } : null };
+  }
+  // The code is the useful half of a refusal (bdErr): "Forbidden" alone once sent someone
+  // hunting a permission problem that was really a missing worker deploy.
+  function ssApiErr(j, r) {
+    switch (j && j.code) {
+      case 'UNCLASSIFIED_ACTION': return "Saved signs aren't switched on yet: the server half of this update is missing. Print and PDF still work.";
+      case 'NO_SESSION':          return 'Your session has expired. Sign in again.';
+      case 'NEED_SIGN_STUDIO':
+      case 'NO_FINANCIAL_ACCESS': return "Your account can't save signs.";
+      case 'ALL_STORES_ONLY':     return 'Your account sees the All stores folder only.';
+      case 'NEED_ADMIN':          return 'Only an admin can delete an All stores sign.';
+      case 'ID_USED':             return 'That save was already used. Save this as a new sign.';
+      case 'BAD_SIGN':            return `The server refused this sign: ${j.error}`;
+    }
+    if (r.status === 401) return 'Your session has expired. Sign in again.';
+    if (r.ok) return "The server's answer was cut off.";
+    return (j && j.error) || `The server answered ${r.status}.`;
+  }
+  // One worker call. Never throws: { j } when the worker said ok, else { err, code, status }.
+  // no-store, so a list is never an old copy with a deleted sign still in it.
+  async function ssApi(action, query, body) {
+    const url = `${WORKER_BASE}?action=${action}` + (query ? '&' + new URLSearchParams(query) : '');
+    let r;
+    try {
+      r = await fetch(url, body ? { method: 'POST', credentials: 'include', cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : { credentials: 'include', cache: 'no-store' });
+    } catch (e) {
+      return { err: "Couldn't reach the server.", code: null, status: 0 };
+    }
+    const j = await r.json().catch(() => null);
+    if (r.ok && j && j.ok) return { j };
+    return { err: ssApiErr(j, r), code: (j && j.code) || null, status: r.status };
+  }
+  function ssSaveState(cur) {
+    if (ssSaving) return 'saving';
+    if (ssSave && ssSave.sign === cur && ssSave.where) return 'saved';
+    if (ssSaveFail && ssSaveFail.sign === cur) return ssSaveFail.used ? 'used' : 'failed';
+    return 'idle';
+  }
+  async function ssDoSave() {
+    const R = window.SignRender;
+    if (ssSaving || ssAssets !== 'ready') return;
+    const v = R.validate(R.signModel(ssSign), ssKit.engine);
+    if (v.blocked.landscape && v.blocked.portrait) return;   // the button is off as well; this is the gate
+    const cur = JSON.stringify(ssSign), st = ssSaveState(cur);
+    if (st === 'saved') return;
+    // The same sign keeps its id, so trying again is the same save. A changed sign, or an id
+    // the worker says is used, gets a new one: a new sign.
+    if (!ssSave || ssSave.sign !== cur || st === 'used') ssSave = { id: ssNewId(), sign: cur, where: null };
+    const mine = ssSave, body = { id: mine.id, sign: JSON.parse(cur), design_version: R.DESIGN_VERSION };
+    ssSaveFail = null;
+    ssSaving = true;
+    ssSaveDraft();   // 🔑 before the request, so a reload mid-save retries with this id
+    ssRefresh();
+    const res = await ssApi('saved-sign-save', null, body);
+    ssSaving = false;
+    const s = res.j && res.j.sign;
+    if (s && s.id === mine.id && ssIsWhere({ scope: s.scope, template: s.template, month: s.month }))
+      mine.where = { scope: s.scope, template: s.template, month: s.month };
+    else ssSaveFail = { sign: mine.sign, used: res.code === 'ID_USED', text: res.err || "The server's answer didn't confirm the save.",
+      // no signal, a lost or garbled answer, a server fault: another try may land, and can't duplicate
+      retry: !res.status || res.status < 300 || res.status >= 500 };
+    ssSaveDraft();
+    ssRefresh();
+  }
+  const ssSaveRow = () => ssH('div', { class: 'ss-save' },
+    ssH('button', { type: 'button', class: 'ss-btn ss-ghost', 'data-save': '', onclick: ssDoSave }, ssIcon('save'), ssH('span', { 'data-save-label': '' }, 'Save sign')),
+    ssH('div', { class: 'ss-savenote', 'data-savenote': '', 'aria-live': 'polite' }));
+
+  /* ── The Saved signs view: a mode of this page, drawn into #ss-root ─────
+     The folders are one call (counts by scope, type and month), and a month's signs another,
+     newest first. The newest request of each wins. Nothing from here is kept on the device:
+     a copy could bring back a sign someone has since deleted. */
+  const ssLib = { folders: null, ferr: null, fseq: 0, list: null, lerr: null, lseq: 0, busy: new Set(), rowErr: new Map(), note: '' };
+  const ssLibAdmin = () => (ssLib.folders ? ssLib.folders.view === 'admin' : ssSavesTo() === 'all');
+  function ssSyncLibBtn() {
+    const b = el('ss-lib-btn');
+    if (b) b.replaceChildren(ssIcon(ssView.mode === 'saved' ? 'back' : 'folder'), ssView.mode === 'saved' ? 'Back to the sign' : 'Saved signs');
+  }
+  function ssToggleLibrary() {
+    if (ssView.mode === 'saved') {
+      ssView.mode = 'make';
+      ssRender();
+      ssFocusKey(null, el('ss-root').querySelector('[aria-current="step"]'));
+    } else {
+      ssView.mode = 'saved'; ssView.folder = null;
+      ssLib.note = ''; ssLib.list = null; ssLib.rowErr.clear();
+      ssLibFetchFolders();
+      ssFocusKey('crumb');
+    }
+    ssSyncLibBtn();
+  }
+  function ssLibReload() {
+    ssLib.note = '';
+    if (ssView.folder && ssView.folder.month) ssLibFetchList(); else ssLibFetchFolders();
+  }
+  async function ssLibFetchFolders() {
+    const seq = ++ssLib.fseq;
+    ssLib.folders = null; ssLib.ferr = null; ssLibRender();
+    const res = await ssApi('saved-sign-folders');
+    if (seq !== ssLib.fseq) return;   // a newer load is on its way
+    if (res.j && Array.isArray(res.j.folders)) ssLib.folders = res.j;
+    else ssLib.ferr = res.err || "The server's answer was cut off.";
+    ssLibRender();
+  }
+  async function ssLibFetchList() {
+    const f = ssView.folder, seq = ++ssLib.lseq;
+    ssLib.list = null; ssLib.lerr = null; ssLibRender();
+    const res = await ssApi('saved-sign-list', { scope: f.scope, template: f.template, month: f.month, limit: 200 });
+    if (seq !== ssLib.lseq) return;   // another folder was opened since
+    if (res.j && Array.isArray(res.j.signs)) ssLib.list = res.j;
+    else ssLib.lerr = res.err || "The server's answer was cut off.";
+    ssLibRender();
+  }
+  // folder: null is the top. A manager's top holds All stores and their own three types; an
+  // admin's top IS All stores. Then { scope, template } (its months), then with a month (its signs).
+  function ssLibGo(to) {
+    ssView.folder = to;
+    ssLib.note = ''; ssLib.rowErr.clear();
+    if (to && to.month) ssLibFetchList();
+    else { ssLib.lseq++; ssLib.list = null; ssLib.lerr = null; ssLibRender(); }
+    ssFocusKey('crumb');
+  }
+  // Every render replaces #ss-root, so focus is carried across by key.
+  function ssFocusKey(key, node) {
+    const root = el('ss-root');
+    const n = node || (root && key ? [...root.querySelectorAll('[data-fk]')].find(x => x.getAttribute('data-fk') === key) : null);
+    if (n && !n.disabled) n.focus();
+  }
+  function ssLibRender() {
+    const root = el('ss-root');
+    if (!root || ssView.mode !== 'saved') return;
+    const a = document.activeElement, fk = a && root.contains(a) ? a.getAttribute('data-fk') : null;
+    root.replaceChildren(...ssLibraryC());
+    if (fk) ssFocusKey(fk);
+  }
+  function ssLibraryC() {
+    return [ssPanel('Saved signs', null, ssLibCrumbs(), ssH('p', { class: 'ss-libnote' }, ssLib.note), ssLibBody())];
+  }
+  function ssLibCrumbs() {
+    const f = ssView.folder || {}, trail = [];
+    if (ssLibAdmin()) trail.push(['All stores', null]);
+    else {
+      trail.push(['Saved signs', null]);
+      if (f.scope === 'all') trail.push(['All stores', { scope: 'all' }]);
+    }
+    if (f.template) trail.push([SS_TYPE_FOLDER[f.template], { scope: f.scope, template: f.template }]);
+    if (f.month) trail.push([ssMonthName(f.month), f]);
+    return ssH('nav', { class: 'ss-crumbs', 'aria-label': 'Folders' }, trail.map(([t, to], i) => [
+      i ? ssH('span', { class: 'ss-crumb-sep', 'aria-hidden': 'true' }, '›') : null,
+      i === trail.length - 1
+        ? ssH('span', { class: 'ss-crumb', 'aria-current': 'location', tabindex: '-1', 'data-fk': 'crumb' }, t)
+        : ssH('button', { type: 'button', class: 'ss-crumb', 'data-crumb': String(i), 'data-fk': `crumb-${i}`, onclick: () => ssLibGo(to) }, t)]));
+  }
+  const ssLibSkeleton = () => ssH('ul', { class: 'ss-lib-list', 'aria-busy': 'true', 'aria-label': 'Loading saved signs', 'data-libskel': '' },
+    [0, 1, 2].map(() => ssH('li', { class: 'ss-lib-skel' }, ssH('i'), ssH('i'))));
+  function ssLibError(text) {
+    return ssH('div', { class: 'ss-note err', role: 'alert' }, ssIcon('alert'),
+      ssH('div', null, ssH('b', null, "Couldn't load saved signs. "), text,
+        ssH('div', { style: 'margin-top:8px' },
+          ssH('button', { type: 'button', class: 'ss-btn ss-ghost ss-sm', 'data-libretry': '', 'data-fk': 'retry', onclick: ssLibReload }, 'Retry'))));
+  }
+  function ssLibFolderRow(name, n, to, icon, sub) {
+    const key = [to.scope, to.template, to.month].filter(Boolean).join('/');
+    return ssH('li', null, ssH('button', { type: 'button', class: 'ss-folder', 'data-folder': key, 'data-fk': 'f:' + key, onclick: () => ssLibGo(to) },
+      ssIcon(icon), ssH('span', { class: 'ss-folder-t' }, ssH('span', null, name), sub ? ssH('span', { class: 'ss-folder-sub' }, sub) : null),
+      ssH('span', { class: 'ss-folder-n' }, n ? `${n} sign${n > 1 ? 's' : ''}` : 'Empty')));
+  }
+  function ssLibEmpty(f) {
+    const what = SS_TYPE_NOUN[f.template];
+    return ssH('p', { class: 'ss-lib-empty', 'data-libempty': '' }, f.scope !== 'all'
+      ? `No ${what} saved yet. Save one on step 3, and it lands in that month's folder here.`
+      : ssLibAdmin() ? `No ${what} in All stores yet. What you save lands here, and every store sees it.`
+      : `No ${what} in All stores yet. Signs an admin saves for every store show up here.`);
+  }
+  function ssLibBody() {
+    const f = ssView.folder;
+    if (f && f.month) {
+      if (ssLib.lerr) return ssLibError(ssLib.lerr);
+      if (!ssLib.list) return ssLibSkeleton();
+      const L = ssLib.list;
+      if (!L.signs.length) return ssLibEmpty(f);
+      return [ssH('ul', { class: 'ss-lib-list' }, L.signs.map(ssLibSignRow)),
+        L.truncated ? ssH('p', { class: 'ss-lib-foot' }, `Showing the newest ${L.signs.length}. The older ones are kept, but not listed here yet.`) : null];
+    }
+    if (ssLib.ferr) return ssLibError(ssLib.ferr);
+    if (!ssLib.folders) return ssLibSkeleton();
+    const all = ssLib.folders.folders;
+    const count = pred => all.filter(pred).reduce((n, x) => n + x.count, 0);
+    const types = scope => SignRender.TEMPLATES.map(t => ssLibFolderRow(SS_TYPE_FOLDER[t.id], count(x => x.scope === scope && x.template === t.id), { scope, template: t.id }, 'folder'));
+    if (!f && !ssLibAdmin()) return ssH('ul', { class: 'ss-lib-list' },
+      ssLibFolderRow('All stores', count(x => x.scope === 'all'), { scope: 'all' }, 'shared', 'Saved by admins for every store'), types('own'));
+    if (!f || !f.template) return ssH('ul', { class: 'ss-lib-list' }, types('all'));
+    const months = all.filter(x => x.scope === f.scope && x.template === f.template);
+    if (!months.length) return ssLibEmpty(f);
+    return ssH('ul', { class: 'ss-lib-list' }, months.map(m => ssLibFolderRow(ssMonthName(m.month), m.count, { scope: f.scope, template: f.template, month: m.month }, 'folder')));
+  }
+  // A saved sign in words: its names, its offer, its label, when, and who (All stores only).
+  function ssLibSignRow(s) {
+    const R = window.SignRender, busy = ssLib.busy.has(s.id), err = ssLib.rowErr.get(s.id);
+    const sign = s.sign && typeof s.sign === 'object' ? R.normalizeSign(s.sign) : null, m = sign ? R.signModel(sign) : null;
+    const name = m ? m.groups.map(g => g.rawName || 'No name').join(' · ') : "A sign this page can't open";
+    const money = c => (c ? R.priceText(c) : 'no price'), unit = { each: ' each', pair: ' per pair' };
+    const offer = !m ? '' : m.template === 'uvt' ? `You pay ${money(m.groups[0].price.cents)} · theirs ${money(m.them.cents)}`
+      : m.groups.map(g => g.kind === 'pct' ? (g.pct.n ? `${g.pct.n}% off` : 'no percent') : money(g.price.cents) + (unit[g.unit] || '')).join(' and ');
+    const label = !m ? '' : !m.label ? 'No label' : m.label.custom ? m.label.raw : R.SALE_LABELS.find(x => x.id === sign.sale).name;
+    const t = new Date(s.saved_at), when = isNaN(t) ? '' : t.toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    return ssH('li', { class: 'ss-signrow', 'data-sign': s.id },
+      ssH('div', { class: 'ss-sr-main' }, ssH('div', { class: 'ss-sr-name' }, name),
+        ssH('div', { class: 'ss-sr-meta' }, [offer, label, when, s.saved_by ? `by ${s.saved_by}` : ''].filter(Boolean).join(' · ')),
+        err ? ssH('div', { class: 'ss-msg', role: 'alert' }, err) : null),
+      ssH('div', { class: 'ss-sr-acts' },
+        ssH('button', { type: 'button', class: 'ss-btn ss-primary ss-sm', 'data-open': s.id, 'data-fk': 'open:' + s.id, disabled: !m || busy,
+          onclick: () => ssOpenSaved(s) }, 'Open'),
+        s.can_delete ? ssH('button', { type: 'button', class: 'ss-btn ss-danger ss-sm', 'data-del': s.id, 'data-fk': 'del:' + s.id, disabled: busy,
+          onclick: () => ssLibDelete(s, name) }, busy ? 'Deleting…' : 'Delete') : null));
+  }
+  // Open: the saved sign replaces the one on screen, on step 3, ready to print. Unchanged, it
+  // reads "Saved"; any change makes the next save a new sign in this month's folder.
+  async function ssOpenSaved(s) {
+    const sign = SignRender.normalizeSign(s.sign), json = JSON.stringify(sign), cur = JSON.stringify(ssSign);
+    const kept = ssIsBlank(ssSign) || cur === json || ssSaveState(cur) === 'saved';
+    if (!kept && !(await uiConfirm("The sign you were making isn't saved. Open this one in its place?",
+      { title: 'Open a saved sign?', okText: 'Open it', defaultCancel: true }))) { ssFocusKey('open:' + s.id); return; }
+    ssSign = sign;
+    ssSave = { id: s.id, sign: json, where: { scope: s.scope, template: s.template, month: s.month } };
+    ssSaveFail = null;
+    ssOpenDisclose.clear();
+    ssView.mode = 'make';
+    ssSyncLibBtn();
+    ssGo(3);
+    ssFocusKey(null, el('ss-root').querySelector('[aria-current="step"]'));
+  }
+  async function ssLibDelete(s, name) {
+    const where = ssWhere({ scope: s.scope, template: s.template, month: s.month });
+    if (!(await uiConfirm(`Delete “${name}” from ${where}? There is no undo.`,
+      { title: 'Delete this sign?', okText: 'Delete', danger: true, defaultCancel: true }))) { ssFocusKey('del:' + s.id); return; }
+    ssLib.busy.add(s.id); ssLib.rowErr.delete(s.id); ssLib.note = '';
+    ssLibRender();
+    const res = await ssApi('saved-sign-delete', null, { id: s.id });
+    ssLib.busy.delete(s.id);
+    if (!res.j && res.status !== 404) {   // 404: it was already gone, which is what was asked
+      ssLib.rowErr.set(s.id, res.err);
+      ssLibRender(); ssFocusKey('del:' + s.id);
+      return;
+    }
+    const list = ssLib.list ? ssLib.list.signs : [], i = list.findIndex(x => x.id === s.id), next = list[i + 1] || list[i - 1];
+    if (i >= 0) list.splice(i, 1);
+    const fo = ssLib.folders && ssLib.folders.folders.find(x => x.scope === s.scope && x.template === s.template && x.month === s.month);
+    if (fo && --fo.count <= 0) ssLib.folders.folders.splice(ssLib.folders.folders.indexOf(fo), 1);
+    if (ssSave && ssSave.id === s.id) { ssSave = null; ssSaveDraft(); }   // the sign on screen is no longer saved
+    ssLib.note = res.j ? `Deleted “${name}”.` : `“${name}” was already deleted.`;
+    const live = el('ss-live');
+    if (live) live.textContent = ssLib.note;
+    ssLibRender();
+    ssFocusKey(next ? 'open:' + next.id : 'crumb');
   }
 
   /* ── The fields ─────────────────────────────────────────────────── */
@@ -32614,6 +32968,7 @@
       ssH('div', { class: 'ss-review' }, ssPreviewCard('landscape'), ssPreviewCard('portrait')),
       ssH('div', { style: 'margin-top:14px;display:grid;gap:10px' }, ssH('div', { 'data-summary': '' }),
         ssH('div', { class: 'ss-note', 'data-reminder': '' }, ssIcon('info'), ssH('span', { 'data-reminder-text': '' }))),
+      ssSaveRow(),
       nav(btn('ss-ghost', '← Back', () => ssGo(2)), btn('ss-ghost', 'Start a new sign', ssStartOver, { 'data-new': '' })));
     const mini = st === 3 ? null : ssH('aside', { class: 'ss-mini' },
       ssH('div', { class: 'ss-panel' }, ssH('div', { class: 'ss-bar' }, ssH('span', { class: 'ss-lbl' }, 'As it will print'), ssOrientSeg()),
@@ -32623,6 +32978,7 @@
   function ssRender() {
     const root = el('ss-root');
     if (!root || !ssSign) return;
+    if (ssView.mode === 'saved') { ssLibRender(); return; }
     const active = document.activeElement && document.activeElement.id;
     root.replaceChildren(...ssLayoutC());
     if (active && active.startsWith('ss-f-') && el(active)) el(active).focus();
@@ -32642,7 +32998,7 @@
   /* ── After every keystroke: previews, messages, what may print ──────── */
   function ssRefresh() {
     const R = window.SignRender, root = el('ss-root');
-    if (!R || !root || !ssSign) return;
+    if (!R || !root || !ssSign || ssView.mode === 'saved') return;
     const t0 = performance.now();
     ssEndPrint();   // the sign is changing: a print readied from it is stale
     const ready = ssAssets === 'ready', failed = ssAssets === 'failed';
@@ -32727,6 +33083,25 @@
       const o = b.getAttribute('data-print') || b.getAttribute('data-pdf');
       b.disabled = !can[o];
       b.title = can[o] ? '' : !ready ? "The sign font hasn't loaded" : only ? `The ${o} sign doesn't fit. The ${only} one prints.` : 'Fix the fields above first';
+    });
+    // Save: for a sign that prints at least one way, like Print. Its state is for THIS sign's
+    // JSON: a change since the last save puts it back to "Save sign".
+    const sst = ssSaveState(JSON.stringify(ssSign)), savable = can.landscape || can.portrait;
+    root.querySelectorAll('[data-save]').forEach(b => {
+      b.disabled = sst === 'saving' || sst === 'saved' || !savable;
+      b.title = savable || sst === 'saved' ? '' : !ready ? "The sign font hasn't loaded" : 'Fix the fields above first';
+      b.querySelector('[data-save-label]').textContent =
+        { idle: 'Save sign', saving: 'Saving…', saved: 'Saved', failed: 'Try again', used: 'Save as a new sign' }[sst];
+    });
+    root.querySelectorAll('[data-savenote]').forEach(n => {
+      const text = sst === 'saved' ? `Saved in ${ssWhere(ssSave.where)}.`
+        : sst === 'saving' ? 'Saving…'
+        : sst === 'failed' ? ssSaveFail.text + (ssSaveFail.retry ? " Your sign is still here. Trying again can't save it twice." : '')
+        : sst === 'used' ? ssSaveFail.text
+        : !savable ? (ready ? 'A sign saves once it can print.' : 'Saving waits for the sign font, like Print.')
+        : `Saves to ${ssWhere({ scope: ssSavesTo(), template: ssSign.template, month: etTodayStr().slice(0, 7) })}. Optional: Print and PDF don't need it.`;
+      if (n.textContent !== text) n.textContent = text;   // aria-live: announce a change, not every keystroke
+      n.className = 'ss-savenote' + (sst === 'saved' ? ' ok' : sst === 'failed' || sst === 'used' ? ' bad' : '');
     });
     ssSaveDraft();
     if (ready && ssView.step === 3 && !ssPdfWarm) {   // so the first PDF does not wait for 364 KB

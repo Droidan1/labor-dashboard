@@ -531,5 +531,49 @@ for (const s of SAMPLES) for (const o of R.ORIENTS) {
   ok(got && got.equals(want), '…and it is sign-logo.png, pixel for pixel');
 }
 
+// ── 9. The design version ────────────────────────────────────────────────────
+// A saved sign records the design it was saved under (SignRender.DESIGN_VERSION), for audit,
+// and a reprint always draws with the current design (PRD). So the number has to move whenever
+// what prints moves. This pins ten fixed signs, both ways, as the SVG draws them (section 7
+// shows the PDF draws the same), plus the font and logo files. Change anything a sign shows (a
+// place, a size, a font, a colour, a narrowing) and this fails until DESIGN_VERSION goes up by
+// one and a line is appended below. APPEND ONLY: saved rows carry these numbers. The signs and
+// the print below are frozen too; a new sign to pin is a new version.
+console.log('Design version');
+const DESIGN_PINS = [
+  // [version, from, what changed, print]
+  [1, '2026-09-24', 'the design Brian approved', 'f4fafc1ae748f1248b4e1395bc364f6160654897e3fd40c49f30a94898d508ea'],   // index.html at beb036d, the last main before 2
+  [2, '2026-09-29', 'a name that misses 0.6 in narrows, up to 10% (PR #309)', '6e48bc656a6d8eb3867043d3638a49ac890de020acfce4f2e7687791f893d17f'],
+];
+{
+  const DESIGN_SAMPLES = [
+    { sale: 'flash', groups: [{ name: 'All cereal', price: '2' }] },
+    { sale: 'manager', groups: [{ name: 'Mens athletic sneakers', price: '24.99', unit: 'each' }] },
+    { sale: 'none', groups: [{ name: 'All candy', price: '0.99' }] },
+    { sale: 'blowout', two: true, groups: [{ name: 'Shoes', price: '10', unit: 'pair' }, { name: 'Premium shoes', price: '15', unit: 'pair', qual: 'Yellow dot on bottom', dot: true }] },
+    { sale: 'sale', two: true, groups: [{ name: 'Sofa', price: '9999.99' }, { name: 'Loveseat', price: '9999.99' }] },
+    { two: true, groups: [{ name: 'Adult costumes', price: '7', unit: 'each' }, { name: 'Kids costumes', price: '5', unit: 'each' }] },
+    { template: 'pct', sale: 'sale', groups: [{ name: 'All winter coats', pct: '20' }] },
+    { template: 'pct', sale: 'custom', custom: 'Weekend deal', two: true, groups: [{ name: 'Shoes', pct: '20' }, { name: 'Premium shoes', pct: '40' }] },
+    { template: 'uvt', sale: 'flash', them: '59.99', groups: [{ name: 'Stand mixer', price: '19.99', unit: 'each' }] },
+    { template: 'uvt', them: '100', groups: [{ name: 'Kitchen storage bins', price: '30' }] },
+  ];
+  // Every node drawSVG makes, with every attribute but the ones a screen reader or a test reads
+  // (aria-*, data-*, role): those can change without the paper changing.
+  const recDoc = { createElementNS(ns, tag) { return { tag, attrs: {}, kids: [], text: null,
+    setAttribute(k, val) { this.attrs[k] = String(val); }, appendChild(c) { this.kids.push(c); return c; }, set textContent(t) { this.text = t; } }; } };
+  const look = n => [n.tag, Object.keys(n.attrs).filter(k => !/^(aria-|data-|role$)/.test(k)).sort().map(k => [k, n.attrs[k]]), n.text, n.kids.map(look)];
+  const sha = x => crypto.createHash('sha256').update(x).digest('hex');
+  const print = sha(JSON.stringify({
+    files: [...FACE_KEYS.map(k => sha(fontBytes[k])), sha(logoBytes)],
+    signs: DESIGN_SAMPLES.map(s => R.ORIENTS.map(o => look(R.drawSVG(E.layoutSign(R.signModel(sign(s)), o), recDoc, { label: 'x', logoHref: 'logo' })))),
+  }));
+  const last = DESIGN_PINS[DESIGN_PINS.length - 1];
+  eq(DESIGN_PINS.map(p => p[0]).join(), DESIGN_PINS.map((p, i) => i + 1).join(), 'the pins run 1, 2, 3… with none skipped or reordered');
+  eq(R.DESIGN_VERSION, last[0], 'SignRender.DESIGN_VERSION is the newest pinned version');
+  ok(print === last[3], `the ten pinned signs look exactly as version ${last[0]} says${print === last[3] ? '' : `: something a sign shows changed. If that is meant, bump DESIGN_VERSION to ${last[0] + 1} and append [${last[0] + 1}, '<date>', '<what changed>', '${print}']`}`);
+  eq(new Set(DESIGN_PINS.map(p => p[3])).size, DESIGN_PINS.length, 'each version looks different from every other');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

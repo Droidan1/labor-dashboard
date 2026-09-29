@@ -11,7 +11,8 @@
 // the two drawers, against the committed font files. This checks what a manager meets: who
 // can open the page, the three steps, the preview the browser actually draws with those
 // fonts, what is allowed to print, and that every word on the page is readable in all three
-// themes.
+// themes. Sections 15–17 (saved signs) also run worker.js itself, through
+// scripts/lib/worker-harness.mjs, so they need a Node with node:sqlite (22.5 or later).
 //
 // 🛑 THE APP'S THEME IS localStorage, NOT prefers-color-scheme (see browser-bin-dump):
 // `darkMode` + `darkFlavor=oled` are written before boot, and the class is asserted.
@@ -73,8 +74,9 @@ check(JSPDF && AUTOTABLE && fs.existsSync(path.join(root, JSPDF)) && fs.existsSy
       `the page names its jsPDF (${JSPDF}) and autotable (${AUTOTABLE}), and dist/ has both`);
 
 // ── the fake worker, run inside the page ─────────────────────────────────
-// auth-me is answered here; nothing else this page does reaches the worker. Every request
-// that is not this server is refused below, so nothing can reach production.
+// auth-me is answered here. The saved-sign actions go out to the network, where sections
+// 15–17 route them to the REAL worker (useWorker, below); anywhere else they meet the refusal
+// every request that is not this server meets, so nothing can reach production.
 function pageMocks({ who, theme }) {
   try {
     localStorage.setItem('darkMode', String(theme !== 'light'));
@@ -85,7 +87,9 @@ function pageMocks({ who, theme }) {
   window.fetch = async (u, o = {}) => {
     const s = String(u && u.url ? u.url : u);
     if (!s.startsWith('https://')) return real(u, o);
-    if (new URL(s).searchParams.get('action') !== 'auth-me') return J({ ok: false, error: 'not in this harness' }, 404);
+    const action = new URL(s).searchParams.get('action') || '';
+    if (action.startsWith('saved-sign-')) return real(u, o);
+    if (action !== 'auth-me') return J({ ok: false, error: 'not in this harness' }, 404);
     window.__ssAuthed = true;
     return J(who);
   };
@@ -98,6 +102,11 @@ const ROLES = {
   // An associate is gated by page grant. This one holds a grant for Sign Studio, which the
   // PRD says cannot be granted: the router must refuse it anyway.
   associate: Object.assign(USER('associate'), { associate: true, pages: { 'merch-signs': 'edit', 'bin-dump': 'edit' } }),
+  // The worker harness's own people (scripts/lib/worker-harness.mjs), for sections 15–17:
+  // two managers of the same store, and an admin.
+  mgr1: Object.assign(USER('manager'), { email: 'howardbrian260@gmail.com', stores: ['BL1'] }),
+  mgr2: Object.assign(USER('manager'), { email: 'alyson@bargainlane.com', stores: ['BL1', 'BL4'] }),
+  hadmin: Object.assign(USER('admin'), { email: 'bgeorges@retjg.com', stores: [] }),
 };
 
 const b = await chromium.launch({ executablePath: CHROME });
@@ -111,7 +120,7 @@ async function section(name, fn) {
   catch (e) { check(false, `${name}: stopped after "${(results[results.length - 1] || [])[1]}" — ${String((e && e.message) || e).split('\n')[0]}`); }
   finally { for (const c of live) { try { await c.close(); } catch (e) {} } live.clear(); }
 }
-async function open({ role = 'manager', theme = 'light', phone = false, go = true, sw = false } = {}) {
+async function open({ role = 'manager', theme = 'light', phone = false, go = true, sw = false, worker = null } = {}) {
   const ctx = await b.newContext(Object.assign({ timezoneId: 'America/New_York', locale: 'en-US', serviceWorkers: sw ? 'allow' : 'block' },
     phone ? { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 }
           : { viewport: { width: 1280, height: 900 } }));
@@ -124,6 +133,7 @@ async function open({ role = 'manager', theme = 'light', phone = false, go = tru
   // A context route also covers the service worker's own requests (Chromium), which a page
   // route does not see.
   await (sw ? ctx : page).route(u => !u.href.startsWith(ORIGIN), r => r.abort());
+  if (worker) await useWorker(page, worker.W, worker.uid);   // registered later, so it is asked first
   await page.addInitScript(pageMocks, { who: ROLES[role], theme });
   await page.goto(`${ORIGIN}/`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => typeof window.navigateToPage === 'function' && window.__ssAuthed, null, { timeout: 10000 });
@@ -937,6 +947,449 @@ await section('14. two WRS exports at once', async () => {
   eq(dls.length, 2, '…both make their PDF');
   eq(hits(AUTOTABLE) - at0, 1, '…and autotable is fetched once, for both');
   check(!errs.length, `…and no page or console errors (${errs.slice(0, 2).join(' | ')})`);
+});
+
+// ── The real worker, for saved signs ─────────────────────────────────────
+// Sections 15–17 send the page's saved-sign requests to worker.js itself, run by the Node
+// harness over SQLite with migration-075 applied: the code the Node suite drives, so the page
+// is checked against the real rules and not a copy of them. Two browser contexts with two
+// sessions share one database, which is how one manager's signs are shown never to reach
+// another's screen. W.down drops the request (no signal), W.lose lets the worker do the work
+// and then drops the answer, W.old answers as a worker without these actions, and W.hold
+// (action, url) can hold an answer back.
+const H = await import('./lib/worker-harness.mjs');
+const WORKER = await H.loadWorker(repo);
+function workerDb() {
+  const { db, env } = H.makeEnv(repo);
+  db.exec(fs.readFileSync(path.join(repo, 'migration-075.sql'), 'utf8'));
+  H.applyMigrationAlters(db, repo);
+  db.prepare("UPDATE sessions SET expires_at = '2099-01-01T00:00:00.000Z'").run();
+  return { db, env, log: [], down: false, lose: false, old: false, hold: null };
+}
+async function useWorker(page, W, uid) {
+  await page.route(u => u.hostname === 'api.retjghub.com' && /^saved-sign-/.test(u.searchParams.get('action') || ''), async route => {
+    const q = route.request(), action = new URL(q.url()).searchParams.get('action');
+    const cors = { 'content-type': 'application/json', 'access-control-allow-origin': ORIGIN, 'access-control-allow-credentials': 'true' };
+    try {
+      if (W.down) return await route.abort('internetdisconnected');
+      if (W.old) return await route.fulfill({ status: 403, headers: cors, body: JSON.stringify({ error: 'Forbidden', code: 'UNCLASSIFIED_ACTION' }) });
+      const res = await WORKER.fetch(new Request(q.url(), { method: q.method(), body: q.method() === 'POST' ? q.postData() : undefined,
+        headers: { 'Content-Type': 'application/json', Cookie: `session=sess-${uid}` } }), W.env, H.ctx);
+      const body = await res.text();
+      W.log.push({ uid, action, url: q.url(), sent: q.postData(), status: res.status, body });
+      const held = W.hold && W.hold(action, q.url());
+      if (held) await held;
+      if (W.lose) { W.lose = false; return await route.abort('connectionreset'); }   // the worker did it; the answer is lost
+      // An ok that names some other sign: a proxy's cached answer, say. It confirms nothing.
+      const forged = W.forge ? body.replace(/"id":"[0-9a-f-]{36}"/, '"id":"00000000-0000-4000-8000-00000000f00d"') : body;
+      await route.fulfill({ status: res.status, headers: cors, body: forged });
+    } catch (e) { /* the page went away (a reload mid-save): nothing is waiting for this answer */ }
+  });
+}
+const etYm = (d = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d).slice(0, 7);
+const monthName = ym => new Date(Date.UTC(+ym.slice(0, 4), +ym.slice(5, 7) - 1, 15)).toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+const YM = etYm(), MONTH = monthName(YM);
+const PM = (([y, m]) => m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`)(YM.split('-').map(Number)), PMONTH = monthName(PM);
+// A saved row, written straight into the table, for the folders a section needs.
+const SG = (o = {}) => Object.assign({ name: '', price: '', pct: '', unit: '', qual: '', dot: false }, o);
+let seedN = 0;
+function seedSign(W, { owner, scope = 'own', month = YM, at, template = 'price', sale = 'none', custom = '', them = '', g0 = {}, g1 = {}, two = false }) {
+  const email = H.USERS.find(u => u[0] === owner)[1], id = `00000000-0000-4000-8000-${String(++seedN).padStart(12, '0')}`;
+  const sign = { template, sale, custom, two, them, groups: [SG(g0), SG(g1)] };
+  W.db.prepare(`INSERT INTO saved_signs (id, owner_id, owner_email, scope, template, saved_month, sign_json, design_version, saved_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 2, ?)`).run(id, owner, email, scope, template, month, JSON.stringify(sign), at || new Date(Date.now() - seedN * 60000).toISOString());
+  return id;
+}
+const saveBtn = page => page.$eval('[data-save]', b => ({ label: b.textContent.trim(), disabled: b.disabled, title: b.title }));
+const saveNote = page => page.$eval('[data-savenote]', n => ({ text: n.textContent, tone: n.className.replace('ss-savenote', '').trim() }));
+const waitSave = (page, label) => page.waitForFunction(l => { const b = document.querySelector('[data-save]'); return !!b && b.textContent.trim() === l; }, label, { timeout: 8000 });
+// How a save ended, whichever way: so a page that ends it the wrong way fails an assertion, not a wait.
+const saveEnds = async page => {
+  await page.waitForFunction(() => { const b = document.querySelector('[data-save]'); return !!b && b.textContent.trim() !== 'Saving…'; }, null, { timeout: 8000 });
+  return (await saveBtn(page)).label;
+};
+const draftOf = page => page.evaluate(() => JSON.parse(localStorage.getItem('sign-studio-draft') || 'null'));
+async function reenter(page) {
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => typeof window.navigateToPage === 'function' && window.__ssAuthed, null, { timeout: 10000 });
+  await page.waitForTimeout(500);
+  await enter(page);
+}
+const waitLib = page => page.waitForFunction(() => !!document.querySelector('#ss-root .ss-crumbs') && !document.querySelector('#ss-root [data-libskel]'), null, { timeout: 8000 });
+const lib = {
+  open: async page => { await page.click('#ss-lib-btn'); await waitLib(page); },
+  go: async (page, key) => { await page.click(`#ss-root [data-folder="${key}"]`); await waitLib(page); },
+  up: async (page, i) => { await page.click(`#ss-root [data-crumb="${i}"]`); await waitLib(page); },
+  crumbs: page => page.$$eval('#ss-root .ss-crumb', ns => ns.map(n => n.textContent)),
+  folders: page => page.$$eval('#ss-root [data-folder]', ns => ns.map(n => `${n.querySelector('.ss-folder-t > span').textContent}: ${n.querySelector('.ss-folder-n').textContent}`)),
+  rows: page => page.$$eval('#ss-root [data-sign]', ns => ns.map(n => ({ name: n.querySelector('.ss-sr-name').textContent, meta: n.querySelector('.ss-sr-meta').textContent,
+    open: !!n.querySelector('[data-open]'), del: !!n.querySelector('[data-del]') }))),
+  focus: page => page.evaluate(() => document.activeElement && document.activeElement.getAttribute('data-fk')),
+};
+const dialog = (page, title) => page.locator('[role="dialog"]', { hasText: title });
+
+// ── 15. Save sign: once, only when the worker says so, and never twice ───
+await section('15. save', async () => {
+  const W = workerDb();
+  const { page, errs } = await open({ role: 'mgr1', worker: { W, uid: 'u-mgr1' } });
+  const rows = () => W.db.prepare('SELECT id, owner_id, scope, template, saved_month, sign_json, design_version, deleted_at FROM saved_signs ORDER BY rowid').all();
+  const saves = () => W.log.filter(x => x.action === 'saved-sign-save');
+  // Only a sign that prints can be saved, and Save says why not.
+  await makeSign(page, { fields: { 'name-0': 'All cereal', 'price-0': '' } });
+  eq(await saveBtn(page), { label: 'Save sign', disabled: true, title: 'Fix the fields above first' }, 'a sign with a field to fix: Save is off, and its title says why');
+  eq((await saveNote(page)).text, 'A sign saves once it can print.', '…and so does the note');
+  await makeSign(page, { fields: { 'name-0': 'All cereal', 'price-0': '2.50' }, units: { 0: 'each' }, sale: 'flash' });
+  eq(await saveBtn(page), { label: 'Save sign', disabled: false, title: '' }, 'a sign that prints: Save is on');
+  eq(await saveNote(page), { text: `Saves to Price signs › ${MONTH}. Optional: Print and PDF don't need it.`, tone: '' },
+     "…and the note says where it goes: the manager's Price signs, this month in Eastern time");
+  eq(rows().length, 0, '…and nothing is saved until Save is tapped');
+
+  // Tapped: Saving… until the worker answers, with the id already in the draft.
+  let release = null;
+  W.hold = () => new Promise(r => { release = r; });
+  await page.click('[data-save]');
+  for (let i = 0; i < 100 && !release; i++) await page.waitForTimeout(50);   // the worker has it; its answer is held back
+  eq(await saveBtn(page), { label: 'Saving…', disabled: true, title: '' }, 'tapped: Saving…, and the button is off, while the answer is on its way');
+  const pending = (await draftOf(page)).save;
+  check(pending && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(pending.id) && pending.where === null,
+        `…the id the page minted is in the draft BEFORE the answer (${JSON.stringify(pending)})`);
+  eq(rows().length, 1, '…and although the worker has written the row, the page does not say Saved until it hears so');
+  W.hold = null; release();
+  await waitSave(page, 'Saved');
+  eq(await saveBtn(page), { label: 'Saved', disabled: true, title: '' }, 'the worker said ok: Saved, and nothing left to tap');
+  eq(await saveNote(page), { text: `Saved in Price signs › ${MONTH}.`, tone: 'ok' }, '…and the note names the folder');
+  const d = await draftOf(page), r0 = rows()[0];
+  eq([r0.id, r0.owner_id, r0.scope, r0.template, r0.saved_month, r0.design_version], [pending.id, 'u-mgr1', 'own', 'price', YM, 2],
+     "one row: the page's id, this manager's, their own folder, a price sign, this month, design version 2");
+  eq(r0.sign_json, JSON.stringify(d.sign), '…holding the sign exactly as the page has it');
+  eq(d.save.where, { scope: 'own', template: 'price', month: YM }, '…and the draft remembers it is saved');
+  eq(Object.keys(JSON.parse(saves()[0].sent)).sort(), ['design_version', 'id', 'sign'], 'the request carries id, sign and design version only: no owner, no folder');
+
+  // A change is a new sign; the saved one never changes.
+  await page.click('[data-step="1"]'); await settle(page);
+  await type(page, '#ss-f-price-0', '2.25');
+  await page.click('[data-step="3"]'); await settle(page);
+  eq((await saveBtn(page)).label, 'Save sign', 'changed after saving: Save sign again');
+  await page.click('[data-save]'); await waitSave(page, 'Saved');
+  let all = rows();
+  eq(all.length, 2, '…and saving it makes a second sign');
+  check(all[1].id !== all[0].id && JSON.parse(all[0].sign_json).groups[0].price === '2.50' && JSON.parse(all[1].sign_json).groups[0].price === '2.25',
+        '…under a new id, with the first one as it was');
+
+  // No signal: say so, keep the sign, and Try again sends the same id.
+  await page.click('[data-step="1"]'); await settle(page);
+  await type(page, '#ss-f-name-0', 'All granola');
+  await page.click('[data-step="3"]'); await settle(page);
+  W.down = true;
+  await page.click('[data-save]'); await waitSave(page, 'Try again');
+  eq(await saveNote(page), { text: "Couldn't reach the server. Your sign is still here. Trying again can't save it twice.", tone: 'bad' }, 'no signal: it says so');
+  eq(rows().length, 2, '…nothing was saved');
+  eq(await page.$$eval('[data-print],[data-pdf]', bs => bs.map(b => b.disabled)), [false, false, false, false], '…and Print and PDF still work');
+  const triedId = (await draftOf(page)).save.id;
+  W.down = false;
+  await page.click('[data-save]'); await waitSave(page, 'Saved');
+  eq([rows().length, rows()[2].id], [3, triedId], 'Try again: saved, under the id the failed try minted');
+
+  // The worker saved it and the answer was lost: Try again finds the row, with no second copy.
+  await page.click('[data-step="1"]'); await settle(page);
+  await type(page, '#ss-f-name-0', 'All oatmeal');
+  await page.click('[data-step="3"]'); await settle(page);
+  W.lose = true;
+  await page.click('[data-save]'); await waitSave(page, 'Try again');
+  eq(rows().length, 4, 'the answer is lost after the worker saved it: the row is there, and the page says Try again');
+  await page.click('[data-save]'); await waitSave(page, 'Saved');
+  eq(rows().length, 4, '🛑 …and Try again confirms that row: no second copy');
+  const lastTwo = saves().slice(-2).map(x => JSON.parse(x.sent).id);
+  check(lastTwo[0] === lastTwo[1], `…because both tries sent one id (${lastTwo.join(', ')})`);
+
+  // A reload mid-save: the page cannot know it landed, so it offers Save, with the same id.
+  await page.click('[data-step="1"]'); await settle(page);
+  await type(page, '#ss-f-name-0', 'All muesli');
+  await page.click('[data-step="3"]'); await settle(page);
+  let letGo = null;
+  W.hold = () => new Promise(r => { letGo = r; });
+  await page.click('[data-save]');
+  for (let i = 0; i < 100 && !letGo; i++) await page.waitForTimeout(50);   // the worker has it; its answer is held back
+  const midId = (await draftOf(page)).save.id;
+  eq(rows().length, 5, 'mid-save: the worker has the row');
+  W.hold = null;
+  await reenter(page);
+  letGo();
+  eq([(await saveBtn(page)).label, (await draftOf(page)).save.id], ['Save sign', midId], 'after a reload mid-save: Save sign, with the same id still in the draft');
+  await page.click('[data-save]'); await waitSave(page, 'Saved');
+  eq(rows().length, 5, '🛑 …so saving again confirms the row the cut-off save made: still one copy');
+
+  // An id the worker says is used (here, another manager's): say so; the next tap is a new sign.
+  const theirs = seedSign(W, { owner: 'u-mgr2', g0: { name: 'Not yours', price: '9' } });
+  await page.evaluate(id => { const x = JSON.parse(localStorage.getItem('sign-studio-draft')); x.save = { id, sign: JSON.stringify(x.sign), where: null };
+    localStorage.setItem('sign-studio-draft', JSON.stringify(x)); }, theirs);
+  await reenter(page);
+  await page.click('[data-save]'); await waitSave(page, 'Save as a new sign');
+  eq(await saveNote(page), { text: 'That save was already used. Save this as a new sign.', tone: 'bad' }, 'an id already used: 409, and the page says what to do');
+  await page.click('[data-save]'); await waitSave(page, 'Saved');
+  const mine = rows().filter(x => x.owner_id === 'u-mgr1');
+  check(mine.length === 6 && mine[5].id !== theirs, '…and Save as a new sign saves it under a new id');
+  eq(JSON.parse(rows().find(x => x.id === theirs).sign_json).groups[0].name, 'Not yours', "…while the other manager's sign is untouched");
+
+  // An ok that names another id confirms nothing.
+  await page.click('[data-step="1"]'); await settle(page);
+  await type(page, '#ss-f-name-0', 'All pretzels');
+  await page.click('[data-step="3"]'); await settle(page);
+  W.forge = true;
+  await page.click('[data-save]');
+  const forged = await saveEnds(page);
+  W.forge = false;
+  eq([forged, (await saveNote(page)).text], ['Try again', "The server's answer didn't confirm the save. Your sign is still here. Trying again can't save it twice."],
+     "an ok naming another sign's id: not Saved, and Try again");
+  await page.click('[data-save]'); await waitSave(page, 'Saved');
+  eq(rows().filter(x => JSON.parse(x.sign_json).groups[0].name === 'All pretzels').length, 1, '…which confirms the one row');
+
+  // A worker without these actions: say so, and Print and PDF carry on.
+  await page.click('[data-step="1"]'); await settle(page);
+  await type(page, '#ss-f-name-0', 'All crackers');
+  await page.click('[data-step="3"]'); await settle(page);
+  W.old = true;
+  await page.click('[data-save]'); await waitSave(page, 'Try again');
+  eq(await saveNote(page), { text: "Saved signs aren't switched on yet: the server half of this update is missing. Print and PDF still work.", tone: 'bad' },
+     'an old worker: the note says the server half is missing, and does not promise a retry');
+  eq(await page.$$eval('[data-print],[data-pdf]', bs => bs.map(b => b.disabled)), [false, false, false, false], '…and Print and PDF still work');
+  W.old = false;
+  check(!errs.length, `no page errors (${errs.slice(0, 2).join(' | ')})`);
+
+  // An admin's save goes to All stores.
+  const A = await open({ role: 'hadmin', worker: { W, uid: 'u-admin' } });
+  await makeSign(A.page, { fields: { 'name-0': 'Chainwide mugs', 'price-0': '1.99' } });
+  eq((await saveNote(A.page)).text, `Saves to All stores › Price signs › ${MONTH}. Optional: Print and PDF don't need it.`, 'an admin: Saves to All stores');
+  await A.page.click('[data-save]'); await waitSave(A.page, 'Saved');
+  eq((await saveNote(A.page)).text, `Saved in All stores › Price signs › ${MONTH}.`, '…and it is saved there');
+  const ar = rows().pop();
+  eq([ar.owner_id, ar.scope], ['u-admin', 'all'], '…as an All stores row');
+  check(!A.errs.length, `admin: no page errors (${A.errs.slice(0, 2).join(' | ')})`);
+});
+
+// ── 16. Saved signs: folders by type, then month; Open and Delete ────────
+await section('16. saved signs', async () => {
+  const W = workerDb();
+  const hr = h => new Date(Date.now() - h * 3600e3).toISOString();
+  seedSign(W, { owner: 'u-mgr1', at: hr(3), sale: 'flash', g0: { name: 'All cereal', price: '2.50', unit: 'each' } });
+  const towels = seedSign(W, { owner: 'u-mgr1', at: hr(1), sale: 'manager', g0: { name: 'Bath towels', price: '4.99' } });
+  const old = seedSign(W, { owner: 'u-mgr1', month: PM, at: `${PM}-15T16:00:00.000Z`, g0: { name: 'Old sign', price: '1' } });
+  seedSign(W, { owner: 'u-mgr1', template: 'pct', sale: 'sale', g0: { name: 'Winter coats', pct: '20' } });
+  seedSign(W, { owner: 'u-mgr1', at: hr(2), g0: { name: '<b onmouseover=x>hi', price: '3' } });
+  seedSign(W, { owner: 'u-mgr2', g0: { name: 'Mgr2 private', price: '9' } });
+  seedSign(W, { owner: 'u-admin', scope: 'all', g0: { name: 'Chainwide mugs', price: '1.99' } });
+  seedSign(W, { owner: 'u-admin', scope: 'all', template: 'uvt', them: '59.99', g0: { name: 'Stand mixer', price: '19.99' } });
+
+  {
+    // Until Sign Studio starts, and if its renderer never loads, there is no Saved signs button.
+    const X = await open({ role: 'mgr1', go: false, worker: { W, uid: 'u-mgr1' } });
+    const showing = () => X.page.$eval('#ss-lib-btn', b => getComputedStyle(b).display !== 'none');
+    eq(await showing(), false, "before Sign Studio starts, the Saved signs button is hidden: its [hidden] wins over .ss-btn's display");
+    await X.page.evaluate(() => { delete window.SignRender; window.navigateToPage('merch-signs'); });
+    await X.page.waitForFunction(() => /didn't load/.test((document.querySelector('#ss-root [role="alert"]') || {}).textContent || ''), null, { timeout: 5000 });
+    eq(await showing(), false, "…and with no renderer, the page says Sign Studio didn't load and shows no Saved signs button");
+  }
+  // A manager: All stores, then their own three types.
+  const { page, errs } = await open({ role: 'mgr1', worker: { W, uid: 'u-mgr1' } });
+  eq(await page.$eval('#ss-lib-btn', b => [b.hidden, b.textContent.trim()]), [false, 'Saved signs'], 'the page header has Saved signs');
+  await lib.open(page);
+  eq(await page.$eval('#ss-lib-btn', b => b.textContent.trim()), 'Back to the sign', '…which turns into Back to the sign');
+  eq(await lib.crumbs(page), ['Saved signs'], "a manager's top folder");
+  eq(await lib.folders(page), ['All stores: 2 signs', 'Price signs: 4 signs', '% Off signs: 1 sign', 'Us vs Them signs: Empty'],
+     '…holds All stores, then their own Price, % Off and Us vs Them signs, with counts');
+  eq(await lib.focus(page), 'crumb', '…and focus is on where they are');
+  await lib.go(page, 'own/price');
+  eq([await lib.crumbs(page), await lib.focus(page)], [['Saved signs', 'Price signs'], 'crumb'], 'Price signs: the path back, with focus on where they are now');
+  eq(await lib.folders(page), [`${MONTH}: 3 signs`, `${PMONTH}: 1 sign`], '…and its months, newest first');
+  await lib.go(page, `own/price/${YM}`);
+  eq(await lib.crumbs(page), ['Saved signs', 'Price signs', MONTH], 'a month: the whole path');
+  const mine = await lib.rows(page);
+  eq(mine.map(x => x.name), ['Bath towels', '<b onmouseover=x>hi', 'All cereal'], "…its signs, newest first, the manager's own only");
+  check(/^\$2\.50 each · Flash Sale · \w{3} \d{1,2}, \d{1,2}:\d{2} [AP]M$/.test(mine[2].meta), `…each with its offer, label and Eastern time (${mine[2].meta})`);
+  check(mine.every(x => x.open && x.del), '…and Open and Delete on every one');
+  eq(await page.evaluate(() => [document.querySelectorAll('#page-merch-signs img').length,
+    [...document.querySelectorAll('#page-merch-signs *')].filter(n => [...n.attributes].some(a => /^on/i.test(a.name))).length]), [0, 0],
+     'a name like markup is drawn as text: no img, no on* attribute anywhere on the page');
+  // All stores: the admins' signs, with who saved them, and no Delete for a manager.
+  await lib.up(page, 0);
+  await lib.go(page, 'all');
+  eq(await lib.folders(page), ['Price signs: 1 sign', '% Off signs: Empty', 'Us vs Them signs: 1 sign'], 'All stores: its three types');
+  await lib.go(page, 'all/price');
+  await lib.go(page, `all/price/${YM}`);
+  eq(await lib.crumbs(page), ['Saved signs', 'All stores', 'Price signs', MONTH], '…down to a month');
+  const shared = await lib.rows(page);
+  eq(shared.map(x => [x.name, /by bgeorges@retjg\.com$/.test(x.meta), x.open, x.del]), [['Chainwide mugs', true, true, false]],
+     '…an admin\'s sign, saved by them, which a manager can open but not delete');
+  await lib.up(page, 1);
+  await lib.go(page, 'all/uvt');
+  await lib.go(page, `all/uvt/${YM}`);
+  check(/^You pay \$19\.99 · theirs \$59\.99 · No label · /.test((await lib.rows(page))[0].meta), 'Us vs Them rows say what you pay and theirs');
+  // Privacy: nothing of another manager's, anywhere a manager can go.
+  const seen = W.log.filter(x => x.uid === 'u-mgr1').map(x => x.body).join(' ');
+  check(!seen.includes('Mgr2 private') && !seen.includes('u-mgr2'), "🛑 nothing of the other manager's reached this manager's page");
+  // The second manager, the same database: their own sign and All stores, nothing of the first's.
+  const M2 = await open({ role: 'mgr2', worker: { W, uid: 'u-mgr2' } });
+  await lib.open(M2.page);
+  eq(await lib.folders(M2.page), ['All stores: 2 signs', 'Price signs: 1 sign', '% Off signs: Empty', 'Us vs Them signs: Empty'], 'the second manager sees their own counts');
+  await lib.go(M2.page, 'own/price'); await lib.go(M2.page, `own/price/${YM}`);
+  eq((await lib.rows(M2.page)).map(x => x.name), ['Mgr2 private'], "🛑 …and their own sign only, none of the first manager's");
+  // An admin: All stores is the top, and there is nothing else.
+  const A = await open({ role: 'hadmin', worker: { W, uid: 'u-admin' } });
+  await lib.open(A.page);
+  eq([await lib.crumbs(A.page), await lib.folders(A.page)], [['All stores'], ['Price signs: 1 sign', '% Off signs: Empty', 'Us vs Them signs: 1 sign']],
+     "an admin's top is All stores' three types: no managers' folders");
+  await lib.go(A.page, 'all/price'); await lib.go(A.page, `all/price/${YM}`);
+  eq((await lib.rows(A.page)).map(x => [x.name, x.del]), [['Chainwide mugs', true]], '…and an admin can delete an All stores sign');
+
+  // The newest request wins: a slow folder answer does not replace the one opened after it.
+  await lib.up(page, 0);
+  await lib.go(page, 'own/price');
+  let rel = null;
+  W.hold = (action, url) => action === 'saved-sign-list' && url.includes(`month=${PM}`) ? new Promise(r => { rel = r; }) : null;
+  await page.click(`#ss-root [data-folder="own/price/${PM}"]`);
+  for (let i = 0; i < 40 && !rel; i++) await page.waitForTimeout(50);
+  await lib.up(page, 1);
+  await lib.go(page, `own/price/${YM}`);
+  W.hold = null; rel();
+  await page.waitForTimeout(400);
+  eq([await lib.crumbs(page), (await lib.rows(page)).length], [['Saved signs', 'Price signs', MONTH], 3], "the older folder's late answer is dropped: this month stays on screen");
+
+  // Open: a sign being made that isn't saved is not thrown away without asking.
+  await page.click('#ss-lib-btn');
+  await makeSign(page, { fields: { 'name-0': 'Half made', 'price-0': '5' } });
+  await lib.open(page);
+  await lib.go(page, 'own/price'); await lib.go(page, `own/price/${YM}`);
+  await page.click(`#ss-root [data-sign] >> nth=2 >> [data-open]`);
+  const askedOpen = await dialog(page, 'Open a saved sign?').waitFor({ timeout: 3000 }).then(() => true, () => false);
+  check(askedOpen, 'Open, with an unsaved sign on screen: it asks first');
+  if (askedOpen) await dialog(page, 'Open a saved sign?').getByRole('button', { name: 'Cancel' }).click();
+  eq([(await draftOf(page)).sign.groups[0].name, await lib.crumbs(page)], ['Half made', ['Saved signs', 'Price signs', MONTH]], '…and Cancel keeps both');
+  await page.click(`#ss-root [data-sign] >> nth=2 >> [data-open]`);
+  await dialog(page, 'Open a saved sign?').getByRole('button', { name: 'Open it' }).click();
+  await waitSave(page, 'Saved');
+  eq([await page.$eval('.ss-step[aria-current="step"]', n => n.dataset.step), (await saveNote(page)).text, await page.$eval('#ss-lib-btn', b => b.textContent.trim())],
+     ['3', `Saved in Price signs › ${MONTH}.`, 'Saved signs'], 'Open it: the sign, on step 3, marked Saved in its folder');
+  await page.click('[data-step="1"]'); await settle(page);
+  eq(await page.evaluate(() => [document.getElementById('ss-f-name-0').value, document.getElementById('ss-f-price-0').value]), ['All cereal', '2.50'], '…with its fields');
+  await page.click('[data-step="3"]'); await settle(page);
+  // Opening another while this one is saved and unchanged: nothing to lose, so no question.
+  await lib.open(page);
+  await lib.go(page, 'own/price'); await lib.go(page, `own/price/${YM}`);
+  await page.click(`#ss-root [data-sign] >> nth=0 >> [data-open]`);
+  await waitSave(page, 'Saved');
+  eq(await dialog(page, 'Open a saved sign?').count(), 0, 'opening another over a saved, unchanged sign asks nothing');
+  eq((await draftOf(page)).sign.groups[0].name, 'Bath towels', '…and it is open');
+
+  // Delete: asks, then soft-deletes, and focus moves on.
+  await lib.open(page);
+  await lib.go(page, 'own/price'); await lib.go(page, `own/price/${YM}`);
+  await page.click(`#ss-root [data-del="${towels}"]`);
+  const ask = dialog(page, 'Delete this sign?');
+  const askedDel = await ask.waitFor({ timeout: 3000 }).then(() => true, () => false);
+  check(askedDel && (await ask.textContent()).includes(`Delete “Bath towels” from Price signs › ${MONTH}? There is no undo.`), 'Delete asks first, naming the sign and its folder');
+  if (askedDel) await ask.getByRole('button', { name: 'Cancel' }).click();
+  eq([(await lib.rows(page)).length, W.log.filter(x => x.action === 'saved-sign-delete').length], [3, 0], '…Cancel: nothing sent, the row stays');
+  await page.click(`#ss-root [data-del="${towels}"]`);
+  await dialog(page, 'Delete this sign?').getByRole('button', { name: 'Delete' }).click();
+  await page.waitForFunction(id => !document.querySelector(`#ss-root [data-sign="${id}"]`), towels, { timeout: 5000 });
+  const gone = W.db.prepare('SELECT deleted_at, deleted_by FROM saved_signs WHERE id = ?').get(towels);
+  check(gone.deleted_at && gone.deleted_by === 'howardbrian260@gmail.com', `Delete: the row is soft-deleted, by this manager (${JSON.stringify(gone)})`);
+  eq([(await lib.rows(page)).map(x => x.name), await page.$eval('#ss-root .ss-libnote', n => n.textContent), await page.$eval('#ss-live', n => n.textContent)],
+     [['<b onmouseover=x>hi', 'All cereal'], 'Deleted “Bath towels”.', 'Deleted “Bath towels”.'], '…the list says so, and so does the live region');
+  eq(await lib.focus(page), 'open:' + (await page.$eval('#ss-root [data-sign]', n => n.dataset.sign)), '…and focus moves to the next sign');
+  // Back up one level, on the counts already loaded: no stale 3 beside a month that holds 2.
+  await lib.up(page, 1);
+  eq(await lib.folders(page), [`${MONTH}: 2 signs`, `${PMONTH}: 1 sign`], "…and one level up, the month's count is already one lower");
+  await page.click('#ss-lib-btn');
+  eq((await saveBtn(page)).label, 'Save sign', 'the sign on screen was the one deleted: it is no longer marked Saved');
+  await lib.open(page);
+  await lib.go(page, 'own/price');
+  eq(await lib.folders(page), [`${MONTH}: 2 signs`, `${PMONTH}: 1 sign`], '…and the worker counts the same');
+  // Deleted elsewhere first: the page takes it off, and says so.
+  await lib.go(page, `own/price/${PM}`);
+  W.db.prepare("UPDATE saved_signs SET deleted_at = '2026-01-01T00:00:00.000Z' WHERE id = ?").run(old);
+  await page.click(`#ss-root [data-del="${old}"]`);
+  await dialog(page, 'Delete this sign?').getByRole('button', { name: 'Delete' }).click();
+  await page.waitForFunction(() => !document.querySelector('#ss-root [data-sign]'), null, { timeout: 5000 });
+  eq(await page.$eval('#ss-root .ss-libnote', n => n.textContent), '“Old sign” was already deleted.', 'a sign someone else deleted first: taken off, and said');
+  check(!!(await page.$('#ss-root [data-libempty]')), '…and the empty month says so');
+  // Empty, failed, and a worker without these actions.
+  await lib.up(page, 0);
+  await lib.go(page, 'own/uvt');
+  eq(await page.$eval('#ss-root [data-libempty]', n => n.textContent), "No Us vs Them signs saved yet. Save one on step 3, and it lands in that month's folder here.", 'an empty type says how signs get there');
+  W.down = true;
+  await page.click('#ss-lib-btn'); await lib.open(page);
+  check(/^Couldn't load saved signs\. Couldn't reach the server\.Retry$/.test(await page.$eval('#ss-root [role="alert"]', n => n.textContent)), 'no signal: it says so, with Retry');
+  W.down = false;
+  await page.click('#ss-root [data-libretry]'); await waitLib(page);
+  eq((await lib.folders(page)).length, 4, '…and Retry loads the folders');
+  W.old = true;
+  await page.click('#ss-root [data-libretry]').catch(() => {});
+  await page.click('#ss-lib-btn'); await lib.open(page);
+  check(/aren't switched on yet/.test(await page.$eval('#ss-root [role="alert"]', n => n.textContent)), 'an old worker: the library says the server half is missing');
+  W.old = false;
+  // More than a folder shows.
+  for (let i = 0; i < 201; i++) seedSign(W, { owner: 'u-mgr1', template: 'pct', month: PM, at: `${PM}-10T12:00:${String(i % 60).padStart(2, '0')}.${String(i).padStart(3, '0')}Z`, g0: { name: `Coat ${i}`, pct: '10' } });
+  await page.click('#ss-root [data-libretry]'); await waitLib(page);
+  await lib.go(page, 'own/pct'); await lib.go(page, `own/pct/${PM}`);
+  eq([(await lib.rows(page)).length, await page.$eval('#ss-root .ss-lib-foot', n => n.textContent)],
+     [200, 'Showing the newest 200. The older ones are kept, but not listed here yet.'], 'a folder of 201: the newest 200, and it says so');
+  check(!errs.length && !M2.errs.length && !A.errs.length, `no page errors (${[...errs, ...M2.errs, ...A.errs].slice(0, 2).join(' | ')})`);
+});
+
+// ── 17. Saved signs on a phone, and every word readable in three themes ──
+await section('17. saved signs: phone and contrast', async () => {
+  const W = workerDb();
+  seedSign(W, { owner: 'u-mgr1', sale: 'custom', custom: 'Weekend deal', g0: { name: 'Mens athletic sneakers', price: '24.99', unit: 'pair' } });
+  seedSign(W, { owner: 'u-admin', scope: 'all', g0: { name: 'Chainwide mugs', price: '1.99' } });
+  {
+    const { page, errs } = await open({ role: 'mgr1', phone: true, worker: { W, uid: 'u-mgr1' } });
+    const fit = async what => {
+      const f = await page.evaluate(() => ({ wide: document.documentElement.scrollWidth - window.innerWidth,
+        small: [...document.querySelectorAll('#page-merch-signs button')].filter(b => { const r = b.getBoundingClientRect(); return r.height && r.height < 40; }).map(b => b.textContent.trim()),
+        rows: [...document.querySelectorAll('#ss-root .ss-folder')].map(b => b.getBoundingClientRect().height).filter(h => h < 48) }));
+      eq(f, { wide: 0, small: [], rows: [] }, `390 px, ${what}: no sideways scroll, every button at least 40 px, folder rows at least 48`);
+    };
+    await lib.open(page); await fit('the top folder');
+    await lib.go(page, 'own/price'); await lib.go(page, `own/price/${YM}`); await fit('a month of signs');
+    await lib.up(page, 0); await lib.go(page, 'all'); await lib.go(page, 'all/price'); await lib.go(page, `all/price/${YM}`); await fit('All stores, with who saved it');
+    check(!errs.length, `phone: no page errors (${errs.slice(0, 2).join(' | ')})`);
+  }
+  for (const theme of ['light', 'dark', 'oled']) {
+    const { page, errs } = await open({ theme, role: 'mgr1', worker: { W, uid: 'u-mgr1' } });
+    const all = [];
+    const take = async (what) => { for (const x of contrastOf(await textSamples(page))) all.push(Object.assign(x, { state: what })); };
+    await makeSign(page, { fields: { 'name-0': 'All cereal', 'price-0': '2' } });
+    await take('step 3, Save sign');
+    W.down = true;
+    await page.click('[data-save]'); await waitSave(page, 'Try again');
+    await take('step 3, a failed save');
+    W.down = false;
+    await page.click('[data-save]'); await waitSave(page, 'Saved');
+    await take('step 3, saved');
+    await lib.open(page);
+    await take('saved signs, top');
+    await lib.go(page, 'own/price'); await lib.go(page, `own/price/${YM}`);
+    await take('a month, own signs with Delete');
+    await page.click('#ss-root [data-sign] >> nth=0 >> [data-del]');
+    await dialog(page, 'Delete this sign?').getByRole('button', { name: 'Delete' }).click();
+    await page.waitForFunction(() => document.querySelector('#ss-root .ss-libnote') && document.querySelector('#ss-root .ss-libnote').textContent, null, { timeout: 5000 });
+    await take('after a delete');
+    await lib.up(page, 0); await lib.go(page, 'all'); await lib.go(page, 'all/price'); await lib.go(page, `all/price/${YM}`);
+    await take('All stores, saved by');
+    await lib.up(page, 0); await lib.go(page, 'own/uvt');
+    await take('an empty folder');
+    W.down = true;
+    await page.click('#ss-lib-btn'); await lib.open(page);
+    await take('failed to load');
+    W.down = false;
+    const low = all.filter(x => x.r < 4.5), min = all.reduce((m, x) => x.r < m.r ? x : m, { r: 99 });
+    measured.push(`[${theme}] saved signs: ${all.length} texts, lowest ${min.r.toFixed(2)}:1 (${min.what}, ${min.state})`);
+    eq(low.map(x => `${x.state}: ${x.what} ${x.r.toFixed(2)}`), [], `[${theme}] every word of Save and Saved signs is at least 4.5:1 on what it is painted over (${all.length} measured)`);
+    for (const s of ['Save sign', 'a failed save', 'saved', 'top', 'Delete', 'after a delete', 'saved by', 'empty', 'failed to load'])
+      check(all.some(x => x.state.includes(s)), `[${theme}] …measured in the state: ${s}`);
+    check(!errs.length, `[${theme}] no page errors (${errs.slice(0, 2).join(' | ')})`);
+  }
 });
 
 await b.close();
