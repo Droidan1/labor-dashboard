@@ -1347,6 +1347,150 @@ function attrsOf(html, tag) {
      '🛑 ...and no load, render, week toggle or export writes it (DESIGN.md §4.8 trap 7)');
 }
 
+// ── 33. A Retake that brings no read back keeps its form ──
+// The form stays open behind the camera (bin-dump-14), but once a retake's photo arrived it
+// closed, and a read that then failed or timed out reopened it EMPTY; a photo that would not
+// open took the form's own photo with it; Cancel dropped the form entirely. Executed over
+// fakes: bdPhoto, bdCancelRead and bdRestoreForm, as the page has them.
+{
+  // Bounded on both sides (tasks/lessons.md, 2026-07-31): fnSrc counts braces naively, so a
+  // slice that runs on into the next function must fail here, not pass as a bigger function.
+  const cut = (n) => { const s = fnSrc(n);
+    return s.length < 8000 && !/\n  (?:async )?function |\n  window\./.test(s.slice(1)) ? s : ''; };
+  const src = { bdPhoto: cut('bdPhoto'), bdCancelRead: cut('bdCancelRead'), bdRestoreForm: cut('bdRestoreForm') };
+  for (const [n, s] of Object.entries(src)) ok(s && s.trimEnd().endsWith('}'), `${n}: its source is found, and cut at its own end`);
+  ok(/function bdOpenVerify\(j, problem\) \{\s*bdState\.shown = \{ j, problem \};/.test(HTML),
+     'bdOpenVerify records what it draws first, so a Retake\'s form can be drawn again as it was');
+
+  const flush = async () => { for (let k = 0; k < 6; k++) await new Promise(r => setImmediate(r)); };
+  const held = () => { let res, rej; const p = new Promise((a, b) => { res = a; rej = b; }); return { p, res, rej }; };
+  const input = () => ({ files: [{ name: 'tag.jpg' }], value: 'C:\\fakepath\\tag.jpg' });
+  const SHOWN = { j: { fields: { barcode: 'PRM-10490-31' }, read: 7, of: 8, truck_hint: null }, problem: undefined };
+  // A page with a verify form open in front of the camera (a Retake), unless `form` is null.
+  const page = (form = { photo: 'PHOTO-A', manual: false, shown: SHOWN,
+                         typed: { pallet_name: 'TYPED NAME', units: '77', po: '' } }) => {
+    const els = {};
+    const E = (id) => els[id] || (els[id] = { id, hidden: false, textContent: '', focused: 0, style: { display: '' },
+      focus() { this.focused++; } });
+    E('bd-modal').style.display = form ? 'flex' : 'none';
+    const state = { photo: form ? form.photo : 'LAST-PHOTO', photoType: 'image/jpeg', manual: form ? form.manual : false,
+                    busy: false, readGen: 0, reading: null, shown: form ? form.shown : null };
+    const log = { forms: [], posts: [], timers: [], shows: [] };
+    const h = { E, state, log, shrinkNext: null, fetchNext: null };
+    const fakes = {
+      el: E, bdState: state,
+      bdSetStatus: () => {}, bdShow: (w) => { log.shows.push(w); },
+      bdCloseModal: () => { E('bd-modal').style.display = 'none'; },
+      bdReadFields: () => ({ ...(form ? form.typed : {}) }),
+      // As the real one: it records what it draws, and the form is open after it.
+      bdOpenVerify: (j, problem) => {
+        log.forms.push({ j, problem, photo: state.photo, manual: state.manual });
+        state.shown = { j, problem };
+        E('bd-m-warn').textContent = problem || ''; E('bd-m-warn').hidden = !problem;
+        E('bd-modal').style.display = 'flex';
+      },
+      psShrink: () => { const n = h.shrinkNext; h.shrinkNext = null; return n ? n.p : Promise.resolve('B64'); },
+      // A request that honours its signal, as fetch does.
+      fetch: (u, o) => { log.posts.push(o); const n = h.fetchNext || held(); h.fetchNext = null;
+        if (o.signal) o.signal.addEventListener('abort', () => n.rej(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+        if (!h.fetchHold) n.res({ ok: true, status: 200, json: async () => ({ ok: true, fields: { barcode: 'NEW' }, read: 8, of: 8 }) });
+        return n.p; },
+      bdErr: (j) => (j && j.error) || 'refused',
+      setTimeout: (fn, ms) => { log.timers.push({ fn, ms }); return log.timers.length; }, clearTimeout: () => {},
+      document: { querySelector: () => E('bd-begin-primary') },
+      BD_FIELDS: new Array(8).fill({}), BD_READ_TIMEOUT_MS: 45000, WORKER_BASE: 'https://api.example.test/',
+    };
+    const names = Object.keys(fakes);
+    Object.assign(h, new Function(...names, `${src.bdRestoreForm}\n${src.bdCancelRead}\n${src.bdPhoto}\n` +
+      'return { bdRestoreForm, bdCancelRead, bdPhoto };')(...names.map(n => fakes[n])));
+    return h;
+  };
+
+  { // The retake will not open: the form comes back exactly as it was.
+    const h = page(), s = held();
+    h.shrinkNext = s;
+    const run = h.bdPhoto(input());
+    s.rej(new Error('that image could not be opened'));
+    await run;
+    const f = h.log.forms[0];
+    ok(f && f.j.fields.pallet_name === 'TYPED NAME' && f.j.fields.units === '77', '🛑 a retake that will not open gives back what was typed');
+    ok(f && f.j.fields.po === null, '...an emptied field drawn as the missing field it was');
+    ok(f && f.photo === 'PHOTO-A' && f.j.read === 7 && f.problem === undefined,
+       '...with the photo the form had, and its own read line ("Read 7 of 8"), not "Couldn\'t read the tag"');
+    ok(/^Couldn't read the tag — that image could not be opened\. The form is as it was\.$/.test(h.E('bd-m-warn').textContent)
+       && !h.E('bd-m-warn').hidden, `...saying so in the warning box (${h.E('bd-m-warn').textContent})`);
+    ok(h.log.posts.length === 0, '...having sent nothing');
+  }
+  { // The retake opens, but the reader fails: the new photo stays, with the fields as they were.
+    const h = page(), n = held();
+    h.fetchNext = n; h.fetchHold = true;
+    const run = h.bdPhoto(input());
+    await flush();
+    n.res({ ok: false, status: 502, json: async () => ({ error: 'Could not read that photo — try again, or type the tag in by hand' }) });
+    await run;
+    const f = h.log.forms[0];
+    ok(f && f.j.fields.pallet_name === 'TYPED NAME' && f.j.read === 0 && f.photo === 'B64',
+       '🛑 a retake the reader fails on keeps the fields as they were, with the NEW photo');
+    ok(f && /^Couldn't read the tag — Could not read that photo.*\. The fields are as they were\.$/.test(f.problem), `...saying why (${f && f.problem})`);
+  }
+  { // The retake times out: the same, said as a timeout.
+    const h = page();
+    h.fetchHold = true;
+    const run = h.bdPhoto(input());
+    await flush();
+    if (h.log.timers[0]) h.log.timers[0].fn();                  // 45s pass; the request is aborted
+    await run;
+    const f = h.log.forms[0];
+    ok(f && f.problem === 'The tag reader took too long. The fields are as they were.' && f.photo === 'B64' && f.j.fields.units === '77',
+       `🛑 a retake that times out keeps the fields and the new photo (${f && f.problem})`);
+  }
+  { // Cancel while the retake decodes: the form, as it was, focused on Retake.
+    const h = page(), s = held();
+    h.shrinkNext = s;
+    const run = h.bdPhoto(input());
+    h.bdCancelRead();
+    const f = h.log.forms[0];
+    ok(f && f.j.fields.pallet_name === 'TYPED NAME' && f.photo === 'PHOTO-A' && f.j.read === 7 && f.problem === undefined,
+       '🛑 Cancel during a retake gives the form back as it was');
+    ok(h.E('bd-m-retake').focused === 1 && h.E('bd-begin-primary').focused === 0, '...focused on Retake, not on Begin');
+    s.res('B64');
+    await run;
+    ok(h.log.posts.length === 0 && h.log.forms.length === 1 && h.state.photo === 'PHOTO-A',
+       '...and the cancelled decode, finishing, sends nothing and changes nothing');
+  }
+  { // Cancel after the request went out: its late answer changes nothing.
+    const h = page();
+    h.fetchHold = true;
+    const run = h.bdPhoto(input());
+    await flush();
+    h.bdCancelRead();
+    await run;
+    ok(h.log.forms.length === 1 && h.log.forms[0].photo === 'PHOTO-A' && h.state.busy === false,
+       '🛑 a cancelled retake\'s request, aborted, does not replace the form it gave back');
+  }
+  { // A typed entry whose Take Photo will not open is still that typed entry.
+    const h = page({ photo: null, manual: true, shown: { j: { fields: {}, read: 0, of: 8 }, problem: undefined }, typed: { barcode: 'PRM-888-1' } });
+    const s = held();
+    h.shrinkNext = s;
+    const run = h.bdPhoto(input());
+    s.rej(new Error('that image could not be opened'));
+    await run;
+    const f = h.log.forms[0];
+    ok(f && f.manual === true && f.photo === null && f.j.fields.barcode === 'PRM-888-1',
+       '🛑 a typed entry whose photo will not open comes back as that typed entry');
+  }
+  { // A first read has no form to give back: it fails into the empty form, as before.
+    const h = page(null), s = held();
+    h.shrinkNext = s;
+    const run = h.bdPhoto(input());
+    s.rej(new Error('that image could not be opened'));
+    await run;
+    const f = h.log.forms[0];
+    ok(f && Object.keys(f.j.fields).length === 0 && /Type it in, or retake the photo\.$/.test(f.problem) && f.photo === null,
+       'a first read that fails still opens the empty form: there was no form to keep');
+  }
+}
+
 // Tally in the shape scripts/test.sh counts: "<n> passed, <m> failed".
 console.log(`\n${assertions - failures} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

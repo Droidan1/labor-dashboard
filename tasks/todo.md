@@ -1,3 +1,91 @@
+# A Retake that brings no read back keeps the form, on both scanners (2026-09-28)
+
+**Request (Brian):** *"Fix the failed Retake empty-form bug next"*. This is the Found item from
+#305: a Retake whose read fails or times out reopens the form empty, losing what was typed.
+Bin Dump behaves the same way.
+
+## The bug (on 26eae03; #305 merged mid-way, so this is its own PR on `main` at 778dbd3)
+
+On both scanners, Retake (and Take Photo on a typed entry) keeps the form open behind the camera
+(#280, #305). Once a photo arrives, the form closes. Then:
+- **The read fails or times out:** the form reopens EMPTY. Everything typed, and every
+  correction made to the first read, is gone.
+- **The new photo will not open:** the form reopens empty, and also without the photo it had.
+- **Cancel on the reading panel:** back to Begin or the dock, and the form is gone with its photo.
+
+## Plan
+
+- [x] **Browser checks first**, for both scanners. Watch them fail on the current head.
+- [x] **What the read carries.** A Retake's read (a photo that arrives while the form is open)
+      carries what the form held: the typed fields, the photo, `manual`, and what the form last
+      drew. That last part needs `irState.shown` / `bdState.shown`, which `irOpenVerify` /
+      `bdOpenVerify` set.
+- [x] **What comes back:**
+  - [x] **New photo opened, but the read failed or timed out:** the form reopens with the new
+        photo, so the tag can still be read off it, and the fields as they were.
+  - [x] **New photo would not open:** the form comes back as it was: its photo, fields, read
+        line and title.
+  - [x] **Cancel during a Retake's read:** the form comes back as it was, focused on Retake.
+  - [x] **Unchanged:**
+    - a first read's Cancel;
+    - abandoning, when another operation takes over and nothing comes back;
+    - a Retake whose read succeeds, which replaces the form with the new read.
+- [x] `irRestoreForm` / `bdRestoreForm`, redrawn from the snapshot rather than trusting the
+      hidden DOM. Bin Dump's Log-tab Edit can redraw the form mid-read.
+- [x] **Unit tests:** `test-inventory-receiver.mjs` §40 and a new executed block in
+      `test-bin-dump.mjs`.
+- [x] **Browser checks:** a section each in `browser-inventory-receiver-read.mjs` and
+      `browser-bin-dump.mjs`.
+- [x] `npm test`; the three browser checks; mutations in isolated copies.
+- [x] `sw.js` v255 + the fixture, last. Scan for invisible characters.
+
+## Review
+
+**Changed** (`index.html`; frontend only):
+- **What the forms record.** `irOpenVerify` / `bdOpenVerify` record what they draw, in
+  `irState.shown` / `bdState.shown`.
+- **The snapshot.** When a photo arrives while the form is open, `irPhoto` / `bdPhoto` snapshot
+  that form as `before`: typed fields, photo, `manual` and `shown`. Bin Dump turns emptied
+  fields back into missing ones.
+- **A failure or timeout:**
+  - If the new photo opened, the form reopens with it and the fields as they were ("… The
+    fields are as they were.").
+  - If it would not open, `irRestoreForm` / `bdRestoreForm` draws the form as it was ("… The
+    form is as it was.").
+- **Cancel.** `irCancelRead` / `bdCancelRead` send a Retake's read back to its form, as it
+  was, focused on Retake.
+- **Bin Dump's warning** goes in the warning box alone. `bdOpenVerify`'s `problem` would also
+  turn the read line into "Couldn't read the tag", which would describe the wrong photo.
+- **Unchanged:** first reads, retakes that read, and reads abandoned for another operation.
+- **Test harness.** `browser-bin-dump.mjs` takes its port from `BD_PORT` and names its broken
+  photo per port, so copies of the repo can run it side by side.
+- `sw.js` v255 + `scripts/fixtures/shell-cache.json`.
+
+**Verified:**
+- **Browser checks on the head** (26eae03): `browser-inventory-receiver-read.mjs` 72/83 and
+  `browser-bin-dump.mjs` 117/128. All 11 fails in each are in the new sections (§8, §8b).
+- **Browser checks on the branch:** 83/83 and 128/128, plus `browser-inventory-receiver.mjs`
+  154/154.
+- **Unit tests:** `test-inventory-receiver.mjs` 400 (21 new in §40) and `test-bin-dump.mjs` 399
+  (18 new in §33). Both files fail against the head.
+- **`npm test`:**
+  - With `TZ=America/New_York`: 6631 assertions across 88 suites, all passed.
+  - Plain, at 00:21 UTC: `test-daily-auction-column.mjs` fails, identically on the head. That
+    is the Daily tab's time-of-day bug below.
+- **Mutations:** 36, 18 per surface, run in four isolated copies, each with its own `dist/` and
+  ports, after a clean unmutated run. All 36 caught.
+  - Four were caught only by the unit tests: the two retake-timeout messages, the old warning
+    on Cancel, and Bin Dump's emptied-field mapping. So `npm test` is what guards them.
+
+**Found, not fixed:**
+- **The Daily tab's "today"** (`buildWeeklyTable`, index.html:11644 / 11675) is decided by the
+  device's local date (`toDateString()`), while `isFuture` uses the Eastern `todayKey`.
+  - On a device not set to Eastern, today's row loses its live figure for part of each day.
+  - `test-daily-auction-column.mjs` fails from 00:00 to 04:00 UTC.
+  - The same pattern recurs at index.html:11792 (later in the same function) and 15730
+    (`_asWeekTotals`).
+  - Queued as a separate suggested task.
+
 # Inventory Receiver's photo reads get Bin Dump's three fixes (2026-09-28)
 
 **Request (Brian):** Inventory Receiver reuses Bin Dump's pallet-tag reader and has the three
