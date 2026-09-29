@@ -1,3 +1,164 @@
+# Sign Studio: a name that misses 0.6 in at full width narrows, up to 10%, instead of refusing (2026-09-29)
+
+**Request (Brian), with a screenshot:** *"Fix the sizing issue so this will print"*. The sign is a
+landscape price sign with two prices:
+- Adult Costumes, $7 each;
+- Kids Costumes, $5 each.
+
+Both names say *"Too long for the landscape sign: letters would be 0.57 in tall, and the minimum
+is 0.6 in. Cut about 1 character."*, and the readout says name 0.57 in, price 3.48 in.
+
+## What is wrong (measured with the committed fonts, on `main` at beb036d)
+
+- **Reproduced exactly:** landscape name 0.567 in, price 3.477 in. The portrait sign already prints,
+  at 0.608 in.
+- **The limit is one word's width.** Each landscape column is 325 pt, and COSTUMES in Poppins Black
+  at 0.6 in is 343.7 pt. A word can't wrap, so the name tops out at 0.567 in however much height is
+  free.
+- **This is not one sign.** At 0.6 in, these words are also wider than a landscape column:
+  - SNEAKERS 325.8, BATTERIES 330.6, MATTRESS 331.4, SWEATERS 336.9 and CHARGERS 338.9 pt;
+  - FURNITURE 343.3 and HANDBAGS 359.0 pt.
+
+  The 24 Sep font review already recorded it: *"Half of a two-price landscape sign holds about 7
+  capitals a line at 0.6 in"*.
+- **The layout can't make the room.**
+  - Even with no inner pad and no gutter, a column is only 365 pt.
+  - An 11 pt pad and a 22 pt gutter give 343 pt, still short of COSTUMES, and would crowd every
+    two-price sign.
+  - −0.02 em of tracking gives 335 pt, and ST in Poppins Black has only 0.038 em between the
+    letters to give.
+
+## Decided (mine, and reversible: it is one constant)
+
+**A product name that can't reach 0.6 in at full width is narrowed. It is narrowed only as much as
+it needs, and never below 90% of its width, before it is refused.**
+- The letters stay 0.6 in tall and stay Poppins Black, so both of Brian's rules still hold.
+- Only a sign that is refused today can change. A sign that prints today keeps its exact layout.
+- The screenshot's sign prints landscape at 0.60 in, narrowed to 94.5%, with a 3.42 in price.
+- It applies to names on all three sign types, so one rule holds everywhere. A condensing face
+  (Archivo) was set aside for Poppins on 24 Sep, so this condenses only the names that need it.
+
+Not done, because they are Brian's calls: lowering the 0.6 in minimum; changing the approved
+gutter, pad or tracking.
+
+## Plan
+
+- [x] **`index.html` renderer (`<script id="sign-render">`):**
+  - [x] `G.narrowMin = 0.9`.
+  - [x] `fitText`: when no split reaches `minCap` at full width, take the split that needs the
+        least narrowing to reach it, if that is ≥ `narrowMin`. The scale is floored to 3
+        decimals, so both drawers get one exact value.
+  - [x] `atCap` returns `sx: 1`. Its fallback to `fitText` narrows the same way.
+  - [x] The name fits (`planGroup`, `layoutUvT`) pass `narrowMin`. Name items carry `sx`.
+  - [x] An item's width counts its `sx`, so centring holds.
+  - [x] `drawSVG`: a narrowed text gets `transform="matrix(sx 0 0 1 x·(1−sx) 0)"`, so its left
+        edge stays at `x`.
+  - [x] `drawPDF`: every `text()` passes `horizontalScale`, even 1. `Tz` persists across text
+        objects like `Tc`, so a narrowed name would otherwise narrow the text after it.
+        Measured with poppler before relying on it: a jsPDF text with no `Tz` after one at
+        50% came out 115.54 pt wide, against 231.08 pt on its own.
+- [x] **`sw.js` `CACHE_NAME` v256 → v257**, and `scripts/fixtures/shell-cache.json`.
+- [x] **`scripts/test-sign-render.mjs`:**
+  - [x] The screenshot's sign prints both ways. Landscape is at 0.6 in, narrowed to 0.945, and
+        COSTUMES fills its 325 pt column without crossing it. Portrait is unchanged at full
+        width, at 0.608 in.
+  - [x] Sofa / Sectional now prints landscape, with SECTIONAL at 0.931 and SOFA at full width.
+        *Changed from the plan:* the word that still refuses is MATTRESSES, which would need
+        80.5% (Sofa / Mattresses, 0.48 in, cut about 2). CLEARANCE would have worked too, but
+        Sofa / Mattresses sits beside the Sofa / Sectional case it contrasts with.
+  - [x] Work boots / Premium work boots now cuts about 2 characters, not 3.
+  - [x] Us vs Them: KITCHEN STORAGE BINS takes its one landscape line at 0.937.
+  - [x] *Added after a surviving mutant (below):* King sheet sets / Tea gives KING / SHEET SETS
+        at 0.934, not KING SHEET / SETS at 0.904.
+  - [x] Grid (600 signs, up from 540 with Adult costumes added):
+    - [x] ink boxes count `sx`;
+    - [x] only names narrow, never below 0.9, to 3 places, at exactly 0.6 in, and every line of
+          one name alike;
+    - [x] with narrowing switched off, every sign that prints has the identical layout;
+    - [x] the grid really narrows: 84 orientations, 88 printable only by narrowing.
+  - [x] Drawers: the costumes sign joins the samples. The SVG and PDF primitives carry the
+        scale and the drawn left edge, and every PDF text passes its scale.
+  - [x] Real jsPDF: every text object's `Tz` is 100 × its `sx`; the costumes sign's four name
+        lines are at 94.5 and nothing else is.
+- [x] **`scripts/browser-sign-studio.mjs`:**
+  - [x] Section 3:
+    - the browser's own matrix for every text is its `sx` across, 1 down, left edge at `x`;
+    - only the costumes sign's four landscape name lines are narrowed;
+    - the ink sweep now covers 6 signs, so it keeps all 5 it had.
+  - [x] Section 4:
+    - the cut is 2;
+    - the screenshot's sign, typed in: Ready to print, all four Print and PDF buttons on,
+      "Letters: name 0.6 in · price 3.42 in", nothing flagged, no field message or invalid
+      field.
+  - [x] Section 5 (added): the sign printed landscape through `page.pdf`. pdftotext puts each
+        COSTUMES at the drawn left edge and width, within 0.006 pt, and as tall against EACH as
+        the font sizes say (2.3799 both).
+  - [x] Section 6: its jsPDF file has `Tz` 94.5 on the four name lines and 100 on the rest, one
+        per text object, each at the layout's left edge.
+- [x] **Verify:**
+  - [x] each new check fails on `main`'s renderer;
+  - [x] mutations, each in an isolated copy (with its own `dist/` for the browser ones);
+  - [x] `npm test`;
+  - [x] `browser-sign-studio.mjs` in full, contrast sections included (no colour changed).
+- [ ] **Ship:** a new draft PR from the branch at `main`, with before and after images.
+
+## Review
+
+**Changed:**
+- **`index.html`, the renderer only.** Page code, styles and colours are untouched.
+- **`sw.js` v257**, and its fixture.
+- **The two Sign Studio test scripts.**
+
+**Verified:**
+- **`test-sign-render.mjs`: 412 passed, 0 failed.**
+  - On `main`'s renderer the same file gives 363 passed and 49 failed.
+  - `main`'s own copy of the file still passes there, 335 of 335.
+  - Grid, `main` → this branch:
+    - printable orientations: 840 → 928;
+    - blocked: 360 → 272;
+    - signs that print at full width and changed: 0.
+- **`browser-sign-studio.mjs`: 223 passed, 0 failed**, in full.
+  - Sections 3 to 6 on `main`'s build, in a separate copy on its own port: 10 checks fail.
+  - The rest of that run reproduced the screenshot: "Letters: name 0.57 in · price 3.48 in",
+    Portrait only, both name fields invalid.
+  - Sections 5 and 6 then stop, because the landscape Print and PDF are off there.
+- **`npm test`: 7,216 assertions across 90 suites, all passed.**
+- **Mutations: 16 of 16 caught in Node, 3 of 3 in the browser.**
+  - Each was caught by an assertion, not a crash. The Node mutants:
+    - the floor at 0.8 and at 0.95;
+    - narrowing a name that fits at full width;
+    - the split that narrows most;
+    - an unfloored scale;
+    - ignoring the height budget;
+    - no `sx` from `atCap`;
+    - a width without `sx`;
+    - no translate, and no transform, in the SVG;
+    - `Tz` only when narrowed, and no `Tz` at all;
+    - no `narrowMin` in price signs, and none in Us vs Them;
+    - no `sx` on the name items of either.
+  - The browser mutants: no translate, no transform, and `Tz` only when narrowed.
+  - **The first Node run missed one: "the split that narrows most wins".** A search over 54
+    realistic names found signs where it changes the output: King sheet sets, Baby bath toys and
+    Kids backpacks all. King sheet sets is now a known outcome, and the rerun caught 16 of 16.
+- **Looked at, drawn by Chromium from the real fonts:** the screenshot's sign, before and after,
+  and Handbags / Sectional, at the 0.905 low end.
+
+**Noticed, not changed:** `atCap` (`index.html:8080`) matches two names at one cap by taking
+the fewest lines that fit the width at full width. It never checks the name's share of the
+height, so the price gives way instead.
+- **This is not new.** A narrowed fit now reaches it more often.
+- **Example:** Adult costumes / Kids costumes in portrait, each with a note and a yellow dot.
+  - ADULT COSTUMES's own fit is one line at 0.6 in, narrowed to 91.2%. KIDS COSTUMES fits one
+    line at full width, at 0.608 in.
+  - Matched at 0.6 in, ADULT COSTUMES is drawn instead as two full-width lines, and the price
+    drops to 1.28 in.
+  - The sign keeps every rule: it was refused before, and prints now.
+- **Why it is left:** keeping the narrowed line would give a 1.95 in price, not 1.28 in. That
+  was measured with a scratch patch, not shipped. The patch keeps a name's own fit when that
+  fit narrowed and set the matched cap, so it would reach only signs this change newly lets
+  print. But it is a second rule in how two names are matched, and Brian's sign doesn't need
+  it. So it is offered as a follow-up, not folded in.
+
 # The worker's live route counts today in Eastern time, whatever `since` says (2026-09-29)
 
 **Request (Brian):** *"Fix the worker since bug next"*. This is the Found item from #307:

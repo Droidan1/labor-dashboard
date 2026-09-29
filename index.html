@@ -8002,6 +8002,9 @@
                 nameShare: { landscape: 0.30, portrait: 0.30 },
                 nameShareTwo: { landscape: 0.40, portrait: 0.42 },   // a half-height row needs more for two lines at 0.6 in
                 minCap: 0.6 * PT, labelMin: 0.3 * PT, qualCap: 17, qualMin: 0.2 * PT, unitCap: 18,
+                // A name too wide for 0.6 in (COSTUMES in half a landscape sign) narrows
+                // just enough to keep 0.6 in letters, never under 90% of its width.
+                narrowMin: 0.9,
                 priceOverName: 2.0,     // target: price capitals ≥ 2× the name's (the name shrinks, never below 0.6 in)
                 priceFloorRatio: 1.1 }; // hard rule: under this the price is not the biggest text, so it can't print
     /* Us vs Them. THEIR PRICE is never bigger than 40% of YOU PAY's capitals,
@@ -8044,15 +8047,29 @@
         return out;
       }
       function fitText(text, o) {
-        // o: { font, boxW, boxH, maxCap, minCap, maxLines, gap, lines (fixed), perLine }
+        // o: { font, boxW, boxH, maxCap, minCap, maxLines, gap, lines (fixed), perLine, narrowMin }
         const m = metricsOf(o.font), perLine = o.perLine == null ? PER_LINE.name : o.perLine;
         const cands = o.lines ? [o.lines] : splits(text.split(/\s+/).filter(Boolean), o.maxLines || 1);
         let best = null;
         for (const lines of cands) {
           const widest = Math.max(...lines.map(l => w100(l, o.font)));
           const n = lines.length, cap = Math.min(o.boxW / (widest / 100) * m.cap, o.boxH / (n + (n - 1) * o.gap), o.maxCap);
-          const c = { lines, cap, n, score: cap * (1 - perLine * (n - 1)), feasible: cap >= o.minCap - 0.01 };
+          const c = { lines, cap, n, sx: 1, score: cap * (1 - perLine * (n - 1)), feasible: cap >= o.minCap - 0.01 };
           if (!best || (c.feasible && !best.feasible) || (c.feasible === best.feasible && c.score > best.score)) best = c;
+        }
+        // No split reaches minCap at full width. With o.narrowMin, a split with the height for
+        // minCap narrows until its widest line fits at minCap; the split that narrows least
+        // wins, if it stays at or above narrowMin. The scale is floored to 3 places: the SVG
+        // and the PDF get one exact number, and the line lands a hair inside its box.
+        if (!best.feasible && o.narrowMin) {
+          let narrow = null;
+          for (const lines of cands) {
+            const widest = Math.max(...lines.map(l => w100(l, o.font))), n = lines.length;
+            if (Math.min(o.boxH / (n + (n - 1) * o.gap), o.maxCap) < o.minCap - 0.01) continue;
+            const sx = Math.floor(o.boxW / (widest / 100 * o.minCap / m.cap) * 1000) / 1000;
+            if (sx >= o.narrowMin && (!narrow || sx > narrow.sx)) narrow = { lines, cap: o.minCap, n, sx, feasible: true };
+          }
+          if (narrow) best = narrow;
         }
         best.size = best.cap / m.cap;
         best.h = best.n * best.cap + (best.n - 1) * o.gap * best.cap;
@@ -8065,7 +8082,7 @@
         const cands = o.lines ? [o.lines] : splits(text.split(/\s+/).filter(Boolean), o.maxLines || 1);
         for (const lines of cands.slice().sort((a, b) => a.length - b.length))
           if (Math.max(...lines.map(l => w100(l, o.font))) * size / 100 <= o.boxW + 0.01)
-            return { lines, cap, size, n: lines.length, h: lines.length * cap + (lines.length - 1) * o.gap * cap, ok: cap >= o.minCap - 0.01 };
+            return { lines, cap, size, sx: 1, n: lines.length, h: lines.length * cap + (lines.length - 1) * o.gap * cap, ok: cap >= o.minCap - 0.01 };
         return fitText(text, Object.assign({}, o, { maxCap: cap }));
       }
       /* The hero, in Luckiest Guy: '$' + dollars with cents raised at half size
@@ -8129,9 +8146,10 @@
         else layoutTwo(out, model.groups, area, orient);
         // Every text item gets its LEFT edge and its width, from the same widths
         // the fit used. Letter spacing goes between letters, not after the last.
+        // A narrowed name (sx < 1) is that much narrower, spacing and all, as in a PDF.
         for (const it of out.items) if (it.t === 'text') {
           it.ls = it.spacing ? it.size * it.spacing : 0;
-          it.w = w100(it.text, it.font) * it.size / 100 + it.ls * Math.max(0, [...it.text].length - 1);
+          it.w = (w100(it.text, it.font) * it.size / 100 + it.ls * Math.max(0, [...it.text].length - 1)) * (it.sx || 1);
           if (it.anchor === 'middle') it.x -= it.w / 2; else if (it.anchor === 'end') it.x -= it.w;
           delete it.anchor; delete it.spacing;
         }
@@ -8206,7 +8224,7 @@
       function planGroup(g, area, orient, { maxName, forced, two }) {
         const X = planExtras(g, area.w), avail = area.h - X.h;
         const nameO = { font: 'word', boxW: area.w, boxH: avail * (two ? G.nameShareTwo : G.nameShare)[orient],
-                        maxCap: maxName, minCap: G.minCap, maxLines: 2, gap: G.lineGap, perLine: PER_LINE.name };
+                        maxCap: maxName, minCap: G.minCap, maxLines: 2, gap: G.lineGap, perLine: PER_LINE.name, narrowMin: G.narrowMin };
         let name = g.name ? (forced && forced.nameCap ? atCap(g.name, forced.nameCap, nameO) : fitText(g.name, nameO)) : null;
         const parts = heroParts(g);
         const priceBox = () => ({ boxW: area.w, boxH: avail - (name ? name.h + name.cap * 0.45 : 0), maxCap: 400 });
@@ -8228,7 +8246,7 @@
         let y = alignTop != null ? alignTop : area.y + Math.max(0, (area.h - stackH) * 0.46);
         if (P.name) {
           P.name.lines.forEach((ln, k) => out.items.push({ t: 'text', role: 'name', group: P.g.i, text: ln, anchor: 'middle',
-            x: cx, y: y + P.name.cap + k * P.name.cap * (1 + G.lineGap), size: P.name.size, font: 'word', fill: 'ink' }));
+            x: cx, y: y + P.name.cap + k * P.name.cap * (1 + G.lineGap), size: P.name.size, sx: P.name.sx, font: 'word', fill: 'ink' }));
           y += P.name.h + nameGap;
         }
         if (P.price) {
@@ -8295,7 +8313,7 @@
         const ml = metricsOf('label');
         // 1. Name.
         const nameO = { font: 'word', boxW: area.w, boxH: avail * U.nameShare, maxCap: U.nameMax[orient],
-                        minCap: G.minCap, maxLines: 2, gap: G.lineGap, perLine: PER_LINE.name };
+                        minCap: G.minCap, maxLines: 2, gap: G.lineGap, perLine: PER_LINE.name, narrowMin: G.narrowMin };
         let name = g.name ? fitText(g.name, nameO) : null;
         // 2. The comparison rows, at one shared cap (labels at 72% of it).
         const themParts = model.them && model.them.cents ? priceParts(model.them.cents) : null;
@@ -8356,7 +8374,7 @@
         let y = area.y + Math.max(0, (area.h - total) * 0.46);
         if (name) {
           name.lines.forEach((ln, k) => out.items.push({ t: 'text', role: 'name', group: 0, text: ln, anchor: 'middle',
-            x: cx, y: y + name.cap + k * name.cap * (1 + G.lineGap), size: name.size, font: 'word', fill: 'ink' }));
+            x: cx, y: y + name.cap + k * name.cap * (1 + G.lineGap), size: name.size, sx: name.sx, font: 'word', fill: 'ink' }));
           y += nameBlock();
         }
         R.rows.forEach((r, k) => {
@@ -8517,6 +8535,8 @@
           const a = { x: n2(it.x), y: n2(it.y), 'font-family': FACES[it.font].fam, 'font-size': n2(it.size),
                       fill: COLORS[it.fill] || COLORS.ink, 'data-role': it.role };
           if (it.ls) a['letter-spacing'] = n2(it.ls);
+          // A narrowed name: scaled across only, about its own left edge, which stays at x.
+          if (it.sx && it.sx !== 1) a.transform = `matrix(${it.sx} 0 0 1 ${n2(it.x * (1 - it.sx))} 0)`;
           svg.appendChild(node('text', a, it.text));
         }
       }
@@ -8542,7 +8562,8 @@
           if (pdf.getFont().fontName !== fam) throw new Error(`The PDF has no ${fam} font.`);
           pdf.setFontSize(it.size);
           pdf.setTextColor(COLORS[it.fill] || COLORS.ink);
-          pdf.text(it.text, it.x, it.y, { charSpace: it.ls, baseline: 'alphabetic' });
+          // Tz, like Tc, carries on into the next text object: every text sets its own, even 100.
+          pdf.text(it.text, it.x, it.y, { charSpace: it.ls, horizontalScale: it.sx || 1, baseline: 'alphabetic' });
         }
       }
     }
