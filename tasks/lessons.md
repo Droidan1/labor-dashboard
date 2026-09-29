@@ -2756,6 +2756,25 @@ counts LINES and a bundler re-joins them, so the two numbers were never comparab
    behaviour was exercised end to end.
 </rules>
 
+### Recurred (2026-09-29, saved signs): I put the pull in the wrong step
+
+Rule 24 is about `wrangler deploy`. I handed Brian three commands, in this order:
+1. the staging migration;
+2. the production migration;
+3. `git checkout main && git pull && npx wrangler deploy`.
+
+`migration-075.sql` had reached `main` minutes earlier, in the PR he had just merged, so his
+first command stopped with *Unable to read SQL text file "migration-075.sql"*. It failed safe,
+because `wrangler` reads the file before it sends anything. The pull was simply in the wrong
+step.
+
+<rules>
+29. **Every `wrangler` command reads the checkout, not only `deploy`.** `d1 execute --file=…`
+   does too. So when handing Brian a sequence:
+   - `git checkout main && git pull` is step 1, before the first `wrangler` line;
+   - it is followed by a check that the file is there (`ls migration-NNN.sql`).
+</rules>
+
 ## I carried a bug's severity across from a bug that only LOOKED the same (2026-09-22)
 
 Brian pointed at `index.html:15242`, a six-store roster reading

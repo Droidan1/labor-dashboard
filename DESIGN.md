@@ -553,6 +553,32 @@ editable cells:
 - **Totals row** pinned at the bottom, flagging any column past its threshold
   regardless of how the individual cells look.
 
+**Folder variant (Sign Studio's Saved signs)**
+
+Same panel, holding a folder tree instead of a table. Use it for anything saved
+by type and then by date:
+
+- **Breadcrumbs** sit under the bar. Each level above is an accent text button
+  at least 40 px tall. The current level is plain ink with
+  `aria-current="location"`, and focus moves to it after every step, because the
+  render replaces the panel (trap 7).
+- **Folder rows** are 52 px: an icon, the name, and one `inkDim` line when the
+  folder needs explaining ("Saved by admins for every store"). The count is
+  right-aligned in `inkDim`, tabular. A folder with nothing in it says
+  **"Empty"**, never "0 signs".
+- **Item rows**: the name in bold ink, then one `inkDim` line of facts
+  (offer · label · Eastern time · who saved it, only when that isn't the
+  reader). The actions sit at the right: the main one is the green button, and
+  a destructive one is outlined in the bad colour. It asks first, naming the
+  item and its folder, and says there is no undo.
+- **States (§6)**:
+  - loading: three pulsing skeleton rows;
+  - failed: "Couldn't load …", the reason, and Retry, in an error note;
+  - empty: the folder says how things get into it;
+  - capped: a capped list says it is capped.
+- **The switch into the view is a page-level action**, so it goes in the page
+  app bar, outside the render target.
+
 **Token literals for `<style>` blocks**
 
 
