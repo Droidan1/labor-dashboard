@@ -157,6 +157,9 @@ async function makeSign(page, s) {
   await page.click('[data-step="3"]'); await settle(page);
 }
 const pill = page => page.$eval('[data-status]', n => ({ cls: n.className.replace('ss-pill ', ''), text: n.textContent.trim() }));
+// Brian's sign (29 Sep), typed as he typed it. At full width COSTUMES stops at 0.57 in in half a
+// landscape sign; it narrows to 94.5% to keep 0.6 in letters.
+const COSTUMES = { two: true, fields: { 'name-0': 'Adult Costumes', 'price-0': '7', 'name-1': 'Kids Costumes', 'price-1': '5' }, units: { 0: 'each', 1: 'each' } };
 
 // ── colour ─────────────────────────────────────────────────────────────
 const rgba = s => { const m = String(s).match(/[\d.]+/g) || []; return [+m[0], +m[1], +m[2], m[3] == null ? 1 : +m[3]]; };
@@ -328,6 +331,7 @@ await section('3. geometry', async () => {
     { fields: { 'name-0': 'All cereal', 'price-0': '2' }, sale: 'flash' },
     { fields: { 'name-0': 'Mens athletic sneakers', 'price-0': '24.99' }, sale: 'manager' },
     { two: true, fields: { 'name-0': 'Shoes', 'price-0': '10', 'name-1': 'Premium shoes', 'price-1': '15' }, sale: 'blowout' },
+    COSTUMES,
     { template: 'pct', two: true, fields: { 'name-0': 'Winter coats', 'pct-0': '20', 'name-1': 'Boots', 'pct-1': '40' }, sale: 'custom', custom: 'Weekend deal' },
     { template: 'uvt', fields: { 'name-0': 'Stand mixer', them: '59.99', 'price-0': '19.99' }, sale: 'sale' },
     { fields: { 'name-0': 'All candy', 'price-0': '0.99' } },
@@ -339,6 +343,7 @@ await section('3. geometry', async () => {
     window.__ssReader = fam;
   });
   let worst = 0, n = 0;
+  const thin = [];
   for (const s of SIGNS) {
     await makeSign(page, s);
     const r = await page.evaluate(() => {
@@ -346,13 +351,22 @@ await section('3. geometry', async () => {
       for (const t of document.querySelectorAll('[data-preview] svg text')) {
         const f = window.__ssReader[t.getAttribute('font-family')], size = +t.getAttribute('font-size'), ls = +(t.getAttribute('letter-spacing') || 0);
         const want = f.w100(t.textContent) * size / 100, got = t.getComputedTextLength() - ls * [...t.textContent].length;   // Chrome counts the spacing after the last letter too
-        out.push({ role: t.dataset.role, rel: Math.abs(got - want) / want });
+        // What the browser really applies to the text inside its sign: 1 across, unless narrowed,
+        // and then about the text's own left edge, which stays at x.
+        const m = t.ownerSVGElement.getScreenCTM().inverse().multiply(t.getScreenCTM()), x = +t.getAttribute('x');
+        const sx = t.hasAttribute('transform') ? +(t.getAttribute('transform').match(/^matrix\((\S+) 0 0 1 \S+ 0\)$/) || [])[1] : 1;
+        out.push({ role: t.dataset.role, text: t.textContent, rel: Math.abs(got - want) / want, sx, drawn: [m.a, m.b, m.c, m.d], left: m.a * x + m.e - x });
       }
       return out;
     });
     n += r.length; worst = Math.max(worst, ...r.map(x => x.rel));
+    thin.push(...r.filter(x => x.sx !== 1 || Math.abs(x.drawn[0] - 1) > 1e-9));
+    const off = r.filter(x => Math.abs(x.drawn[0] - x.sx) > 1e-6 || x.drawn[1] || x.drawn[2] || Math.abs(x.drawn[3] - 1) > 1e-9 || Math.abs(x.left) > 0.01);
+    eq(off.map(x => x.text), [], `${Object.values(s.fields).join(' / ')}: every text is drawn at its own width across, from its left edge`);
   }
   check(n > 60 && worst < 0.001, `every text the browser draws is within 0.1% of the reader's width (${n} texts, worst ${(worst * 100).toFixed(3)}%)`);
+  // Only Brian's sign narrows, and only its landscape names, each line of both alike.
+  eq(thin.map(x => `${x.text} ${x.sx}`), ['ADULT 0.945', 'COSTUMES 0.945', 'KIDS 0.945', 'COSTUMES 0.945'], 'the costumes sign\'s landscape names are drawn at 94.5%, and no other text is narrowed');
   // The ink sweep: the sign drawn at 2 px per point, then every pixel in the band between the
   // border's inner edge (31 pt) and the content box (51 pt, less 1 pt for a round letter's
   // overshoot) must be paper.
@@ -393,7 +407,7 @@ await section('3. geometry', async () => {
     }, { b64: buf.toString('base64'), W, H });
   };
   const bands = [];
-  for (const s of SIGNS.slice(0, 5)) {
+  for (const s of SIGNS.slice(0, 6)) {
     await makeSign(page, s);
     for (const o of ['landscape', 'portrait']) bands.push(await inkInBand(o, 0));
   }
@@ -410,7 +424,7 @@ await section('4. per-orientation', async () => {
   const sum = await page.$eval('[data-summary] .ss-note', n => ({ cls: n.className, head: n.querySelector('b').textContent, items: [...n.querySelectorAll('li')].map(l => l.textContent) }));
   eq(sum.cls, 'ss-note warn', '…the summary is a warning, not an error');
   eq(sum.head, 'Only the portrait sign can print. To print the landscape sign too:', '…and says which prints and why');
-  eq(sum.items, ['Too long for the landscape sign: letters would be 0.46 in tall, and the minimum is 0.6 in. Cut about 3 characters.'], '…with the fix');
+  eq(sum.items, ['Too long for the landscape sign: letters would be 0.46 in tall, and the minimum is 0.6 in. Cut about 2 characters.'], '…with the fix');
   eq(await page.$eval('[data-readout="landscape"] .bad', n => n.textContent), '0.46 in', 'the landscape readout flags the 0.46 in name');
   // A field error on top blocks both, and says so.
   await page.click('[data-step="1"]'); await settle(page);
@@ -424,6 +438,15 @@ await section('4. per-orientation', async () => {
   await page.click('[data-step="3"]'); await settle(page);
   eq(await pill(page), { cls: 'ok', text: 'Ready to print' }, 'fixed: ready to print, both ways');
   eq(await page.$$eval('[data-summary] *', ns => ns.length), 0, '…with no summary left');
+  // Brian's sign: it stopped landscape at 0.57 in, and now prints both ways.
+  await makeSign(page, COSTUMES);
+  eq(await pill(page), { cls: 'ok', text: 'Ready to print' }, 'Adult Costumes / Kids Costumes, $7 and $5 each: ready to print, both ways');
+  eq(await page.$$eval('[data-print], [data-pdf]', bs => bs.map(b => b.disabled)), [false, false, false, false], '…every Print and PDF button is on');
+  eq(await page.$eval('[data-readout="landscape"]', n => n.textContent), 'Letters: name 0.6 in · price 3.42 in', '…and landscape letters read 0.6 in');
+  eq(await page.$$eval('[data-readout] .bad', ns => ns.length), 0, '…with nothing flagged');
+  await page.click('[data-step="1"]'); await settle(page);
+  eq(await page.$$eval('[data-msg]', ns => ns.map(n => n.textContent).filter(Boolean)), [], '…and step 1 shows no field message');
+  eq(await page.$$eval('[aria-invalid="true"]', ns => ns.map(n => n.id)), [], '…and marks no field invalid');
   check(!errs.length, `no page errors (${errs.slice(0, 2).join(' | ')})`);
 });
 
@@ -488,6 +511,28 @@ await section('5. print', async () => {
   eq(btns, [['landscape', true, "The landscape sign doesn't fit. The portrait one prints."], ['portrait', false, '']], 'portrait only: landscape Print is off and says why');
   await page.evaluate(() => { const b = document.querySelector('[data-print="landscape"]'); b.disabled = false; b.click(); });
   eq((await state()).on, false, '🛑 a forced click on the disabled landscape Print readies nothing: the print path checks too');
+  // Brian's sign prints landscape, narrowed on paper as in the preview. pdftotext's word boxes:
+  // each COSTUMES starts at its x and is as wide as drawn, and stands as tall against EACH as
+  // its font size says, which is 0.6 in letters, not the 0.57 in it would have at full width.
+  await makeSign(page, COSTUMES);
+  const drawn = await page.$$eval('[data-preview="landscape"] svg text', ts => ts.filter(t => ['COSTUMES', 'EACH'].includes(t.textContent)).map(t => {
+    const sx = t.hasAttribute('transform') ? +t.getAttribute('transform').match(/^matrix\((\S+)/)[1] : 1;
+    return { text: t.textContent, x: +t.getAttribute('x'), size: +t.getAttribute('font-size'), sx, w: t.getComputedTextLength() * sx };
+  }));
+  await page.click('[data-print="landscape"]');
+  const cf = path.join(PDIR, 'costumes.pdf');
+  fs.writeFileSync(cf, await page.pdf({ preferCSSPageSize: true, printBackground: true }));
+  const words = [...execFileSync('pdftotext', ['-bbox', cf, '-'], { encoding: 'utf8' })
+    .matchAll(/<word xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)">(COSTUMES|E?ACH)<\/word>/g)]   // EACH is letter-spaced: E, ACH
+    .map(m => ({ text: m[5], x: +m[1], w: +m[3] - +m[1], h: +m[4] - +m[2] }));
+  const printedC = words.filter(w => w.text === 'COSTUMES'), drawnC = drawn.filter(d => d.text === 'COSTUMES');
+  eq([printedC.length, drawnC.length, drawnC.map(d => d.sx)], [2, 2, [0.945, 0.945]], 'Adult Costumes / Kids Costumes: landscape prints, with both COSTUMES drawn at 94.5%');
+  const where = printedC.map((w, k) => drawnC[k] && [w.x - drawnC[k].x, w.w - drawnC[k].w].map(v => +v.toFixed(3)));
+  check(where.every(d => d && Math.abs(d[0]) < 0.05 && Math.abs(d[1]) < 0.05),
+        `…each on paper from its left edge, as wide as drawn (${printedC.map(w => `x ${w.x.toFixed(2)} w ${w.w.toFixed(2)}`).join('; ')}; off by ${JSON.stringify(where)})`);
+  const each = words.find(w => /ACH$/.test(w.text)), eachSize = (drawn.find(d => d.text === 'EACH') || {}).size;
+  const tall = each && printedC[0] ? printedC[0].h / each.h : NaN, wantTall = drawnC[0] && eachSize ? drawnC[0].size / eachSize : NaN;
+  check(Math.abs(tall / wantTall - 1) < 0.005, `…and as tall as its font size says: ${tall.toFixed(4)} × EACH on paper, ${wantTall.toFixed(4)} drawn`);
   check(!errs.length, `no page errors (${errs.slice(0, 2).join(' | ')})`);
 });
 
@@ -557,6 +602,25 @@ await section('6. pdf', async () => {
     } else check(false, `${orient}: the page's layout could not be read for comparison`);
   }
   await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+  // Brian's sign as a PDF: every text object sets its own horizontal scale (Tz carries on to
+  // the next text otherwise), 94.5 on the four name lines and 100 on the rest, each from the
+  // layout's left edge.
+  await makeSign(page, COSTUMES);
+  const cos = await makePdf(page, 'landscape');
+  const cosItems = await page.evaluate(() => {
+    const R = window.SignRender;
+    const model = R.signModel(R.normalizeSign({ two: true, groups: [{ name: 'Adult Costumes', price: '7', unit: 'each' }, { name: 'Kids Costumes', price: '5', unit: 'each' }] }));
+    return window.__ssCheckEngine.layoutSign(model, 'landscape').items.filter(i => i.t === 'text').map(i => ({ x: i.x, sx: i.sx || 1 }));
+  }).catch(() => []);
+  const cosBts = [...pdfStreams(cos.buf).filter(x => /\bBT\b/.test(x.data)).map(x => x.data).join('\n').matchAll(/BT\n([^]*?)ET/g)].map(m => {
+    const tz = m[1].match(/(\S+) Tz/), td = m[1].match(/(\S+) (\S+) Td/);
+    return { tz: tz ? +(+tz[1]).toFixed(3) : null, x: td ? +(+td[1]).toFixed(2) : null };
+  });
+  eq(cosBts.map(b => b.tz), cosItems.map(i => +(100 * i.sx).toFixed(3)), `Adult Costumes / Kids Costumes PDF: Tz ${cosBts.map(b => b.tz).join(' ')}, one per text object`);
+  eq(cosBts.filter(b => b.tz !== 100).length, 4, '…the four name lines, and only they, at 94.5%');
+  eq(cosBts.map(b => b.x), cosItems.map(i => +i.x.toFixed(2)), '…each from the layout\'s left edge');
+  const cosText = pdfFacts(cos.buf, 'costumes-pdf.pdf').text.replace(/\s+/g, ' ');
+  check(/ADULT KIDS COSTUMES COSTUMES/.test(cosText), `…and the names are real text, read across both columns (${cosText.trim().slice(0, 40)})`);
   check(!errs.length, `no page errors (${errs.slice(0, 2).join(' | ')})`);
   // The jsPDF file fails once, then comes back: the next tap tries again and works.
   fail.add('/' + JSPDF);   // down before step 3, so the idle warm-up meets it too

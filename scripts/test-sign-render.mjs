@@ -200,11 +200,33 @@ v = V({ sale: 'manager', groups: [{ name: 'Mens athletic sneakers', price: '24.9
 eq(both(v) + JSON.stringify(v.msgs), 'false,false{}', 'MENS ATHLETIC SNEAKERS, the 22-character limit, prints both ways');
 v = V({ sale: 'blowout', two: true, groups: [{ name: 'Work boots', price: '20', unit: 'pair' }, { name: 'Premium work boots', price: '35', unit: 'pair' }] });
 eq(both(v), 'true,false', 'Work boots / Premium work boots: portrait only');
-eq(v.msgs['name-1'], 'Too long for the landscape sign: letters would be 0.46 in tall, and the minimum is 0.6 in. Cut about 3 characters.',
-   '…and the message names the longer name, the sign, the height and the cut');
+eq(v.msgs['name-1'], 'Too long for the landscape sign: letters would be 0.46 in tall, and the minimum is 0.6 in. Cut about 2 characters.',
+   '…and the message names the longer name, the sign, the height and the cut (2, since what is left may narrow)');
 eq(Object.keys(v.msgs).join(), 'name-1', '…and only the longer name is told to change');
+// A word can't wrap, and half a landscape sign is 325 pt: COSTUMES at 0.6 in is 343.7 pt of
+// Poppins Black. The name narrows just enough to keep 0.6 in letters (Brian's sign, 29 Sep).
+const capIn = it => +(it.size * fonts.word.up('H') / R.PT).toFixed(3);
+const namesOf = L => L.items.filter(i => i.role === 'name').map(i => `${i.text} ${capIn(i)} ×${i.sx}`).join(' | ');
+v = V({ two: true, groups: [{ name: 'Adult costumes', price: '7', unit: 'each' }, { name: 'Kids costumes', price: '5', unit: 'each' }] });
+eq(both(v) + JSON.stringify(v.msgs), 'false,false{}', 'Adult costumes / Kids costumes, $7 and $5 each: prints both ways');
+eq(namesOf(v.layouts.landscape), 'ADULT 0.6 ×0.945 | COSTUMES 0.6 ×0.945 | KIDS 0.6 ×0.945 | COSTUMES 0.6 ×0.945',
+   '…landscape: both names 0.6 in tall, narrowed to 94.5%, every line of a name alike');
+const costumes = v.layouts.landscape.items.filter(i => i.text === 'COSTUMES');
+ok(costumes.every(i => i.w <= 325 && i.w > 324.5), `…and COSTUMES fills its 325 pt column without crossing it (${costumes.map(i => i.w.toFixed(2))})`);
+eq(namesOf(v.layouts.portrait), 'ADULT 0.608 ×1 | COSTUMES 0.608 ×1 | KIDS COSTUMES 0.608 ×1', '…portrait: full width, as before');
 v = V({ sale: 'sale', two: true, groups: [{ name: 'Sofa', price: '499' }, { name: 'Sectional', price: '899' }] });
-eq(both(v), 'true,false', 'Sofa / Sectional: a 9-letter word can\'t wrap in half a landscape sign, so portrait only');
+eq(both(v) + JSON.stringify(v.msgs), 'false,false{}', 'Sofa / Sectional: SECTIONAL narrows to fit half a landscape sign');
+eq(namesOf(v.layouts.landscape), 'SOFA 0.6 ×1 | SECTIONAL 0.6 ×0.931', '…and only SECTIONAL narrows: SOFA fits at full width');
+// When two ways of breaking a name both narrow enough, the one that narrows least wins.
+v = V({ two: true, groups: [{ name: 'King sheet sets', price: '7', unit: 'each' }, { name: 'Tea', price: '5', unit: 'each' }] });
+eq(both(v) + namesOf(v.layouts.landscape), 'false,falseKING 0.6 ×0.934 | SHEET SETS 0.6 ×0.934 | TEA 0.6 ×1',
+   'King sheet sets / Tea: KING / SHEET SETS at 93.4%, not KING SHEET / SETS at 90.4%');
+v = V({ sale: 'sale', two: true, groups: [{ name: 'Sofa', price: '499' }, { name: 'Mattresses', price: '899' }] });
+eq(both(v), 'true,false', 'Sofa / Mattresses: MATTRESSES would have to narrow to 80.5%, past the 90% floor, so portrait only');
+eq(v.msgs['name-1'], 'Too long for the landscape sign: letters would be 0.48 in tall, and the minimum is 0.6 in. Cut about 2 characters.',
+   '…and says so, with the height it would have');
+v = V({ template: 'uvt', them: '100', groups: [{ name: 'Kitchen storage bins', price: '30' }] });
+eq(both(v) + namesOf(v.layouts.landscape), 'false,falseKITCHEN STORAGE BINS 0.6 ×0.937', 'Us vs Them: the one landscape line narrows too');
 v = V({ sale: 'sale', two: true, groups: [{ name: 'Sofa', price: '9999.99' }, { name: 'Loveseat', price: '9999.99' }] });
 eq(both(v) + JSON.stringify(v.msgs), 'false,false{}', '$9,999.99 in two groups, the widest price, fits both ways');
 v = V({ template: 'uvt', them: '100', groups: [{ name: 'Lt. blue end table', price: '30' }] });
@@ -222,14 +244,14 @@ eq(v.layouts.portrait.items.filter(i => i.role === 'label').length, 0, 'no label
 // the design was approved on. Ink boxes come from the glyphs themselves (readFont).
 console.log('Layout invariants');
 const inkOf = it => {
-  const f = fonts[it.font], chars = [...it.text];
-  return { x0: it.x + it.size * f.inkLeft(chars[0]), x1: it.x + it.w + it.size * f.inkRight(chars[chars.length - 1]),
+  const f = fonts[it.font], chars = [...it.text], across = it.size * (it.sx || 1);   // a narrowed name's overhangs narrow too
+  return { x0: it.x + across * f.inkLeft(chars[0]), x1: it.x + it.w + across * f.inkRight(chars[chars.length - 1]),
            y0: it.y - it.size * Math.max(0, ...chars.map(f.up)), y1: it.y + it.size * Math.max(0, ...chars.map(f.down)) };
 };
 const boxOf = it => it.t === 'text' ? inkOf(it) : it.t === 'logo' ? { x0: it.x, x1: it.x + it.w, y0: it.y, y1: it.y + it.h }
   : it.t === 'dot' ? { x0: it.cx - it.r, x1: it.cx + it.r, y0: it.cy - it.r, y1: it.cy + it.r } : null;
 const NAMES = ['Tea', 'All cereal', 'Bath towels', 'Mens athletic sneakers', 'Kitchen storage bins', 'Sectional', 'Lt. blue end table',
-  'WWWWWWWWWWWWWWWWWWWWWW', 'Iiiiii iiiiii iiiiii i'];
+  'WWWWWWWWWWWWWWWWWWWWWW', 'Iiiiii iiiiii iiiiii i', 'Adult costumes'];
 const OFFERS = ['0.99', '2', '4.99', '24.99', '1,299', '9999.99'];
 const PCT_OFFERS = ['5', '20', '99'];
 const LABELS = [{ sale: 'none' }, { sale: 'flash' }, { sale: 'manager' }, { sale: 'custom', custom: 'Weekend deal' }];
@@ -245,14 +267,32 @@ for (const L of LABELS) for (const X of EXTRAS) for (const [a, name] of NAMES.en
 }
 const faults = {};
 const fault = (k, s) => { (faults[k] = faults[k] || []).push(s); };
-let printable = 0, blockedCount = 0;
+let printable = 0, blockedCount = 0, narrowed = 0, freed = 0;
+const NARROW = R.G.narrowMin, capEm = fonts.word.up('H');
 const t0 = Date.now();
 for (const s of grid) {
   const model = R.signModel(sign(s)), r = R.validate(model, E), tag = JSON.stringify(s);
+  // The same sign with narrowing switched off: what printed that way must print exactly so.
+  R.G.narrowMin = 0;
+  const wide = R.validate(model, E);
+  R.G.narrowMin = NARROW;
   for (const o of R.ORIENTS) {
+    if (!wide.blocked[o] && (r.blocked[o] || JSON.stringify(r.layouts[o].items) !== JSON.stringify(wide.layouts[o].items)))
+      fault('a sign that prints at full width changed', `${o} ${tag}`);
+    if (wide.blocked[o] && !r.blocked[o]) freed++;
     if (r.blocked[o]) { blockedCount++; if (!Object.keys(r.msgs).length) fault('blocked with no message', `${o} ${tag}`); continue; }
     printable++;
     const L = r.layouts[o], inner = 18 + 13 + 20;   // the content box: margin, border, pad
+    // Only a name narrows, never under the floor, and only to hold exactly 0.6 in letters.
+    // The scale has 3 places, and every line of one name shares it.
+    const thin = L.items.filter(i => i.t === 'text' && (i.sx || 1) !== 1);
+    if (thin.length) narrowed++;
+    for (const i of thin) {
+      if (i.role !== 'name') fault('something other than a name narrowed', `${o} ${i.role} ${tag}`);
+      if (!(i.sx >= NARROW && i.sx < 1) || Math.abs(i.sx * 1000 - Math.round(i.sx * 1000)) > 1e-9) fault('a narrowing past the floor, or not to 3 places', `${o} ${i.sx} ${tag}`);
+      if (Math.abs(i.size * capEm - R.G.minCap) > 1e-9) fault('a narrowed name not exactly 0.6 in', `${o} ${i.size * capEm} ${tag}`);
+    }
+    for (const gi of [0, 1]) if (new Set(L.items.filter(i => i.role === 'name' && i.group === gi).map(i => i.sx)).size > 1) fault('one name at two widths', `${o} ${tag}`);
     const boxes = L.items.map(it => ({ it, b: boxOf(it) })).filter(x => x.b);
     // Round letters overshoot the cap height and the baseline by about 1% of their size, by
     // design (the O in BLOW, measured: 0.012 em), and the box is budgeted in cap heights. So
@@ -284,9 +324,12 @@ for (const s of grid) {
   }
 }
 const ms = Date.now() - t0;
-console.log(`  grid: ${grid.length} signs, ${printable} printable, ${blockedCount} blocked, ${ms} ms`);
-ok(grid.length === 540 && printable > 600 && blockedCount > 50, `the grid covers ${grid.length} signs: ${printable} printable orientations, ${blockedCount} blocked (${ms} ms)`);
-for (const k of ['blocked with no message', 'ink outside the content box', 'overlap', 'name under 0.6 in', 'price not the biggest text',
+console.log(`  grid: ${grid.length} signs, ${printable} printable (${narrowed} with a narrowed name, ${freed} only by narrowing), ${blockedCount} blocked, ${ms} ms`);
+ok(grid.length === 600 && printable > 600 && blockedCount > 50, `the grid covers ${grid.length} signs: ${printable} printable orientations, ${blockedCount} blocked (${ms} ms)`);
+ok(narrowed > 20 && freed > 20, `the grid prints signs by narrowing a name (${narrowed} orientations, ${freed} of them blocked at full width)`);
+for (const k of ['a sign that prints at full width changed', 'something other than a name narrowed', 'a narrowing past the floor, or not to 3 places',
+                 'a narrowed name not exactly 0.6 in', 'one name at two widths',
+                 'blocked with no message', 'ink outside the content box', 'overlap', 'name under 0.6 in', 'price not the biggest text',
                  'two names at two sizes', 'two prices at two sizes', 'their price over 40% of the hero'])
   ok(!faults[k], `no printable sign has: ${k}${faults[k] ? ` (${faults[k].length}, e.g. ${faults[k][0]})` : ''}`);
 // The sale label's ink ends AT the content box's right edge, not near it. An italic letter
@@ -330,7 +373,12 @@ const svgPrims = svg => svg.kids.slice(1).map(n => {   // kids[0] is the white p
   if (n.tag === 'image') return ['image', r2(a.x), r2(a.y), r2(a.width), r2(a.height)];
   if (n.tag === 'line') return ['line', r2(a.x1), r2(a.y1), r2(a.x2), r2(a.y2), a.stroke.toLowerCase(), r2(a['stroke-width'])];
   if (n.tag === 'circle') return ['circle', r2(a.cx), r2(a.cy), r2(a.r), a.fill.toLowerCase(), a.stroke.toLowerCase()];
-  if (n.tag === 'text') return ['text', n.text, r2(a.x), r2(a.y), r2(a['font-size']), a['font-family'], a.fill.toLowerCase(), r2(a['letter-spacing'] || 0), a['text-anchor'] || null];
+  if (n.tag === 'text') {
+    // A narrowed name is scaled across about its own left edge: matrix(sx 0 0 1 x·(1−sx) 0).
+    const m = (a.transform || '').match(/^matrix\((\S+) 0 0 1 (\S+) 0\)$/), sx = m ? +m[1] : a.transform ? NaN : 1;
+    const left = m ? sx * +a.x + +m[2] : +a.x;
+    return ['text', n.text, r2(a.x), r2(a.y), r2(a['font-size']), a['font-family'], a.fill.toLowerCase(), r2(a['letter-spacing'] || 0), a['text-anchor'] || null, sx, r2(left)];
+  }
   return ['?', n.tag];
 });
 const pdfRecorder = () => {
@@ -343,17 +391,18 @@ const pdfRecorder = () => {
     addImage(d, fmt, x, y, w, h, alias, comp) { prims.push(['image', r2(x), r2(y), r2(w), r2(h)]); calls.push(`${fmt} ${comp}`); },
     line(x1, y1, x2, y2) { prims.push(['line', r2(x1), r2(y1), r2(x2), r2(y2), st.draw, r2(st.lw)]); },
     circle(x, y, r, style) { prims.push(['circle', r2(x), r2(y), r2(r), st.fill, st.draw]); calls.push(style); },
-    text(t, x, y, o) { prims.push(['text', t, r2(x), r2(y), r2(st.size), st.font, st.text, r2(o && o.charSpace || 0), (o && o.align) || null]);
-                       calls.push((o && 'charSpace' in o) ? 'cs' : 'no-cs'); },
+    text(t, x, y, o) { prims.push(['text', t, r2(x), r2(y), r2(st.size), st.font, st.text, r2(o && o.charSpace || 0), (o && o.align) || null, o && o.horizontalScale, r2(x)]);
+                       calls.push((o && 'charSpace' in o) ? 'cs' : 'no-cs', (o && typeof o.horizontalScale === 'number') ? 'hs' : 'no-hs'); },
   };
   return rec;
 };
 const SAMPLES = [OKSIGN, { sale: 'blowout', two: true, groups: [{ name: 'Shoes', price: '10', unit: 'pair' }, { name: 'Premium shoes', price: '15', unit: 'pair', qual: 'Yellow dot on bottom', dot: true }] },
   { template: 'uvt', sale: 'flash', them: '59.99', groups: [{ name: 'Stand mixer', price: '19.99', unit: 'each' }] },
   { template: 'pct', sale: 'custom', custom: 'Weekend deal', two: true, groups: [{ name: 'Shoes', pct: '20' }, { name: 'Premium shoes', pct: '40' }] },
-  { sale: 'none', groups: [{ name: 'All candy', price: '0.99' }] }];
+  { sale: 'none', groups: [{ name: 'All candy', price: '0.99' }] },
+  { two: true, groups: [{ name: 'Adult costumes', price: '7', unit: 'each' }, { name: 'Kids costumes', price: '5', unit: 'each' }] }];
 for (const s of SAMPLES) for (const o of R.ORIENTS) {
-  const model = R.signModel(sign(s)), L = E.layoutSign(model, o), tag = `${o} ${s.template || 'price'}${s.two ? ' ×2' : ''}`;
+  const model = R.signModel(sign(s)), L = E.layoutSign(model, o), tag = `${o} ${s.template || 'price'}${s.two ? ' ×2' : ''} ${s.groups[0].name}`;
   const svg = R.drawSVG(L, fakeDoc, { label: R.describe(model), logoHref: 'blob:logo' });
   const rec = pdfRecorder();
   R.drawPDF(L, rec, { logo: logoBytes });
@@ -361,6 +410,10 @@ for (const s of SAMPLES) for (const o of R.ORIENTS) {
   ok(a === b, `${tag}: the SVG and the PDF draw the same primitives${a === b ? '' : `\n        svg ${a.slice(0, 300)}\n        pdf ${b.slice(0, 300)}`}`);
   eq(svgPrims(svg).length, L.items.length, `${tag}: one primitive per item`);
   ok(rec.calls.filter(c => c === 'no-cs').length === 0, `${tag}: every PDF text passes its letter spacing, even 0`);
+  ok(rec.calls.filter(c => c === 'no-hs').length === 0, `${tag}: every PDF text passes its horizontal scale, even 1 (Tz carries on to the next text)`);
+  const thin = svgPrims(svg).filter(p => p[0] === 'text' && p[9] !== 1).map(p => `${p[1]} ${p[9]}`).join(', ');
+  eq(thin, o === 'landscape' && /costumes/.test(s.groups[0].name) ? 'ADULT 0.945, COSTUMES 0.945, KIDS 0.945, COSTUMES 0.945' : '',
+     `${tag}: ${thin ? 'the narrowed names are drawn narrowed, about their left edge' : 'nothing is drawn narrowed'}`);
   eq(rec.calls.filter(c => /^PNG/.test(c)).join(), 'PNG FAST', `${tag}: the logo goes in as a PNG, with FAST compression`);
   ok(svgPrims(svg).every(p => p[0] !== 'text' || p[8] === null), `${tag}: no SVG text is anchored; each is drawn from its left edge`);
 }
@@ -432,13 +485,17 @@ for (const s of SAMPLES) for (const o of R.ORIENTS) {
   eq(bts.length, texts.length, `${tag}: one text object per text item`);
   const bad = [];
   bts.forEach((bt, i) => {
-    const it = texts[i] || {}, tf = bt.match(/\/F\d+ (\S+) Tf/), td = bt.match(/(\S+) (\S+) Td/), tc = bt.match(/(\S+) Tc/);
+    const it = texts[i] || {}, tf = bt.match(/\/F\d+ (\S+) Tf/), td = bt.match(/(\S+) (\S+) Td/), tc = bt.match(/(\S+) Tc/), tz = bt.match(/(\S+) Tz/);
     if (!tf || Math.abs(+tf[1] - it.size) > 1e-6) bad.push(`${it.role} size ${tf && tf[1]} vs ${it.size}`);
     if (!td || Math.abs(+td[1] - it.x) > 1e-6 || Math.abs(+td[2] - (L.H - it.y)) > 1e-6) bad.push(`${it.role} at ${td && td.slice(1).join(',')} vs ${it.x},${L.H - it.y}`);
     if (!tc || Math.abs(+tc[1] - it.ls) > 1e-6) bad.push(`${it.role} Tc ${tc && tc[1]} vs ${it.ls}`);
-    if (/ Tz| Tw|Tm\n/.test(bt)) bad.push(`${it.role} scaled or word-spaced`);
+    // Tz is horizontal scale in percent: its own in every text object, 100 unless narrowed.
+    if (!tz || Math.abs(+tz[1] - 100 * (it.sx || 1)) > 1e-6) bad.push(`${it.role} Tz ${tz && tz[1]} vs ${100 * (it.sx || 1)}`);
+    if (/ Tw|Tm\n/.test(bt)) bad.push(`${it.role} word-spaced or transformed`);
   });
-  eq(bad.join('; '), '', `${tag}: every text is set at the layout's size, left edge, baseline and spacing`);
+  eq(bad.join('; '), '', `${tag}: every text is set at the layout's size, left edge, baseline, spacing and width`);
+  const tzs = bts.map(bt => +(bt.match(/(\S+) Tz/) || [])[1]).filter(z => Math.abs(z - 100) > 1e-9).map(z => +z.toFixed(6));
+  eq(tzs.join(), o === 'landscape' && /costumes/.test(s.groups[0].name) ? '94.5,94.5,94.5,94.5' : '', `${tag}: ${tzs.length ? 'the four narrowed name lines, and nothing else, are at 94.5%' : 'no text is narrowed'}`);
 }
 // The logo in the PDF is sign-logo.png, pixel for pixel. jsPDF decodes a PNG and compresses it
 // again (since 3.0.2; 3.0.3 had to fix a regression in exactly that), so both are read back:
