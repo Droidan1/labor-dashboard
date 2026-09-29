@@ -1,3 +1,165 @@
+# "Today" is the stores' Eastern day on every device: the Daily tabs, the week, the live window (2026-09-29)
+
+**Request (Brian):** *"Fix the Daily tab today time-zone bug next"*. This is the Found item from
+#306. The Store Detail Daily tab decides "today" by the device's date, while the rows,
+`loadStoreFromD1` and the live figure all use Eastern days. So `scripts/test-daily-auction-column.mjs`
+fails on a UTC machine from 00:00 to 04:00 UTC.
+
+## The bug (on `main` at ef466e2)
+
+The rows are Eastern days. `loadStoreFromD1` builds each row as local noon on its Eastern date,
+and nulls the stored figures on the Eastern-today row so the live figure can take its place.
+Seven places then decide "today" by the device instead:
+
+1. **`buildWeeklyTable`** (Store Detail, Daily): `isToday` uses `toDateString()`, twice (the row,
+   and `reportedDays`). `isFuture`, on the line after the first, uses Eastern time.
+2. **`buildAllStoresWeeklyTable`** (All Stores, Daily): the same, twice.
+3. **`_asWeekTotals`** (the All Stores hero): the same.
+4. **`getTodayRow`**: the same. It has six call sites: the in-app notifications, the hero's budget
+   and auction, the store cards' auction, the Store Detail hero's budget and auction (two), and
+   the hourly card.
+5. **`renderDashboard`'s closed-store budget**: the same, deliberately, "the same way getTodayRow
+   picks the trading stores' row".
+6. **`fetchLiveCloverSales`**: `since=` is the device's midnight. The worker (worker.js:28195-28197)
+   uses it as the window and saves the result as the Eastern day's snapshot, in D1 and KV.
+   This is review item dashboard-7.
+7. **`loadAll`'s `currentWeek`**: the week of the latest row whose local-noon instant has passed.
+   🛑 **This is wrong on Eastern devices too.** From midnight to noon every Sunday, `currentWeek`
+   is still last week, so `isCurrentWeek` is false for This Week / Today. The Store Detail
+   hero and the Daily tab then lose today's live figure.
+   - Simulated with that loop in Node: 09:00 and 11:59 ET on Sunday 2026-09-27 give week 34;
+     12:01 gives week 35.
+   - The noon also moves with the device's zone. A Tokyo device rolls the week at 23:00 ET on
+     Saturday, and a Los Angeles one at 15:00 ET on Sunday.
+
+**What a device east of Eastern sees** (UTC or Tokyo, 20:00-24:00 ET):
+- The Daily tab puts the live figure on tomorrow's row, and leaves today's as "—".
+- The hero measures today's sales against tomorrow's budget.
+- The live figure counts only the sales since the device's midnight, and the worker saves that
+  partial figure as today's snapshot.
+
+**A device west of Eastern** (Central, Pacific) gets the reverse, from 00:00 ET until its own
+midnight: the live window reaches back into yesterday, and yesterday's day plus today's is saved
+as today's.
+
+## Plan
+
+- [x] **Tests first**, each watched failing on `main`:
+  - [x] **`scripts/test-today-eastern.mjs`** (new, run by `npm test`).
+    - It runs the real functions, sliced out of `index.html`, in a `vm` context with a
+      pinned `Date` and `process.env.TZ` set per case. Node re-reads `TZ` on assignment (checked
+      on v22).
+    - Zones: New York, Chicago, Los Angeles, UTC and Tokyo, at instants where the device's
+      date is not the Eastern one, plus Sunday mornings and a DST day.
+    - The slices are bounded on both sides.
+  - [x] **`scripts/browser-today-eastern.mjs`** (new).
+    - The page is booted under `timezoneId` Tokyo, Los Angeles and New York, with a fixed
+      clock.
+    - Budgets vary by day and by store, so a wrong row names itself.
+    - It checks the hero's today budget (Holland included), the Store Detail Daily tab's today
+      row and Live tag, the All Stores daily row, and the live request's `since`.
+- [x] **The fix** (`index.html` only; frontend; no worker change, no deploy):
+  - [x] **Sites 1-5:** compare the row's day key with the Eastern today. That means
+        `rowDayKey(r)` or the function's existing `dateKey`, against `etTodayStr()` or its
+        existing `todayKey`. The device-local `todayStr` strings go.
+  - [x] **Site 6:** `since` becomes the Eastern midnight of the Eastern today, from a new
+        `etStartOfDay(ymd)`. That is the worker's `getStartOfDayET`, written with `etDayOf`.
+        On an Eastern device it is the same number as now, so no one in the business sees a
+        different URL.
+  - [x] **Site 7:** `currentWeek` becomes the week of the latest row whose day key is on or
+        before the Eastern today.
+- [x] **`test-daily-auction-column.mjs`:** give its harness the real `rowDayKey`.
+- [x] **`browser-holland-budget.mjs`:** its comment at 102-104 says the page reads
+      `getTodayRow` off `toDateString()`. Correct it.
+- [x] **Verify:**
+  - [x] `npm test`, both plain (UTC) and with `TZ=America/New_York`.
+  - [x] The new browser check, plus `browser-holland-budget` and `browser-channel-matrix`, which
+        both mock the live request by its `since`.
+  - [x] One mutation per site, each putting that site back as it was, in isolated lanes. Each is
+        judged by its targeted FAIL lines, and a MISSED is reproduced alone.
+- [x] `sw.js` v256 and the fixture, last. Scan the diff for invisible characters.
+
+**Decided, not asked:**
+- **`since` stays, but carries the Eastern midnight.** The review's one-liner, which drops it,
+  would also work, because the worker defaults to Eastern midnight. But the URL is the key of
+  the 5-minute `_apiCache`. Without `since`, a payload cached before midnight could come back
+  after midnight, stamped as the new day. Keeping `since` also keeps the URL byte-identical on
+  Eastern devices.
+- **Row keys stay on the app's convention:** `rowDayKey`, the UTC slice of local noon. It is
+  wrong only at UTC+12:45 and beyond (see Found).
+
+## Review
+
+**Changed** (`index.html`; frontend only, no worker change, no deploy):
+- **`etStartOfDay(ymd)`**, next to `etTodayStr` and `etDayOf`: midnight Eastern on an Eastern
+  date, written the way the worker's `getStartOfDayET` is.
+- **Sites 1-5** compare the row's day key (`rowDayKey(r)`, or the function's own `dateKey` /
+  `key`) with the Eastern today. No `toDateString()` is left in `index.html`.
+- **Site 6:** `fetchLiveCloverSales` asks from `etStartOfDay(day)`, for the same `day` it stamps
+  on the payload.
+- **Site 7:** `currentWeek` is the week of the latest row whose day key is on or before the
+  Eastern today.
+- `sw.js` v256, and the shell-cache fixture.
+- `docs/code-review-2026-09-22.md`: dashboard-7 is marked "frontend half fixed". Its worker half
+  is worker-core-3, still open.
+
+**Tests:**
+- **`scripts/test-today-eastern.mjs`** (new; 441 assertions, run by `npm test`). It runs the page's
+  own code in a `vm` context, fed through the real loader:
+  - the loader, the week pick, the live fetch and `getTodayRow`;
+  - both Daily tables and `_asWeekTotals`.
+
+  It runs under five device zones at four instants, plus the two clock-change Sundays.
+  `etStartOfDay` is also checked against the first Eastern minute of every day of 2025-2028, and
+  against the worker's function. On an Eastern device it equals the device's own midnight, every
+  day. **Against `main`: 120 failures. On the branch: none.**
+- **`scripts/browser-today-eastern.mjs`** (new; 54 assertions).
+  - It boots the page in Tokyo, Los Angeles and New York, with a fixed clock.
+  - It checks the live requests' `since`, the hero's today budget (Holland included), both
+    Daily tables and the All Stores hero.
+  - It measures the today chip in both themes.
+  - **Against `main`'s page: 18 failures, all where predicted.** The Eastern Monday control
+    passes there too.
+- **`test-daily-auction-column.mjs`:** its harness gets the real `rowDayKey`. At 00:52 UTC
+  today, `main` failed it under `TZ=UTC` (got 415, want 1915). The branch passes under UTC, New
+  York, Tokyo and Los Angeles.
+- **`test-live-sales-reconcile.mjs`:** its harness gets the real `etStartOfDay`. It now also
+  asserts that the window opens at the stamped day's midnight Eastern.
+- **`browser-holland-budget.mjs`:** comment corrected. A copy run with the browser on UTC, and one
+  on Tokyo, both pass (30/30).
+
+**Verified:**
+- **`npm test`:** 7,076 assertions across 89 suites, all passing, both plain (UTC) and with
+  `TZ=America/New_York`.
+- **Browser checks, on the final build:** `browser-today-eastern` 54/54, `browser-holland-budget`
+  30/30, `browser-channel-matrix` 100/100.
+- **Mutations: 13 of 13 caught**, in four isolated lanes, each by the assertion aimed at it. Each
+  put one site back as it was:
+  - the Daily row, its `reportedDays`, and its `todayKey`;
+  - the All Stores sum and its chip;
+  - `_asWeekTotals`;
+  - `getTodayRow`;
+  - the closed-store budget (caught only by the browser check: the hero is $1 over, which is
+    Holland's next-day budget);
+  - `since` from the device's midnight;
+  - `etStartOfDay` without its EST hour;
+  - the week pick by the clock, with no cap, or first rather than latest.
+- **Contrast of the today chip:** styling unchanged. Its day number measures 8.22:1 and its
+  weekday 4.63:1 on accent green, in both themes.
+- Scanned the added lines for invisible characters: clean.
+
+**Found, not fixed:**
+- **worker-core-3:** the worker still honours any `since` it is sent, and its snapshot write does
+  not spare manual overrides. This is a worker change. It would also close the one gap left here:
+  a request made before midnight by the device's clock, and received after midnight by the
+  worker's, is counted from the previous midnight and saved as the new day.
+- **The row-key convention** (`rowDayKey`, and about thirty inline `toISOString().slice(0, 10)`
+  keys on a row's `date`) gives the previous day on a device at UTC+12:45 or later, such as
+  New Zealand from late September. The fix is to read local calendar parts, since a row is local noon on its
+  day. That is a sweep of its own.
+- **`test-labour.mjs` and `test-sheet-import-cron.mjs`** fail under `TZ=Asia/Tokyo`, identically
+  on `main` (4 and 14 failures). They pass in UTC and in Eastern time.
+
 # A Retake that brings no read back keeps the form, on both scanners (2026-09-28)
 
 **Request (Brian):** *"Fix the failed Retake empty-form bug next"*. This is the Found item from

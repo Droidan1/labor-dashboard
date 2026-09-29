@@ -98,9 +98,9 @@ let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) pass++; else { fail++; console.log('  FAIL ' + m); } };
 
 const b = await chromium.launch({ executablePath: CHROME });
-// 🛑 Browser-local === ET. The page derives "today" from an ET Intl format but reads
-// getTodayRow off browser-local toDateString(); a UTC browser makes those disagree after
-// 8 PM ET and the test would chase a phantom off-by-one that prod never has.
+// The browser runs in Eastern, the stores' own zone. The page's "today" no longer depends on
+// the browser's zone (it is the Eastern date everywhere; scripts/browser-today-eastern.mjs
+// checks Tokyo and Los Angeles), and these budgets are the same every day in any case.
 const ctx = await b.newContext({ timezoneId: TZ, viewport: { width: 1400, height: 1200 } });
 const page = await ctx.newPage();
 const errs = [];
