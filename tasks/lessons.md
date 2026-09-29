@@ -47,6 +47,22 @@ camera cannot produce) that look identical.
 dir with its own `dist/`), never two against one tree, and never let one runner's cleanup
 restore a file it did not write.** Before trusting a MISSED, reproduce it alone.
 
+### Extended (2026-09-29): a stale lane gives a false CAUGHT, and a lane refresh can reach the repo
+
+- **Re-sync the lanes after ANY edit to a suite they run, and `cmp` the suites before starting.**
+  I changed `test-live-sales-reconcile.mjs`'s harness after the last refresh. The lanes' old
+  copy would have crashed on every mutant (`etStartOfDay is not defined`), and the runner counts
+  a crash as CAUGHT. That is 13 of 13 "caught" that proves nothing. A false CAUGHT is quieter
+  than a false MISSED, because nobody re-checks a pass.
+- **There is no `rsync` here: refresh a lane with
+  `tar --exclude=./node_modules --exclude=./.git -cf - . | tar -xf - -C <lane>`.** My fallback
+  was `rsync … && [ -e lane/node_modules ] || ln -s <repo>/node_modules lane/node_modules`. The
+  `rsync` failed, so the `ln -s` ran, and the lane's `node_modules` was already a symlink to the
+  repo's. `ln -s T L`, when `L` is a link to a directory, creates the link INSIDE that directory.
+  It planted `node_modules/node_modules -> node_modules` in the repo itself. I found it and
+  removed it. **Guard the link with `[ -L L ] ||`, or use `ln -sfn`, and never chain a fallback
+  behind `&& … ||`**: the `||` also fires when the first command fails.
+
 ## A `\u` escape I typed reached the file as the character itself (2026-09-25)
 
 Writing Sign Studio's renderer, I typed the alphabet regex as `\u0020-\u007E\u00A0-…`. The

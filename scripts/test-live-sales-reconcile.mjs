@@ -121,10 +121,15 @@ const live = async () => {
   // The Eastern date moves on WHILE the request is out, so a stamp taken from
   // the response side would read the next day.
   const clock = { day: '2026-09-28' };
+  // The live window opens at midnight Eastern of that same day, from the page's own helper.
+  const etSrc = ['etDayOf', 'etStartOfDay'].map(n => (src.match(new RegExp(`^  function ${n}\\(.*$`, 'm')) || [''])[0]).join('\n');
+  ok(/function etStartOfDay\(/.test(etSrc), 'extracted etStartOfDay');
+  const etStartOfDay = new Function(`${etSrc}\n return etStartOfDay;`)();
+  let asked = '';
   const build = (response) => new Function(
-    'cachedFetch', 'WORKER_BASE', 'etTodayStr',
+    'cachedFetch', 'WORKER_BASE', 'etTodayStr', 'etStartOfDay',
     `${fnSrc}\n return fetchLiveCloverSales;`
-  )(async () => { const r = response; clock.day = '2026-09-29'; return r; }, 'https://api.example/', () => clock.day);
+  )(async (url) => { asked = url; const r = response; clock.day = '2026-09-29'; return r; }, 'https://api.example/', () => clock.day, etStartOfDay);
 
   const agg = { total: 90, retail: 50, bin: 40, avgCart: 45, avgItems: 2, orderCount: 2, avgTxnSec: 30, avgASP: 22.5 };
   const r = await build({ aggregate: agg, channels: { retail: {}, bin: {}, mixed: 1 } })('BL1');
@@ -136,6 +141,9 @@ const live = async () => {
   // (scripts/browser-channel-matrix.mjs, scenario C), so the stamp is the day
   // the request was made for.
   ok(r.day === '2026-09-28', `stamps the payload with the Eastern date it was requested on, got ${r.day}`);
+  const since = new URL(asked).searchParams.get('since');
+  ok(since === String(Date.parse('2026-09-28T04:00:00Z')),
+    `and asks for that day from its midnight Eastern, 2026-09-28T04:00Z (got ${since && new Date(Number(since)).toISOString()})`);
 
   // A worker with no orders today.
   const zero = await build({ aggregate: null, channels: null })('BL1');

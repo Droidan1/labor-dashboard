@@ -8696,6 +8696,10 @@
   let dashCardBlended = {};          // code → { cart, items, orders, asp }
   function etTodayStr() { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()); }
   function etDayOf(t) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(t)); }   // the stores' date of an instant
+  // Midnight Eastern on an Eastern date: 04:00 UTC in EDT, 05:00 UTC in EST, read off the
+  // Eastern calendar AT that instant. The same as the worker's getStartOfDayET, whose comment
+  // says why no other time of day will do on the two Sundays the clocks change.
+  function etStartOfDay(ymd) { const t = Date.parse(ymd + 'T04:00:00Z'); return etDayOf(t) === ymd ? t : t + 3600000; }
   let allWeeks       = [];
   let liveDataLoading = false;
   let historicalDataLoading = false;
@@ -8979,10 +8983,12 @@
     if (n == null) return null;
     return n < 5 ? n * 100 : n;
   }
+  // Today's row is the stores' Eastern today, the row loadStoreFromD1 nulls for the live
+  // figure. The device's own date differs from it for part of every day outside Eastern time.
   function getTodayRow(storeName) {
-    const todayStr = new Date().toDateString();
+    const today = etTodayStr();
     const rows = allStoreData[storeName] || [];
-    return rows.find(r => r.date && r.date.toDateString() === todayStr) || null;
+    return rows.find(r => rowDayKey(r) === today) || null;
   }
 
   // ── Comparison helpers (Last Week / Last Year) ──
@@ -9242,10 +9248,11 @@
   // and healed overnight when the nightly job rewrote all three from one
   // pipeline. A manager caught it, not a test. See tasks/channel-reconciliation.md.
   async function fetchLiveCloverSales(storeKey) {
-    const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    const workerUrl = `${WORKER_BASE}?store=${storeKey}&since=${startOfToday}`;
     const day = etTodayStr();   // the Eastern date this payload is "today" for; see loadAll
+    // From midnight Eastern, not the device's midnight: the worker counts the orders since
+    // `since` and saves the total as the Eastern day's snapshot. On an Eastern device the
+    // two are the same number, so its request is unchanged.
+    const workerUrl = `${WORKER_BASE}?store=${storeKey}&since=${etStartOfDay(day)}`;
     try {
       const data = await cachedFetch(workerUrl, { credentials: 'include' });
       // An older worker has no `aggregate` key at all. Return null rather than
@@ -9443,18 +9450,20 @@
 
     // Generate week list
     const weekSet = new Set();
-    let currentWeekDate = 0;
+    let currentWeekDay = '';
     currentWeek = null;
-    const now = new Date().getTime();
+    const today = etTodayStr();
 
     for (const rows of Object.values(allStoreData)) {
       for (const r of rows) {
         if (r.week != null) {
           weekSet.add(r.week);
-          const t = r.date ? r.date.getTime() : 0;
-          // Find the most recent week up to today
-          if (t <= now && t > currentWeekDate) {
-            currentWeekDate = t;
+          // The week of the latest row up to today, by the stores' Eastern dates. Not by the
+          // clock: a row's date is local noon, so comparing it with the time kept last week
+          // current until noon every Sunday, and moved that noon with the device's zone.
+          const k = rowDayKey(r);
+          if (k != null && k <= today && k > currentWeekDay) {
+            currentWeekDay = k;
             currentWeek = r.week;
           }
         }
@@ -10312,10 +10321,9 @@
           todayAuction += todayRowAuction;
         }
       }
-      // Closed stores still carry today's budget into the chain figure. Matched on
-      // toDateString(), the same way getTodayRow above picks the trading stores' row.
-      const todayDS = new Date().toDateString();
-      todayTotalBudget += budgetOnlyTotal(r => r.date && r.date.toDateString() === todayDS);
+      // Closed stores still carry today's budget into the chain figure: the Eastern-today
+      // row, the same one getTodayRow above picks for the trading stores.
+      todayTotalBudget += budgetOnlyTotal(r => rowDayKey(r) === todayStr);
       el("today-total-card").classList.remove("hidden");
     }
     if (showHist) {
@@ -11640,8 +11648,8 @@
         + `<div class="p-8 text-center text-opl-inkDim dark:text-op-inkDim">No data for Week ${escapeHtml(String(effectiveWeek))}.</div>`;
     }
 
-    // Live boost for today.
-    const todayStr = new Date().toDateString();
+    // Live boost for today. Today is the stores' Eastern date, matched on each row's day key:
+    // the device's own date differs from it for part of every day outside Eastern time.
     const todayKey = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
     const isCurrentWeek = effectiveWeek === currentWeek;
     const liveTotal = isCurrentWeek ? (liveCloverData[storeName]?.total ?? null) : null;
@@ -11672,7 +11680,7 @@
 
     for (const r of sorted) {
       const dateKey = r.date.toISOString().slice(0, 10);
-      const isToday = isCurrentWeek && r.date && r.date.toDateString() === todayStr;
+      const isToday = isCurrentWeek && dateKey === todayKey;
       const isFuture = dateKey > todayKey;
       const pos = (isToday && liveTotal != null && liveTotal > 0) ? liveTotal : r.aTotal;
       // `auctionRaw`, not `aAuction`: loadStoreFromD1 nulls aAuction on today's
@@ -11789,7 +11797,7 @@
     // (worker.js) — and it now shows a figure in its row, so it has to count
     // here too or the day count contradicts the rows above it.
     const reportedDays = sorted.filter(r => {
-      const isToday = isCurrentWeek && r.date && r.date.toDateString() === todayStr;
+      const isToday = isCurrentWeek && rowDayKey(r) === todayKey;
       return r.aTotal != null || (rowAuction(r) || 0) !== 0 || (isToday && liveTotal != null && liveTotal > 0);
     }).length;
 
@@ -11822,7 +11830,6 @@
   }
 
   function buildAllStoresWeeklyTable() {
-    const todayStr = new Date().toDateString();
     const todayKey = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
     const isCurrentWeek = selectedWeek === currentWeek;
 
@@ -11836,7 +11843,7 @@
         if (!dayMap[key]) dayMap[key] = { dateObj: r.date, budget: 0, sales: 0, hasSales: false, hasLive: false };
         if (r.bTotal != null) dayMap[key].budget += r.bTotal;
         const liveTotal = isCurrentWeek ? (liveCloverData[storeName]?.total ?? null) : null;
-        const isToday = isCurrentWeek && r.date.toDateString() === todayStr;
+        const isToday = isCurrentWeek && key === todayKey;
         const posSales = (isToday && liveTotal != null && liveTotal > 0) ? liveTotal : r.aTotal;
         // Include manually-entered auction so the combined breakdown matches the
         // store cards and the daily email. aAuction is null for today's live row
@@ -11876,7 +11883,7 @@
 
     for (const d of sorted) {
       const dateKey = d.dateObj.toISOString().slice(0, 10);
-      const isToday = isCurrentWeek && d.dateObj.toDateString() === todayStr;
+      const isToday = isCurrentWeek && dateKey === todayKey;
       const isFuture = dateKey > todayKey;
       const diff = d.sales - d.budget;
       const diffPos = diff >= 0;
@@ -15710,7 +15717,7 @@
   // Aggregate per-store totals for the selected week. Live-boosts today.
   // Returns { perStore: [...], totalSales, totalBudget, daysReported, daysInWeek, storesReporting }.
   function _asWeekTotals() {
-    const todayStr = new Date().toDateString();
+    const todayKey = etTodayStr();
     const isCurrentWeek = selectedWeek === currentWeek;
     const SHORT_LABEL = { BL1:'Coliseum', BL2:'South Bend', BL4:'Dupont', BL8:'Holland', BL12:'Wyoming', BL14:'Battle Creek', BL16:'Indy East' };
     const perStore = [];
@@ -15727,7 +15734,7 @@
       let reported = false;
       for (const r of weekRows) {
         const liveTotal = isCurrentWeek ? (liveCloverData[s]?.total ?? null) : null;
-        const isToday = isCurrentWeek && r.date && r.date.toDateString() === todayStr;
+        const isToday = isCurrentWeek && rowDayKey(r) === todayKey;
         const sales = (isToday && liveTotal != null && liveTotal > 0) ? liveTotal : r.aTotal;
         if (isToday && liveTotal != null && liveTotal > 0) anyLive = true;
         if (sales != null) {
