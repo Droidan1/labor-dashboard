@@ -28158,7 +28158,7 @@ export default {
     return new Response(JSON.stringify({ ok: true, ...result }), { headers: corsJson });
   }
 
-    // ── Live data endpoint (existing): ?store=BL1&since=timestamp
+    // ── Live data endpoint (existing): ?store=BL1, today in Eastern time (any since= is ignored)
     const storeKey = url.searchParams.get("store");
     if (!storeKey) {
       return new Response(JSON.stringify({ error: "Please specify a store" }), {
@@ -28192,9 +28192,13 @@ export default {
       });
     }
 
-    const since = url.searchParams.get("since");
+    // Today in Eastern time, whatever `since` says. The result is saved below as the Eastern
+    // day's snapshot, so a caller's own window (a device's midnight, yesterday's, or since=0,
+    // which also paged Clover back through its retention) became that day's D1 row and KV key.
+    // The page still sends `since`, which keys its 5-minute cache, and it is ignored here. This
+    // is the window ?action=items already uses for today.
     const et = getETToday();
-    const startOfToday = since ? Number(since) : et.startOfDay;
+    const startOfToday = et.startOfDay;
 
     try {
       // Fetch orders + refunds + item-categorization inputs in parallel.

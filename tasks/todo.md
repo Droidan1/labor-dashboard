@@ -1,3 +1,111 @@
+# The worker's live route counts today in Eastern time, whatever `since` says (2026-09-29)
+
+**Request (Brian):** *"Fix the worker since bug next"*. This is the Found item from #307:
+`worker.js:28197`, `const startOfToday = since ? Number(since) : et.startOfDay;`. It is the
+`since` half of review item worker-core-3, and the worker half of dashboard-7.
+
+**Scope, asked and answered:** `since` only. The live route writing over a same-day manual
+override (dashboard-8) stays open. It is to be fixed together with admin-settings-5: Manual Labor
+Hours sets the same flag, so guarding one without the other would freeze that day's sales.
+
+## The bug (on `main` at c32b6cb)
+
+The fall-through live route (`GET /?store=X&since=…`) takes the caller's `since` as the start of
+the Clover window. `fetchItemOrders` and `fetchRefundElements` filter on `createdTime>=since`, with
+no upper bound and uncapped paging. The route then saves the result as the **Eastern** day's
+snapshot, in D1 `daily_sales` and KV `sales:<store>:<date>`.
+
+Measured on `main` in the harness, with the clock at 00:30 ET (23:30 in Chicago):
+- **`since` = Central midnight:** both days ($62) are saved as today's row.
+- **`since=0`:** the same, plus a pull back through Clover's ~90-day retention. Any BL1 manager
+  can send it.
+
+The only caller is the page. Since #307 it sends midnight Eastern, which is the value the worker
+would use by default. Older cached pages sent the device's midnight. No cron, script or worker
+code calls this route.
+
+## Plan
+
+- [x] **`scripts/test-live-window.mjs`** (new, run by `npm test`), watched failing on `main`.
+  - It drives the real worker on the harness, with the clock pinned, a Clover stub that honours
+    the `createdTime` window, and the snapshot write awaited.
+  - Cases:
+    - (a) Central midnight;
+    - (b) `since=0` as a BL1 manager;
+    - (c) Monday's midnight Eastern, the midnight race;
+    - (d) a `since` after the only order today;
+    - (e) `since=abc`;
+    - (f) Eastern midnight, and no `since` at all: the controls;
+    - (g) `since=0` on both clock-change Sundays.
+  - Each case checks the Clover window, the response aggregate, the D1 row and the KV snapshot.
+- [x] **`worker.js`:** `const startOfToday = et.startOfDay;`. The route header says `since` is
+      ignored, keeping the marker that `test-privilege-guards.js` slices from.
+- [x] **Verify:**
+  - [x] `npm test`, plain (UTC) and with `TZ=America/New_York`;
+  - [x] four mutations in an isolated copy;
+  - [x] scan the diff for invisible characters.
+- [x] **`docs/code-review-2026-09-22.md`:** worker-core-3's `since` half and dashboard-7's worker
+      half are fixed. dashboard-8 stays open.
+- [ ] **Ship:** draft PR, then ask for `wrangler deploy` as soon as it is pushed. It is worker-only
+      and backward compatible. Verify it from the deployed bundle, not with a probe that writes.
+
+## Review
+
+**Changed** (`worker.js` only; no frontend change, so no cache bump):
+- **The live route's window is `et.startOfDay`, whatever `since` says.** Its header comment says
+  so, and keeps the `// ── Live data endpoint (existing)` prefix that `test-privilege-guards.js`
+  slices from. The edit sits after `_API_TOKEN`, so that suite's offsets did not move.
+- **`docs/code-review-2026-09-22.md`:**
+  - dashboard-7 is marked fixed: the page and the worker.
+  - worker-core-3's `since` half is marked fixed. Its manual-override half stays open, as
+    dashboard-8.
+
+**Tests:** `scripts/test-live-window.mjs` (new; 63 assertions, run by `npm test`).
+- It drives the real worker on the harness, with the clock pinned and a Clover stub that
+  honours the window it is asked for. It awaits the snapshot write.
+- For every `since`, it checks four things:
+  - the window Clover was asked for;
+  - the response aggregate and its raw orders;
+  - the `daily_sales` rows;
+  - the `sales:` KV keys.
+- **Against `main`: 37 failures**, across cases a-e and g. On `main`:
+  - Central midnight, `since=0` and the midnight race each saved $62 as Tuesday's row. That is
+    both days' sales.
+  - A later `since`, and `since=abc`, saved nothing and answered nothing.
+  - The two clock-change Sundays saved both days.
+  - The two controls (f) passed.
+- **Here: 0 failures.**
+
+**Verified:**
+- **`npm test`:** 7,139 assertions across 90 suites, all passing, both plain (UTC) and with
+  `TZ=America/New_York`. test-privilege-guards, test-live-sales-reconcile, test-request-scoping
+  and test-et-day-start pass unchanged.
+- **Mutations: 4 of 4 caught**, in an isolated copy:
+  - putting the old line back (37 failures);
+  - honouring a later `since` (6);
+  - honouring an earlier one (10);
+  - starting the window a day early (45).
+- `worker.js` parses as a module.
+- Scanned the added lines for invisible characters: clean.
+
+**Not done here: the deploy.** It is Brian's `wrangler deploy` of `clover-sales-api`. It is
+worker-only and backward compatible: today's page already sends this window, and the response
+shape is unchanged. So it can go out as soon as it is pushed.
+- Verify it from the deployed bundle (`content/v2`): `const startOfToday = et.startOfDay;`
+  present, `since ? Number(since)` absent, and code this change did not touch still there.
+- Every successful live call writes D1, so no production probe is used (rules 3 and 7).
+
+**Found, not fixed:**
+- **dashboard-8 / admin-settings-5**, as decided: the live route still writes over a same-day
+  manual override. It is to be fixed together with the Labor Hours flag.
+- **The live response still carries every raw order,** `elements: elements || []`
+  (worker.js:28287). The page reads only `aggregate` and `channels`, so every live poll ships a
+  day's fully expanded orders for nothing, per store.
+- **At midnight, the page stamps a payload with the date on its own clock.** A request built just
+  before midnight is now counted as the new day (usually empty, so nothing is written), but it is
+  shown under the old day's label until the next load. Returning `date: et.dateStr` from the
+  worker would let the page stamp what was actually counted.
+
 # "Today" is the stores' Eastern day on every device: the Daily tabs, the week, the live window (2026-09-29)
 
 **Request (Brian):** *"Fix the Daily tab today time-zone bug next"*. This is the Found item from
