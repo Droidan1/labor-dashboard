@@ -5075,6 +5075,10 @@ const ACTION_BUSINESS = new Map([
   ["sticker-template", "bl"],
   ["sticker-template-set", "bl"],
   ["sticker-mark-image", "bl"],
+  ["saved-sign-folders", "bl"],
+  ["saved-sign-list", "bl"],
+  ["saved-sign-save", "bl"],
+  ["saved-sign-delete", "bl"],
   ["manifest-upload", "bl"],
   ["manifest-remap", "bl"],
   ["manifest-classify", "bl"],
@@ -13361,6 +13365,118 @@ function mosQty(raw) {
 function mosMonthOf(iso) {
   const et = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date(iso));
   return et.slice(0, 7);
+}
+
+/* ── Saved signs (Sign Studio) ────────────────────────────────────────────────────────────
+   Brian, 2026-09-29: folders by sign type, then by month. A manager sees only the signs they
+   saved, plus one shared All stores folder. Admins and superusers see All stores only, and
+   everything they save goes there. Table and reasoning: migration-075.sql.
+
+   savedSignAccess is the whole rule, in one place. The page is gated to the same three roles
+   (index.html, navigateToPage), and this is the gate that holds when a request doesn't come
+   from the page. Executives pass canSeeFinancials, so they are refused here, by role. Staff
+   and associates never get this far: these actions are in neither NON_FINANCIAL_ACTIONS nor
+   ACTION_PAGE, so the financial gate refuses them first. */
+function savedSignAccess(user) {
+  if (!user) return null;                     // no session, or the snapshot-secret caller
+  if (user.role === "manager") return { view: "manager", saveTo: "own", scopes: ["all", "own"] };
+  if (user.role === "admin" || user.role === "superuser") return { view: "admin", saveTo: "all", scopes: ["all"] };
+  return null;
+}
+
+/* The worker's copy of Sign Studio's field rules: SignRender's normalizeSign, signModel,
+   parsePrice, parsePct, unsupportedChars and validate, in index.html. A saved sign must be
+   exactly normalizeSign's shape (nothing added, nothing coerced), and every field the sign
+   prints must pass the rules the form shows. scripts/test-saved-signs.mjs runs the page's
+   validate and this against the same signs, so a rule changed on one side fails there. */
+const SAVED_SIGN = {
+  templates: ["price", "pct", "uvt"],
+  sales: ["none", "sale", "flash", "manager", "blowout", "custom"],
+  units: ["", "each", "pair"],
+  limit: { name: 22, qual: 32, custom: 12 },
+  // What the sign's Poppins files can draw, judged in capitals: SignRender's TEXT_CHARS.
+  chars: /^[\u0020-\u007E\u00A0-\u00AC\u00AE-\u00FF\u0152\u0153\u0178\u2013\u2014\u2018\u2019\u201C\u201D\u2022\u2026\u20AC\u2122]$/,
+  uuid: /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+};
+// parsePrice's answer (integer cents, or null) without its messages. The page tests a third
+// decimal, a minus sign and $10,000+ separately so each gets its own message; the pattern alone
+// refuses all three, and caps a price at $9,999.99.
+function savedSignCents(raw) {
+  const t = String(raw).trim().replace(/^\$\s*/, "");
+  if (!/^(\d{1,4}|\d{1,3},\d{3})?(\.\d{1,2})?$/.test(t)) return null;
+  const [d, c = ""] = t.replace(/,/g, "").split(".");
+  const cents = Number(d || 0) * 100 + Number((c + "00").slice(0, 2));
+  return cents > 0 ? cents : null;
+}
+function savedSignPct(raw) {                // parsePct: a whole number 1 to 99, or null
+  const t = String(raw).trim().replace(/\s*%?\s*(off)?$/i, "");
+  if (!/^-?\d+$/.test(t)) return null;
+  const n = Number(t);
+  return n >= 1 && n <= 99 ? n : null;
+}
+// → { sign, template } or { error, field }. `field` names the form field, as validate does.
+function savedSignCheck(raw) {
+  const isObj = v => !!v && typeof v === "object" && !Array.isArray(v);
+  const exact = (o, keys) => isObj(o) && Object.keys(o).length === keys.length && keys.every(k => Object.prototype.hasOwnProperty.call(o, k));
+  const str = v => typeof v === "string" && v.length <= 200;   // normalizeSign's cap
+  const bad = (field, error) => ({ error, field });
+  // 1. The shape: exactly what normalizeSign returns.
+  if (!exact(raw, ["template", "sale", "custom", "two", "them", "groups"])) return bad("sign", "Not a sign.");
+  const { template, sale, custom, two, them, groups } = raw;
+  if (!SAVED_SIGN.templates.includes(template)) return bad("template", "Unknown sign type.");
+  if (!SAVED_SIGN.sales.includes(sale)) return bad("sale", "Unknown sale label.");
+  if (!str(custom) || !str(them)) return bad("sign", "Not a sign.");
+  if (typeof two !== "boolean" || (template === "uvt" && two)) return bad("two", "Us vs Them has one product.");
+  if (!Array.isArray(groups) || groups.length !== 2) return bad("sign", "Not a sign.");
+  for (const g of groups) {
+    if (!exact(g, ["name", "price", "pct", "unit", "qual", "dot"]) || ![g.name, g.price, g.pct, g.qual].every(str)
+        || !SAVED_SIGN.units.includes(g.unit) || typeof g.dot !== "boolean") return bad("sign", "Not a sign.");
+  }
+  if (groups[0].dot && groups[1].dot) return bad("qual-1", "Only one group can have the yellow dot.");
+  // 2. What prints: signModel's rules, and validate's messages.
+  const clean = s => s.normalize("NFC").trim().replace(/\s+/g, " ");
+  const printable = s => [...clean(s)].every(ch => [...ch.toUpperCase().normalize("NFC")].every(u => SAVED_SIGN.chars.test(u)));
+  const n = template !== "uvt" && two ? 2 : 1;
+  for (let i = 0; i < n; i++) {
+    const g = groups[i], name = clean(g.name), qual = clean(g.qual);
+    if (!name) return bad(`name-${i}`, "A name is required.");
+    if (name.length > SAVED_SIGN.limit.name) return bad(`name-${i}`, `Names are ${SAVED_SIGN.limit.name} characters at most.`);
+    if (!printable(name)) return bad(`name-${i}`, "The name has a character the sign can't print.");
+    if (template === "pct") { if (savedSignPct(g.pct) === null) return bad(`pct-${i}`, "Percent off goes from 1 to 99."); }
+    else if (savedSignCents(g.price) === null) return bad(`price-${i}`, "Not a price the sign can print.");
+    if (g.dot && !qual) return bad(`qual-${i}`, "Say what the dot means.");
+    if (qual.length > SAVED_SIGN.limit.qual) return bad(`qual-${i}`, `Notes are ${SAVED_SIGN.limit.qual} characters at most.`);
+    if (!printable(qual)) return bad(`qual-${i}`, "The note has a character the sign can't print.");
+  }
+  if (sale === "custom") {
+    const label = clean(custom);
+    if (!label) return bad("custom", "Type the label, or pick another one.");
+    if (label.length > SAVED_SIGN.limit.custom) return bad("custom", `Labels are ${SAVED_SIGN.limit.custom} characters at most.`);
+    if (!printable(label)) return bad("custom", "The label has a character the sign can't print.");
+  }
+  if (template === "uvt") {
+    const theirs = savedSignCents(them), ours = savedSignCents(groups[0].price);
+    if (theirs === null) return bad("them", "Enter their price.");
+    // discountPct, rounded down: paying their price or more is no saving, and neither is under 1%.
+    if (Math.floor((theirs - ours) * 100 / theirs) < 1) return bad("price-0", "What they pay has to be at least 1% under their price.");
+  }
+  // Rebuilt in normalizeSign's key order, so the stored JSON is the page's own
+  // JSON.stringify(normalizeSign(sign)), character for character.
+  return {
+    template,
+    sign: { template, sale, custom, two, them,
+            groups: groups.map(g => ({ name: g.name, price: g.price, pct: g.pct, unit: g.unit, qual: g.qual, dot: g.dot })) },
+  };
+}
+// A row as the page sees it. Never the owner's id; "saved by" only where it isn't the reader.
+function savedSignOut(row, access, user) {
+  let sign = null;
+  try { sign = JSON.parse(row.sign_json); } catch (_) { /* a row the page can't open is still listed */ }
+  return {
+    id: row.id, scope: row.scope, template: row.template, month: row.saved_month, saved_at: row.saved_at,
+    saved_by: row.scope === "all" ? row.owner_email : null, design_version: row.design_version, sign,
+    can_delete: row.scope === access.saveTo && (row.scope === "all" || row.owner_id === user.id),
+  };
 }
 
 // Category code -> name, from the KV maps ONLY — never triggering a refresh.
@@ -26659,6 +26775,150 @@ export default {
            VALUES (?, ?, ?, ?, ?, ?)`);
         await env.DB.batch(counts.map(c => ins.bind(store, week, c.category, Number(c.bays), who, now)));
         return new Response(JSON.stringify({ ok: true, store, week_ending: week, saved: counts.length }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // ── Saved signs (Sign Studio): folders by sign type, then by month ──
+    // Brian, 2026-09-29. Who sees what is savedSignAccess; the table is migration-075.sql.
+    // 🔑 The owner is only ever currentUser.id. No request field names an owner or a scope.
+    // GET ?action=saved-sign-folders → { view, save_to, folders: [{scope, template, month, count}] }
+    if (url.searchParams.get("action") === "saved-sign-folders" && request.method === "GET") {
+      const access = savedSignAccess(currentUser);
+      if (!access) return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_SIGN_STUDIO" }), { status: 403, headers: corsJson });
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const all = await env.DB.prepare(
+          `SELECT template, saved_month AS month, COUNT(*) AS n FROM saved_signs
+            WHERE scope = 'all' AND deleted_at IS NULL GROUP BY template, saved_month`).all();
+        const own = access.scopes.includes("own")
+          ? await env.DB.prepare(
+              `SELECT template, saved_month AS month, COUNT(*) AS n FROM saved_signs
+                WHERE scope = 'own' AND deleted_at IS NULL AND owner_id = ? GROUP BY template, saved_month`)
+              .bind(currentUser.id).all()
+          : { results: [] };
+        const rank = t => SAVED_SIGN.templates.indexOf(t);
+        const folders = [
+          ...(all.results || []).map(r => ({ scope: "all", template: r.template, month: r.month, count: r.n })),
+          ...(own.results || []).map(r => ({ scope: "own", template: r.template, month: r.month, count: r.n })),
+        ].sort((a, b) => a.scope.localeCompare(b.scope) || rank(a.template) - rank(b.template) || b.month.localeCompare(a.month));
+        return new Response(JSON.stringify({ ok: true, view: access.view, save_to: access.saveTo, folders }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // GET ?action=saved-sign-list&scope=own|all&template=price|pct|uvt&month=YYYY-MM[&limit=1..200]
+    // One folder, newest first. `truncated` says there are more than `limit`.
+    if (url.searchParams.get("action") === "saved-sign-list" && request.method === "GET") {
+      const access = savedSignAccess(currentUser);
+      if (!access) return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_SIGN_STUDIO" }), { status: 403, headers: corsJson });
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      const scope = url.searchParams.get("scope"), template = url.searchParams.get("template"), month = url.searchParams.get("month") || "";
+      if (!["own", "all"].includes(scope) || !SAVED_SIGN.templates.includes(template) || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+        return new Response(JSON.stringify({ error: "Name a folder: scope, template and month (YYYY-MM).", code: "BAD_FOLDER" }), { status: 400, headers: corsJson });
+      }
+      if (!access.scopes.includes(scope)) {
+        return new Response(JSON.stringify({ error: "Admins save to and see All stores only.", code: "ALL_STORES_ONLY" }), { status: 403, headers: corsJson });
+      }
+      try {
+        const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "100", 10) || 100, 1), 200);
+        const cols = "id, owner_id, owner_email, scope, template, saved_month, sign_json, design_version, saved_at";
+        const rows = scope === "own"
+          ? await env.DB.prepare(
+              `SELECT ${cols} FROM saved_signs
+                WHERE scope = 'own' AND deleted_at IS NULL AND owner_id = ? AND template = ? AND saved_month = ?
+                ORDER BY saved_at DESC, rowid DESC LIMIT ?`).bind(currentUser.id, template, month, limit + 1).all()
+          : await env.DB.prepare(
+              `SELECT ${cols} FROM saved_signs
+                WHERE scope = 'all' AND deleted_at IS NULL AND template = ? AND saved_month = ?
+                ORDER BY saved_at DESC, rowid DESC LIMIT ?`).bind(template, month, limit + 1).all();
+        const list = rows.results || [];
+        return new Response(JSON.stringify({
+          ok: true, scope, template, month, truncated: list.length > limit,
+          signs: list.slice(0, limit).map(r => savedSignOut(r, access, currentUser)),
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=saved-sign-save  { id, sign, design_version } → { sign }
+    // `id` is the page's crypto.randomUUID(), minted when Save is first tapped and reused on
+    // every retry: saving it twice is one row. The scope comes from the role, never the body.
+    if (url.searchParams.get("action") === "saved-sign-save" && request.method === "POST") {
+      const access = savedSignAccess(currentUser);
+      if (!access) return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_SIGN_STUDIO" }), { status: 403, headers: corsJson });
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const text = await request.text();
+        if (text.length > 8192) return new Response(JSON.stringify({ error: "That is too big to be a sign.", code: "SIGN_TOO_LARGE" }), { status: 413, headers: corsJson });
+        let body = null;
+        try { body = JSON.parse(text); } catch (_) { /* refused below */ }
+        if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some(k => !["id", "sign", "design_version"].includes(k))
+            || typeof body.id !== "string" || !SAVED_SIGN.uuid.test(body.id)
+            || !Number.isInteger(body.design_version) || body.design_version < 1 || body.design_version > 999) {
+          return new Response(JSON.stringify({ error: "Send { id, sign, design_version }.", code: "BAD_REQUEST" }), { status: 400, headers: corsJson });
+        }
+        const chk = savedSignCheck(body.sign);
+        if (chk.error) return new Response(JSON.stringify({ error: chk.error, code: "BAD_SIGN", field: chk.field }), { status: 400, headers: corsJson });
+        const json = JSON.stringify(chk.sign), savedAt = new Date().toISOString();
+        await env.DB.prepare(
+          `INSERT INTO saved_signs (id, owner_id, owner_email, scope, template, saved_month, sign_json, design_version, saved_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`)
+          .bind(body.id, currentUser.id, currentUser.email || "", access.saveTo, chk.template, mosMonthOf(savedAt), json, body.design_version, savedAt).run();
+        // Decide from the row itself, never from meta.changes (see the ebay_cases sweep): a retry of
+        // this person's own save, byte for byte, is success; any other use of the id is refused, with
+        // the same body whoever holds it, so the answer says nothing about anyone else's signs.
+        const row = await env.DB.prepare(
+          `SELECT id, owner_id, owner_email, scope, template, saved_month, sign_json, design_version, saved_at, deleted_at
+             FROM saved_signs WHERE id = ?`).bind(body.id).first();
+        if (!row || row.owner_id !== currentUser.id || row.scope !== access.saveTo || row.sign_json !== json || row.deleted_at) {
+          return new Response(JSON.stringify({ error: "That save id is already used. Save it as a new sign.", code: "ID_USED" }), { status: 409, headers: corsJson });
+        }
+        return new Response(JSON.stringify({ ok: true, sign: savedSignOut(row, access, currentUser) }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=saved-sign-delete  { id } → soft delete: the row stays, for audit, and leaves
+    // every list and count. A manager deletes their own signs; an admin or superuser deletes All
+    // stores signs. A sign the caller can't see is "Not found", whoever's it is.
+    if (url.searchParams.get("action") === "saved-sign-delete" && request.method === "POST") {
+      const access = savedSignAccess(currentUser);
+      if (!access) return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_SIGN_STUDIO" }), { status: 403, headers: corsJson });
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        let body = null;
+        try { body = await request.json(); } catch (_) { /* refused below */ }
+        const id = body && typeof body === "object" ? body.id : null;
+        if (typeof id !== "string" || !SAVED_SIGN.uuid.test(id)) {
+          return new Response(JSON.stringify({ error: "Send { id }.", code: "BAD_REQUEST" }), { status: 400, headers: corsJson });
+        }
+        const row = await env.DB.prepare(`SELECT id, owner_id, scope, deleted_at FROM saved_signs WHERE id = ?`).bind(id).first();
+        const visible = !!row && !row.deleted_at && access.scopes.includes(row.scope) && (row.scope === "all" || row.owner_id === currentUser.id);
+        if (!visible) return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: corsJson });
+        if (row.scope !== access.saveTo) {
+          return new Response(JSON.stringify({ error: "Only an admin can delete an All stores sign.", code: "NEED_ADMIN" }), { status: 403, headers: corsJson });
+        }
+        const now = new Date().toISOString(), who = currentUser.email || currentUser.id;
+        // The guard again, in the write itself. Owner and scope never change after a save, so today
+        // this repeats the check above and nothing can reach it; it is there so the write still can't
+        // cross owners if a later change ever lets a sign move.
+        if (row.scope === "own") {
+          await env.DB.prepare(
+            `UPDATE saved_signs SET deleted_at = ?, deleted_by = ?
+              WHERE id = ? AND scope = 'own' AND owner_id = ? AND deleted_at IS NULL`).bind(now, who, id, currentUser.id).run();
+        } else {
+          await env.DB.prepare(
+            `UPDATE saved_signs SET deleted_at = ?, deleted_by = ?
+              WHERE id = ? AND scope = 'all' AND deleted_at IS NULL`).bind(now, who, id).run();
+        }
+        const after = await env.DB.prepare(`SELECT deleted_at FROM saved_signs WHERE id = ?`).bind(id).first();
+        if (!after || !after.deleted_at) return new Response(JSON.stringify({ error: "The delete did not apply." }), { status: 500, headers: corsJson });
+        return new Response(JSON.stringify({ ok: true, id }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }

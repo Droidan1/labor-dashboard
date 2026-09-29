@@ -1,3 +1,158 @@
+# Sign Studio: saved signs, in folders by type and month (2026-09-29)
+
+**Request (Brian):** *"Let's create folders for managers to save signs. Have them organized by sign
+type and then subfolders organized by date. Manager can only see their signs but admin signs are
+saved to all stores in it's own folder that all managers see."* This is the PRD's second release.
+
+**Decided (Brian's answers to four questions):**
+
+| Question | Answer |
+|---|---|
+| A manager sees | **Only signs they saved**, plus the shared All stores folder. District managers too. No store picker. |
+| Admins and superusers see | **All stores only.** Their saves always go there. |
+| Date subfolders | **By month**, Eastern, newest first ("September 2026") |
+| Open, change, save | **A new sign** in this month's folder. The original never changes. |
+
+**From the PRD:**
+- Saving is optional.
+- A save counts only when the server confirms it.
+- A retried save never duplicates: the client mints the id.
+- Each sign records its design version, for audit; a reprint uses the current design.
+- The server validates every field.
+- No one reaches another person's signs by changing a request.
+
+## Shape: two PRs, worker first
+
+Brian merges within seconds, and a merge deploys the page (lesson: "A deploy-order dependency cannot
+be enforced by a note").
+- **PR 1:** migration, worker and Node tests. Inert until something calls it.
+- **PR 2:** the page. Opened only after PR 1 is verified live. It also tolerates an old worker:
+  the message says so, and Print/PDF keep working.
+
+## Plan: PR 1
+
+- [x] **`migration-075.sql`:** table `saved_signs` and two partial indexes, one for own signs and
+      one for All stores. Additive and re-runnable. House-style header with UUID apply commands and
+      a pragma check.
+  - `owner_id` (the session's `users.id`) is the access key. There is no FK, per M029, and no CHECK
+    constraints, per M062.
+  - `saved_month` (Eastern, `YYYY-MM`) is stored, because SQLite groups by UTC.
+- [x] **`worker.js` helpers**, after `mosMonthOf`:
+  - `savedSignAccess(user)`:
+    - manager → own + all, saves to own;
+    - admin/superuser → all only, saves to all;
+    - executive, staff, associate and the secret header → null.
+  - `savedSignCheck(raw)`:
+    - the exact sign shape (normalizeSign's keys and types), checked strictly;
+    - the printed fields validated like `validate(model, null)`.
+  - `savedSignOut(row)`: never returns `owner_id`.
+- [x] **Routes**, after `shelf-count-save`, each gated by `savedSignAccess` (403 `NEED_SIGN_STUDIO`):
+  - GET `saved-sign-folders`: counts per scope, type and month.
+  - GET `saved-sign-list`: one folder, newest first, limit 100 (at most 200), with `truncated`.
+  - POST `saved-sign-save`: `{id, sign, design_version}`, 8 KB cap. `INSERT … ON CONFLICT(id) DO
+    NOTHING`, then **re-read the row** (`meta.changes` is not trusted on D1, `worker.js:16526-16530`).
+    The same owner with the same sign → 200; anything else → 409 `ID_USED`, with the same body
+    whoever owns the id.
+  - POST `saved-sign-delete`: a soft delete. Not visible → 404; a manager on an All stores sign →
+    403 `NEED_ADMIN`. The UPDATE repeats the owner/scope guard.
+- [x] **`ACTION_BUSINESS`:** four `["saved-sign-…", "bl"]` entries. Nothing goes in
+      `NON_FINANCIAL_ACTIONS` or `ACTION_PAGE`, so staff and associates stay refused.
+- [x] **`scripts/test-migration-075.mjs`:**
+  - columns and NOT NULLs;
+  - no FK or CHECK;
+  - a duplicate id is refused;
+  - the partial indexes are used (EXPLAIN);
+  - a re-run is a no-op.
+- [x] **`scripts/test-saved-signs.mjs`** (harness, clock pinned):
+  - access on all four actions, for executive, staff, an associate with the page grant, no
+    session, and the secret header;
+  - visibility between two managers of the same store, admin and superuser, each negative with
+    its positive;
+  - idempotency, including `Promise.all`;
+  - `ID_USED`;
+  - every refusal writes no row;
+  - **parity** with the client's `validate(…, null)`, one field varied at a time;
+  - the delete rules;
+  - Eastern month boundaries (UTC and ET months differ);
+  - limits.
+- [x] **Verify:**
+  - each new check fails on `main`;
+  - mutations, in isolated copies;
+  - `npm test`.
+- [ ] **Ship PR 1 (draft). Ask Brian to:**
+  1. run the migration on staging (a dry run of the SQL);
+  2. run it on production, after an explicit go with a summary;
+  3. merge;
+  4. `git pull && npx wrangler deploy` from `main`, then read back the bindings and crons.
+
+  **No staging worker deploy** (lesson 2026-08-19).
+- [ ] **Verify the deploy read-only, three passes:**
+  - `pragma_table_info('saved_signs')` on production D1;
+  - the deployed worker contains the four actions.
+
+### Review: PR 1
+
+**Changed from the plan** (each found while verifying):
+- **The save answer has no `created` flag.** Two saves in the same millisecond made it wrong, and
+  the page never needs it.
+- **The server's `parsePrice` copy is shorter than the page's.** The page tests a third decimal,
+  a minus sign and $10,000+ separately, only to word each message; the pattern alone refuses all
+  three. Three surviving mutants showed the checks could never fire, and the parity test shows
+  nothing changed.
+- **Us vs Them is one check on the server:** "at least 1% under their price" also refuses paying
+  their price or more.
+- **The migration's comment said a bound `scope = ?` can't use a partial index.** Measured on
+  SQLite 3.51, it can (SQLite re-plans once the value is bound). The comment now says only that
+  the literals make the match unconditional.
+- **Its "confirm the two indexes" query** would have printed three rows, including the primary
+  key's automatic index. It now filters on `sql IS NOT NULL`.
+- **The `\u` lesson recurred.** The worker's copy of `TEXT_CHARS`, and five strings in the test,
+  reached disk as literal characters: a no-break space, two U+202E, a soft hyphen and two
+  combining accents. Found by reading the diff, then a scan. The suite could not see it, so §4b
+  now pins the list's spelling to the page's. `lessons.md` gained rules 3 and 4.
+
+**Verified:**
+- **`test-saved-signs.mjs`: 178 passed.** Against `main`'s worker it ends 38 passed, 136 failed.
+  It ends with a tally, not a crash: a missing row reads as `{}`, so a broken worker fails
+  assertions.
+- **`test-migration-075.mjs`: 21 passed.**
+- **Worker mutants: 47 of 48 caught by assertions, none crashed.**
+  - Covered: visibility, both scopes, idempotency, the soft delete, Eastern months, every
+    validation rule, the limit clamp, and an `ACTION_BUSINESS` line (the business-gate suite
+    fails too).
+  - The survivor is the owner guard repeated inside the delete's UPDATE. Owner and scope never
+    change after a save, so nothing can reach it today. It stays as defence in depth, and its
+    comment says so.
+- **The suites that read `ACTION_BUSINESS` or slice worker.js all pass:**
+  - business gate 14;
+  - privilege guards and financial gate, all assertions passed;
+  - Inventory Receiver 400;
+  - Price Scan 1,038;
+  - associates 184.
+- **`npm test`: 7,415 assertions across 92 suites, all passed.**
+
+## Plan: PR 2 (after PR 1 is live)
+
+- [ ] **SignRender `DESIGN_VERSION`**, with an append-only layout pin in `test-sign-render.mjs`.
+- [ ] **Step 3: Save sign.**
+  - It shows its state and a note that says where the sign goes.
+  - The id is minted per content and kept in the draft, so a retry or a reload never duplicates.
+  - "Saved" shows only on server `ok`.
+  - Errors are mapped the `bdErr` way, including the old-worker message.
+- [ ] **Header button: Saved signs.**
+  - Managers get All stores and their own three type folders; admins get All stores' type
+    folders.
+  - Then month → sign rows with Open (confirm if unsaved) and Delete (confirm, only when
+    `can_delete`).
+  - It is built with `ssH` and `--ss-*` styles in all three themes.
+- [ ] **Browser section** with a stateful stub and a second manager. `CACHE_NAME` bump.
+- [ ] **Verify:**
+  - `npm test`;
+  - the full browser suite;
+  - contrast in three themes;
+  - mutations.
+- [ ] **Ship PR 2.** Brian checks it on the phone.
+
 # Sign Studio: a name that misses 0.6 in at full width narrows, up to 10%, instead of refusing (2026-09-29)
 
 **Request (Brian), with a screenshot:** *"Fix the sizing issue so this will print"*. The sign is a
