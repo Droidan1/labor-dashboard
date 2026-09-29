@@ -49,9 +49,10 @@ const srv = http.createServer((q, s) => {
 });
 await new Promise(r => srv.listen(PORT, r));
 
-// A real image stands in for the photo (psShrink decodes it); a text file named .jpg is the
-// photo that will not decode.
+// A real image stands in for the photo (psShrink decodes it); a second, different one is a
+// retake whose photo can be told apart; a text file named .jpg is the photo that will not decode.
 const PHOTO = path.join(repo, 'icon-192.png');
+const PHOTO2 = path.join(repo, 'icon-512.png');
 const BROKEN = path.join(os.tmpdir(), `ir-read-broken-${PORT}.jpg`);
 fs.writeFileSync(BROKEN, 'this is not an image');
 
@@ -91,7 +92,7 @@ function pageMocks({ who, theme, TRUCK, DOCK_PALLETS, CLOSED, PALLETS }) {
   } catch (e) {}
   const M = window.__ir = {
     calls: [], aborts: 0,
-    scanDelay: 0, scanHang: false, scanIgnoresAbort: false, scanBodyHang: false, scanEmpty: false,
+    scanDelay: 0, scanHang: false, scanIgnoresAbort: false, scanBodyHang: false, scanEmpty: false, scanFail: false,
     openDelay: 0, openFail: false,
     truck: null,                                    // what truck-current reports on the dock
     shrinkArgs: [], decoded: 0, shrinkDelay: 0,      // see the psShrink wrapper in open()
@@ -135,6 +136,8 @@ function pageMocks({ who, theme, TRUCK, DOCK_PALLETS, CLOSED, PALLETS }) {
         // point of no return comes back. The generation number must ignore it.
         await wait(M.scanHang ? Infinity : M.scanDelay, M.scanIgnoresAbort ? null : o.signal);
         if (M.scanEmpty) return J({});
+        // The worker's own refusal when the vision call fails (worker.js, both scan actions).
+        if (M.scanFail) return J({ error: 'Could not read that photo — try again, or type the tag in by hand' }, 502);
         return J({ ok: true, fields, read: Object.values(fields).filter(v => v != null).length, of: Object.keys(fields).length });
       }
       case 'truck-open':
@@ -544,6 +547,74 @@ for (const theme of ['light', 'dark', 'oled']) await section(`7. paint [${theme}
   const det = inkRatio(await paintOf(page, '#ir-det-read-cancel'));
   check(det >= 4.5, `[${theme}] the read-back's Cancel reads ${det.toFixed(2)}:1`);
   measured.push(`${theme.padEnd(5)}  dock Cancel ${dock.toFixed(2)}:1   read-back Cancel ${det.toFixed(2)}:1`);
+});
+
+// ── 8. A Retake that brings no read back keeps the form ──
+// The form stays open behind the camera (bin-dump-14), but once a photo arrived it closed, and
+// a read that then failed or timed out reopened it EMPTY — the typed corrections gone; a photo
+// that would not open took the form's own photo with it; and Cancel dropped the form entirely.
+await section('8. a failed Retake keeps the form', async () => {
+  const { page, errs } = await open();
+  await pickPhoto(page, PHOTO);                                   // a scanned BOL, corrected by hand
+  await waitModal(page, /Verify Bill of Lading/);
+  await page.fill('#ir-f-bol_no', 'TYPED-7702');
+  await page.fill('#ir-f-carrier', 'MY CARRIER');
+  const srcA = await page.getAttribute('#ir-m-photo', 'src');
+  const lineA = (await page.textContent('#ir-m-read')).trim();
+  const typed = async () => [await page.inputValue('#ir-f-bol_no').catch(() => ''), await page.inputValue('#ir-f-carrier').catch(() => '')].join(' | ');
+
+  // A retake that will not open: the form comes back as it was.
+  await pickPhoto(page, BROKEN, '#ir-m-retake');
+  await waitModal(page, /Verify Bill of Lading/);
+  check(await typed() === 'TYPED-7702 | MY CARRIER', `🛑 a retake that will not open gives back what was typed (${await typed()})`);
+  check(await page.isVisible('#ir-m-photo') && await page.getAttribute('#ir-m-photo', 'src') === srcA,
+        '...and the photo the form had');
+  check((await page.textContent('#ir-m-read')).trim() === lineA, `...and its read line ("${lineA}")`);
+  check(/^Couldn't read it — .*The form is as it was\.$/.test(await warnText(page)), `...saying so (${await warnText(page)})`);
+
+  // A retake that opens, but that the reader fails on: the new photo stays, the fields as they were.
+  await set(page, { scanFail: true });
+  await pickPhoto(page, PHOTO2, '#ir-m-retake');
+  await page.waitForFunction(() => /fields are as they were|Couldn't read it/.test(document.getElementById('ir-m-warn').textContent)
+    && document.getElementById('ir-modal').style.display === 'flex', null, { timeout: 8000 }).catch(() => {});
+  check(await typed() === 'TYPED-7702 | MY CARRIER', `🛑 a retake the reader fails on keeps the fields as they were (${await typed()})`);
+  const srcB = await page.getAttribute('#ir-m-photo', 'src');
+  check(await page.isVisible('#ir-m-photo') && srcB && srcB !== srcA, '...with the NEW photo, so the tag can still be read off it');
+  check(/^Couldn't read it — Could not read that photo.*The fields are as they were\.$/.test(await warnText(page)),
+        `...saying why (${await warnText(page)})`);
+  await set(page, { scanFail: false });
+
+  // Cancel while a retake is read: the form comes back as it was just before it.
+  await page.fill('#ir-f-seal_no', 'SEAL-TYPED');
+  await set(page, { scanDelay: 1500, scanIgnoresAbort: true });
+  await pickPhoto(page, PHOTO, '#ir-m-retake');
+  await page.waitForTimeout(300);
+  check(!(await modalOpen(page)) && await page.isVisible('#ir-reading'), '(the retake is being read; the form is closed)');
+  await page.click('#ir-read-cancel', { timeout: 2000 }).catch(() => {});
+  await settle(page);
+  check(await modalOpen(page) && await typed() === 'TYPED-7702 | MY CARRIER'
+        && await page.inputValue('#ir-f-seal_no').catch(() => '') === 'SEAL-TYPED',
+        '🛑 Cancel during a retake gives the form back, as typed');
+  check(await modalOpen(page) && await page.getAttribute('#ir-m-photo', 'src').catch(() => null) === srcB, '...with the photo it had before that retake');
+  check(await focused(page) === 'ir-m-retake', `...focused on Retake (${await focused(page)})`);
+  await page.waitForTimeout(1600);                                // the cancelled read answers now
+  check(await modalOpen(page) && await page.inputValue('#ir-f-seal_no').catch(() => '') === 'SEAL-TYPED' && await page.getAttribute('#ir-m-photo', 'src').catch(() => null) === srcB,
+        '🛑 ...and its late answer changes nothing');
+  await set(page, { scanDelay: 0, scanIgnoresAbort: false });
+  if (await modalOpen(page)) await closeForm(page);
+
+  // A typed entry whose photo will not open is still the typed entry.
+  await openReadBack(page);
+  await page.click('#ir-det-manual');
+  await settle(page);
+  await page.fill('#ir-f-barcode', 'P-TYPED-0003');
+  await pickPhoto(page, BROKEN, '#ir-m-retake');                  // "Take Photo"
+  await page.waitForTimeout(800);
+  check(await modalOpen(page) && /^Add pallet by hand/.test(await title(page))
+        && await page.inputValue('#ir-f-barcode').catch(() => '') === 'P-TYPED-0003'
+        && await page.isVisible('#ir-m-manual') && !(await page.isVisible('#ir-m-shot')),
+        `🛑 a typed entry whose photo will not open comes back as that typed entry (${await title(page)})`);
+  check(!errs.length, `no page errors (${errs.slice(0, 2).join(' | ')})`);
 });
 
 await b.close();

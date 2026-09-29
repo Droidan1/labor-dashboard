@@ -40,7 +40,8 @@ const repo = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
 const root = path.join(repo, 'dist');
 if (!fs.existsSync(path.join(root, 'index.html'))) { console.error('No dist/ — run bash scripts/build.sh first.'); process.exit(2); }
 const types = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml' };
-const PORT = 8096;
+// Overridable so that copies of the repo can run this side by side (mutation runs).
+const PORT = Number(process.env.BD_PORT) || 8096;
 const srv = http.createServer((q, s) => {
   const f = path.join(root, q.url === '/' ? 'index.html' : q.url.split('?')[0]);
   if (!f.startsWith(root) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { s.writeHead(404); return s.end('no'); }
@@ -49,10 +50,11 @@ const srv = http.createServer((q, s) => {
 });
 await new Promise(r => srv.listen(PORT, r));
 
-// A real image stands in for the tag photo (psShrink decodes it); a text file named .jpg
-// is the photo that will not decode.
+// A real image stands in for the tag photo (psShrink decodes it); a second, different one is a
+// retake whose photo can be told apart; a text file named .jpg is the photo that will not decode.
 const PHOTO = path.join(repo, 'icon-192.png');
-const BROKEN = path.join(os.tmpdir(), 'bin-dump-broken.jpg');
+const PHOTO2 = path.join(repo, 'icon-512.png');
+const BROKEN = path.join(os.tmpdir(), `bin-dump-broken-${PORT}.jpg`);
 fs.writeFileSync(BROKEN, 'this is not an image');
 
 const results = [], measured = [];
@@ -82,7 +84,7 @@ function pageMocks({ who, theme }) {
     item_no: '50201', pallet_name: 'FG BL CONSUMABLES - FOOD - SNACKS', sup_ref: 'mix', po: 'RM1 - TJX', units: 40 + id,
     created_by_tag: 'Sam R', truck_no: null, logged_by: 'Alex M', edited_by: null, edited_at: null, has_photo: true, ...extra });
   const M = window.__bd = {
-    calls: [], listDelay: {}, scanDelay: 0, scanHang: false, scanIgnoresAbort: false, logDelay: 0, updateDup: false,
+    calls: [], listDelay: {}, scanDelay: 0, scanHang: false, scanIgnoresAbort: false, scanFail: false, logDelay: 0, updateDup: false,
     scan: { barcode: 'PRM-10490-31', item_no: '50201', pallet_name: 'PALLET AMAZON IND8', sup_ref: null,
             po: '5036', units: 48, created_by_tag: 'Sam R', truck_no: '10490' },
     rows: [
@@ -117,6 +119,8 @@ function pageMocks({ who, theme }) {
         // scanIgnoresAbort: the answer lands anyway, late — how a read cancelled mid-decode
         // (psShrink cannot be aborted) comes back. The generation number must ignore it.
         await wait(M.scanHang ? Infinity : M.scanDelay, M.scanIgnoresAbort ? null : o.signal);
+        // The worker's own refusal when the vision call fails.
+        if (M.scanFail) return J({ error: 'Could not read that photo — try again, or type the tag in by hand' }, 502);
         return J({ ok: true, fields: M.scan, read: Object.values(M.scan).filter(v => v != null).length, of: 8, truck_hint: null });
       case 'bin-dump-recent': {
         const bc = url.searchParams.get('barcode');
@@ -398,6 +402,71 @@ await section('8. Retake (bin-dump-14)', async () => {
   check(await modalOpen(page), '🛑 the typed form is still open after the camera is dismissed');
   check(await page.inputValue('#bd-f-barcode') === 'PRM-777-1' && await page.inputValue('#bd-f-pallet_name') === 'TYPED BY HAND',
         '...with everything typed still in it');
+  await ctx.close();
+});
+
+// ── 8b. A Retake that brings no read back keeps the form ──
+// Once a retake's photo arrived the form closed, and a read that then failed or timed out
+// reopened it EMPTY; a photo that would not open took the form's own photo with it; Cancel
+// dropped the form entirely.
+await section('8b. failed Retake keeps the form', async () => {
+  const { ctx, page, errs } = await open();
+  const open_ = () => page.evaluate(() => document.getElementById('bd-modal').style.display === 'flex');
+  const warn = () => page.evaluate(() => { const w = document.getElementById('bd-m-warn'); return w.hidden ? '' : w.textContent; });
+  const typed = async () => [await page.inputValue('#bd-f-pallet_name').catch(() => ''), await page.inputValue('#bd-f-units').catch(() => '')].join(' | ');
+  await pickPhoto(page, PHOTO);                                   // a scanned tag, corrected by hand
+  await page.waitForFunction(() => document.getElementById('bd-modal').style.display === 'flex', null, { timeout: 8000 });
+  await page.fill('#bd-f-pallet_name', 'TYPED NAME');
+  await page.fill('#bd-f-units', '77');
+  const srcA = await page.getAttribute('#bd-m-photo', 'src');
+  const lineA = (await page.textContent('#bd-m-read')).trim();
+
+  // A retake that will not open: the form comes back as it was.
+  await pickPhoto(page, BROKEN, '#bd-m-retake');
+  await page.waitForFunction(() => document.getElementById('bd-modal').style.display === 'flex', null, { timeout: 8000 });
+  check(await typed() === 'TYPED NAME | 77', `🛑 a retake that will not open gives back what was typed (${await typed()})`);
+  check(await page.isVisible('#bd-m-photo') && await page.getAttribute('#bd-m-photo', 'src') === srcA, '...and the photo the form had');
+  check((await page.textContent('#bd-m-read')).trim() === lineA, `...and its read line ("${lineA}")`);
+  check(/^Couldn't read the tag — .*The form is as it was\.$/.test(await warn()), `...saying so (${await warn()})`);
+
+  // A retake that opens, but that the reader fails on: the new photo stays, the fields as they were.
+  await page.evaluate(() => { window.__bd.scanFail = true; });
+  await pickPhoto(page, PHOTO2, '#bd-m-retake');
+  await page.waitForFunction(() => document.getElementById('bd-modal').style.display === 'flex', null, { timeout: 8000 });
+  check(await typed() === 'TYPED NAME | 77', `🛑 a retake the reader fails on keeps the fields as they were (${await typed()})`);
+  const srcB = await page.getAttribute('#bd-m-photo', 'src');
+  check(await page.isVisible('#bd-m-photo') && srcB && srcB !== srcA, '...with the NEW photo, so the tag can still be read off it');
+  check(/^Couldn't read the tag — Could not read that photo.*The fields are as they were\.$/.test(await warn()), `...saying why (${await warn()})`);
+  await page.evaluate(() => { window.__bd.scanFail = false; });
+
+  // Cancel while a retake is read: the form comes back as it was just before it.
+  await page.fill('#bd-f-truck_no', '31337');
+  await page.evaluate(() => { window.__bd.scanDelay = 1500; window.__bd.scanIgnoresAbort = true; });
+  await pickPhoto(page, PHOTO, '#bd-m-retake');
+  await page.waitForTimeout(300);
+  check(!(await open_()) && await page.isVisible('#bd-reading'), '(the retake is being read; the form is closed)');
+  await page.click('#bd-read-cancel', { timeout: 2000 }).catch(() => {});
+  await settle(page);
+  check(await open_() && await typed() === 'TYPED NAME | 77' && await page.inputValue('#bd-f-truck_no').catch(() => '') === '31337',
+        '🛑 Cancel during a retake gives the form back, as typed');
+  check(await open_() && await page.getAttribute('#bd-m-photo', 'src').catch(() => null) === srcB, '...with the photo it had before that retake');
+  check(await page.evaluate(() => document.activeElement && document.activeElement.id) === 'bd-m-retake', '...focused on Retake');
+  await page.waitForTimeout(1600);                                // the cancelled read answers now
+  check(await open_() && await page.inputValue('#bd-f-truck_no').catch(() => '') === '31337' && await page.getAttribute('#bd-m-photo', 'src').catch(() => null) === srcB,
+        '🛑 ...and its late answer changes nothing');
+  await page.evaluate(() => { window.__bd.scanDelay = 0; window.__bd.scanIgnoresAbort = false; });
+  if (await open_()) { await page.click('#bd-m-cancel'); await settle(page); }
+
+  // A typed entry whose photo will not open is still the typed entry.
+  await page.click('#bd-manual');
+  await settle(page);
+  await page.fill('#bd-f-barcode', 'PRM-888-1');
+  await pickPhoto(page, BROKEN, '#bd-m-retake');                  // "Take Photo"
+  await page.waitForTimeout(800);
+  check(await open_() && /^Log pallet by hand/.test(await page.textContent('#bd-m-title'))
+        && await page.inputValue('#bd-f-barcode').catch(() => '') === 'PRM-888-1' && await page.isVisible('#bd-m-manual'),
+        `🛑 a typed entry whose photo will not open comes back as that typed entry (${(await page.textContent('#bd-m-title')).trim()})`);
+  check(!errs.length, `no page errors (${errs.slice(0, 2).join(' | ')})`);
   await ctx.close();
 });
 

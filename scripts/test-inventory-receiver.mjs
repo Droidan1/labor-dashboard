@@ -1207,8 +1207,8 @@ function seedTruck(db, { store = 'BL1', bol = '7679', count = 40, closed = null 
   };
   const src = {};
   for (const n of ['irPhoto', 'irPost', 'irRetake', 'irEndRead', 'irAbandonRead', 'irCancelRead',
-                   'irCloseDetail', 'irSubmit', 'irOpenVerify', 'irBeginBol', 'irBeginPallet',
-                   'irManualPallet', 'irEditPallet']) {
+                   'irRestoreForm', 'irCloseDetail', 'irSubmit', 'irOpenVerify', 'irBeginBol',
+                   'irBeginPallet', 'irManualPallet', 'irEditPallet']) {
     src[n] = fnSrc(n);
     ok(src[n] && src[n].trimEnd().endsWith('}'), `${n}: its source is found, and cut at its own end`);
   }
@@ -1234,6 +1234,8 @@ function seedTruck(db, { store = 'BL1', bol = '7679', count = 40, closed = null 
      'Retake is locked while a submit posts, and always unlocked after');
   ok(/el\('ir-m-shot'\)\.hidden = true;\s*\/\/[^\n]*\n\s*el\('ir-m-photo'\)\.removeAttribute\('src'\);/.test(src.irOpenVerify),
      'a form with no photo keeps no src behind its hidden box, which irLbOpen() would enlarge');
+  ok(/^  function irOpenVerify\(j, warn\) \{\s*irState\.shown = \{ j, warn \};/.test(src.irOpenVerify),
+     'irOpenVerify records what it draws first, so a Retake\'s form can be drawn again as it was');
 
   // ── Executed: irPost hands the read's signal to fetch, and nobody else's ──
   const sent = [];
@@ -1255,21 +1257,34 @@ function seedTruck(db, { store = 'BL1', bol = '7679', count = 40, closed = null 
   const aborted = () => Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
   const input = () => ({ files: [{ name: 'tag.jpg' }], value: 'C:\\fakepath\\tag.jpg' });
   // One fresh page per scenario. Elements are plain objects; everything irPhoto calls out to is
-  // recorded. It starts as the page does between reads, holding the LAST read's photo.
-  const harness = ({ mode = 'bol', opFrom = 'dock', truck = null } = {}) => {
+  // recorded. It starts as the page does between reads, holding the LAST read's photo — or, given
+  // `form`, with a form open in front of the camera: a Retake, and what that form holds.
+  const harness = ({ mode = 'bol', opFrom = 'dock', truck = null, form = null } = {}) => {
     const els = {};
     const E = (id) => els[id] || (els[id] = { id, hidden: false, disabled: false, textContent: '', focused: 0, scrolled: 0,
-      focus() { this.focused++; }, scrollIntoView() { this.scrolled++; }, removeAttribute() {} });
+      style: { display: '' }, focus() { this.focused++; }, scrollIntoView() { this.scrolled++; }, removeAttribute() {} });
     for (const id of ['ir-reading', 'ir-det-read-cancel', 'ir-det-status']) E(id).hidden = true;
-    const state = { mode, opFrom, truck, manual: true, photo: 'LAST-PHOTO', mediaType: 'image/jpeg', readGen: 0, reading: null };
+    const state = { mode, opFrom, truck, manual: true, photo: 'LAST-PHOTO', mediaType: 'image/jpeg', readGen: 0, reading: null, shown: null };
+    E('ir-modal').style.display = 'none';
     const log = { closed: 0, picks: 0, forms: [], det: [], shrink: [], posts: [], timers: [], cleared: [] };
-    const h = { E, state, log, shrinkNext: null, postNext: null };
+    const h = { E, state, log, shrinkNext: null, postNext: null, typed: null };
+    if (form) {
+      Object.assign(state, { photo: form.photo, mediaType: form.photo ? 'image/jpeg' : null, manual: form.manual, shown: form.shown });
+      h.typed = form.typed;
+      E('ir-modal').style.display = 'flex';
+    }
     const fakes = {
       el: E, irState: state,
-      irCloseModal: () => { log.closed++; },
+      irCloseModal: () => { log.closed++; E('ir-modal').style.display = 'none'; },
       irPick: () => { log.picks++; },
       irSetDetStatus: (msg) => { log.det.push(msg); E('ir-det-status').hidden = !msg; E('ir-det-status').textContent = msg || ''; },
-      irOpenVerify: (j, warn) => { log.forms.push({ j, warn, photo: state.photo }); },
+      // As the real one: it records what it draws, and the form is open after it.
+      irOpenVerify: (j, warn) => {
+        log.forms.push({ j, warn, photo: state.photo, manual: state.manual });
+        state.shown = { j, warn };
+        E('ir-modal').style.display = 'flex';
+      },
+      irReadFields: () => ({ ...h.typed }),
       psShrink: (f, max, q) => {
         log.shrink.push({ args: [max, q], photo: state.photo });
         const n = h.shrinkNext; h.shrinkNext = null;
@@ -1288,8 +1303,8 @@ function seedTruck(db, { store = 'BL1', bol = '7679', count = 40, closed = null 
     };
     const names = Object.keys(fakes);
     Object.assign(h, new Function(...names,
-      `${src.irEndRead}\n${src.irAbandonRead}\n${src.irCancelRead}\n${src.irRetake}\n${src.irPhoto}\n` +
-      'return { irEndRead, irAbandonRead, irCancelRead, irRetake, irPhoto };')(...names.map(n => fakes[n])));
+      `${src.irEndRead}\n${src.irAbandonRead}\n${src.irCancelRead}\n${src.irRestoreForm}\n${src.irRetake}\n${src.irPhoto}\n` +
+      'return { irEndRead, irAbandonRead, irCancelRead, irRestoreForm, irRetake, irPhoto };')(...names.map(n => fakes[n])));
     return h;
   };
 
@@ -1437,6 +1452,114 @@ function seedTruck(db, { store = 'BL1', bol = '7679', count = 40, closed = null 
     h.state.mode = null;
     h.irRetake();
     ok(h.log.picks === 1, '...and does nothing with no operation under way');
+  }
+  // ── A Retake that brings no read back keeps its form ──
+  // A scanned BOL, corrected by hand, then retaken. What that form was showing:
+  const SHOWN = { j: { fields: { bol_no: '7679' }, read: 8, of: 10, truck_hint: null }, warn: 'an earlier warning' };
+  const TYPED = { bol_no: 'TYPED-7679', carrier: 'MINE', seal_no: null };
+  const retake = (extra) => harness({ form: { photo: 'PHOTO-A', manual: false, shown: SHOWN, typed: TYPED }, ...extra });
+  { // The retake will not open: the form comes back exactly as it was.
+    const h = retake(), s = held();
+    h.shrinkNext = s;
+    const run = h.irPhoto(input());
+    ok(h.log.closed === 1 && h.state.photo === null, '(a retake\'s photo closes its form and clears the photo, as any photo does)');
+    s.rej(new Error('that image could not be opened'));
+    await run;
+    const f = h.log.forms[0];
+    ok(f && f.j.fields && f.j.fields.bol_no === 'TYPED-7679' && f.j.fields.carrier === 'MINE',
+       '🛑 a retake that will not open gives back what was typed');
+    ok(f && f.photo === 'PHOTO-A' && h.state.mediaType === 'image/jpeg', '...and the photo the form had');
+    ok(f && f.j.read === 8 && f.j.of === 10, '...and what it was showing: "Read 8 of 10 fields", not 0');
+    ok(f && /^Couldn't read it — that image could not be opened\. The form is as it was\.$/.test(f.warn), `...saying so (${f && f.warn})`);
+    ok(h.log.posts.length === 0 && h.log.forms.length === 1, '...having sent nothing');
+  }
+  { // The retake opens, but the reader fails: the new photo stays, with the fields as they were.
+    const h = retake(), p = held();
+    h.postNext = p;
+    const run = h.irPhoto(input());
+    await flush();
+    p.rej(new Error('Could not read that photo — try again, or type the BOL in by hand'));
+    await run;
+    const f = h.log.forms[0];
+    ok(f && f.j.fields.bol_no === 'TYPED-7679' && f.j.read === 0, '🛑 a retake the reader fails on keeps the fields as they were');
+    ok(f && f.photo === 'B64', '...with the NEW photo, so the tag can still be read off it');
+    ok(f && /^Couldn't read it — Could not read that photo.*\. The fields are as they were\.$/.test(f.warn), `...saying why (${f && f.warn})`);
+  }
+  { // The retake times out: the same, said as a timeout.
+    const h = retake(), p = held();
+    h.postNext = p;
+    const run = h.irPhoto(input());
+    await flush();
+    if (h.log.timers[0]) h.log.timers[0].fn();
+    p.rej(aborted());
+    await run;
+    const f = h.log.forms[0];
+    ok(f && f.warn === 'The reader took too long. The fields are as they were.' && f.photo === 'B64' && f.j.fields.carrier === 'MINE',
+       `🛑 a retake that times out keeps the fields and the new photo (${f && f.warn})`);
+  }
+  { // Cancel while the retake decodes: the form, as it was, focused on Retake.
+    const h = retake(), s = held();
+    h.shrinkNext = s;
+    const run = h.irPhoto(input());
+    h.irCancelRead();
+    const f = h.log.forms[0];
+    ok(f && f.j.fields.bol_no === 'TYPED-7679' && f.photo === 'PHOTO-A' && f.j.read === 8,
+       '🛑 Cancel during a retake gives the form back as it was — typed fields, its photo, its read line');
+    ok(f && f.warn === 'an earlier warning', '...warning and all: nothing new to say, the person asked for this');
+    ok(h.E('ir-m-retake').focused === 1 && h.E('receive-truck').focused === 0, '...focused on Retake, not on Receive Truck');
+    s.res('B64');
+    await run;
+    ok(h.log.posts.length === 0 && h.log.forms.length === 1 && h.state.photo === 'PHOTO-A',
+       '...and the cancelled decode, finishing, sends nothing and changes nothing');
+  }
+  { // Cancel after the request went out: its late answer changes nothing.
+    const h = retake(), p = held();
+    h.postNext = p;
+    const run = h.irPhoto(input());
+    await flush();
+    h.irCancelRead();
+    p.res({ ok: true, fields: { bol_no: 'LATE' }, read: 10, of: 10 });
+    await run;
+    ok(h.log.forms.length === 1 && h.log.forms[0].j.fields.bol_no === 'TYPED-7679' && h.state.photo === 'PHOTO-A',
+       '🛑 a cancelled retake\'s late answer does not replace the form it gave back');
+  }
+  { // A typed entry whose Take Photo will not open is still that typed entry.
+    const h = harness({ mode: 'pallet', opFrom: 'detail',
+      form: { photo: null, manual: true, shown: { j: { fields: {}, read: 0, of: 8 }, warn: null }, typed: { barcode: 'P-TYPED-9' } } });
+    const s = held();
+    h.shrinkNext = s;
+    const run = h.irPhoto(input());
+    s.rej(new Error('that image could not be opened'));
+    await run;
+    const f = h.log.forms[0];
+    ok(f && f.manual === true && f.photo === null && f.j.fields.barcode === 'P-TYPED-9',
+       '🛑 a typed entry whose photo will not open comes back as that typed entry');
+  }
+  { // Abandoned for another operation: nothing comes back — that operation owns the screen.
+    const h = retake(), p = held();
+    h.postNext = p;
+    const run = h.irPhoto(input());
+    await flush();
+    h.irAbandonRead();
+    p.res({ ok: true, fields: {}, read: 0, of: 10 });
+    await run;
+    ok(h.log.forms.length === 0, 'a retake abandoned for another operation gives nothing back');
+  }
+  { // A retake that reads: the new read replaces the form, as before.
+    const h = retake();
+    await h.irPhoto(input());
+    const f = h.log.forms[0];
+    ok(f && f.warn === null && f.j.fields.bol_no === '7702' && f.photo === 'B64', 'a retake that reads replaces the form with its read');
+  }
+  { // A first read has no form to give back: it fails into the empty form, as before.
+    const h = harness(), s = held();
+    h.shrinkNext = s;
+    const run = h.irPhoto(input());
+    s.rej(new Error('that image could not be opened'));
+    await run;
+    const f = h.log.forms[0];
+    ok(f && Object.keys(f.j.fields).length === 0 && /Type it in, or retake the photo\.$/.test(f.warn),
+       'a first read that fails still opens the empty form: there was no form to keep');
   }
   await flush();
   process.off('unhandledRejection', onUnhandled);

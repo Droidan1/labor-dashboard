@@ -28715,7 +28715,9 @@
                     loadSeq: 0, rowsStore: '',
                     // One number per tag read. A cancelled or timed-out read may still come
                     // back; anything carrying an older number is ignored.
-                    readGen: 0, reading: null };
+                    readGen: 0, reading: null,
+                    // What bdOpenVerify last drew: a Retake's form can be redrawn as it was.
+                    shown: null };
 
   // Mirrors canSeeFinancials on the worker, which admits the same roles as every
   // other bin-dump action. A manager mis-scans a pallet and should not need an admin
@@ -28899,15 +28901,27 @@
       bdSetStatus('Still saving the last pallet — try again in a moment.', 'err');
       return;
     }
+    // 🔑 A photo that arrives while the form is open is a Retake of THAT form. What the form
+    // holds — what was typed, its photo, what it was showing — goes with the read, so a retake
+    // that brings no read back gives the form back rather than an empty one.
+    let before = null;
+    if (el('bd-modal').style.display === 'flex') {
+      const fields = bdReadFields();
+      // An emptied field is a missing one, drawn as it was: NOT FOUND after a read.
+      for (const k of Object.keys(fields)) if (fields[k] === '') fields[k] = null;
+      before = { fields, photo: bdState.photo, photoType: bdState.photoType,
+                 manual: bdState.manual, shown: bdState.shown };
+    }
     // A photo has arrived, so the form it replaces can close — and not before.
     bdCloseModal();
     bdState.manual = false;
     // 🛑 Forget the last pallet's photo BEFORE decoding this one. psShrink rejects a file
     // it cannot decode, and the empty form that follows must not show — or upload — the
-    // previous tag (bin-dump-4).
+    // previous tag (bin-dump-4). A Retake keeps its own form's photo in `before`, and only
+    // that form ever gets it back.
     bdState.photo = null;
     const gen = ++bdState.readGen;
-    const read = bdState.reading = { ctl: null, why: '' };
+    const read = bdState.reading = { ctl: null, why: '', before };
     bdState.busy = true;
     bdSetStatus('');
     el('bd-reading-sub').textContent = 'Sending the photo to Claude';
@@ -28942,6 +28956,15 @@
       bdOpenVerify(j);
     } catch (e) {
       if (gen !== bdState.readGen) return;          // cancelled: there is nothing to report
+      // 🛑 A Retake that brings no read back must not cost its form. If the new photo opened,
+      // it stays — the tag can still be read off it — beside the fields as they were; if it
+      // would not open, the form comes back exactly as it was.
+      if (read.before) {
+        const why = read.why === 'timeout' ? 'The tag reader took too long' : `Couldn't read the tag — ${(e && e.message) || e}`;
+        if (bdState.photo) bdOpenVerify({ fields: read.before.fields, read: 0, of: BD_FIELDS.length }, `${why}. The fields are as they were.`);
+        else bdRestoreForm(read.before, `${why}. The form is as it was.`);
+        return;
+      }
       // ⚠️ A failed read must not cost the pallet. Open the form empty so a torn
       // or unreadable tag can still be keyed in by hand, and say what went wrong.
       bdOpenVerify({ fields: {}, read: 0, of: BD_FIELDS.length },
@@ -28975,9 +28998,26 @@
     bdState.busy = false;
     bdShow('begin');
     bdSetStatus('');
+    // A Retake's read goes back to its form, as it was, and to the button that started it.
+    if (read.before) {
+      bdRestoreForm(read.before);
+      try { el('bd-m-retake').focus(); } catch (e) { /* hidden */ }
+      return;
+    }
     try { document.querySelector('#bd-begin .bd-primary').focus(); } catch (e) { /* hidden */ }
   }
   window.bdCancelRead = bdCancelRead;
+
+  // Give a Retake's form back as it was when its photo arrived (bdPhoto's `before`): its photo
+  // and typed fields, and what it was showing, redrawn the way bdOpenVerify always draws it.
+  // 🛑 A `warn` goes in the warning box ALONE: bdOpenVerify's `problem` also rewrites the read
+  // line to "Couldn't read the tag", which would describe a photo no longer on the form.
+  function bdRestoreForm(before, warn) {
+    bdState.photo = before.photo; bdState.photoType = before.photoType; bdState.manual = before.manual;
+    const shown = before.shown || {};
+    bdOpenVerify({ ...(shown.j || {}), fields: before.fields }, shown.problem);
+    if (warn) { el('bd-m-warn').textContent = warn; el('bd-m-warn').hidden = false; }
+  }
 
   function bdFieldRow(f, val, state, note) {
     const tag = state === 'miss' ? '<span class="bd-tag">NOT FOUND</span>'
@@ -28997,6 +29037,7 @@
   }
 
   function bdOpenVerify(j, problem) {
+    bdState.shown = { j, problem };
     bdState.editingId = null;
     bdLockForm(false);
     const manual = !!bdState.manual;
@@ -29757,6 +29798,7 @@
     // The photo read in flight, and its number. Every read, Cancel and abandon moves the
     // number on, and a read whose number is no longer current writes nothing (irPhoto).
     readGen: 0, reading: null,
+    shown: null,                   // what irOpenVerify last drew: a Retake's form can be redrawn
   };
 
   function irCanDelete() {
@@ -29940,6 +29982,13 @@
     const f = input.files && input.files[0];
     input.value = '';
     if (!f) return;
+    // 🔑 A photo that arrives while the form is open is a Retake of THAT form. What the form
+    // holds — what was typed, its photo, what it was showing — goes with the read, so a retake
+    // that brings no read back gives the form back rather than an empty one.
+    const before = el('ir-modal').style.display === 'flex'
+      ? { fields: irReadFields(), photo: irState.photo, mediaType: irState.mediaType,
+          manual: irState.manual, shown: irState.shown }
+      : null;
     // A photo has arrived, so what it replaces can go — and not before (irRetake): any read
     // still in flight, and the form.
     irAbandonRead();
@@ -29947,7 +29996,8 @@
     irState.manual = false;
     // 🛑 Forget the last photo BEFORE decoding this one. psShrink rejects a file it cannot
     // decode, and the empty form that follows must not show — or upload — the previous one
-    // (bin-dump-4, fixed the same way).
+    // (bin-dump-4, fixed the same way). A Retake keeps its own form's photo in `before`, and
+    // only that form ever gets it back.
     irState.photo = null; irState.mediaType = null;
     const isBol = irState.mode === 'bol';
     // 🛑 #ir-reading lives on the RECEIVE pane. A manager adding a pallet to a truck they
@@ -29956,7 +30006,7 @@
     // dead-button failure irPick's own error path exists for. Say it where they are looking.
     const detail = irState.opFrom === 'detail';
     const gen = ++irState.readGen;
-    const read = irState.reading = { ctl: null, why: '', detail };
+    const read = irState.reading = { ctl: null, why: '', detail, before };
     if (detail) irSetDetStatus('Reading tag…', 'ok');
     el('ir-det-read-cancel').hidden = !detail;
     if (detail) el('ir-det-readline').scrollIntoView({ block: 'nearest' });
@@ -29986,9 +30036,18 @@
       irOpenVerify(j, null);
     } catch (e) {
       if (gen !== irState.readGen) return;          // cancelled or abandoned: nothing to report
+      const list = isBol ? IR_BOL_FIELDS : IR_TAG_FIELDS;
+      // 🛑 A Retake that brings no read back must not cost its form. If the new photo opened,
+      // it stays — the tag can still be read off it — beside the fields as they were; if it
+      // would not open, the form comes back exactly as it was.
+      if (read.before) {
+        const why = read.why === 'timeout' ? 'The reader took too long' : `Couldn't read it — ${(e && e.message) || e}`;
+        if (irState.photo) irOpenVerify({ fields: read.before.fields, read: 0, of: list.length }, `${why}. The fields are as they were.`);
+        else irRestoreForm(read.before, `${why}. The form is as it was.`);
+        return;
+      }
       // ⚠️ A failed read must not cost the truck. Open the form empty and editable so a
       // torn BOL or a glare-blown tag can still be keyed in by hand, and say what broke.
-      const list = isBol ? IR_BOL_FIELDS : IR_TAG_FIELDS;
       irOpenVerify({ fields: {}, read: 0, of: list.length },
         read.why === 'timeout'
           ? 'The reader took too long — type it in, or retake the photo.'
@@ -30032,11 +30091,26 @@
   function irCancelRead() {
     const read = irAbandonRead();
     if (!read) return;
+    // A Retake's read goes back to its form, as it was: the button that started it is Retake.
+    if (read.before) {
+      irRestoreForm(read.before);
+      try { el('ir-m-retake').focus(); } catch (e) { /* not focusable */ }
+      return;
+    }
     const back = read.detail ? el('ir-det-scan')
       : irState.truck ? el('ir-btn-pallet') : document.querySelector('#ir-begin .ir-primary');
     try { back.focus(); } catch (e) { /* not focusable */ }
   }
   window.irCancelRead = irCancelRead;
+
+  // Give a Retake's form back as it was when its photo arrived (irPhoto's `before`): its photo
+  // and typed fields, and what it was showing — the read line, the warning — redrawn the way
+  // irOpenVerify always draws it. A `warn` passed in says why it came back.
+  function irRestoreForm(before, warn) {
+    irState.photo = before.photo; irState.mediaType = before.mediaType; irState.manual = before.manual;
+    const shown = before.shown || {};
+    irOpenVerify({ ...(shown.j || {}), fields: before.fields }, warn === undefined ? shown.warn : warn);
+  }
 
   // ── Verify popup ──────────────────────────────────────────────────────────
   // 🛑 `manual` decides whether a BLANK means anything. An empty field is a failure only
@@ -30058,6 +30132,7 @@
   }
 
   function irOpenVerify(j, warn) {
+    irState.shown = { j, warn };
     const isBol = irState.mode === 'bol';
     const manual = !!irState.manual;
     const list = isBol ? IR_BOL_FIELDS : IR_TAG_FIELDS;
