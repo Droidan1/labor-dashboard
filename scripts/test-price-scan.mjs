@@ -2232,7 +2232,9 @@ console.log('Price Scan');
 // \🔑 A SHELF LABEL IS NOT A PRICE OVERRIDE. It carries the code and the retail price that
 // merch-scan already computed -- and merch-scan requires canSeeFinancials, with the comment
 // "Managers use this on the floor, so it cannot be admin-only." The sticker now matches the
-// scan that produces it instead of out-ranking it. Still never staff.
+// scan that produces it instead of out-ranking it. Staff reach it only as an associate
+// holding Price Scan at EDIT (2026-09-30) — through requirePage, which passes every
+// financial role exactly as canSeeFinancials did. test-associate drives that for real.
 {
   const worker = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
   const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
@@ -2244,11 +2246,12 @@ console.log('Price Scan');
     const at = worker.indexOf(`url.searchParams.get("action") === "${action}"`);
     ok(at > 0, `${action} has a handler`);
     const gate = codeOnly(worker.slice(at, at + 1400));
-    ok(/if \(!isAdminSecret && !canSeeFinancials\(currentUser\)\)/.test(gate),
-       `\🔑 ${action} gates on canSeeFinancials -- the gate the scan itself uses`);
+    ok(/requirePage\(currentUser, isAdminSecret, "merch-scan", "edit", corsJson\)/.test(gate),
+       `\🔑 ${action} gates on the Price Scan page at edit -- a financial role passes as before`);
     ok(!/requireAdminAccess/.test(gate),
        `\🛑 …and no longer on requireAdminAccess, which is superuser+admin only`);
-    ok(/NEED_MANAGER/.test(gate), `…refusing with NEED_MANAGER, which the screen can explain`);
+    ok(new RegExp(`\\["${action}",\\s*\\["merch-scan",\\s*"edit"\\]\\]`).test(worker),
+       `…and ACTION_PAGE agrees, so the gate and the handler ask the same question`);
   }
 
   // Extract the REAL role set rather than restating it: a harness that reimplements the

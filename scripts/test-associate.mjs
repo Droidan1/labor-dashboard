@@ -689,5 +689,129 @@ const cipherOf = (db, id) => db.prepare('SELECT pin_cipher c FROM users WHERE id
   ok(/additionalData/.test(enc), 'and binds the ciphertext to the user id');
 }
 
+// ── Price Scan (2026-09-30) ────────────────────────────────────────────────
+// Brian's decisions: an associate granted Price Scan sees the SAME scan a manager does
+// (cost, GP %, ASP included); printing is the EDIT level; and the manager-only controls —
+// override, new Clover price points, the label design, furniture, pricing by hand — stay
+// closed at every level. Driven through worker.fetch with a real associate session.
+{
+  const { db, env } = env0();
+  for (const m of ['migration-041.sql', 'migration-042.sql', 'migration-043.sql', 'migration-056.sql'])
+    db.exec(fs.readFileSync(path.join(repo, m), 'utf8'));
+  applyMigrationAlters(db, repo);
+  const SNACKS = 'FG BL CONSUMABLES - FOOD - SNACKS';
+  const su = (action, body) => call(`/?action=${action}`, { user: 'u-su', method: 'POST', body, env });
+  await su('merch-criteria-draft', { cells: [
+    { category: null, field: 'price_cap_pct_retail', value: '50' },
+    { category: null, field: 'min_gross_margin_pct', value: '30' },
+  ]});
+  await su('merch-criteria-publish', { note: 'associate price scan' });
+  await env.SALES_SNAPSHOTS.put('category-costs:global', JSON.stringify({ costs: { [SNACKS]: 0.81 } }));
+  // Fully cached, so the scan touches only D1/KV — blockNetwork() would fail anything else.
+  const now = new Date().toISOString();
+  db.prepare(`INSERT INTO item_cache (identifier, identifier_type, brand, title, size, l2, l3, l3_source,
+                retail_price, retail_source, retail_confidence, fetched_at, updated_at)
+              VALUES ('085239098745','upc','Good & Gather','Refried Black Beans','16oz',
+                      'Consumable Food',?,'claude',6.99,'target.com','medium',?,?)`).run(SNACKS, now, now);
+  await env.SALES_SNAPSHOTS.put('sticker:category-codes:BL1', JSON.stringify({
+    map: { [SNACKS]: '50007' }, field: 'code', at: now, codes: ['BL-50007-2_5', 'BL-50007-3'] }));
+
+  const view = await makeAssociate(env, { name: 'Vi Scan', pin: '314159', pages: { 'merch-scan': 'view' } });
+  const edit = await makeAssociate(env, { name: 'Ed Print', pin: '271828', pages: { 'merch-scan': 'edit' } });
+  const none = await makeAssociate(env, { name: 'No Scan', pin: '161803', pages: { 'bin-dump': 'edit' } });
+  eq(view.status, 200, 'an associate can be granted Price Scan — the page is grantable');
+  eq(edit.status, 200, '…at edit too');
+  const sV = (await signIn(env, 'Vi Scan', '314159')).sid;
+  const sE = (await signIn(env, 'Ed Print', '271828')).sid;
+  const sN = (await signIn(env, 'No Scan', '161803')).sid;
+  ok(sV && sE && sN, 'all three sign in');
+
+  const ask = async (sid, action, { method = 'POST', body } = {}) => {
+    const r = await worker.fetch(asSession(`/?action=${action}`, sid, { method, body }), env, ctx);
+    return { status: r.status, body: await json(r) };
+  };
+  const scan = { identifier: '085239098745' };
+
+  // The scan itself: view is enough, and the answer is the manager's answer.
+  const mgr = await call('/?action=merch-scan', { user: 'u-mgr1', method: 'POST', body: scan, env });
+  const mgrBody = await json(mgr);
+  eq(mgr.status, 200, 'a manager still scans');
+  const v = await ask(sV, 'merch-scan', { body: scan });
+  eq(v.status, 200, '🔑 an associate holding Price Scan at view can scan');
+  eq(v.body.price, mgrBody.price, '…and gets the price a manager gets');
+  eq(v.body.cost, mgrBody.cost, '🔑 …and, by Brian\'s decision, the same cost');
+  eq(v.body.gp_pct, mgrBody.gp_pct, '…and the same GP %');
+  ok(v.body.cost !== undefined && v.body.cost !== null, '…which is really there, not two absent fields agreeing');
+  const n = await ask(sN, 'merch-scan', { body: scan });
+  eq(n.status, 403, '🛑 an associate WITHOUT Price Scan cannot scan');
+  eq(n.body.code, 'NEED_PAGE_VIEW', '…and is told which page they lack');
+
+  // The label layout is read on page load at view, without an admin's email in it.
+  await call('/?action=sticker-template-set', { user: 'u-su', method: 'POST', env,
+    body: { op: 'save', name: 'Stock', template: {} } });
+  const tpl = await ask(sV, 'sticker-template', { method: 'GET' });
+  eq(tpl.status, 200, 'the label template reads at view');
+  ok(!JSON.stringify(tpl.body).includes('bhoward@bargainlane.com'),
+     '🛑 …and carries no admin email to an associate\'s phone');
+
+  // Printing is edit.
+  const ST = { store: 'BL1', l3: SNACKS, price: 2.5, code: 'BL-50007-2_5', title: 'Refried Black Beans' };
+  for (const [action, opts] of [['sticker-check', { body: { l3: SNACKS, price: 2.5, store: 'BL1' } }],
+                                ['sticker-printed', { body: ST }],
+                                ['sticker-history', { method: 'GET' }]]) {
+    const r = await ask(sV, action, opts);
+    eq(r.status, 403, `🛑 ${action} is refused at view — printing is the edit level`);
+    eq(r.body.code, 'NEED_PAGE_EDIT', `…saying edit is what is missing (${action})`);
+  }
+  const chk = await ask(sE, 'sticker-check', { body: { l3: SNACKS, price: 2.5, store: 'BL1' } });
+  eq(chk.status, 200, '🔑 at edit, sticker-check answers for their own store');
+  eq(chk.body.code, 'BL-50007-2_5', '…with the code the label will carry');
+  eq((await ask(sE, 'sticker-printed', { body: ST })).status, 200, '…the print is recorded');
+  const hist = await ask(sE, 'sticker-history', { method: 'GET' });
+  eq(hist.status, 200, '…and the reprint list reads');
+  eq((hist.body.prints || []).length, 1, '…holding exactly their own print');
+
+  // Their stores, not every store. A manager is not held to this — they print for other
+  // stores' shelves today, and this change must not narrow them.
+  const away = await ask(sE, 'sticker-check', { body: { l3: SNACKS, price: 2.5, store: 'BL4' } });
+  eq(away.status, 403, '🛑 an associate cannot check a label for a store not on their grant');
+  eq(away.body.code, 'NO_STORE_ACCESS', '…and is told it is the store');
+  eq((await ask(sE, 'sticker-printed', { body: { ...ST, store: 'BL4' } })).status, 403,
+     '🛑 …nor record a print there');
+  const mgrAway = await call('/?action=sticker-check', { user: 'u-mgr1', method: 'POST', env,
+    body: { l3: SNACKS, price: 2.5, store: 'BL4' } });
+  ok(mgrAway.status !== 403, 'a BL1 manager can still check a BL4 label, exactly as before');
+
+  // 🛑 What no grant reaches, at any level.
+  for (const action of ['merch-scan-save', 'sticker-create-price-point', 'sticker-template-set',
+                        'sticker-mark-image', 'merch-manual-price', 'furniture-identify', 'furniture-save',
+                        'merch-product-save']) {
+    eq((await ask(sE, action, { body: {} })).status, 403, `🛑 ${action} stays closed to an associate at edit`);
+  }
+  for (const action of ['merch-categories', 'furniture-bands', 'merch-products', 'merch-velocity']) {
+    eq((await ask(sE, action, { method: 'GET' })).status, 403, `🛑 ${action} stays closed to an associate at edit`);
+  }
+}
+
+// 🔑 THE GATE AND THE HANDLER MUST ASK THE SAME QUESTION. The financial gate reads
+// ACTION_PAGE; each handler writes its page and level out again as literals. They agree
+// today, and nothing pinned it — a handler left at "view" behind a map entry at "edit" is
+// the gap that says yes quietly. Every entry, not just this change's.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const mapSrc = src.slice(src.indexOf('const ACTION_PAGE = new Map(['), src.indexOf(']);', src.indexOf('const ACTION_PAGE = new Map([')));
+  const entries = [...mapSrc.matchAll(/^\s*\["([a-z0-9-]+)",\s*\["([a-z0-9-]+)",\s*"(view|edit)"\]\]/gm)];
+  ok(entries.length >= 29, `ACTION_PAGE was read (${entries.length} entries)`);
+  for (const [, action, page, level] of entries) {
+    const at = src.indexOf(`url.searchParams.get("action") === "${action}"`);
+    ok(at > 0, `${action} has a handler`);
+    const next = src.indexOf('url.searchParams.get("action") ===', at + 10);
+    const body = src.slice(at, next > 0 ? next : at + 4000);
+    const lit = body.match(/(?:requirePage|canUsePage)\(currentUser, isAdminSecret, "([a-z0-9-]+)", "(view|edit)"/);
+    ok(lit && lit[1] === page && lit[2] === level,
+       `${action}: handler asks ${lit ? `${lit[1]}/${lit[2]}` : 'nothing'}, ACTION_PAGE says ${page}/${level}`);
+  }
+}
+
 console.log(failures ? `\n${failures} of ${assertions} FAILED` : `\n${assertions} passed, 0 failed`);
 process.exit(failures ? 1 : 0);

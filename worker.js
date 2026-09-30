@@ -14844,6 +14844,21 @@ const ACTION_PAGE = new Map([
   ["truck-pallet-log",    ["inventory-receiver", "edit"]],
   ["truck-down",          ["inventory-receiver", "edit"]],
   ["truck-pallet-update", ["inventory-receiver", "edit"]],
+  // Price Scan (Brian, 2026-09-30). An associate granted it sees the SAME scan result a
+  // manager does — our cost, GP % and ASP included. That was his call, made knowing the rest
+  // of this map exists to keep money off associates' screens; it is not an oversight.
+  // Printing is the edit level: view scans and reads the price, edit also prints and
+  // reprints. sticker-template is view because it is the label's layout, read on page load.
+  //
+  // 🛑 ABSENT on purpose, so no grant reaches them at any level: merch-scan-save (changing
+  // what an item is worth for every store), sticker-create-price-point (new Clover items),
+  // sticker-template-set / sticker-mark-image (the label design), merch-manual-price,
+  // merch-categories, furniture-*, merch-products / merch-product-save, merch-velocity.
+  ["merch-scan",       ["merch-scan", "view"]],
+  ["sticker-template", ["merch-scan", "view"]],
+  ["sticker-check",    ["merch-scan", "edit"]],
+  ["sticker-printed",  ["merch-scan", "edit"]],
+  ["sticker-history",  ["merch-scan", "edit"]],
 ]);
 
 // The closed set an admin may tick, DERIVED from the map above rather than
@@ -14873,6 +14888,15 @@ function requirePage(user, isAdminSecret, page, level, corsJson) {
     code: level === "edit" ? "NEED_PAGE_EDIT" : "NEED_PAGE_VIEW",
     page,
   }), { status: 403, headers: corsJson });
+}
+
+// An associate prints only for the stores on their grant. A FINANCIAL role is deliberately
+// not held to this: managers print labels for other stores' shelves today, and opening
+// Price Scan to associates must not narrow anything a manager already had.
+function associateStoreDenied(user, isAdminSecret, store, corsJson) {
+  if (isAdminSecret || canSeeFinancials(user) || canAccessStore(user, store)) return null;
+  return new Response(JSON.stringify({ error: "Forbidden for this store", code: "NO_STORE_ACCESS" }),
+    { status: 403, headers: corsJson });
 }
 
 // Who did this, for a history column. An associate's email is synthetic and is
@@ -23597,21 +23621,26 @@ export default {
     // GET ?action=sticker-template
     // Anyone who can print needs to read it, so this is the print gate, not the edit gate.
     if (url.searchParams.get("action") === "sticker-template" && request.method === "GET") {
-      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
-        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
-      }
+      // Read on page load by anyone who can scan — the label's layout, nothing about money.
+      const pageDenied = requirePage(currentUser, isAdminSecret, "merch-scan", "view", corsJson);
+      if (pageDenied) return pageDenied;
       try {
         const coll = await loadStickerTemplates(env);
         const markImage = await env.SALES_SNAPSHOTS?.get(STICKER_MARK_IMAGE_KEY, "json");
         // 🔑 `template: null` is a real answer, not a failure: nobody has saved one and the
         // caller should draw the defaults. Returning the defaults here instead would make
         // "never configured" and "configured back to stock" indistinguishable.
+        // 🔑 updatedBy is an admin's email, stamped on the active template, the list and the
+        // mark image alike. The template editor shows it; an associate's phone, which only
+        // reads the layout to print with, never receives it.
+        const scrub = (o) => (o && !(isAdminSecret || canSeeFinancials(currentUser)))
+          ? { ...o, updatedBy: undefined } : o;
         return new Response(JSON.stringify({
           ok: true,
-          template: activeStickerTemplate(coll),
+          template: scrub(activeStickerTemplate(coll)),
           active: coll.active || null,
-          templates: (coll.items || []).map(t => ({ id: t.id, name: t.name, updatedAt: t.updatedAt, updatedBy: t.updatedBy })),
-          markImage: markImage || null,
+          templates: (coll.items || []).map(t => scrub({ id: t.id, name: t.name, updatedAt: t.updatedAt, updatedBy: t.updatedBy })),
+          markImage: scrub(markImage || null),
           defaults: STICKER_TEMPLATE_DEFAULT,
           limits: { maxTemplates: STICKER_MAX_TEMPLATES, markMaxSide: STICKER_MARK_MAX_SIDE, markMaxBytes: STICKER_MARK_MAX_BYTES },
         }), { headers: corsJson });
@@ -23722,10 +23751,10 @@ export default {
       // an item is worth for every store. canSeeFinancials is the gate merch-scan already
       // requires to reach this screen at all ("Managers use this on the floor, so it cannot
       // be admin-only"), so the sticker now matches the scan that produces it rather than
-      // out-ranking it. Still narrower than business access: never staff.
-      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
-        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
-      }
+      // out-ranking it. Staff reach it only as an associate holding Price Scan at edit
+      // (ACTION_PAGE); requirePage passes every financial role exactly as before.
+      const pageDenied = requirePage(currentUser, isAdminSecret, "merch-scan", "edit", corsJson);
+      if (pageDenied) return pageDenied;
       try {
         const body = await request.json();
         const l3 = String(body?.l3 || "").trim();
@@ -23749,6 +23778,8 @@ export default {
             detail: "Pick the store you are printing for — sticker numbers are per store." }),
             { headers: corsJson });
         }
+        const storeDenied = associateStoreDenied(currentUser, isAdminSecret, store, corsJson);
+        if (storeDenied) return storeDenied;
         // 🔑 ASKED BEFORE CLOVER IS. This is a local D1 read and the sweep below is a
         // network round trip over the whole catalogue, so the cheap certain question goes
         // first — and "that buy is closed" is a sentence someone can act on, where "this
@@ -23848,10 +23879,10 @@ export default {
       // an item is worth for every store. canSeeFinancials is the gate merch-scan already
       // requires to reach this screen at all ("Managers use this on the floor, so it cannot
       // be admin-only"), so the sticker now matches the scan that produces it rather than
-      // out-ranking it. Still narrower than business access: never staff.
-      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
-        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
-      }
+      // out-ranking it. Staff reach it only as an associate holding Price Scan at edit
+      // (ACTION_PAGE); requirePage passes every financial role exactly as before.
+      const pageDenied = requirePage(currentUser, isAdminSecret, "merch-scan", "edit", corsJson);
+      if (pageDenied) return pageDenied;
       if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
       try {
         const body = await request.json();
@@ -23865,6 +23896,8 @@ export default {
           return new Response(JSON.stringify({ error: "A print record needs a store, category, price and code" }),
             { status: 400, headers: corsJson });
         }
+        const storeDenied = associateStoreDenied(currentUser, isAdminSecret, store, corsJson);
+        if (storeDenied) return storeDenied;
         // 🔑 The street price is stored, not re-derived. sticker-check never returns it and
         // the history row is all a reprint has, so without this column a reprint would draw a
         // label MISSING a field the original had -- two different stickers for one shelf.
@@ -25932,10 +25965,10 @@ export default {
       // an item is worth for every store. canSeeFinancials is the gate merch-scan already
       // requires to reach this screen at all ("Managers use this on the floor, so it cannot
       // be admin-only"), so the sticker now matches the scan that produces it rather than
-      // out-ranking it. Still narrower than business access: never staff.
-      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
-        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
-      }
+      // out-ranking it. Staff reach it only as an associate holding Price Scan at edit
+      // (ACTION_PAGE); requirePage passes every financial role exactly as before.
+      const pageDenied = requirePage(currentUser, isAdminSecret, "merch-scan", "edit", corsJson);
+      if (pageDenied) return pageDenied;
       if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
       try {
         const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "8", 10) || 8, 1), 25);
@@ -25994,12 +26027,12 @@ export default {
       // Managers use this on the floor, so it cannot be admin-only. canSeeFinancials is
       // reused rather than a fresh list: the screen shows our COST and our margin, which
       // is exactly the data that set already governs — superuser, admin, executive,
-      // manager, never staff. When the worker role arrives it is one entry, in one place,
-      // and every other money surface stays consistent with it.
-      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
-        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }),
-          { status: 403, headers: corsJson });
-      }
+      // manager. The one door for staff is an associate's Price Scan grant (ACTION_PAGE,
+      // view), and they get the same answer a manager does — Brian's decision, 2026-09-30.
+      // requirePage passes every financial role exactly as the canSeeFinancials check it
+      // replaces did.
+      const pageDenied = requirePage(currentUser, isAdminSecret, "merch-scan", "view", corsJson);
+      if (pageDenied) return pageDenied;
       if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
       try {
         const body = await request.json();
