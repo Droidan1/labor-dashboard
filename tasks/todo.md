@@ -5163,6 +5163,8 @@ Answers captured up front, because three of them change who can write to product
 - [x] ⚠️ `^PQ` on continuous media (`^MNN`) is **unverified on the real ZD410**. psZpl's own
       comment records that a stale UNVERIFIED warning is worse than none — so this ships
       flagged, and Brian test-prints qty 3 before it is called done.
+      → 2026-09-30: verified BROKEN on the real printer (copies crept off the stickers);
+      switched to gap sensing, `^MNY`. Still owed: one qty-3 print after calibrating.
 
 ## 2 · Manual mode
 
@@ -8620,9 +8622,9 @@ Three real bugs surfaced along the way, all now fixed:
   price would be worse.
 - **Only BL1 has been exercised.** The map is derived per store, so the others should work,
   but nothing has proven it.
-- **Multi-label registration.** `^MNN` declares continuous media. If the 1x1 stock is
-  die-cut with gaps, `^MNY` is correct and labels will otherwise creep out of position.
-  One character, waiting on evidence rather than a guess.
+- ~~**Multi-label registration.**~~ ✅ 2026-09-30: the evidence arrived — a photographed
+  qty run with the price creeping off each sticker on plainly gapped stock. `^MNY` now.
+  Calibrate each printer to the roll once (ZD410: PAUSE + CANCEL for 2 s).
 - **Whether duplicates already exist in Clover** from the years the guard did nothing. A
   read-only scan would count items sharing a `code`; nobody has run it.
 

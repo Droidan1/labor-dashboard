@@ -26396,7 +26396,14 @@
 
     const money = '$' + Number(price).toFixed(2);
     const qr = f('qr'), mark = f('mark'), cd = f('code'), pr = f('price'), rt = f('retail');
-    const out = ['^XA', '^PW203', '^LL203', '^MNN', '^LH0,0'];
+    // 🛑 ^MNY, NOT ^MNN. ^MNN told the printer the roll was CONTINUOUS paper, so it never
+    // looked for the gap between stickers: it fed exactly ^LL203 (1.000") per copy while a
+    // die-cut sticker plus its gap is about 1 1/8", and every copy in a ^PQ run landed ~1/8"
+    // further off than the last. Photographed 2026-09-30: the price walking up and off the
+    // sticker across one run, on stock with plainly visible gaps. ^MNY is gap ("web")
+    // sensing, so each copy starts at the top of its own sticker. The printer should be
+    // calibrated to the roll once after the change (ZD410: hold PAUSE + CANCEL 2 seconds).
+    const out = ['^XA', '^PW203', '^LL203', '^MNY', '^LH0,0'];
     // The QR is drawn unconditionally. It is the only part of the label the register reads,
     // and the worker refuses to store a template that turns it off; this agrees with that
     // rather than trusting it.

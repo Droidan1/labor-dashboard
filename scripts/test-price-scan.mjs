@@ -2932,7 +2932,9 @@ console.log('Price Scan');
   // The hardcoded label, transcribed from what it emitted before the template existed.
   const legacy = (code, price) => {
     const money = '$' + Number(price).toFixed(2);
-    return ['^XA', '^PW203', '^LL203', '^MNN', '^LH0,0',
+    // ^MNY since 2026-09-30 — the one line of the old label changed on purpose (gap
+    // sensing; see the block after this one). Everything else is still the old bytes.
+    return ['^XA', '^PW203', '^LL203', '^MNY', '^LH0,0',
       `^FO104,10^BQN,2,4^FDLA,${code}^FS`, '^FO12,18^A0N,74,74^FD$^FS',
       `^FO10,116^A0N,20,20^FD${code}^FS`, `^FO10,142^A0N,54,54^FD${money}^FS`, '^XZ'].join('\n');
   };
@@ -2942,6 +2944,14 @@ console.log('Price Scan');
   }
   eq(psZpl('BL-1-1', 1, { retail: 9.99 }, null), legacy('BL-1-1', 1),
      '\🔑 …even with a street price available, because that field ships OFF');
+
+  // \🛑 THE ROLL HAS GAPS. ^MNN (continuous) made every copy of a ^PQ run creep about 1/8"
+  // further off its sticker than the last — photographed on the store printer 2026-09-30.
+  // Gap sensing is what registers each copy to its own sticker, for one copy or fifty.
+  for (const q of [1, 3, 50]) {
+    const z = psZpl('BL-50008-2_5', 2.5, {}, null, q);
+    ok(/\^MNY/.test(z) && !/\^MN[NM]/.test(z), `\🔑 gap-sensing media, never continuous (qty ${q})`);
+  }
 
   // \🛑 NO STREET PRICE IS A NORMAL ANSWER. "No street price found" is a real scan outcome
   // and every row printed before the column existed has none. It must vanish, not print
