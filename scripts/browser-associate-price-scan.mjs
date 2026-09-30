@@ -13,7 +13,8 @@
 // the last is the failure this page would otherwise ship with: Manual and Furniture were
 // ungated buttons that open onto "Forbidden" for anyone without a financial role.
 // Decisions pinned (Brian, 2026-09-30): same scan as a manager, cost included; printing is
-// the EDIT level; overrides, new price points, manual and furniture pricing stay managers'.
+// the EDIT level, and so is the Override (price, retail, category — "like managers"); new
+// price points, manual and furniture pricing stay managers'.
 let chromium;
 try {
   ({ chromium } = await import('playwright-core'));
@@ -49,19 +50,24 @@ const SCAN = { ok: true, identifier: '078000035421', identifier_type: 'upc', tit
   brand: 'Canada Dry', size: '12pk', l2: 'Consumable Food', l3: 'FG BL CONSUMABLES - FOOD - BEVERAGES',
   retail: 6.99, retail_source: 'set by hand', retail_confidence: 'high', retail_overridden: true,
   asp: 2.43, cost: 0.81, price: 4.00, price_basis: 'set by hand', price_overridden: true,
-  gp_pct: 79.8, below_gp_floor: false, gp_floor_pct: 30, flags: [], categories: [],
+  gp_pct: 79.8, below_gp_floor: false, gp_floor_pct: 30, flags: [],
+  categories: [{ key: 'Consumable Food', label: 'Consumable Food', children: [
+    { key: 'FG BL CONSUMABLES - FOOD - BEVERAGES', label: 'Beverages' },
+    { key: 'FG BL CONSUMABLES - FOOD - SNACKS', label: 'Snacks' }] }],
   from_cache: true, looked_up: false, from_photo: false, manifest: null };
 
 function mocks({ who, SCAN }) {
   try { localStorage.setItem('bioPromptDismissed', '1'); localStorage.setItem('coachTipsDisabled', '1'); } catch (e) {}
-  window.__calls = [];
+  window.__calls = []; window.__saved = [];
   const J = (x, status = 200) => new Response(JSON.stringify(x), { status, headers: { 'content-type': 'application/json' } });
   window.fetch = async (u, o = {}) => {
     const action = new URL(String(u), location.href).searchParams.get('action');
     window.__calls.push(action);
+    if (action === 'merch-scan-save') { try { window.__saved.push(JSON.parse(o.body)); } catch (e) {} }
     switch (action) {
       case 'auth-me': return J(who);
       case 'merch-scan': return J(SCAN);
+      case 'merch-scan-save': return J({ ok: true, identifier: SCAN.identifier });
       case 'sticker-template': return J({ ok: true, template: null, markImage: null });
       case 'sticker-history': return J({ ok: true, prints: [] });
       case 'sticker-check': return J(window.__noCloverItem
@@ -97,7 +103,7 @@ async function scan(page) {
 }
 const ASSOC = (pages) => ({ authenticated: true, email: 'assoc_42@associate.invalid', name: 'Ed Print',
   role: 'staff', associate: true, pages, stores: ['BL1'], businesses: ['bl'] });
-const MANAGER_ONLY = ['merch-categories', 'furniture-bands', 'sticker-create-price-point', 'merch-scan-save', 'ob-buy-list'];
+const MANAGER_ONLY = ['merch-categories', 'furniture-bands', 'sticker-create-price-point', 'ob-buy-list'];
 // One scenario per section. A wait that times out is a FAILED check and the run goes on —
 // a crash would hide every check after it.
 const live = new Set();
@@ -121,7 +127,19 @@ await section('1. An associate at EDIT', async () => {
   await scan(page);
   const card = await page.textContent('#ps-result');
   check(/\$0\.81/.test(card) && /79\.8% GP/.test(card), '🔑 the scan shows cost and GP, as it does for a manager');
-  check(!/Override price or retail/.test(card), '🛑 …but no Override — that is the manager right');
+  check(/Override price or retail/.test(card), '🔑 edit overrides like a manager: the Override button is there');
+  check(await shown(page, '#ps-result .ps-link[onclick="psOverride()"]'), '…and the category\'s Change link');
+  // Drive the editor: pick a category, set our price, save — the body is what the worker gets.
+  await page.click('text=Override price or retail');
+  await page.waitForSelector('#ps-e-l3', { timeout: 3000 });
+  await page.selectOption('#ps-e-l3', 'FG BL CONSUMABLES - FOOD - SNACKS');
+  await page.fill('#ps-e-price', '3.50');
+  await page.click('#ps-edit >> text=Save');
+  await page.waitForFunction(() => window.__saved.length === 1, null, { timeout: 4000 });
+  const saved = (await page.evaluate(() => window.__saved))[0];
+  check(saved.l3 === 'FG BL CONSUMABLES - FOOD - SNACKS' && saved.suggested_price === '3.50',
+        `🔑 the override posts the category and price they chose (${JSON.stringify(saved)})`);
+  check(!/Could not save/.test(await page.textContent('#page-merch-scan')), '…and saves without an error');
   check(await shown(page, '#ps-print'), '🔑 edit prints: the Print button is there');
   check(await shown(page, '#ps-tab-reprint'), '…and the Reprint tab');
   check(!(await shown(page, '#ps-ob')), '…but no Buy picker without Opportunity Buys');
@@ -147,6 +165,8 @@ await section('2. An associate at VIEW', async () => {
   check(await shown(page, '#page-merch-scan'), 'an associate at view lands on Price Scan too');
   await scan(page);
   check(!(await shown(page, '#ps-print')), '🛑 view does not print: no Print button');
+  check(!/Override price or retail/.test(await page.textContent('#ps-result')), '🛑 …and does not override');
+  check(!(await shown(page, '#ps-result .ps-link[onclick="psOverride()"]')), '…nor get the category\'s Change link');
   check(!(await shown(page, '#ps-tab-reprint')), '…and no Reprint tab');
   const calls = await page.evaluate(() => window.__calls);
   check(!calls.includes('sticker-check') && !calls.includes('sticker-history'),

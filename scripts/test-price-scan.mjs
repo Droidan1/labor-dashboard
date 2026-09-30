@@ -292,7 +292,7 @@ console.log('Price Scan');
 
   const fn = decomment(html.slice(html.indexOf('function psCanOverride('),
                         html.indexOf('}', html.indexOf('function psCanOverride(')) + 1));
-  ok(/canSeeFinancials\(currentUser\)/.test(fn),
+  ok(/canSeeFinancials\(currentUser\) \|\| pageLevel\('merch-scan'\) >= 2/.test(fn),
      '🛑 …and the browser asks the SAME question, so the control matches what will be accepted');
   ok(!/superuser/.test(fn),
      '…rather than the role list it used to hardcode');
@@ -2300,10 +2300,17 @@ console.log('Price Scan');
   // `canSee` below is the REAL canSeeFinancials, lifted out of worker.js above -- so this
   // exercises the actual composition rather than a stand-in that could agree while
   // production disagrees.
-  const overrideFor = (role) => {
+  // The REAL client pageLevel, lifted out of index.html the same way, so an associate's
+  // grant is read exactly as the page reads it.
+  const plConst = (html.match(/const PAGE_LEVEL_N = \{[^}]*\};/) || [])[0];
+  const plFn = (html.match(/function pageLevel\(page, user\) \{[\s\S]*?\n  \}/) || [])[0];
+  ok(plConst && plFn, 'the client pageLevel is extractable from index.html');
+  const overrideFor = (role, pages) => {
     try {
+      const user = { ...U(role), ...(pages ? { pages, associate: true } : {}) };
+      const pageLevel = new Function('currentUser', `${plConst}\n${plFn}\nreturn pageLevel;`)(user);
       return !!buildOrStub('psCanOverride', ovr + '\n  }',
-        ['currentUser', 'canSeeFinancials'], [U(role), canSee], 'psCanOverride')();
+        ['currentUser', 'canSeeFinancials', 'pageLevel'], [user, canSee, pageLevel], 'psCanOverride')();
     } catch (e) { return `threw: ${e.message}`; }
   };
   eq(overrideFor('manager'), true,
@@ -2311,6 +2318,10 @@ console.log('Price Scan');
   eq(overrideFor('staff'), false,
      '🛑 …and staff still may NOT. This widened the gate, it did not remove it');
   eq(overrideFor('admin'), true, '…and everyone who already could, still can');
+  eq(overrideFor('staff', { 'merch-scan': 'edit' }), true,
+     '🔑 an associate holding Price Scan at EDIT may override — Brian, 2026-09-30');
+  eq(overrideFor('staff', { 'merch-scan': 'view' }), false, '🛑 …but not at view');
+  eq(overrideFor('staff', { 'bin-dump': 'edit' }), false, '🛑 …and edit on some OTHER page is not it');
   ok(/\$\{psCanOverride\(\) \? '<button class="ps-link" onclick="psOverride\(\)"/.test(html),
      '\🔑 …and still guards the price override, which did NOT move');
   ok(/case 'NEED_MANAGER':/.test(html),

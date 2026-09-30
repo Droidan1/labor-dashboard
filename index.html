@@ -27504,9 +27504,11 @@
   // nothing about the gap between them.
   //
   // What this grants, said plainly: a manager can now change what an item is worth for
-  // every store, permanently. Staff still cannot — canSeeFinancials never admits them.
+  // every store, permanently. Staff cannot — except an associate holding Price Scan at EDIT,
+  // whom Brian asked (2026-09-30) to "edit prices and categories like managers". The worker
+  // puts merch-scan-save at merch-scan edit in ACTION_PAGE; this is the same question.
   function psCanOverride() {
-    return canSeeFinancials(currentUser);
+    return canSeeFinancials(currentUser) || pageLevel('merch-scan') >= 2;
   }
 
   // 🔑 ONE FORM, OPENED STRAIGHT. This used to be a uiPrompt asking for the STREET
@@ -37454,7 +37456,10 @@
         : `Signs in with a name and code. Sees ${what}, at ${where}. Nothing else — no dashboard, no sales.`
           // Brian chose (2026-09-30) that Price Scan shows associates what it shows managers.
           // Said here, at the moment of granting, because the sentence above is otherwise untrue.
-          + (picked.some(t => t.startsWith('Price Scan')) ? ' Price Scan also shows our cost, GP % and ASP.' : '');
+          + (picked.includes('Price Scan (edit)')
+            ? ' Price Scan also shows our cost, GP % and ASP — and at edit they can print stickers'
+              + ' and change an item\'s price and category for every store.'
+            : picked.some(t => t.startsWith('Price Scan')) ? ' Price Scan also shows our cost, GP % and ASP.' : '');
   }
 
   function openAssociateModal(id) {
