@@ -2269,8 +2269,8 @@ console.log('Price Scan');
   ok(!canSee(null), '…and not an unauthenticated caller');
 
   // The front end must ask the same question, under its own name.
-  ok(/function psCanPrint\(\) \{ return canSeeFinancials\(currentUser\); \}/.test(html),
-     'the screen mirrors the worker gate rather than inventing a second role list');
+  ok(/function psCanPrint\(\) \{ return canSeeFinancials\(currentUser\) \|\| pageLevel\('merch-scan'\) >= 2; \}/.test(html),
+     'the screen mirrors the worker gate — financial roles, or Price Scan at edit — rather than inventing a second role list');
   const row = sliceOrNull(html, '  function psStickerRow(j) {', '  function psStickerCheck');
   ok(/if \(!psCanPrint\(\)\) return ''/.test(row || ''),
      'the Print button is offered on the print right');

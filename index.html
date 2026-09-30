@@ -13124,9 +13124,10 @@
     if (managerPages.includes(page)) {
       const role = currentUser && currentUser.role;
       // Mirrors canSeeFinancials on the worker: this screen shows our cost and margin.
-      // Staff are excluded until the worker role exists — one entry, in both places.
+      // The one other door is an associate's Price Scan grant (2026-09-30) — the worker
+      // admits the same people through ACTION_PAGE.
       const allowed = ['superuser', 'admin', 'executive', 'manager'];
-      if (!allowed.includes(role)) return;
+      if (!allowed.includes(role) && pageLevel('merch-scan') < 1) return;
     }
     if (adminOnly.includes(page)) {
       const role = currentUser && currentUser.role;
@@ -24848,6 +24849,11 @@
     // every iPhone — 4 of the 6 installed devices — which is why it looked missing.
     el('ps-photo').value = '';
     psStopScan();   // never re-enter the page with a camera still running
+    // Manual and Furniture price things by hand, which the worker keeps to financial
+    // roles. Offered to an associate, each would open onto a "Forbidden".
+    for (const id of ['ps-manual', 'ps-furniture']) {
+      const b = el(id); if (b) b.style.display = canSeeFinancials(currentUser) ? '' : 'none';
+    }
     psTabName = 'scan';   // and never on a tab the last visit left behind
     psApplyTab();
     psTplLoad();          // never blocks a scan: null just means the stock label
@@ -26051,7 +26057,9 @@
     let why;
     if (j.price === null || j.price === undefined) {
       why = missFlag
-        ? MISS_WHY[missFlag] + ' Set the retail price by hand and every future scan of this item is instant.'
+        ? MISS_WHY[missFlag] + (psCanOverride()
+            ? ' Set the retail price by hand and every future scan of this item is instant.'
+            : ' A manager can set its retail price by hand.')
         : 'Nothing to price from — no street retail found, and no sales history for this category.';
     } else if (j.price_basis === "the buy's manifest") {
       // 🔑 Brian's sheet, not a derivation. Said plainly, because a price nobody can
@@ -26313,7 +26321,9 @@
         // "make this a pop up and not a small buttton." The .ps-link it used to be sat
         // inline under a red sentence and read as a footnote — the one actionable control
         // on a dead-end message, styled like the least important thing on the card.
-        : a.reason === 'no clover item' && psCanPrint()
+        // Creating Clover items at every store is a manager's call, not a printer's: an
+        // associate who can print still never gets this button (sticker-create-price-point).
+        : a.reason === 'no clover item' && canSeeFinancials(currentUser)
           ? `${psEsc(a.detail)}
              <button class="ps-btn ghost" type="button" style="margin-top:9px"
                      onclick="psCreatePricePoint()">Add it to inventory at every store</button>`
@@ -26341,6 +26351,11 @@
         return 'Printing stickers needs an admin account.';
       case 'NO_FINANCIAL_ACCESS':
         return 'Your account cannot see cost data, so it cannot check sticker codes.';
+      case 'NEED_PAGE_EDIT':
+      case 'NEED_PAGE_VIEW':
+        return 'Printing stickers needs Price Scan at "edit" — ask a manager to change your access.';
+      case 'NO_STORE_ACCESS':
+        return 'You can print stickers only for your own store. Pick it above.';
     }
     if (status === 401) return 'Your session has expired — sign in again.';
     if (status === 403) return 'The sticker check was refused, and did not say why.';
@@ -27356,7 +27371,10 @@
     // buy is putting a label on a shelf. Opening a buy is a separate, stricter right the
     // worker owns; this button never offers that.
     const obBtn = el('ps-ob');
-    if (obBtn) obBtn.style.display = psCanPrint() ? '' : 'none';
+    // An associate also needs Opportunity Buys itself: ob-buy-list belongs to that page in
+    // the worker, and a Price Scan grant does not reach it.
+    if (obBtn) obBtn.style.display = psCanPrint()
+      && (canSeeFinancials(currentUser) || pageLevel('opportunity-buys') >= 1) ? '' : 'none';
     const n = el('ps-tab-reprint-n');
     if (n) n.textContent = psRecent.length ? String(psRecent.length) : '';
     if (!psRecent.length) {
@@ -27465,7 +27483,9 @@
   // print stickers all day saw no Print button and no Reprint tab. Different jobs, different
   // rights. This mirrors the worker's canSeeFinancials, which merch-scan already requires to
   // reach this screen at all -- so the sticker matches the scan that produced it.
-  function psCanPrint() { return canSeeFinancials(currentUser); }
+  // An associate holding Price Scan at EDIT prints too (2026-09-30) — the worker's
+  // ACTION_PAGE puts sticker-check/-printed/-history at merch-scan edit.
+  function psCanPrint() { return canSeeFinancials(currentUser) || pageLevel('merch-scan') >= 2; }
 
   // 🛑 THIS MOVED WITH THE WORKER, NOT AHEAD OF IT. merch-scan-save was widened from
   // requireAdminAccess to canSeeFinancials on Brian's instruction (2026-09-21: managers get
@@ -35037,6 +35057,9 @@
     { id: 'inventory-receiver', label: 'Inventory Receiver', nav: 'nav-inventory-receiver' },
     { id: 'mos', label: 'Mark Out of Stock', nav: 'nav-mos' },
     { id: 'opportunity-buys', label: 'Opportunity Buys', nav: 'nav-opportunity-buys' },
+    // Last on purpose: landingPageFor picks the FIRST granted page, so appending leaves every
+    // existing associate's front door where it was.
+    { id: 'merch-scan', label: 'Price Scan', nav: 'nav-merch-scan' },
   ];
   // Mirrors PAGE_LEVELS in worker.js. The worker is the real gate; this only
   // stops the UI offering what the API would refuse.
@@ -36411,17 +36434,21 @@
     for (const p of GRANTABLE_PAGES) {
       if (pageLevel(p.id, user) > 0) el(p.nav)?.classList.remove('hidden');
     }
-    // Every grantable page now lives INSIDE the Inventory group, so un-hiding the
-    // child is not enough on its own: the subtraction above hid the group wrapper and
-    // the header (the header carries .nav-item), and #nav-inventory-sub ships closed.
-    // Without this an associate granted Bin Dump gets an empty sidebar. Derived from
-    // what is actually visible rather than from a second copy of the page list, so a
-    // future child added to the group is covered without editing this.
-    const invSub = el('nav-inventory-sub');
-    if (invSub && invSub.querySelector('.nav-subitem:not(.hidden)')) {
-      el('nav-inventory-group')?.classList.remove('hidden');
-      el('nav-inventory')?.classList.remove('hidden');
-      if (typeof toggleInventoryMenu === 'function') toggleInventoryMenu(true);
+    // Every grantable page lives INSIDE a group — Inventory, and since Price Scan,
+    // Merchandising — so un-hiding the child is not enough on its own: the subtraction
+    // above hid the group wrapper and the header (the header carries .nav-item), and each
+    // sub-list ships closed. Without this an associate granted Bin Dump gets an empty
+    // sidebar. Derived from what is actually visible rather than from a second copy of
+    // the page list, so a future child added to either group is covered without editing
+    // this; a page in a third group needs one more row here.
+    for (const [sub, group, header, open] of [
+      ['nav-inventory-sub', 'nav-inventory-group', 'nav-inventory', window.toggleInventoryMenu],
+      ['nav-merch-sub', 'nav-merch-group', 'nav-merch', window.toggleMerchMenu],
+    ]) {
+      if (!el(sub)?.querySelector('.nav-subitem:not(.hidden)')) continue;
+      el(group)?.classList.remove('hidden');
+      el(header)?.classList.remove('hidden');
+      if (typeof open === 'function') open(true);
     }
     // The badge is the name a pallet gets logged under. On a shared phone that is
     // the one thing worth showing — it is how the next person knows to sign out.
@@ -37417,7 +37444,10 @@
       ? 'Pick at least one store — without one they can sign in but cannot log anything.'
       : !picked.length
         ? `They will sign in and see nothing. Tick a page to give them something to open.`
-        : `Signs in with a name and code. Sees ${what}, at ${where}. Nothing else — no dashboard, no sales.`;
+        : `Signs in with a name and code. Sees ${what}, at ${where}. Nothing else — no dashboard, no sales.`
+          // Brian chose (2026-09-30) that Price Scan shows associates what it shows managers.
+          // Said here, at the moment of granting, because the sentence above is otherwise untrue.
+          + (picked.some(t => t.startsWith('Price Scan')) ? ' Price Scan also shows our cost, GP % and ASP.' : '');
   }
 
   function openAssociateModal(id) {
