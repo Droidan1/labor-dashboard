@@ -465,7 +465,6 @@ with no callers. `sales-diag` covers the same ground; the rest is in git.
 ├── scripts/build.sh      ← Cloudflare Pages build: copies static
 │                           assets to dist/, runs tailwindcss, rewrites
 │                           API base on non-main branches
-├── html/                 ← per-store reference pages
 ├── docs/                 ← internal preview/notification mockups
 └── CNAME                 ← GitHub Pages domain (www.retjghub.com)
 ```

@@ -724,7 +724,9 @@ mobile. The original handoff left this range unspecified.
 - `scripts/build.sh` is run by Cloudflare Pages on every push to a
   branch attached to a Pages project. It:
   1. Copies the static frontend (`index.html`, `sw.js`,
-     `manifest.json`, icons, `BLlogo.svg`, `html/*`) into `dist/`.
+     `manifest.json`, icons, `BLlogo.svg`) into `dist/`. Nothing under
+     `html/` ships: those were store sales/cost exports, and were public
+     until 2026-09-30.
   2. **Runs `npx tailwindcss` to regenerate `dist/tailwind.css`**
      from `tailwind.config.js`. Don't rely on the committed root
      `tailwind.css` — it'll go stale.

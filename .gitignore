@@ -1,5 +1,9 @@
 node_modules/
 .DS_Store
+
+# Spreadsheet exports (store sales, costs, gross profit). This repo is PUBLIC and build.sh
+# once published everything under html/ to the live site — never commit them again.
+html/
 dist/
 _preview/
 

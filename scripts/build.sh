@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 rm -rf dist
-mkdir -p dist/html
+mkdir -p dist
 
 # ⚠️ This is an explicit allowlist — a new asset that isn't listed here is
 # committed to the repo but NEVER reaches production, and 404s silently.
@@ -33,8 +33,11 @@ cp fonts/*.ttf fonts/*.txt dist/fonts/
 echo "Building tailwind.css from tailwind.config.js…"
 npx tailwindcss -i tailwind.input.css -o dist/tailwind.css --minify
 
-# Per-store pages + their stylesheet (filenames contain spaces).
-find html -type f ! -name '.DS_Store' -exec cp {} dist/html/ \;
+# 🛑 NOTHING FROM html/ SHIPS. It used to be copied here wholesale ("per-store pages"): Google
+# Sheets exports of each store's L2 summary — quantity sold, net sales, cost, gross profit,
+# GPM% — served to anyone at www.retjghub.com/html/*.html with no sign-in, and by every
+# Cloudflare Pages preview. Removed 2026-09-30; html/ is gitignored so an export dropped
+# there cannot be committed again. scripts/test-shell-cache.mjs fails if this comes back.
 
 # Non-production Pages builds talk to the staging API, not prod.
 # CF_PAGES_BRANCH is set by Cloudflare Pages; production branch is `main`.

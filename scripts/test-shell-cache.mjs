@@ -63,8 +63,8 @@ const expand = src => {
   return fs.readdirSync(path.join(repo, dir)).filter(f => re.test(f)).map(f => path.posix.join(dir, f));
 };
 for (const line of build.split('\n')) {
-  // A `cp` that starts a command. The `find html … -exec cp` line is not one, and nothing
-  // under html/ is precached.
+  // A `cp` that starts a command. Nothing under html/ is precached — or shipped at all
+  // (asserted below).
   const m = line.match(/(?:^|&&\s*)cp\s+([^;&|]+)/);
   if (!m) continue;
   const args = m[1].trim().split(/\s+/).filter(a => !a.startsWith('-'));
@@ -88,6 +88,16 @@ for (const p of precache) {
   ok(shipped.has(rel), `${p} is precached but build.sh never copies it to dist/, so every install would fail`);
   if (fromRepo.has(rel)) ok(fs.existsSync(path.join(repo, fromRepo.get(rel))), `${p} is precached but ${fromRepo.get(rel)} is not in the repo`);
 }
+
+// 🛑 NOTHING FROM html/ IS PUBLISHED. build.sh used to copy html/ into dist/ wholesale: store
+// sales, cost and gross-profit exports, public at www.retjghub.com/html/ and on every
+// Cloudflare preview (found and removed 2026-09-30). Read the way the loop above reads it.
+console.log('No store exports ship');
+const buildCode = build.split('\n').filter(l => !/^\s*#/.test(l)).join('\n');
+ok(!/(^|[\s'"])html\//m.test(buildCode) && !/find\s+html\b/.test(buildCode) && !/dist\/html/.test(buildCode),
+   '🛑 build.sh copies nothing from html/ into dist/');
+ok(/^html\/$/m.test(fs.readFileSync(path.join(repo, '.gitignore'), 'utf8')),
+   '…and html/ is gitignored, so a local export dropped there cannot be committed');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
