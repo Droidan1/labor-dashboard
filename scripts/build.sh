@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 rm -rf dist
-mkdir -p dist/html
+mkdir -p dist
 
 # ⚠️ This is an explicit allowlist — a new asset that isn't listed here is
 # committed to the repo but NEVER reaches production, and 404s silently.
@@ -28,8 +28,7 @@ cp index.html sw.js manifest.json \
 echo "Building tailwind.css from tailwind.config.js…"
 npx tailwindcss -i tailwind.input.css -o dist/tailwind.css --minify
 
-# Per-store pages + their stylesheet (filenames contain spaces).
-find html -type f ! -name '.DS_Store' -exec cp {} dist/html/ \;
+# 🛑 NOTHING FROM html/ SHIPS — store sales/cost exports, public until 2026-09-30. See main.
 
 # Non-production Pages builds talk to the staging API, not prod.
 # CF_PAGES_BRANCH is set by Cloudflare Pages; production branch is `main`.

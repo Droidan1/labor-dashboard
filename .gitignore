@@ -16,3 +16,6 @@ _preview/
 
 # Playwright CLI scratch.
 .playwright-cli/
+
+# Store sales/cost spreadsheet exports — this repo is PUBLIC. Never commit them.
+html/
