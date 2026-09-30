@@ -2865,3 +2865,29 @@ exactly like an agent recovering.
    `Origin: https://example.com` added `example.com` to its accepted-hosts list on Brian's
    Mac. Rule 3 again: that probe did the damage the check was meant to rule out.
 </rules>
+
+---
+
+## The sidebar only fit on the screen it was built on (2026-09-30)
+
+"Can't scroll the side bar" on a store's Windows PC. The aside is `h-screen overflow-hidden`,
+and its nav list was a flex child that could not be shorter than its content, so nothing
+could scroll. On the Mac's tall window it all fit. At 1280×600, which is a 1080p screen at
+150% scaling, a superuser's list is ~800px with every group closed. Settings, dark mode and
+the collapse toggle were below the edge. The wheel scrolled the page behind instead, which
+does nothing, because the sidebar is sticky.
+
+The fix's first draft carried two no-ops, and only mutation showed it. `min-height: 0`
+survived removal, because a scroll container's flex minimum is already 0. So did
+`overflow-y: auto`, because `overflow-x: hidden` alone forces it. And the harness's first
+"after" run failed like the original bug: its measure() used `top` for both the list's rect
+and its scrollTop, so the wheel landed on Settings and scrolled the page.
+
+<rules>
+37. **Check any fixed-height chrome at 1280×600.** That is a 1080p Windows screen at 150%
+   scaling, and a store PC is likelier than the Mac to be one. `scripts/browser-sidebar-scroll.mjs`
+   does it for the sidebar.
+38. **Mutation-test CSS like code.** A declaration that survives removal is not part of the
+   fix. When a test fails in the SAME way as the bug it guards, check the test's own
+   measurements before touching the fix.
+</rules>

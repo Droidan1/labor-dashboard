@@ -500,6 +500,17 @@
       transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), min-width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     }
     .sidebar.collapsed { width: 64px; min-width: 64px; }
+    /* The nav list is the sidebar's scroller. The aside is h-screen + overflow-hidden, and a
+       flex child that is NOT a scroll container can never be shorter than its content — so
+       on a short window (a 1080p Windows screen at 125–150% scaling leaves roughly 600–700px)
+       the list pushed Settings, dark mode and the collapse toggle below the bottom edge with
+       nothing to scroll. A superuser's list is ~800px with every group closed, ~1600px with
+       all three open. As a scroll container its minimum drops to 0, so it shrinks and
+       scrolls while the logo and the bottom controls stay put. overflow-x: expanding the
+       rail animates its width while the labels are already full length. contain: a wheel
+       that reaches the end of the list must not start scrolling the page behind it.
+       scripts/browser-sidebar-scroll.mjs measures all of this in a real browser. */
+    .sidebar > nav { overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-width: thin; }
     @media (max-width: 768px) {
       .sidebar { position: fixed !important; left: 0; top: 0; z-index: 50 !important; width: 256px !important; min-width: 0 !important; }
       .sidebar.collapsed { width: 0 !important; overflow: hidden; border-right: none; }
