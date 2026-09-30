@@ -82,6 +82,12 @@ const EXPECT = {
     pages: { 'bin-dump': 'edit', 'mos': 'edit', 'inventory-receiver': 'view' },
     bar: ['Bin Dump', 'MOS', 'Menu'],
     menu: [['Inventory', ['bin-dump', 'inventory-receiver', 'mos']], ['Account', ['@signout']]] },
+  // An associate holding Price Scan gets it as a bar tab, like Bin Dump and MOS (Brian,
+  // 2026-09-30) — while the associate above, without it, keeps a three-tab bar.
+  associateScan: { role: 'associate', associate: true, businesses: [BL], biz: 'bl',
+    pages: { 'bin-dump': 'edit', 'mos': 'edit', 'merch-scan': 'edit' },
+    bar: ['Bin Dump', 'MOS', 'Price Scan', 'Menu'],
+    menu: [['Merchandising', ['merch-scan']], ['Inventory', ['bin-dump', 'mos']], ['Account', ['@signout']]] },
   ecom: { role: 'superuser', businesses: [BL, ECOM], biz: 'ecom',
     bar: ['eBay Cases', 'Menu'],
     menu: [['E-Commerce', ['ebay-cases']], ['Account', ['@switch', 'settings', '@signout']]] },

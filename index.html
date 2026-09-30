@@ -1242,6 +1242,11 @@
       <button id="bn-mos" data-tab="mos" aria-label="Mark Out of Stock" onclick="navigateToPage('mos')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
         <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 7.3 12 3 3.5 7.3v9.4L12 21l8.5-4.3z"/><line x1="4" y1="4" x2="20" y2="20"/></svg><span class="bn-lb">MOS</span>
       </button>
+      <!-- Price Scan for an associate granted it (2026-09-30) — the same reason as the two
+           above. Managers do not get it back: it left their bar for the Menu on 2026-09-22. -->
+      <button id="bn-merch-scan" data-tab="merch-scan" aria-label="Price Scan" onclick="navigateToPage('merch-scan')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="8" x2="7" y2="16"/><line x1="10.5" y1="8" x2="10.5" y2="16"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="17" y1="8" x2="17" y2="16"/></svg><span class="bn-lb">Price Scan</span>
+      </button>
       <!-- E-Commerce's front door. Its one page used to sit under More — which was
            the only tab that business had. -->
       <button id="bn-ebay-cases" data-tab="ebay-cases" aria-label="eBay Cases" onclick="navigateToPage('ebay-cases')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
@@ -38312,6 +38317,9 @@
       // than living two taps deep on the Menu.
       gate('bn-bin-dump', roleReady && vis('nav-bin-dump') && !seesDash, 'flex');
       gate('bn-mos', roleReady && vis('nav-mos') && !seesDash, 'flex');
+      // Price Scan, on the same terms (Brian, 2026-09-30). `!seesDash` is what keeps it off
+      // the manager bar, which gave this tab up for the Menu on 2026-09-22.
+      gate('bn-merch-scan', roleReady && vis('nav-merch-scan') && !seesDash, 'flex');
       // Admin bar: Content + Flow Calendar (admin-only sidebar items).
       gate('bn-content', vis('nav-content'), 'flex');
       gate('bn-flow', vis('nav-flow-calendar'), 'flex');

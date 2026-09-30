@@ -192,6 +192,13 @@ await section('4. On a phone, the Menu lists it', async () => {
   await page.waitForTimeout(400);
   const menu = (await page.textContent('#page-menu').catch(() => '')) || '';
   check(/Merchandising/.test(menu) && /Price Scan/.test(menu), `🔑 the phone Menu offers Price Scan under Merchandising`);
+  // …and the bar carries it as a tab of its own, lit while they are on it.
+  await page.evaluate(() => window.navigateToPage('merch-scan'));
+  await page.waitForTimeout(400);
+  const tab = await page.evaluate(() => { const t = document.getElementById('bn-merch-scan');
+    return { shown: !!(t && t.offsetParent), lit: !!(t && !t.classList.contains('text-opl-inkDim')) }; });
+  check(tab.shown, '🔑 the phone bar has a Price Scan tab');
+  check(tab.lit, '…lit while they are on the page');
   await ctx.close();
 });
 
@@ -205,6 +212,12 @@ await section('5. A manager is untouched', async () => {
   await scan(page);
   check(/Override price or retail/.test(await page.textContent('#ps-result')), '…and Override');
   check(await shown(page, '#ps-print') && await shown(page, '#ps-ob'), '…and Print and the Buy picker');
+  // The bar only exists on a phone, so this has to be asked at phone width — at desktop
+  // width it could never fail (it did not, when the gate was broken to prove it).
+  const phone = await open({ authenticated: true, email: 'm@x.com', name: 'Alex M', role: 'manager',
+    stores: ['BL1', 'BL4'], pages: {}, businesses: ['bl'] }, { width: 390, height: 844, mobile: true });
+  check(await shown(phone.page, '#bn-dashboard'), 'the manager\'s phone bar is on screen');
+  check(!(await shown(phone.page, '#bn-merch-scan')), '🛑 …with no Price Scan tab — it left the manager bar on 2026-09-22');
   await ctx.close();
 });
 
