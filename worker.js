@@ -14850,15 +14850,20 @@ const ACTION_PAGE = new Map([
   // Printing is the edit level: view scans and reads the price, edit also prints and
   // reprints. sticker-template is view because it is the label's layout, read on page load.
   //
-  // 🛑 ABSENT on purpose, so no grant reaches them at any level: merch-scan-save (changing
-  // what an item is worth for every store), sticker-create-price-point (new Clover items),
-  // sticker-template-set / sticker-mark-image (the label design), merch-manual-price,
-  // merch-categories, furniture-*, merch-products / merch-product-save, merch-velocity.
+  // 🔑 merch-scan-save — the Override editor, setting an item's price, retail and category
+  // for EVERY STORE, permanently — is edit too: Brian asked the same day for associates to
+  // "edit prices and categories like managers". Same endpoint, same reach as a manager's.
+  //
+  // 🛑 ABSENT on purpose, so no grant reaches them at any level: sticker-create-price-point
+  // (new Clover items), sticker-template-set / sticker-mark-image (the label design),
+  // merch-manual-price, merch-categories, furniture-*, merch-products / merch-product-save,
+  // merch-velocity.
   ["merch-scan",       ["merch-scan", "view"]],
   ["sticker-template", ["merch-scan", "view"]],
   ["sticker-check",    ["merch-scan", "edit"]],
   ["sticker-printed",  ["merch-scan", "edit"]],
   ["sticker-history",  ["merch-scan", "edit"]],
+  ["merch-scan-save",  ["merch-scan", "edit"]],
 ]);
 
 // The closed set an admin may tick, DERIVED from the map above rather than
@@ -23545,9 +23550,12 @@ export default {
       // 🔑 psCanOverride IN index.html MIRRORS THIS AND MUST MOVE WITH IT. A screen that
       // hides a control the worker would accept is merely coy; one that SHOWS a control the
       // worker refuses teaches people the app is broken. test-price-scan pins them together.
-      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
-        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
-      }
+      //
+      // Widened once more, 2026-09-30: an associate holding Price Scan at EDIT may override
+      // too — Brian: "allow them to edit prices and categories like managers". requirePage
+      // passes every financial role exactly as the canSeeFinancials check it replaces did.
+      const pageDenied = requirePage(currentUser, isAdminSecret, "merch-scan", "edit", corsJson);
+      if (pageDenied) return pageDenied;
       if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
       try {
         const body = await request.json();

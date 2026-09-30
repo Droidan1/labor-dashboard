@@ -691,9 +691,10 @@ const cipherOf = (db, id) => db.prepare('SELECT pin_cipher c FROM users WHERE id
 
 // ── Price Scan (2026-09-30) ────────────────────────────────────────────────
 // Brian's decisions: an associate granted Price Scan sees the SAME scan a manager does
-// (cost, GP %, ASP included); printing is the EDIT level; and the manager-only controls —
-// override, new Clover price points, the label design, furniture, pricing by hand — stay
-// closed at every level. Driven through worker.fetch with a real associate session.
+// (cost, GP %, ASP included); printing is the EDIT level, and so — asked the same day,
+// "edit prices and categories like managers" — is the Override (merch-scan-save). What stays
+// closed at every level: new Clover price points, the label design, furniture, pricing by
+// hand. Driven through worker.fetch with a real associate session.
 {
   const { db, env } = env0();
   for (const m of ['migration-041.sql', 'migration-042.sql', 'migration-043.sql', 'migration-056.sql'])
@@ -782,8 +783,24 @@ const cipherOf = (db, id) => db.prepare('SELECT pin_cipher c FROM users WHERE id
     body: { l3: SNACKS, price: 2.5, store: 'BL4' } });
   ok(mgrAway.status !== 403, 'a BL1 manager can still check a BL4 label, exactly as before');
 
+  // The Override: price, retail and category, for every store — at edit, like a manager.
+  const ov = { identifier: '085239098745', suggested_price: 3.5, retail_price: 7.49, l3: SNACKS };
+  const ovView = await ask(sV, 'merch-scan-save', { body: ov });
+  eq(ovView.status, 403, '🛑 an associate at VIEW cannot override a price');
+  eq(ovView.body.code, 'NEED_PAGE_EDIT', '…and is told edit is what is missing');
+  eq((await ask(sN, 'merch-scan-save', { body: ov })).status, 403, '🛑 …nor can one without Price Scan');
+  const ovEdit = await ask(sE, 'merch-scan-save', { body: ov });
+  eq(ovEdit.status, 200, '🔑 an associate at EDIT can override price, retail and category');
+  const after = await ask(sV, 'merch-scan', { body: scan });
+  eq(after.body.price, 3.5, '🔑 …and the next scan — by anyone — prices from it');
+  eq(after.body.price_basis, 'set by hand', '…reported as set by hand');
+  eq(after.body.retail, 7.49, '…with the retail they set');
+  const row = db.prepare(`SELECT updated_by FROM item_cache WHERE identifier = '085239098745'`).get();
+  ok(/@associate\.invalid$/.test(row?.updated_by || ''),
+     'the override is recorded against the associate\'s own account key, like their prints');
+
   // 🛑 What no grant reaches, at any level.
-  for (const action of ['merch-scan-save', 'sticker-create-price-point', 'sticker-template-set',
+  for (const action of ['sticker-create-price-point', 'sticker-template-set',
                         'sticker-mark-image', 'merch-manual-price', 'furniture-identify', 'furniture-save',
                         'merch-product-save']) {
     eq((await ask(sE, action, { body: {} })).status, 403, `🛑 ${action} stays closed to an associate at edit`);

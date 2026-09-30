@@ -281,8 +281,12 @@ console.log('Price Scan');
   // the code rather than by the code. A `!/x/` test over a region that contains English
   // is testing the English.
   const gate = decomment(wsrc.slice(gateAt, gateAt + 2600));
-  ok(/canSeeFinancials\(currentUser\)/.test(gate),
-     '🔑 the worker gates merch-scan-save on canSeeFinancials');
+  // 2026-09-30: financial roles, or an associate holding Price Scan at edit — the worker asks
+  // requirePage (which admits every financial role), and ACTION_PAGE puts it at edit.
+  ok(/requirePage\(currentUser, isAdminSecret, "merch-scan", "edit", corsJson\)/.test(gate),
+     '🔑 the worker gates merch-scan-save on Price Scan at edit (financial roles pass as before)');
+  ok(/\["merch-scan-save",\s*\["merch-scan",\s*"edit"\]\]/.test(wsrc),
+     '…and ACTION_PAGE agrees');
   ok(!/requireAdminAccess/.test(gate),
      '…and no longer on requireAdminAccess');
 
