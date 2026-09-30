@@ -2824,3 +2824,44 @@ by tidying.
    operation" to defer a fix has a cost: the bug stays in production and Brian gets a
    decision he did not need to make. Earn the citation with the grep.
 </rules>
+
+---
+
+## The printer probe was answered by our own service worker (2026-09-30)
+
+Shelf stickers printed all month from the Mac, then failed on the first Windows PC with
+*"Zebra Browser Print is not answering on this machine (SyntaxError: Unexpected token 'N',
+"Network er"... is not valid JSON)"*. `Network er…` is not Zebra's text. It is `sw.js`'s
+offline fallback, `new Response('Network error — offline', { status: 503 })`.
+
+Every GET that was not an API or CDN host fell into the app-shell branch, so the probe of
+`http://127.0.0.1:9100/available` was re-issued BY THE WORKER. Chrome's Local Network Access
+lets a worker reach loopback only if the site already holds the permission, and a worker
+cannot ask for it; only a page can. The Mac had granted it at some point, and the new PC had
+not, so the worker's fetch failed and the branch substituted its 503. Reproduced on the Mac
+itself, with the agent running and the host accepted: a fresh browser profile got the
+identical SyntaxError from prod. A/B in one tab: the old worker gave `503 Network error — offline`,
+the fixed one gave `TypeError: Failed to fetch`.
+
+It also rewrites an earlier lesson. "An empty answer is a fault, not a fact" rule 2 put
+`cache: 'no-store'` on the probe to stop one empty answer outliving the printer. That option
+governs the HTTP cache. The worker's stale-while-revalidate answers from **Cache Storage**,
+which it does not reach, so every probe was handed the PREVIOUS probe's answer. The 800 ms
+retry then got whatever the first call's background refresh had stored, which can look
+exactly like an agent recovering.
+
+<rules>
+33. **Before blaming the remote, ask who actually answered.** A response the page did not
+   expect may be from our own service worker, which intercepts every GET it is not told to skip.
+   Grep `sw.js` for the text first; `r.type === 'basic'` on a cross-origin URL is the tell.
+34. **A service worker must not proxy anything it does not own.** Requests it re-issues run
+   under ITS permissions, not the page's: no Local Network Access prompt, no user
+   gesture. Local agents, like the API, are bypassed outright (`isLocalAgentRequest`);
+   `scripts/test-sw-routing.mjs` fails if any absolute `fetch()` target in `index.html` is
+   answered by the worker.
+35. **`cache: 'no-store'` does not reach Cache Storage.** It only makes a live probe uncacheable
+   when no service worker sits in front of it.
+36. **Don't probe a local agent with an invented Origin.** Checking Browser Print's CORS with
+   `Origin: https://example.com` added `example.com` to its accepted-hosts list on Brian's
+   Mac. Rule 3 again: that probe did the damage the check was meant to rule out.
+</rules>

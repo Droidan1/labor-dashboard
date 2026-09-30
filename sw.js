@@ -1,4 +1,4 @@
-const CACHE_NAME = 'dashboard-cache-v258';
+const CACHE_NAME = 'dashboard-cache-v259';
 
 // Pre-fetched and cached on install
 const PRECACHE_ASSETS = [
@@ -52,6 +52,24 @@ function isApiRequest(hostname) {
          // Google APIs (Sheets, OAuth) but NOT Google Fonts
          (hostname.endsWith('googleapis.com') && !hostname.startsWith('fonts.')) ||
          hostname === 'accounts.google.com';
+}
+
+// Something else running on this machine — the Zebra Browser Print agent at
+// 127.0.0.1:9100 — never intercept.
+// 🛑 A request this worker re-issues is not the request the page made. Chrome lets a
+// service worker reach loopback only if the site ALREADY holds the local-network
+// permission, and a worker cannot ask for it; only a page can. So on a PC that had never
+// granted it, the worker's fetch failed where the page's own would have raised the prompt,
+// and the app-shell branch answered the printer probe with its offline 503 — which the
+// probe then died parsing as JSON ("Unexpected token 'N'"). It printed on the Mac that had
+// granted the permission and failed on the first Windows PC that had not. And when it did
+// succeed, that branch handed the probe the PREVIOUS answer from Cache Storage, which the
+// page's cache:'no-store' does not reach. scripts/test-sw-routing.mjs pins this.
+// Other origins only: the browser tests serve the app itself from 127.0.0.1.
+function isLocalAgentRequest(url) {
+  return url.origin !== self.location.origin &&
+         (url.hostname === 'localhost' || url.hostname === '[::1]' ||
+          /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(url.hostname));
 }
 
 // ── Install: precache app shell ───────────────────────────────────────────────
@@ -129,6 +147,9 @@ self.addEventListener('fetch', event => {
 
   // 1. API requests — never intercept
   if (isApiRequest(url.hostname)) return;
+
+  // 1b. Local agents (the label printer) — never intercept
+  if (isLocalAgentRequest(url)) return;
 
   // 2. CDN + font requests — cache-first, fall back to network
   //    These URLs are versioned/immutable so stale-while-revalidate is unnecessary.
