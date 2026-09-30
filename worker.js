@@ -1336,6 +1336,55 @@ async function cloverFetch(url, options) {
   }
 }
 
+// ─── Is this item code already in use at a store? ───────────────────────
+//
+// 🛑 CLOVER CANNOT FILTER ITEMS BY `code`. It answers every such request with
+//   400 {"message":"'code' is not a supported field for this filter."}
+// which is how create-clover-item's duplicate guard came to be decorative: it asked
+// exactly that, read the response only inside `if (dupResp.ok)`, and so never once
+// entered the block. The 400 fell straight through and the handler created the duplicate
+// the check exists to prevent. Confirmed against live Clover on 2026-09-02; the same
+// filter is what broke the sticker existence check, which now avoids the call entirely.
+//
+// 🔑 SO PAGE THE CATALOGUE. It is two requests at BL1's ~1,100 items, on an admin action
+// that creates inventory — not a hot path, and correct without depending on which fields
+// Clover will filter on this week.
+//
+// 🔑 `code` OR `sku`, because create-clover-item writes the same string to BOTH, and a
+// duplicate sitting in either field is still a duplicate at the register.
+//
+// 🛑 AND IT ANSWERS null RATHER THAN false WHEN IT COULD NOT LOOK. A guard that treats
+// "I could not check" as "no duplicate" is the exact failure being fixed here, just
+// arrived at more honestly. The caller must refuse to create on null.
+const CLOVER_CODE_SCAN_PAGES = 20;
+
+async function cloverCodeInUse(env, store, code, headers) {
+  const mId = env[`${String(store).toUpperCase()}_MERCHANT_ID`];
+  if (!mId) return { inUse: null, why: `${store} has no merchant id configured` };
+  const want = String(code);
+  try {
+    for (let page = 0; page < CLOVER_CODE_SCAN_PAGES; page++) {
+      const r = await cloverFetch(
+        `https://api.clover.com/v3/merchants/${mId}/items?limit=1000&offset=${page * 1000}`, { headers });
+      if (!r?.ok) {
+        const txt = await r.text().catch(() => "");
+        return { inUse: null, why: `Clover answered ${r?.status}${txt ? ` — ${txt.slice(0, 160)}` : ""}` };
+      }
+      const rows = (await r.json())?.elements || [];
+      const hit = rows.find(it => String(it?.code || "") === want || String(it?.sku || "") === want);
+      if (hit) return { inUse: true, existingId: hit.id, existingName: String(hit?.name || "") };
+      // A short page is the end of the catalogue, which makes "absent" a fact rather than
+      // an assumption. Only here may this return false.
+      if (rows.length < 1000) return { inUse: false };
+    }
+  } catch (e) {
+    // cloverFetch awaits fetch() directly, so an unreachable Clover throws rather than
+    // returning a non-ok response — an ok-check alone would never see it.
+    return { inUse: null, why: `the request failed: ${e.message}` };
+  }
+  return { inUse: null,
+    why: `stopped after ${CLOVER_CODE_SCAN_PAGES * 1000} items without reaching the end of the catalogue` };
+}
 // ─── Resolve or create a Clover category by name (case-insensitive) ──────
 async function resolveCloverCategory(s, categoryName, env) {
   const mId = env[`${s}_MERCHANT_ID`];
@@ -3881,6 +3930,9 @@ const ACTION_BUSINESS = new Map([
   ["merch-product-save", "bl"],
   ["merch-scan", "bl"],
   ["merch-scan-save", "bl"],
+  ["sticker-check", "bl"],
+  ["sticker-printed", "bl"],
+  ["sticker-history", "bl"],
   ["manifest-upload", "bl"],
   ["manifest-remap", "bl"],
   ["manifest-classify", "bl"],
@@ -10573,6 +10625,182 @@ function furnitureMatch(attrs, rows) {
   return scored.sort((x, y) => y.score - x.score).slice(0, 3);
 }
 
+// ─── Shelf stickers: the code an associate scans at the register ─────────────
+//
+// A 1x1 thermal sticker carries a QR of `BL-50008-2_5` — the category's code and the
+// price — and the POS resolves it to a real Clover item. So the string is not a label we
+// invent for display: it is a LOOKUP KEY, and one that does not exist in Clover is a
+// sticker that fails in front of a customer.
+//
+// 🛑 THE PRICE ENCODING IS THE WHOLE CONTRACT, and it is not "replace the dot".
+// Confirmed against real codes:
+//
+//     $2.50 -> 2_5        trailing zero dropped
+//     $2.75 -> 2_75       kept, because 5 is significant
+//     $10.00 -> 10        NO SEPARATOR AT ALL, not 10_0
+//
+// That last case is a different SHAPE, not just a different value, so anything reading
+// these back has to accept a code with no underscore in it.
+const stickerPriceCode = (price) => {
+  const n = Number(price);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n.toFixed(2)
+    .replace(/0+$/, "")     // 2.50 -> 2.5   |   10.00 -> 10.
+    .replace(/\.$/, "")     // 10.  -> 10
+    .replace(".", "_");     // 2.5  -> 2_5
+};
+
+// 🔑 The category code is per CATEGORY, never per store — one map for the chain.
+//
+// 🛑 THIS IS NOT `IM_TO_L2`, AND THE TWO WILL LOOK INTERCHANGEABLE. That map is the IM#
+// rung of the costing ladder — a different numbering scheme that also happens to use
+// five-digit numbers beginning 50. They COLLIDE: 50008 is a sticker code for
+// "FG BL CONSUMABLES - FOOD - PANTRY", and separately an IM# that IM_TO_L2 resolves to
+// "Softline - Apparel". Reaching for IM_TO_L2 because it is already there and already
+// numeric would put a pantry item's price under an apparel code, and the sticker would
+// still scan — it would just ring up the wrong thing. Sticker codes come from Clover
+// item codes and from nowhere else.
+const stickerCode = (categoryCode, price) => {
+  const p = stickerPriceCode(price);
+  const c = String(categoryCode ?? "").trim();
+  return (!p || !/^\d+$/.test(c)) ? null : `BL-${c}-${p}`;
+};
+
+// Category -> numeric code, LEARNED FROM CLOVER rather than kept by hand.
+//
+// 🔑 THERE IS NO TABLE TO MAINTAIN, and that is deliberate. A hand-kept list of category
+// codes drifts the moment somebody adds an item in Clover, and a drifted list makes this
+// screen refuse to print labels that are perfectly valid — the failure is invisible and
+// blames the wrong thing. Clover already holds the answer in the `code` of every item it
+// sells, so the map is derived by reading them and is correct by construction.
+//
+// Cached because it is a full inventory page and it changes about never.
+// 🛑 THE STORE IS PART OF THE KEY. This was one KV entry, "sticker:category-codes",
+// shared by all six stores — so whichever store swept last owned the map, and every other
+// store read its numbers. Combined with the endpoint defaulting an absent store to BL1,
+// a manager scanning at BL4 was verifying against BL1's catalogue: it could refuse a code
+// that exists locally, or — the direction that matters — approve one that does not, which
+// is a sticker that fails at the register in front of a customer. The entire feature
+// exists to prevent exactly that.
+const stickerCodesKey = (store) => `sticker:category-codes:${store}`;
+const STICKER_CODES_TTL = 86400;
+
+// Resolve and VALIDATE the store, or answer null. Never fall back to a default: guessing
+// which building someone is standing in is how the bug above happened.
+const stickerStore = (store) => {
+  const s = String(store || "").trim().toUpperCase();
+  return ALL_STORES.includes(s) ? s : null;
+};
+
+async function stickerCategoryCodes(env, store, opts = {}) {
+  const s = stickerStore(store);
+  if (!s) return null;
+  const cached = await env.SALES_SNAPSHOTS?.get(stickerCodesKey(s), "json");
+  if (!opts.force && cached?.map && cached.at && (Date.now() - Date.parse(cached.at)) < STICKER_CODES_TTL * 1000) {
+    return { map: cached.map, field: cached.field || "code", codes: cached.codes || [] };
+  }
+  const mId = env[`${s}_MERCHANT_ID`], tok = env[`${s}_API_TOKEN`];
+  if (!mId || !tok) return { map: cached?.map || {}, field: cached?.field || "code", codes: cached?.codes || [] };
+
+  // 🔑 `code` OR `sku` — the Inventory page's own dupKey() treats them as one field, so
+  // this must too. Looking only at `code` when a store keeps its numbers in `sku` finds
+  // nothing, and the screen then says "this category has no sticker number" — which reads
+  // as a Clover data problem when it is really us reading the wrong column.
+  //
+  // Which field won is REMEMBERED, because the existence check filters on a named field
+  // and has to ask about the same one the map was built from.
+  // 🔑 THE CODES COME FREE. This pass already extracts every BL- string in order to build
+  // the category map, so keeping them costs one array — and it is what lets the existence
+  // check be a set lookup instead of a second Clover call. Clover has no filter for `code`
+  // at all (it answers 400: "'code' is not a supported field for this filter"), so the
+  // lookup this replaces could never have worked. See the comment on stickerCodeExists.
+  const tally = {}, fieldHits = { code: 0, sku: 0 }, seen = new Set();
+  // 🛑 A THROWN FETCH IS THE SAME EVENT AS AN EMPTY READ AND MUST LAND THE SAME WAY.
+  // cloverFetch awaits fetch() directly, so Clover being unreachable THROWS rather than
+  // returning a non-ok response, and the `!r?.ok` break below never sees it. Uncaught, it
+  // escaped to the endpoint's 500 handler, which answers { error } with no `detail` —
+  // and the screen renders a body with no detail as its generic refusal. So a Clover blip
+  // presented as a permanent "cannot be printed", with nothing to distinguish the two.
+  // Returning null lets the endpoint give the refusal it already wrote for exactly this.
+  try {
+    for (let offset = 0; offset < 5000; offset += 1000) {
+      const r = await cloverFetch(
+        `https://api.clover.com/v3/merchants/${mId}/items?expand=categories&limit=1000&offset=${offset}`,
+        { headers: { Authorization: `Bearer ${tok}` } });
+      if (!r?.ok) break;
+      const rows = (await r.json())?.elements || [];
+      for (const it of rows) {
+        const field = /^BL-\d+-/.test(String(it?.code || "")) ? "code"
+                    : /^BL-\d+-/.test(String(it?.sku || "")) ? "sku" : null;
+        if (!field) continue;
+        fieldHits[field]++;
+        seen.add(String(it[field]));
+        const m = /^BL-(\d+)-/.exec(String(it[field]));
+        for (const c of (it?.categories?.elements || [])) {
+          const name = String(c?.name || "").trim();
+          if (!name) continue;
+          (tally[name] ||= {})[m[1]] = (tally[name][m[1]] || 0) + 1;
+        }
+      }
+      if (rows.length < 1000) break;
+    }
+  } catch (_) {
+    // A stale map still answers correctly for every category that has not changed number,
+    // which is all of them on any normal day — the same trade the empty-read path below
+    // already makes. With nothing cached there is no answer to give, only a fault.
+    return cached?.map ? { map: cached.map, field: cached.field || "code", codes: cached.codes || [] } : null;
+  }
+  // Count per category rather than taking the first seen: one mis-keyed item should not
+  // be able to redefine a whole category's number.
+  const map = {};
+  for (const [name, counts] of Object.entries(tally)) {
+    map[name] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+  }
+  const field = fieldHits.sku > fieldHits.code ? "sku" : "code";
+  const codes = [...seen];
+  // An empty read is a Clover hiccup, not proof the codes vanished — keep what we had.
+  if (!Object.keys(map).length) {
+    return cached?.map ? { map: cached.map, field: cached.field || "code", codes: cached.codes || [] }
+                       : { map: {}, field: "code", codes: [] };
+  }
+  await env.SALES_SNAPSHOTS?.put(stickerCodesKey(s),
+    JSON.stringify({ map, field, codes, at: new Date().toISOString() }));
+  return { map, field, codes };
+}
+
+// Does this exact code exist in Clover? Reuses the same `filter=code=` lookup that
+// create-clover-item already uses as its duplicate check.
+// Returns { exists } when we know, or { exists: null, why } when we could not find out.
+//
+// 🛑 CLOVER CANNOT FILTER ON `code` AT ALL. This used to ask
+// `items?filter=code=BL-50002-1_5`, which every single time answered
+//   400 {"message":"'code' is not a supported field for this filter."}
+// so the check could never succeed — and because it discarded the body, all it ever said
+// was "Clover did not answer". The same broken filter is create-clover-item's duplicate
+// guard, where the failure is worse than useless: that handler only inspects the response
+// `if (dupResp.ok)`, so the 400 falls through and it creates the duplicate it was there
+// to prevent.
+//
+// 🔑 SO STOP ASKING. The category sweep already reads every item and already extracts
+// every BL- string to build the map; the set of existing codes falls out of a pass we
+// were making anyway. That removes the network call, the filter syntax and this entire
+// class of failure from the hot path.
+//
+// 🛑 THE ONE THING THIS TRADES is freshness on DELETION: a code removed from Clover since
+// the last sweep still reads as present until the cache turns over, so a sticker could be
+// printed for an item that has just been deleted. Creation is handled — a miss forces a
+// re-read, because a manager who adds a price point expects to print it now rather than
+// tomorrow — and creation is the direction this actually moves in. Deletion of a price
+// point is rare, and the alternative on offer is a check that refuses 100% of the time.
+async function stickerCodeExists(env, store, code, known) {
+  if ((known || []).includes(code)) return { exists: true };
+  const again = await stickerCategoryCodes(env, store, { force: true });
+  if (!again) {
+    return { exists: null, why: "Clover did not answer when we re-read the item list to be sure" };
+  }
+  return { exists: (again.codes || []).includes(code), rechecked: true };
+}
+
 function merchTree() {
   const tree = {};
   for (const [l3, l2] of Object.entries(L3_TO_L2)) {
@@ -15924,17 +16152,18 @@ export default {
           if (!mId || !tok) return { store: s, ok: false, error: "Store not configured", stage: "config" };
           const headers = { "Authorization": `Bearer ${tok}`, "Content-Type": "application/json" };
 
-          // Duplicate check: look for existing item with same code
-          const dupResp = await cloverFetch(
-            `https://api.clover.com/v3/merchants/${mId}/items?filter=code%3D${encodeURIComponent(code)}&limit=5`,
-            { headers }
-          );
-          if (dupResp.ok) {
-            const dupData = await dupResp.json();
-            if ((dupData.elements || []).length > 0) {
-              const existing = dupData.elements[0];
-              return { store: s, ok: false, duplicate: true, existingId: existing.id, error: "Item with this code already exists" };
-            }
+          // 🛑 FAIL CLOSED. This used to run a filter Clover rejects with a 400 and read the
+          // reply only `if (dupResp.ok)`, so the check never ran and the duplicate was
+          // created anyway — the guard has never once blocked anything. An unanswerable
+          // duplicate check must refuse to create, not shrug and carry on.
+          const dup = await cloverCodeInUse(env, s, code, headers);
+          if (dup.inUse === null) {
+            return { store: s, ok: false, stage: "duplicate-check",
+              error: `Could not check whether ${code} is already in use — ${dup.why}. Nothing was created.` };
+          }
+          if (dup.inUse) {
+            return { store: s, ok: false, duplicate: true, existingId: dup.existingId,
+              error: `Item with code ${code} already exists${dup.existingName ? ` (${dup.existingName})` : ""}` };
           }
 
           const { categoryId, created: categoryCreated } = await resolveCloverCategory(s, l3, env);
@@ -18946,6 +19175,147 @@ export default {
         }
         return new Response(JSON.stringify({ ok: true, identifier, saved_by: who, saved_at: now }),
           { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // ── Can we print a shelf sticker for this? ────────────────────────────────
+    //    POST ?action=sticker-check  { l3, price, store? }
+    //
+    // 🛑 THIS REFUSES RATHER THAN GUESSES, and that is the point of it. The QR is a
+    // lookup key the POS resolves; a code with no Clover item behind it is a sticker
+    // that fails at the register with a customer waiting. So the answer is only ever
+    // "yes, this exact code exists" or "no, and here is which part is missing" —
+    // never a nearby price that happens to scan, because silently repricing an item
+    // to suit the label is the one outcome worse than not printing.
+    if (url.searchParams.get("action") === "sticker-check" && request.method === "POST") {
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
+      if (unauth) return unauth;
+      try {
+        const body = await request.json();
+        const l3 = String(body?.l3 || "").trim();
+        const price = Number(body?.price);
+        if (!l3) {
+          return new Response(JSON.stringify({ ok: true, printable: false, reason: "no category",
+            detail: "This item has no category yet, so there is no sticker code for it." }), { headers: corsJson });
+        }
+        const priceCode = stickerPriceCode(price);
+        if (!priceCode) {
+          return new Response(JSON.stringify({ ok: true, printable: false, reason: "no price",
+            detail: "There is no price to put on a sticker." }), { headers: corsJson });
+        }
+        // 🛑 NO DEFAULT STORE. This read `body?.store || "BL1"`, so an absent store meant a
+        // manager at BL4 was answered from BL1's catalogue — silently, and in the direction
+        // that approves a code which does not resolve at the register they are standing at.
+        // The app cannot know which building someone is in, so it asks rather than assumes.
+        const store = stickerStore(body?.store);
+        if (!store) {
+          return new Response(JSON.stringify({ ok: true, printable: false, reason: "no store",
+            detail: "Pick the store you are printing for — sticker numbers are per store." }),
+            { headers: corsJson });
+        }
+        const codeMap = await stickerCategoryCodes(env, store);
+        if (!codeMap) {
+          // 🛑 SAY WHICH QUESTION WENT UNANSWERED. Both Clover calls refuse with the
+          // same `reason`, and giving them the same `detail` too put us straight back where
+          // the last fix started: one sentence for two failures that need different work.
+          // This one means the inventory sweep did not complete, so there is no map and no
+          // code — which is why the body below carries no `code` field and this one cannot.
+          return new Response(JSON.stringify({ ok: true, printable: false, reason: "clover unreachable",
+            stage: "category map",
+            detail: "Clover did not answer when we asked which sticker number this category uses. Try again." }), { headers: corsJson });
+        }
+        const codes = codeMap.map;
+        // merchLabel is what Clover's category is actually called; L3 keys are ours.
+        const catCode = codes[l3] || codes[merchLabel(l3)] || null;
+        if (!catCode) {
+          return new Response(JSON.stringify({ ok: true, printable: false, reason: "no category code",
+            detail: `No Clover item in ${merchLabel(l3)} carries a BL- code, so this category has no sticker number yet.`,
+          }), { headers: corsJson });
+        }
+        const code = stickerCode(catCode, price);
+        const found = await stickerCodeExists(env, store, code, codeMap.codes);
+        const exists = found.exists;
+        if (exists === null) {
+          // Clover did not answer. Unknown is NOT permission to print — the whole
+          // guarantee is that a printed code resolves, and we cannot claim that here.
+          return new Response(JSON.stringify({ ok: true, printable: false, reason: "clover unreachable",
+            code, stage: "code lookup", clover_status: found.status ?? null,
+            detail: `Clover did not answer when we checked whether ${code} exists — ${found.why}` }), { headers: corsJson });
+        }
+        return new Response(JSON.stringify({
+          ok: true, printable: exists, code, category_code: catCode, price_code: priceCode, store,
+          reason: exists ? null : "no clover item",
+          detail: exists ? null
+            : `No Clover item with code ${code}. Create it first, then this will print.`,
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // ── What was printed, and printing it again ───────────────────────────────
+    //    POST ?action=sticker-printed   { store, l3, price, code, title? }
+    //    GET  ?action=sticker-history[&limit=]
+    //
+    // 🔑 THE HISTORY STORES THE QUESTION, NOT THE ANSWER. Rows keep store + l3 + price,
+    // the three inputs sticker-check consumes; `code` is recorded only so the list can
+    // show what came out. A reprint re-runs sticker-check from the inputs, so a category
+    // renumbered in Clover reprints under its NEW number and a code deleted since is
+    // refused exactly as a fresh scan would be. Replaying a stored code verbatim would be
+    // faster and would eventually put a sticker on a shelf that no longer resolves at the
+    // register — the one outcome this feature exists to prevent. A convenience must not
+    // reintroduce the thing the feature is for.
+    if (url.searchParams.get("action") === "sticker-printed" && request.method === "POST") {
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
+      if (unauth) return unauth;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const store = stickerStore(body?.store);
+        const l3 = String(body?.l3 || "").trim();
+        const code = String(body?.code || "").trim();
+        // 🛑 Cents, not a float. The price is what both the printed $1.50 and the encoded
+        // 1_5 come from; a value that stringifies as 1.4999999 corrupts the code itself.
+        const cents = Math.round(Number(body?.price) * 100);
+        if (!store || !l3 || !code || !Number.isFinite(cents) || cents <= 0) {
+          return new Response(JSON.stringify({ error: "A print record needs a store, category, price and code" }),
+            { status: 400, headers: corsJson });
+        }
+        await env.DB.prepare(
+          `INSERT INTO sticker_prints (store, l3, price_cents, code, title, printed_by, printed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        ).bind(store, l3, cents, code, String(body?.title || "").slice(0, 200) || null,
+               (currentUser && currentUser.email) || "unknown", new Date().toISOString()).run();
+        return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    if (url.searchParams.get("action") === "sticker-history" && request.method === "GET") {
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
+      if (unauth) return unauth;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "8", 10) || 8, 1), 25);
+        // 🔑 Scoped to the caller. A reprint list is "what I just printed" — someone else's
+        // prints are not a thing this screen can act on, and showing them invites a manager
+        // to reprint a label for a shelf they are not standing at.
+        const rows = await env.DB.prepare(
+          `SELECT id, store, l3, price_cents, code, title, printed_at
+             FROM sticker_prints WHERE printed_by = ?
+            ORDER BY printed_at DESC LIMIT ?`
+        ).bind((currentUser && currentUser.email) || "unknown", limit).all();
+        return new Response(JSON.stringify({
+          ok: true,
+          prints: (rows?.results || []).map(r => ({
+            id: r.id, store: r.store, l3: r.l3, code: r.code,
+            title: r.title || "", printed_at: r.printed_at,
+            price: (Number(r.price_cents) || 0) / 100,
+          })),
+        }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
