@@ -1,3 +1,56 @@
+# Price Scan: the Buy sheet, and no scanning in Buy until a buy is picked (2026-10-01)
+
+**Request (Brian):** replace the "Price into" chip row (it will not scale to many buys) with
+option B from three mockups — a sheet with search, Recent, and every open buy with its
+progress — and *"make it mandatory that one is selected before user can look up or scan
+anything"*.
+
+**Decisions (Brian, asked 2026-10-01):**
+- Only inside Buy: regular Scan, Manual and Furniture never need a buy.
+- Everyone who can print gets Buy, associates included — they see open buys without admin
+  emails or notes. Needs a worker change.
+- No exceptions: the sheet lists open buys only, no "not from a buy" choice. None open → it
+  says an admin opens one, and Cancel goes back to regular pricing.
+
+**Design:** Buy opens the sheet; the only ways out are picking a buy or Cancel. So there is no
+"in Buy, nothing picked" state for a scan to slip through. A picked buy shows a banner —
+PO, name, vendor, received, labels vs units — with Change and Stop.
+Assumptions (mine): Recent = the last 3 buys picked on this device that are still open; a
+picked buy survives an app reload for the rest of that day (a reload dropping someone out of
+Buy mid-pallet is the same silent failure as never picking); after each print the counts
+refresh, and a buy closed meanwhile is dropped with a message.
+
+**Plan:**
+- [x] Worker: `ps-buy-list` (GET, open buys only) on Price Scan's EDIT grant — the print level
+      — with no `note` / `opened_by` / `closed_*`. ACTION_PAGE + business gate entries. Tests.
+- [x] App: the sheet (search; Recent; All open · N; progress rows; empty / error states; Stop
+      inside it), the banner, Buy offered on psCanPrint alone, persisted same-day choice,
+      refresh after print. The old chip strip goes.
+- [x] Tests: test-associate / test-opportunity-buys for the worker; browser-associate-price-scan
+      (associate picks a buy and prints into it); browser-price-scan (sheet on a phone in light /
+      dark / OLED: contrast, on top, search, Cancel leaves Buy off). Mutations.
+- [ ] Ship in order: worker commit → Brian deploys it → verify live → push the app.
+
+
+**Review (2026-10-01):**
+- Two commits, worker first: `ps-buy-list` is inert until the app calls it, and the app's Buy
+  sheet would fail on a worker without it. CACHE_NAME v269 → v270.
+- npm test 7636/7636 (test-associate +17: an associate at edit lists open buys only, with no
+  note / opened_by / closed_by; view, no grant and staff are refused; the Opportunity Buys
+  page stays closed to them). browser-associate-price-scan 72/72 (§7: an associate picks a buy,
+  the scan, label check and print record all carry it, the count moves, Recent, Escape,
+  survives a reload, expires the next day, a closed buy is dropped and asked again, Stop).
+  browser-price-scan 152/152 (§6, phone, light / dark / OLED: bottom sheet, scrolls inside,
+  on top at both edges, search, every line ≥ 4.5:1 — lowest 4.73, the dark banner detail).
+- Mutations 15/15 killed (4 worker, 11 app). Two test gaps found on the way and fixed: shown()
+  asks offsetParent, which is null for a fixed overlay, so "the sheet is closed" passed
+  vacuously; and nothing looked at the sheet's bottom edge, where the phone bar would cover it
+  without the z-index.
+- Not fixed: `scripts/browser-opportunity-buys.mjs:119` passes unmocked requests to the real
+  network (`return real(u, o)`), so it fetches production `ly-sales` and fails 4 checks on CORS
+  — identical on main.
+---
+
 # Price Scan: Printer tools menu at the top right (2026-10-01)
 
 **Request (Brian):** *"Move the Calibrate and the printer option to the top right on the page as

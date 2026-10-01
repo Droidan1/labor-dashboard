@@ -105,6 +105,11 @@ function pageMocks({ who, theme, detector }) {
       case 'sticker-template': return J({ ok: true, template: null, markImage: null });
       case 'sticker-history': return J({ ok: true, prints: [] });
       case 'merch-categories': return J({ ok: true, categories: [] });
+      // 24 open buys for the Buy sheet: more than a phone shows, so its list must scroll.
+      case 'ps-buy-list': return J({ ok: true, buys: Array.from({ length: 24 }, (_, i) => ({
+        po: String(40300 + i * 11), label: ['Drinks', 'Kitchen', 'HBA', 'Toys Q4', 'Pet', 'Bedding'][i % 6],
+        vendor: ['Returns lot', 'Wayfair returns', 'CVS closeouts'][i % 3], received_on: '2026-09-' + String(28 - (i % 20)).padStart(2, '0'),
+        units: i % 5 ? 100 + i * 40 : null, labels: i * 17 })) });
       default: return J({ ok: false, error: 'not in this harness' }, 404);
     }
   };
@@ -443,6 +448,71 @@ for (const theme of ['light', 'dark', 'oled']) await section(`5. printer tools [
   await page.click('#ps-tools-btn');
   await page.keyboard.press('Escape');
   check(!(await open_()) && (await page.getAttribute('#ps-tools-btn', 'aria-expanded')) === 'false', `[${theme}] …and so does Escape`);
+  check(!errs.length, `[${theme}] no page errors (${errs.slice(0, 2).join(' | ')})`);
+});
+
+// ── 6. The Buy sheet and its banner, on a phone, painted in every theme (2026-10-01) ──
+// The sheet replaced a row of chips that would not hold many buys. It is a bottom sheet over
+// the page, its list scrolls inside it, and every line of it — and of the banner a pick
+// leaves behind — is measured against what is actually painted under it.
+const readsAt = (page, sel) => page.evaluate(s => {
+  const n = document.querySelector(s), chain = [];
+  for (let p = n; p; p = p.parentElement) {
+    const bg = getComputedStyle(p).backgroundColor;
+    chain.push(bg);
+    const a = (bg.match(/[\d.]+/g) || [])[3];
+    if (a == null || +a === 1) break;
+  }
+  return { fg: getComputedStyle(n).color, chain };
+}, sel).then(p => {
+  let base = rgba(p.chain[p.chain.length - 1]);
+  for (let i = p.chain.length - 2; i >= 0; i--) base = over(rgba(p.chain[i]), base);
+  return { r: ratio(over(rgba(p.fg), base), base), opaque: rgba(p.chain[p.chain.length - 1])[3] === 1 };
+});
+for (const theme of ['light', 'dark', 'oled']) await section(`6. buy sheet [${theme}]`, async () => {
+  const { page, errs } = await open({ theme });
+  await page.click('#ps-ob');
+  await page.waitForSelector('#ps-ob-sheet [data-po]', { timeout: 5000 });
+  const box = await page.evaluate(() => { const r = document.querySelector('#ps-ob-sheet .ps-obs-box').getBoundingClientRect();
+    return { l: r.left, r: r.right, t: r.top, b: r.bottom }; });
+  check(Math.abs(box.b - 844) < 2 && box.l >= 0 && box.r <= 390 && box.t >= 844 * 0.13,
+        `[${theme}] a bottom sheet that fits the phone (${JSON.stringify(box)})`);
+  const sc = await page.evaluate(() => { const l = document.getElementById('ps-obs-list'); return { sh: l.scrollHeight, ch: l.clientHeight }; });
+  check(sc.sh > sc.ch && sc.ch > 200, `[${theme}] 24 buys scroll inside the sheet (${sc.sh} > ${sc.ch})`);
+  const onTop = await page.evaluate(() => { const r = document.querySelector('#ps-ob-sheet [data-po]').getBoundingClientRect();
+    return !!document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest('[data-po]'); });
+  check(onTop, `[${theme}] a row is on top where it is drawn`);
+  // …and so is its BOTTOM edge, where the phone's floating bar sits: a sheet below the bar's
+  // stacking order would lose its last rows and its Stop button under it.
+  const bottomOnTop = await page.evaluate(b => !!document.elementFromPoint(195, b - 24)?.closest('#ps-ob-sheet'), box.b);
+  check(bottomOnTop, `[${theme}] the sheet's bottom edge is above the phone bar, not under it`);
+  const reads = [];
+  for (const [what, sel] of [['title', '#ps-obs-title'], ['group', '#ps-ob-sheet .ps-obs-g'], ['PO', '#ps-ob-sheet [data-po] b'],
+                             ['detail', '#ps-ob-sheet [data-po] .ps-obs-sub'], ['count', '#ps-ob-sheet [data-po] .ps-obs-n']]) {
+    const x = await readsAt(page, sel);
+    check(x.opaque && x.r >= 4.5, `[${theme}] the sheet's ${what} reads ${x.r.toFixed(2)}:1`);
+    reads.push(`${what} ${x.r.toFixed(2)}`);
+  }
+  await page.fill('#ps-obs-q', 'HBA');
+  const hits = await page.$$eval('#ps-ob-sheet [data-po]', r => r.length);
+  check(hits === 4, `[${theme}] search narrows the list (${hits} HBA buys)`);
+  const po = await page.$eval('#ps-ob-sheet [data-po]', r => r.dataset.po);
+  await page.click(`#ps-ob-sheet [data-po="${po}"]`);
+  for (const [what, sel] of [['banner label', '#ps-ob-bar .ps-ob-k'], ['banner name', '#ps-ob-bar .ps-ob-name'],
+                             ['banner detail', '#ps-ob-bar .ps-ob-meta'], ['Change', '#ps-ob-bar .ps-link']]) {
+    const x = await readsAt(page, sel);
+    check(x.opaque && x.r >= 4.5, `[${theme}] the ${what} reads ${x.r.toFixed(2)}:1`);
+    reads.push(`${what} ${x.r.toFixed(2)}`);
+  }
+  await page.click('#ps-ob');
+  await page.waitForSelector('#ps-ob-sheet .ps-obs-row.on', { timeout: 5000 });
+  const cur = await readsAt(page, '#ps-ob-sheet .ps-obs-row.on .ps-obs-sub');
+  check(cur.opaque && cur.r >= 4.5, `[${theme}] "pricing into it now" reads ${cur.r.toFixed(2)}:1`);
+  reads.push(`now ${cur.r.toFixed(2)}`);
+  measured.push(`${theme.padEnd(5)}  ${reads.join('  ')}`);
+  await page.mouse.click(195, 30);
+  check(!(await page.$('#ps-ob-sheet')) && /PO /.test(await page.textContent('#ps-ob-bar')),
+        `[${theme}] a tap on the page behind cancels, keeping the buy`);
   check(!errs.length, `[${theme}] no page errors (${errs.slice(0, 2).join(' | ')})`);
 });
 

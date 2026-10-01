@@ -4912,6 +4912,50 @@
         .ps-ob-strip .ps-link{color:inherit}
         .ps-ob-dot{width:8px;height:8px;border-radius:999px;background:#1c7a33;flex:none}
         .dark .ps-ob-dot{background:#4ade80}
+        /* The Buy banner (2026-10-01): the strip's own colours, on two lines and a bar. The name
+           takes the page's ink and the detail its dim, each measured on the tinted strip by
+           scripts/browser-price-scan.mjs §6 in light, dark and OLED. */
+        .ps-ob-strip.ps-ob-on{display:block;padding:10px 12px 12px}
+        .ps-ob-top{display:flex;align-items:center;gap:8px}
+        .ps-ob-top .ps-link{padding:6px 4px}
+        .ps-ob-k{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+        .ps-ob-name{font-size:16px;font-weight:700;color:#14110a;margin-top:4px}
+        .dark .ps-ob-name{color:rgb(var(--op-ink))}
+        .ps-ob-meta{font-size:12.5px;color:#6b6453;margin-top:2px}
+        .dark .ps-ob-meta{color:rgb(var(--op-inkDim))}
+        .ps-obs-pb{display:block;height:4px;border-radius:2px;background:rgba(20,16,8,.10);overflow:hidden;margin-top:8px}
+        .dark .ps-obs-pb{background:rgba(255,255,255,.10)}
+        .ps-obs-pb b{display:block;height:100%;background:#22c55e}
+        /* The Buy sheet: a bottom sheet on a phone, a dialog wider up. Appended to <body> —
+           a fixed overlay inside #main-scroll would scroll with the page. Below _uiDialog's
+           z-index, so an alert raised from inside it still lands on top. */
+        #ps-ob-sheet{position:fixed;inset:0;z-index:99990;display:flex;align-items:flex-end;justify-content:center;
+          background:rgba(0,0,0,.5)}
+        .ps-obs-box{width:100%;max-width:520px;max-height:86vh;max-height:86dvh;display:flex;flex-direction:column;gap:12px;
+          background:#ffffff;color:#14110a;border:1px solid rgba(20,16,8,.10);border-radius:16px 16px 0 0;
+          padding:12px 16px calc(16px + env(safe-area-inset-bottom))}
+        .dark .ps-obs-box{background:rgb(var(--op-panel));color:rgb(var(--op-ink));border-color:rgba(255,255,255,.09)}
+        @media (min-width:640px){#ps-ob-sheet{align-items:center;padding:24px}.ps-obs-box{border-radius:16px;max-height:80vh}}
+        .ps-obs-head{display:flex;align-items:center;justify-content:space-between;font-size:17px;font-weight:700}
+        .ps-obs-x{width:40px;height:40px;display:inline-flex;align-items:center;justify-content:center;border:none;
+          border-radius:10px;background:transparent;color:#6b6453;cursor:pointer}
+        .dark .ps-obs-x{color:rgb(var(--op-inkDim))}
+        .ps-obs-list{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+        .ps-obs-g{margin:10px 0 2px}
+        .ps-obs-row{display:block;width:100%;text-align:left;background:transparent;border:none;
+          border-top:1px solid rgba(20,16,8,.08);padding:11px 4px;color:inherit;font:inherit;cursor:pointer}
+        .dark .ps-obs-row{border-top-color:rgba(255,255,255,.08)}
+        .ps-obs-row:hover{background:rgba(20,16,8,.04)}
+        .dark .ps-obs-row:hover{background:rgba(255,255,255,.05)}
+        .ps-obs-l1{display:flex;align-items:baseline;gap:8px;font-size:14.5px}
+        .ps-obs-n{margin-left:auto;font-size:12.5px;color:#6b6453;font-variant-numeric:tabular-nums;white-space:nowrap}
+        .dark .ps-obs-n{color:rgb(var(--op-inkDim))}
+        .ps-obs-sub{display:block;font-size:12.5px;color:#6b6453;margin-top:2px}
+        .dark .ps-obs-sub{color:rgb(var(--op-inkDim))}
+        .ps-obs-row.on .ps-obs-sub{color:#1c7a33}
+        .dark .ps-obs-row.on .ps-obs-sub{color:#4ade80}
+        .ps-obs-msg{font-size:13.5px;line-height:1.45;color:#6b6453;padding:14px 2px}
+        .dark .ps-obs-msg{color:rgb(var(--op-inkDim))}
         .ps-stat{font-size:12px;line-height:1.4;color:#6b6453}
         .dark .ps-stat{color:rgb(var(--op-inkDim))}
         .ps-stat.no{color:#9a3412}
@@ -5126,15 +5170,16 @@
             <button id="ps-manual" class="ps-link" onclick="pmOpen()" type="button">Manual</button>
             <button id="ps-furniture" class="ps-link" onclick="fnOpen()" type="button">Furniture</button>
             <!-- A buy is a CONTEXT, not a mode: it applies to scanning and to manual pricing
-                 alike, so it does not go through psChrome and does not take the body over. -->
-            <button id="ps-ob" class="ps-link" onclick="psObToggle()" type="button" style="display:none">Buy</button>
+                 alike, so it does not go through psChrome and does not take the body over.
+                 It opens the Buy sheet (psObOpen), whose only ways out are a buy or Cancel. -->
+            <button id="ps-ob" class="ps-link" onclick="psObOpen()" type="button" style="display:none"
+                    aria-haspopup="dialog" aria-pressed="false">Buy</button>
           </div>
           <div id="ps-body">
             <!-- 🔑 OUTSIDE #ps-barcode-mode ON PURPOSE. psChrome hides that div whole when a
                  mode opens; a buy has to stay visible while you price by hand, which is
                  exactly when an opportunity buy is most likely to be what you are doing. -->
             <div id="ps-ob-bar" style="display:none"></div>
-            <div id="ps-ob-pick" style="display:none"></div>
             <!-- 🛑 ONE PLAIN DIV DOES THE HIDING. Toggling `hidden` on .ps-row does
                  nothing: both are single class selectors and this style block comes after
                  tailwind.css, so display:flex wins on source order and the barcode
@@ -24906,6 +24951,9 @@
     }
     const tools = el('ps-tools'); if (tools) tools.style.display = psCanPrint() ? '' : 'none';
     psToolsToggle(false);
+    psObRestore();
+    psObPaint();
+    if (psOb.po) psObCheck();
     psPrinterLabel();
     psTabName = 'scan';   // and never on a tab the last visit left behind
     psApplyTab();
@@ -27394,74 +27442,222 @@
   // TEXT can carry the PO, and only when the template's Show is set to "Number + PO".
   // docs/feature-opportunity-buys.md Phase 2 is what puts a PO inside the code itself.
   let psOb = { po: null, label: '' };
+  // The open buys as the sheet last read them (ps-buy-list): what a pick and the banner use.
+  let psObBuys = [];
+  let psObGen = 0;
+  const PS_OB_KEY = 'ps-ob', PS_OB_RECENT_KEY = 'ps-ob-recent';
 
   function psObActive() { return psOb.po; }
 
+  // 🔑 THE BUY YOU PICKED SURVIVES A RELOAD, FOR THE REST OF THAT DAY. A phone that drops
+  // the app mid-pallet (the camera, a call, iOS reclaiming memory) came back in regular
+  // pricing with nothing on screen to say so: the same silent failure as never picking.
+  // Tomorrow starts clean, and a buy closed meanwhile is caught by psObCheck.
+  function psObSave() {
+    try {
+      if (psOb.po) localStorage.setItem(PS_OB_KEY, JSON.stringify(psOb));
+      else localStorage.removeItem(PS_OB_KEY);
+    } catch (_) { /* private mode: this visit still works */ }
+  }
+  // psOb.day is the Eastern date it was picked, so an app left open overnight starts clean too.
+  function psObRestore() {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(PS_OB_KEY) || 'null'); } catch (_) {}
+    const today = etTodayStr();
+    const good = (b) => !!(b && b.po && b.day === today && psCanPrint());
+    if (good(saved)) psOb = saved;
+    else if (!good(psOb)) { psOb = { po: null, label: '' }; psObSave(); }
+  }
+  // Recent = the last three buys picked on THIS device; the sheet shows those still open.
+  function psObRecent() {
+    try {
+      const r = JSON.parse(localStorage.getItem(PS_OB_RECENT_KEY) || '[]');
+      return Array.isArray(r) ? r.map(String) : [];
+    } catch (_) { return []; }
+  }
+  function psObDay(d) {
+    const t = d ? new Date(`${d}T12:00:00`) : null;
+    return t && !isNaN(t) ? t.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+  }
+  function psObCount(b) {
+    return b.units ? `${b.labels || 0} of ${b.units} labeled` : `${b.labels || 0} labeled`;
+  }
+  function psObBar(b) {
+    if (!b.units) return '';
+    const pct = Math.min(100, Math.round(100 * (b.labels || 0) / b.units));
+    return `<span class="ps-obs-pb"><b style="width:${pct}%"></b></span>`;
+  }
+
+  // The banner: which buy every label now counts against, with Change and Stop.
   function psObPaint() {
+    const btn = el('ps-ob');
+    if (btn) btn.setAttribute('aria-pressed', psOb.po ? 'true' : 'false');
     const bar = el('ps-ob-bar');
     if (!bar) return;
     if (!psOb.po) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
     bar.style.display = '';
-    // Verified pairs: #1c7a33 on the light panel is 5.41:1, #4ade80 on the dark panel
-    // 10.21:1. Both measured, per DESIGN.md trap 6.
-    bar.innerHTML = `<div class="ps-ob-strip">
-      <span class="ps-ob-dot"></span>
-      <span>Pricing into <strong>PO ${psEsc(psOb.po)}</strong>${psOb.label ? ' · ' + psEsc(psOb.label) : ''}</span>
-      <button class="ps-link" type="button" onclick="psObClear()" style="margin-left:auto">Stop</button>
+    const received = psObDay(psOb.received_on);
+    bar.innerHTML = `<div class="ps-ob-strip ps-ob-on">
+      <div class="ps-ob-top"><span class="ps-ob-dot"></span><span class="ps-ob-k">Pricing into</span>
+        <button class="ps-link" type="button" onclick="psObOpen()" style="margin-left:auto">Change</button>
+        <button class="ps-link" type="button" onclick="psObClear()">Stop</button></div>
+      <div class="ps-ob-name">PO ${psEsc(psOb.po)}${psOb.label ? ' · ' + psEsc(psOb.label) : ''}</div>
+      <div class="ps-ob-meta">${psEsc([psOb.vendor, received ? `received ${received}` : '', psObCount(psOb)]
+        .filter(Boolean).join(' · '))}</div>
+      ${psObBar(psOb)}
     </div>`;
   }
 
+  // Stop: back to regular pricing.
   function psObClear() {
     psOb = { po: null, label: '' };
+    psObSave();
     psObPaint();
-    const pick = el('ps-ob-pick');
-    if (pick) { pick.style.display = 'none'; pick.innerHTML = ''; }
   }
   window.psObClear = psObClear;
 
-  async function psObToggle() {
-    const pick = el('ps-ob-pick');
-    if (!pick) return;
-    if (pick.style.display !== 'none') { pick.style.display = 'none'; pick.innerHTML = ''; return; }
-    pick.style.display = '';
-    pick.innerHTML = '<div class="ps-ob-strip"><span>Loading open buys…</span></div>';
+  // ── The Buy sheet ───────────────────────────────────────────────────────────
+  //
+  // 🔑 PICK A BUY OR CANCEL: THERE IS NO THIRD WAY OUT. Brian (2026-10-01): inside Buy,
+  // nothing is looked up or scanned until a buy is picked. The sheet covers the page, so
+  // nothing behind it can be scanned, and it closes only on a pick or on Cancel (the ✕, the
+  // backdrop, Escape), which leaves things as they were. So there is never a "Buy, nothing
+  // picked" state for a scan to slip through. Regular scanning, Manual and Furniture never
+  // need a buy, and no "not from a buy" row is offered: none open means an admin opens one.
+  function psObClose() {
+    psObGen++;
+    const sh = el('ps-ob-sheet');
+    if (sh) sh.remove();
+    document.removeEventListener('keydown', psObKey);
+  }
+  window.psObClose = psObClose;
+  function psObKey(e) { if (e.key === 'Escape') psObClose(); }
+
+  async function psObOpen(note) {
+    psObClose();
+    const gen = psObGen;
+    const sheet = document.createElement('div');
+    sheet.id = 'ps-ob-sheet';
+    sheet.setAttribute('role', 'dialog');
+    sheet.setAttribute('aria-modal', 'true');
+    sheet.setAttribute('aria-labelledby', 'ps-obs-title');
+    sheet.innerHTML = `<div class="ps-obs-box">
+      <div class="ps-obs-head"><span id="ps-obs-title">Price into a buy</span>
+        <button type="button" class="ps-obs-x" aria-label="Cancel" onclick="psObClose()"><svg width="18" height="18"
+          viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"
+          aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+      ${note ? `<div class="ps-ob-strip warn"><span class="ps-ob-dot"></span><span>${psEsc(note)}</span></div>` : ''}
+      <input id="ps-obs-q" class="ps-in" type="search" style="display:none" autocomplete="off" spellcheck="false"
+             placeholder="Search PO, name or vendor" aria-label="Search the open buys">
+      <div id="ps-obs-list" class="ps-obs-list"><div class="ps-obs-msg">Loading open buys…</div></div>
+      ${psOb.po ? `<button type="button" id="ps-obs-stop" class="ps-btn ghost">Stop pricing into PO ${psEsc(psOb.po)}</button>` : ''}
+    </div>`;
+    sheet.addEventListener('click', (e) => {
+      if (e.target === sheet) return psObClose();
+      const row = e.target.closest('[data-po]');
+      if (row) return psObPick(row.dataset.po);
+      if (e.target.closest('#ps-obs-stop')) { psObClose(); psObClear(); }
+    });
+    document.body.appendChild(sheet);
+    document.addEventListener('keydown', psObKey);
+    const list = el('ps-obs-list');
     let j = null, status = 0;
     try {
-      const r = await fetch(`${WORKER_BASE}?action=ob-buy-list&status=open`, { credentials: 'include' });
+      const r = await fetch(`${WORKER_BASE}?action=ps-buy-list`, { credentials: 'include' });
       status = r.status;
       j = await r.json().catch(() => null);
     } catch (e) {
-      pick.innerHTML = `<div class="ps-ob-strip"><span>Could not reach the buys list: ${psEsc(e.message)}</span></div>`;
+      if (gen === psObGen) list.innerHTML = `<div class="ps-obs-msg">Could not reach the buys list: ${psEsc(e.message)}</div>`;
       return;
     }
+    if (gen !== psObGen) return;   // closed, or opened again, while this was loading
     if (status !== 200 || !j || !j.ok) {
-      pick.innerHTML = `<div class="ps-ob-strip"><span>${psEsc((j && j.error) || `Could not load buys (${status}).`)}</span></div>`;
+      list.innerHTML = `<div class="ps-obs-msg">${psEsc((j && j.error) || `Could not load buys (${status}).`)}</div>`;
       return;
     }
-    const buys = j.buys || [];
-    if (!buys.length) {
-      // 🔑 SAYS WHO CAN FIX IT. A manager cannot open a buy — that is an admin job — so an
+    psObBuys = j.buys || [];
+    if (!psObBuys.length) {
+      // 🔑 SAYS WHO CAN FIX IT. A manager cannot open a buy (that is an admin job), so an
       // empty list is a dead end unless the sentence names the way out.
-      pick.innerHTML = '<div class="ps-ob-strip"><span>No buys are open. An admin opens one on '
-        + 'the Opportunity Buys page.</span></div>';
+      list.innerHTML = '<div class="ps-obs-msg">No buys are open. An admin opens one on the Opportunity Buys '
+        + 'page. Cancel to price regular stock.</div>';
       return;
     }
-    pick.innerHTML = `<div class="ps-ob-strip" style="flex-wrap:wrap">
-      <span class="ps-lbl">Price into</span>
-      ${buys.map(b => `<button class="ps-link" type="button"
-          onclick="psObPick('${psEsc(b.po)}', '${psEsc((b.label || '').replace(/'/g, ''))}')">
-          PO ${psEsc(b.po)}${b.label ? ' · ' + psEsc(b.label) : ''}</button>`).join('')}
-    </div>`;
+    const q = el('ps-obs-q');
+    q.style.display = '';
+    q.addEventListener('input', () => psObFilter(q.value));
+    psObFilter('');
+    // The keyboard only where there is one to spare: on a phone it would cover the list,
+    // and the buy wanted is usually a Recent one, a tap away.
+    if (window.matchMedia && matchMedia('(pointer: fine)').matches) q.focus();
   }
-  window.psObToggle = psObToggle;
+  window.psObOpen = psObOpen;
 
-  function psObPick(po, label) {
-    psOb = { po, label: label || '' };
-    const pick = el('ps-ob-pick');
-    if (pick) { pick.style.display = 'none'; pick.innerHTML = ''; }
+  function psObFilter(text) {
+    const list = el('ps-obs-list');
+    if (!list) return;
+    const row = (b) => {
+      const on = b.po === psOb.po;
+      const received = psObDay(b.received_on);
+      const sub = [b.vendor, received ? `received ${received}` : ''].filter(Boolean).join(' · ');
+      return `<button type="button" class="ps-obs-row${on ? ' on' : ''}" data-po="${psEsc(b.po)}">
+        <span class="ps-obs-l1"><b>PO ${psEsc(b.po)}</b>${b.label ? `<span>${psEsc(b.label)}</span>` : ''}
+          <span class="ps-obs-n">${b.units ? `${b.labels || 0} / ${b.units}` : `${b.labels || 0} labeled`}</span></span>
+        <span class="ps-obs-sub">${psEsc(on ? (sub ? sub + ' · ' : '') + 'pricing into it now' : (sub || 'No vendor or date'))}</span>
+        ${psObBar(b)}
+      </button>`;
+    };
+    const q = String(text || '').trim().toLowerCase();
+    if (q) {
+      const hits = psObBuys.filter(b => `${b.po} ${b.label || ''} ${b.vendor || ''}`.toLowerCase().includes(q));
+      list.innerHTML = hits.length ? hits.map(row).join('')
+        : `<div class="ps-obs-msg">No open buy matches “${psEsc(text.trim())}”.</div>`;
+      return;
+    }
+    const recent = psObRecent().map(po => psObBuys.find(b => b.po === po)).filter(Boolean);
+    const rest = psObBuys.filter(b => !recent.includes(b));
+    list.innerHTML = (recent.length ? `<div class="ps-lbl ps-obs-g">Recent</div>${recent.map(row).join('')}` : '')
+      + (rest.length ? `<div class="ps-lbl ps-obs-g">All open · ${psObBuys.length}</div>${rest.map(row).join('')}` : '');
+  }
+
+  function psObPick(po) {
+    const b = psObBuys.find(x => x.po === po);
+    if (!b) return;
+    psOb = { po: b.po, label: b.label || '', vendor: b.vendor || '', received_on: b.received_on || null,
+             units: b.units, labels: b.labels || 0, day: etTodayStr() };
+    try {
+      localStorage.setItem(PS_OB_RECENT_KEY, JSON.stringify([b.po, ...psObRecent().filter(p => p !== b.po)].slice(0, 3)));
+    } catch (_) { /* Recent is a convenience */ }
+    psObSave();
+    psObClose();
     psObPaint();
   }
   window.psObPick = psObPick;
+
+  // Re-reads the open buys: the banner's counts after a print, and a buy closed meanwhile.
+  // A closed buy cannot take new labels (sticker-check and sticker-printed both refuse it),
+  // so it is dropped and the sheet asks again. Nothing is changed on an answer it cannot read.
+  async function psObCheck() {
+    const po = psOb.po;
+    if (!po) return;
+    let j = null;
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=ps-buy-list`, { credentials: 'include' });
+      if (r.ok) j = await r.json();
+    } catch (_) { return; }
+    if (!j || !j.ok || psOb.po !== po) return;
+    psObBuys = j.buys || [];
+    const b = psObBuys.find(x => x.po === po);
+    if (!b) {
+      psObClear();
+      psObOpen(`PO ${po} was closed, so it can't take new labels. Pick another buy, or Cancel to price regular stock.`);
+      return;
+    }
+    psOb = { ...psOb, label: b.label || '', vendor: b.vendor || '', received_on: b.received_on || null,
+             units: b.units, labels: b.labels || 0 };
+    psObSave();
+    psObPaint();
+  }
 
 
   // ── What was printed, and printing it again ──────────────────────────────────
@@ -27511,6 +27707,7 @@
         }
       }
     } catch (_) { /* the sticker printed; the record is not worth an alarm */ }
+    if (po) psObCheck();
     psRecentLoad();
   }
 
@@ -27569,12 +27766,10 @@
     if (reBtn) reBtn.style.display = psCanPrint() ? '' : 'none';
     // The buy picker follows the same right as Print, for the same reason: pricing into a
     // buy is putting a label on a shelf. Opening a buy is a separate, stricter right the
-    // worker owns; this button never offers that.
+    // worker owns; this button never offers that. Associates included (Brian, 2026-10-01):
+    // ps-buy-list serves them on Price Scan's own edit grant, which is what psCanPrint means.
     const obBtn = el('ps-ob');
-    // An associate also needs Opportunity Buys itself: ob-buy-list belongs to that page in
-    // the worker, and a Price Scan grant does not reach it.
-    if (obBtn) obBtn.style.display = psCanPrint()
-      && (canSeeFinancials(currentUser) || pageLevel('opportunity-buys') >= 1) ? '' : 'none';
+    if (obBtn) obBtn.style.display = psCanPrint() ? '' : 'none';
     const n = el('ps-tab-reprint-n');
     if (n) n.textContent = psRecent.length ? String(psRecent.length) : '';
     if (!psRecent.length) {

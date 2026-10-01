@@ -58,7 +58,13 @@ const SCAN = { ok: true, identifier: '078000035421', identifier_type: 'upc', tit
 
 function mocks({ who, SCAN }) {
   try { localStorage.setItem('bioPromptDismissed', '1'); localStorage.setItem('coachTipsDisabled', '1'); } catch (e) {}
-  window.__calls = []; window.__saved = []; window.__zebra = [];
+  window.__calls = []; window.__saved = []; window.__zebra = []; window.__bodies = [];
+  // The open buys Price Scan's Buy sheet reads (ps-buy-list). A test closes one by
+  // deleting it from here; prints into one add to its labels, as the worker's count would.
+  window.__buys = window.__buys || [
+    { po: '12345', label: 'Drinks', vendor: 'Returns lot', received_on: '2026-09-28', units: 600, labels: 214 },
+    { po: '40211', label: 'Kitchen', vendor: 'Wayfair returns', received_on: '2026-09-26', units: 420, labels: 12 },
+    { po: '99998', label: '', vendor: '', received_on: null, units: null, labels: 0 }];
   const J = (x, status = 200) => new Response(JSON.stringify(x), { status, headers: { 'content-type': 'application/json' } });
   window.fetch = async (u, o = {}) => {
     // Zebra Browser Print, stubbed: one printer, and every write recorded, never sent.
@@ -68,12 +74,18 @@ function mocks({ who, SCAN }) {
     const action = new URL(String(u), location.href).searchParams.get('action');
     window.__calls.push(action);
     if (action === 'merch-scan-save') { try { window.__saved.push(JSON.parse(o.body)); } catch (e) {} }
+    if (o.body && typeof o.body === 'string') { try { window.__bodies.push({ action, body: JSON.parse(o.body) }); } catch (e) {} }
+    if (action === 'sticker-printed') {
+      try { const b = JSON.parse(o.body); const buy = window.__buys.find(x => x.po === b.po);
+            if (buy) buy.labels += b.qty || 1; } catch (e) {}
+    }
     switch (action) {
       case 'auth-me': return J(who);
       case 'merch-scan': return J(SCAN);
       case 'merch-scan-save': return J({ ok: true, identifier: SCAN.identifier });
       case 'sticker-template': return J({ ok: true, template: null, markImage: null });
       case 'sticker-history': return J({ ok: true, prints: [] });
+      case 'ps-buy-list': return J({ ok: true, buys: window.__buys });
       case 'sticker-check': return J(window.__noCloverItem
         ? { ok: true, printable: false, reason: 'no clover item', detail: 'No Clover item carries BL-50044-4 yet.' }
         : { ok: true, printable: true, code: 'BL-50044-4', category_code: '50044' });
@@ -146,7 +158,7 @@ await section('1. An associate at EDIT', async () => {
   check(!/Could not save/.test(await page.textContent('#page-merch-scan')), '…and saves without an error');
   check(await shown(page, '#ps-print'), '🔑 edit prints: the Print button is there');
   check(await shown(page, '#ps-tab-reprint'), '…and the Reprint tab');
-  check(!(await shown(page, '#ps-ob')), '…but no Buy picker without Opportunity Buys');
+  check(await shown(page, '#ps-ob'), '🔑 …and Buy: picking a buy is the print level, on Price Scan\'s own grant (2026-10-01)');
   const calls = await page.evaluate(() => window.__calls);
   check(calls.includes('sticker-check'), 'the sticker check ran for the Print button');
   const bad = calls.filter(a => MANAGER_ONLY.includes(a));
@@ -187,6 +199,7 @@ await section('2. An associate at VIEW', async () => {
   check(!(await shown(page, '#ps-result .ps-link[onclick="psOverride()"]')), '…nor get the category\'s Change link');
   check(!(await shown(page, '#ps-tab-reprint')), '…and no Reprint tab');
   check(!(await shown(page, '#ps-tools-btn')), '…and no Printer tools: it cannot print');
+  check(!(await shown(page, '#ps-ob')), '…and no Buy: it cannot print into one');
   const calls = await page.evaluate(() => window.__calls);
   check(!calls.includes('sticker-check') && !calls.includes('sticker-history'),
         '…and the page never asks the print endpoints, which would refuse');
@@ -275,6 +288,98 @@ await section('6. two printers on one PC', async () => {
   await page.waitForFunction(() => /not connected/.test(document.getElementById('ps-print-note')?.textContent || ''), null, { timeout: 4000 });
   check((await page.evaluate(() => window.__zebra.length)) === 2, '🛑 with the ZD410 gone, NOTHING is sent — not to the GX420d');
   check(/GX420D/.test(await page.textContent('#ps-print-note')), '…and the note says what IS connected');
+  check(errs.length === 0, `no JS errors${errs.length ? ': ' + errs.join(' | ') : ''}`);
+});
+
+// ── 7. The Buy sheet: an associate picks a buy and prints into it (2026-10-01) ─────
+// Brian: inside Buy nothing is looked up or scanned until a buy is picked; regular scanning
+// never needs one. The sheet's only exits are a pick or Cancel.
+await section('7. the Buy sheet', async () => {
+  const { page, errs } = await open(ASSOC({ 'merch-scan': 'edit' }));
+  // 🛑 NOT shown(): it asks offsetParent, which is null for every position:fixed element, so
+  // it calls the sheet hidden while it covers the screen — and "closed" checks pass vacuously.
+  const sheet = () => page.evaluate(() => { const e = document.getElementById('ps-ob-sheet');
+    const r = e && e.getBoundingClientRect(); return !!(r && r.width > 0 && r.height > 0); });
+  const banner = async () => ((await page.textContent('#ps-ob-bar').catch(() => '')) || '').replace(/\s+/g, ' ').trim();
+  await page.click('#ps-ob');
+  await page.waitForSelector('#ps-ob-sheet [data-po="40211"]', { timeout: 4000 });
+  check(await sheet(), '🔑 Buy opens the sheet, listing the open buys');
+  const covered = await page.evaluate(() => {
+    const r = document.getElementById('ps-go').getBoundingClientRect();
+    return !!document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest('#ps-ob-sheet');
+  });
+  check(covered, '🛑 …and covers Look it up: nothing behind it can be scanned while it is up');
+  const calls = await page.evaluate(() => window.__calls);
+  check(calls.includes('ps-buy-list') && !calls.includes('ob-buy-list'),
+        '…read from ps-buy-list, never the Opportunity Buys page\'s list');
+  await page.click('#ps-ob-sheet .ps-obs-x');
+  check(!(await sheet()) && (await banner()) === '', '🔑 Cancel closes it with no buy: back to regular pricing');
+  check((await page.getAttribute('#ps-ob', 'aria-pressed')) === 'false', '…and Buy reads as off');
+
+  await page.click('#ps-ob');
+  await page.waitForSelector('#ps-obs-q', { state: 'visible', timeout: 4000 });
+  await page.fill('#ps-obs-q', 'kitchen');
+  const rows = await page.$$eval('#ps-ob-sheet [data-po]', r => r.map(x => x.dataset.po));
+  check(rows.join() === '40211', `search narrows by name (${rows.join()})`);
+  await page.click('#ps-ob-sheet [data-po="40211"]');
+  check(!(await sheet()), 'picking closes the sheet');
+  check(/PRICING INTO/i.test(await banner()) && /PO 40211 · Kitchen/.test(await banner()) && /12 of 420 labeled/.test(await banner()),
+        `🔑 …and the banner names the buy and its count (${await banner()})`);
+  check((await page.getAttribute('#ps-ob', 'aria-pressed')) === 'true', '…with Buy reading as on');
+
+  await scan(page);
+  const bodies = () => page.evaluate(() => window.__bodies);
+  const lastOf = async (a) => (await bodies()).filter(x => x.action === a).pop()?.body || {};
+  check((await lastOf('merch-scan')).po === '40211', '🔑 the scan carries the buy');
+  await page.click('#ps-print');
+  await page.waitForFunction(() => window.__zebra.length >= 1, null, { timeout: 4000 });
+  await page.waitForFunction(() => window.__bodies.some(x => x.action === 'sticker-printed'), null, { timeout: 4000 });
+  check((await lastOf('sticker-check')).po === '40211' && (await lastOf('sticker-printed')).po === '40211',
+        '🔑 …and so do the label check and the print record');
+  await page.waitForFunction(() => /13 of 420 labeled/.test(document.getElementById('ps-ob-bar').textContent), null, { timeout: 4000 })
+    .then(() => check(true, '…and the banner\'s count moves with the print'),
+          () => check(false, `…and the banner\'s count moves with the print (${'stuck'})`));
+
+  // Recent: the buy just picked is first next time.
+  await page.click('#ps-ob');
+  await page.waitForSelector('#ps-ob-sheet [data-po]', { timeout: 4000 });
+  const first = await page.$eval('#ps-ob-sheet [data-po]', r => r.dataset.po);
+  check(first === '40211', `Recent puts the last buy picked first (${first})`);
+  await page.keyboard.press('Escape');
+  check(!(await sheet()) && /PO 40211/.test(await banner()), 'Escape cancels, and the buy stays picked');
+
+  // A reload mid-pallet keeps the buy, for the rest of the day.
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => window.__calls?.includes('auth-me'), null, { timeout: 10000 });
+  await page.waitForTimeout(900);
+  await page.evaluate(() => window.navigateToPage('merch-scan'));
+  await page.waitForTimeout(500);
+  check(/PO 40211/.test(await banner()), '🔑 after a reload the buy is still picked, not silently dropped');
+  // …but only for the day it was picked: tomorrow starts in regular pricing.
+  await page.evaluate(() => { const v = JSON.parse(localStorage.getItem('ps-ob')); v.day = '2020-01-01';
+                              localStorage.setItem('ps-ob', JSON.stringify(v)); });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => window.__calls?.includes('auth-me'), null, { timeout: 10000 });
+  await page.waitForTimeout(900);
+  await page.evaluate(() => window.navigateToPage('merch-scan'));
+  await page.waitForTimeout(500);
+  check((await banner()) === '' && (await page.evaluate(() => localStorage.getItem('ps-ob'))) === null,
+        '🔑 a buy picked on an earlier day is not carried into today');
+  await page.click('#ps-ob');
+  await page.click('#ps-ob-sheet [data-po="40211"]', { timeout: 4000 });
+
+  // Closed meanwhile: the next check drops it and asks again.
+  await page.evaluate(() => { window.__buys = window.__buys.filter(b => b.po !== '40211'); });
+  await scan(page);
+  await page.click('#ps-print');
+  await page.waitForSelector('#ps-ob-sheet', { timeout: 4000 });
+  check(/PO 40211 was closed/.test(await page.textContent('#ps-ob-sheet')) && (await banner()) === '',
+        '🛑 a buy closed meanwhile is dropped, and the sheet asks for another');
+  await page.click('#ps-ob-sheet [data-po="12345"]');
+  check(/PO 12345 · Drinks/.test(await banner()), '…which a tap answers');
+  await page.click('#ps-ob-bar button:text-is("Stop")');
+  check((await banner()) === '' && (await page.evaluate(() => localStorage.getItem('ps-ob'))) === null,
+        '🔑 Stop goes back to regular pricing, and forgets the buy');
   check(errs.length === 0, `no JS errors${errs.length ? ': ' + errs.join(' | ') : ''}`);
 });
 
