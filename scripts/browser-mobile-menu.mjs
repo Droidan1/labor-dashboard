@@ -85,9 +85,10 @@ const EXPECT = {
   // An associate holding Price Scan gets it as a bar tab, like Bin Dump and MOS (Brian,
   // 2026-09-30) — while the associate above, without it, keeps a three-tab bar.
   associateScan: { role: 'associate', associate: true, businesses: [BL], biz: 'bl',
-    pages: { 'bin-dump': 'edit', 'mos': 'edit', 'merch-scan': 'edit' },
+    pages: { 'bin-dump': 'edit', 'mos': 'edit', 'merch-scan': 'edit', 'merch-signs': 'view' },
     bar: ['Bin Dump', 'MOS', 'Price Scan', 'Menu'],
-    menu: [['Merchandising', ['merch-scan']], ['Inventory', ['bin-dump', 'mos']], ['Account', ['@signout']]] },
+    // Sign Studio (granted 2026-10-01) has no bar tab: it lives on the Menu, under Merchandising.
+    menu: [['Merchandising', ['merch-scan', 'merch-signs']], ['Inventory', ['bin-dump', 'mos']], ['Account', ['@signout']]] },
   ecom: { role: 'superuser', businesses: [BL, ECOM], biz: 'ecom',
     bar: ['eBay Cases', 'Menu'],
     menu: [['E-Commerce', ['ebay-cases']], ['Account', ['@switch', 'settings', '@signout']]] },

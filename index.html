@@ -13152,14 +13152,14 @@
     }
     // Sign Studio: managers, admins and superusers, the PRD's list (a district manager is a
     // manager with more stores since migration-029; the old name stays to mirror merchRoles).
-    // Not executives, who get Price Scan, and not an associate by page grant: the role is
-    // the gate. Making and printing a sign never reaches the worker, so for that this is the
-    // only one; saved signs do, and the worker's savedSignAccess refuses every other role on
-    // its own. The sidebar item in applyRoleUI carries the same list.
+    // Not executives, who get Price Scan. An associate may, by page grant (Brian, 2026-10-01).
+    // Making and printing a sign never reaches the worker, so for that this is the only gate;
+    // saved signs do, and the worker's ACTION_PAGE + savedSignAccess hold the same line. The
+    // sidebar item in applyRoleUI carries the role list; applyAssociateNav adds the grant.
     if (page === 'merch-signs') {
       const role = currentUser && currentUser.role;
       const allowed = ['superuser','admin','district_manager','manager'];
-      if (!allowed.includes(role)) return;
+      if (!allowed.includes(role) && pageLevel('merch-signs') < 1) return;
     }
     // Bin Dump: a manager receiving pallets, not an admin surface. The worker is
     // the real gate; this only decides whether the shell opens.
@@ -32552,6 +32552,9 @@
   const ssMonthName = ym => `${SS_MONTHS[+ym.slice(5, 7) - 1]} ${ym.slice(0, 4)}`;
   const ssWhere = w => (w.scope === 'all' ? 'All stores › ' : '') + `${SS_TYPE_FOLDER[w.template]} › ${ssMonthName(w.month)}`;
   const ssSavesTo = () => (currentUser && ['admin', 'superuser'].includes(currentUser.role) ? 'all' : 'own');
+  // Saving is the edit level for an associate (ACTION_PAGE: saved-sign-save at merch-signs edit).
+  // At view they make, print and open saved signs; the Save row is not offered at all.
+  const ssCanSave = () => !isAssociate(currentUser) || pageLevel('merch-signs') >= 2;
   const ssIsWhere = w => !!w && typeof w === 'object' && ['own', 'all'].includes(w.scope)
     && SignRender.TEMPLATES.some(t => t.id === w.template) && typeof w.month === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(w.month);
   function ssNewId() {
@@ -32574,6 +32577,8 @@
       case 'NO_SESSION':          return 'Your session has expired. Sign in again.';
       case 'NEED_SIGN_STUDIO':
       case 'NO_FINANCIAL_ACCESS': return "Your account can't save signs.";
+      case 'NEED_PAGE_EDIT':      return 'Saving signs needs Sign Studio at "edit" — ask a manager to change your access.';
+      case 'NEED_PAGE_VIEW':      return "Your account doesn't have Sign Studio.";
       case 'ALL_STORES_ONLY':     return 'Your account sees the All stores folder only.';
       case 'NEED_ADMIN':          return 'Only an admin can delete an All stores sign.';
       case 'ID_USED':             return 'That save was already used. Save this as a new sign.';
@@ -32606,7 +32611,7 @@
   }
   async function ssDoSave() {
     const R = window.SignRender;
-    if (ssSaving || ssAssets !== 'ready') return;
+    if (ssSaving || ssAssets !== 'ready' || !ssCanSave()) return;
     const v = R.validate(R.signModel(ssSign), ssKit.engine);
     if (v.blocked.landscape && v.blocked.portrait) return;   // the button is off as well; this is the gate
     const cur = JSON.stringify(ssSign), st = ssSaveState(cur);
@@ -33013,7 +33018,7 @@
       ssH('div', { class: 'ss-review' }, ssPreviewCard('landscape'), ssPreviewCard('portrait')),
       ssH('div', { style: 'margin-top:14px;display:grid;gap:10px' }, ssH('div', { 'data-summary': '' }),
         ssH('div', { class: 'ss-note', 'data-reminder': '' }, ssIcon('info'), ssH('span', { 'data-reminder-text': '' }))),
-      ssSaveRow(),
+      ssCanSave() ? ssSaveRow() : null,
       nav(btn('ss-ghost', '← Back', () => ssGo(2)), btn('ss-ghost', 'Start a new sign', ssStartOver, { 'data-new': '' })));
     const mini = st === 3 ? null : ssH('aside', { class: 'ss-mini' },
       ssH('div', { class: 'ss-panel' }, ssH('div', { class: 'ss-bar' }, ssH('span', { class: 'ss-lbl' }, 'As it will print'), ssOrientSeg()),
@@ -35074,6 +35079,7 @@
     // Last on purpose: landingPageFor picks the FIRST granted page, so appending leaves every
     // existing associate's front door where it was.
     { id: 'merch-scan', label: 'Price Scan', nav: 'nav-merch-scan' },
+    { id: 'merch-signs', label: 'Sign Studio', nav: 'nav-merch-signs' },
   ];
   // Mirrors PAGE_LEVELS in worker.js. The worker is the real gate; this only
   // stops the UI offering what the API would refuse.

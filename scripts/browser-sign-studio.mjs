@@ -99,9 +99,11 @@ const ROLES = {
   // A district manager is a `manager` with more stores: migration-029 retired the separate role.
   manager: USER('manager'), admin: USER('admin'), superuser: USER('superuser'),
   executive: USER('executive'), staff: USER('staff'),
-  // An associate is gated by page grant. This one holds a grant for Sign Studio, which the
-  // PRD says cannot be granted: the router must refuse it anyway.
+  // An associate is gated by page grant. Sign Studio became grantable on 2026-10-01 (Brian):
+  // edit makes, prints and saves; view makes and prints, and is offered no Save row.
   associate: Object.assign(USER('associate'), { associate: true, pages: { 'merch-signs': 'edit', 'bin-dump': 'edit' } }),
+  associateView: Object.assign(USER('associate'), { associate: true, pages: { 'merch-signs': 'view' } }),
+  associateNone: Object.assign(USER('associate'), { associate: true, pages: { 'bin-dump': 'edit' } }),
   // The worker harness's own people (scripts/lib/worker-harness.mjs), for sections 15–17:
   // two managers of the same store, and an admin.
   mgr1: Object.assign(USER('manager'), { email: 'howardbrian260@gmail.com', stores: ['BL1'] }),
@@ -231,7 +233,21 @@ await section('1. roles', async () => {
     check(await page.evaluate(() => document.getElementById('nav-merch-signs').classList.contains('active')), `${role}: …and lights its own item`);
     check(!errs.length, `${role}: no page errors (${errs.slice(0, 2).join(' | ')})`);
   }
-  for (const role of ['executive', 'staff', 'associate']) {
+  // Associates by page grant: the Merchandising group shows Sign Studio alone, the router opens
+  // it, and the Save row follows the level — the worker refuses a view-level save anyway.
+  for (const [role, canSave] of [['associate', true], ['associateView', false]]) {
+    const { page, errs } = await open({ role, go: false });
+    const items = await page.evaluate(() => [...document.querySelectorAll('#nav-merch-sub .nav-item')]
+      .filter(n => !n.classList.contains('hidden')).map(n => n.querySelector('.nav-label').textContent.trim()));
+    eq(items, ['Sign Studio'], `${role}: Merchandising lists Sign Studio and nothing else`);
+    await enter(page);
+    eq(await shown(page), ['page-merch-signs'], `🔑 ${role}: the router opens Sign Studio on the grant`);
+    await makeSign(page, { fields: { 'name-0': 'All cereal', 'price-0': '2' }, sale: 'flash' });
+    eq(!!(await page.$('[data-save]')), canSave,
+       `${role}: ${canSave ? '🔑 the Save row is offered at edit' : '🛑 no Save row at view'}`);
+    check(!errs.length, `${role}: no page errors (${errs.slice(0, 2).join(' | ')})`);
+  }
+  for (const role of ['executive', 'staff', 'associateNone']) {
     const { page, errs } = await open({ role, go: false });
     const vis = await page.evaluate(() => ({ group: !document.getElementById('nav-merch-group').classList.contains('hidden'),
       item: !document.getElementById('nav-merch-signs').classList.contains('hidden') }));
@@ -240,7 +256,7 @@ await section('1. roles', async () => {
     const before = await shown(page);
     await page.evaluate(() => window.navigateToPage('merch-signs'));
     await page.waitForTimeout(200);
-    eq(await shown(page), before, `🛑 ${role}: the router refuses Sign Studio${role === 'associate' ? ', grant or no grant' : ''}`);
+    eq(await shown(page), before, `🛑 ${role}: the router refuses Sign Studio${role === 'associateNone' ? ' without the grant' : ''}`);
     check(!errs.length, `${role}: no page errors (${errs.slice(0, 2).join(' | ')})`);
   }
 });
