@@ -394,6 +394,58 @@ for (const theme of ['light', 'dark', 'oled']) await section(`4. background [${t
   check(!errs.length, `[${theme}] no page errors (${errs.slice(0, 2).join(' | ')})`);
 });
 
+// ── 5. Printer tools, top right, painted in every theme (2026-10-01) ────
+// Calibrate printer and the printer choice left the scan bar for one menu at the top right of
+// the page. It opens over the scan card, so each item is asked what is actually ON TOP at its
+// centre, and each line of text what it reads against what is painted behind it.
+for (const theme of ['light', 'dark', 'oled']) await section(`5. printer tools [${theme}]`, async () => {
+  const { page, errs } = await open({ theme });
+  const box = sel => page.evaluate(s => { const r = document.querySelector(s).getBoundingClientRect();
+    return { l: r.left, t: r.top, r: r.right, b: r.bottom }; }, sel);
+  const open_ = () => page.evaluate(() => document.getElementById('ps-tools-menu').style.display !== 'none');
+  const btn = await box('#ps-tools-btn'), h1 = await box('#ps-wrap h1'), card = await box('#ps-card');
+  check(btn.r > 390 - 16 - 2 && btn.b <= card.t && Math.abs(btn.t - h1.t) < 12,
+        `[${theme}] Printer tools sits top right, beside the title, above the scan card (${JSON.stringify({ btn, h1: h1.t, card: card.t })})`);
+  check(btn.b - btn.t >= 40, `[${theme}] …a 40 px tap target (${btn.b - btn.t})`);
+  check(!(await open_()), `[${theme}] …closed until it is opened`);
+  await page.click('#ps-tools-btn');
+  const menu = await box('#ps-tools-menu');
+  check(await open_() && menu.l >= 0 && menu.r <= 390, `[${theme}] it opens inside the phone's width (${JSON.stringify(menu)})`);
+  const onTop = await page.evaluate(() => ['ps-calibrate', 'ps-printer'].every(id => {
+    const r = document.getElementById(id).getBoundingClientRect();
+    return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest('#' + id);
+  }));
+  check(onTop, `[${theme}] 🛑 both items are on top where they are drawn, not under the scan card`);
+  // What each line reads: its colour over every background behind it, down to the first opaque one.
+  const paintOf = sel => page.evaluate(s => {
+    const n = document.querySelector(s), chain = [];
+    for (let p = n; p; p = p.parentElement) {
+      const bg = getComputedStyle(p).backgroundColor;
+      chain.push(bg);
+      const a = (bg.match(/[\d.]+/g) || [])[3];
+      if (a == null || +a === 1) break;
+    }
+    return { fg: getComputedStyle(n).color, chain };
+  }, sel);
+  const reads = [];
+  for (const [what, sel] of [['Printer tools', '#ps-tools-btn'], ['Calibrate printer', '#ps-calibrate b'],
+                             ['its hint', '#ps-calibrate span'], ['Not set on this PC', '#ps-printer-now']]) {
+    const p = await paintOf(sel);
+    let base = rgba(p.chain[p.chain.length - 1]);
+    for (let i = p.chain.length - 2; i >= 0; i--) base = over(rgba(p.chain[i]), base);
+    const r = ratio(over(rgba(p.fg), base), base);
+    check(rgba(p.chain[p.chain.length - 1])[3] === 1 && r >= 4.5, `[${theme}] "${what}" reads ${r.toFixed(2)}:1`);
+    reads.push(`${what} ${r.toFixed(2)}:1`);
+  }
+  measured.push(`${theme.padEnd(5)}  ${reads.join('   ')}`);
+  await page.click('#ps-wrap h1');
+  check(!(await open_()), `[${theme}] a tap anywhere else closes it`);
+  await page.click('#ps-tools-btn');
+  await page.keyboard.press('Escape');
+  check(!(await open_()) && (await page.getAttribute('#ps-tools-btn', 'aria-expanded')) === 'false', `[${theme}] …and so does Escape`);
+  check(!errs.length, `[${theme}] no page errors (${errs.slice(0, 2).join(' | ')})`);
+});
+
 await b.close();
 srv.close();
 if (measured.length) console.log('Painted contrast:\n  ' + measured.join('\n  '));

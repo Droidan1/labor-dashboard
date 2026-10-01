@@ -1,3 +1,33 @@
+# Price Scan: Printer tools menu at the top right (2026-10-01)
+
+**Request (Brian):** *"Move the Calibrate and the printer option to the top right on the page as
+printer tools with those 2 options."*
+
+**Plan:**
+- [x] Header becomes a row: title left, a "Printer tools" button right (printer icon + chevron,
+      40 px tap target, `aria-expanded`), shown only when `psCanPrint()` — the same people the two
+      links were shown to.
+- [x] Its menu holds **Calibrate printer** (hint "Re-measure the sticker roll") and **Choose printer**
+      (hint "Now: ZD410" / "Not set on this PC"); ids `ps-calibrate` / `ps-printer` kept so
+      `psCalibrate` still disables its own button. Each closes the menu as it runs; an outside tap
+      or Escape closes it, like the Weekly Retail Download menu.
+- [x] Remove both links from `#ps-bar`. CACHE_NAME v268 → v269.
+- [x] Verify: test-price-scan pins (hidden by default, in the menu, gone from the bar, gated on
+      psCanPrint); browser-associate-price-scan (edit sees it, view does not, manager does,
+      Calibrate runs from it, Choose printer re-asks); browser-price-scan §5 at phone width in
+      light / dark / OLED: top right, 40 px, on top of the scan card, contrast ≥ 4.5:1 for every
+      line, outside tap + Escape close. Mutations on the gate, the closers and the label.
+
+**Review (2026-10-01):**
+- One app commit, no worker change. CACHE_NAME v268 → v269. npm test 7617/7617; browser-associate-
+  price-scan 51/51; browser-price-scan 98/98.
+- Painted contrast (phone, real backgrounds): light — Printer tools 4.87, item 18.85, hint 5.88;
+  dark — 9.89 / 14.98 / 5.74; OLED — 10.84 / 17.68 / 8.33 (all :1).
+- Mutations killed 8/9: gate removed (unit + assoc), no outside-tap close (3), no Escape close (3),
+  Calibrate leaves the menu open (unit + assoc), label never updates (assoc), dim dark hint (2.99:1),
+  18.75 px tap target (3), header not a row (3). **Survived: no `z-index`** — nothing positioned sits
+  under the menu today, so it draws on top without one; kept, as the Weekly Retail Download menu has one.
+
 # Price Scan: stickers only ever go to the sticker printer (2026-10-01)
 
 **Request (Brian):** the store's Windows PC has the ZD410 (price stickers) *and* a Zebra GX420d

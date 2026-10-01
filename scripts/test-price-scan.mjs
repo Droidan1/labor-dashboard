@@ -4990,10 +4990,17 @@ console.log('Price Scan');
   const src = sliceOrNull(html, '  const PS_CALIBRATE_ZPL', '  window.psCalibrate = psCalibrate;');
   ok(src, 'psCalibrate and its command string are where the test expects them');
 
-  ok(/<button id="ps-calibrate"[^>]*onclick="psCalibrate\(\)"[^>]*style="display:none"/.test(html),
-     'the bar carries a Calibrate printer button, hidden until the page decides');
+  // 2026-10-01: it and the printer choice moved out of the scan bar into Printer tools, a
+  // menu at the top right of the page. scripts/browser-price-scan.mjs §5 drives the menu.
+  ok(/<div id="ps-tools" style="display:none">/.test(html), 'Printer tools is hidden until the page decides');
+  const tools = sliceOrNull(html, '<div id="ps-tools"', '<div id="ps-status"') || '';
+  ok(/<button id="ps-calibrate"[^>]*onclick="psToolsToggle\(false\); psCalibrate\(\)"/.test(tools)
+     && /<button id="ps-printer"[^>]*onclick="psToolsToggle\(false\); psChangePrinter\(\)"/.test(tools),
+     '…and holds Calibrate printer and Choose printer, each closing the menu as it runs');
+  const bar = sliceOrNull(html, '<div id="ps-bar">', '<div id="ps-body">');
+  ok(bar && !/ps-calibrate|ps-printer/.test(bar), '…and neither is left in the scan bar');
   const init = sliceOrNull(html, '  function initPriceScan() {', '  window.initPriceScan');
-  ok(/el\('ps-calibrate'\);\s*if \(cal\) cal\.style\.display = psCanPrint\(\) \? '' : 'none';/.test(init || ''),
+  ok(/el\('ps-tools'\);\s*if \(tools\) tools\.style\.display = psCanPrint\(\) \? '' : 'none';/.test(init || ''),
      '🔑 …offered to exactly the people who can Print (psCanPrint)');
 
   const stub = ({ canPrint = true, confirm = true, probe = { dev: { name: 'ZD410', uid: 'u1' } }, write = { ok: true, status: 200 } } = {}) => {

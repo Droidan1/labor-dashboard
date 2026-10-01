@@ -152,9 +152,14 @@ await section('1. An associate at EDIT', async () => {
   const bad = calls.filter(a => MANAGER_ONLY.includes(a));
   check(bad.length === 0, `🛑 the page called nothing a manager-only endpoint serves (${bad.join() || 'none'})`);
   check(!/Forbidden/.test(await page.textContent('#page-merch-scan')), 'no "Forbidden" anywhere on the page');
-  // Calibrate printer (2026-10-01): offered with Print, asks first, then sends the calibration.
-  check(await shown(page, '#ps-calibrate'), '🔑 edit can print, so it is offered Calibrate printer');
+  // Calibrate printer (2026-10-01): offered with Print, in Printer tools at the top right;
+  // it asks first, then sends the calibration.
+  check(await shown(page, '#ps-tools-btn'), '🔑 edit can print, so it is offered Printer tools');
+  check(!(await shown(page, '#ps-calibrate')), '…closed until it is opened');
+  await page.click('#ps-tools-btn');
+  check(await shown(page, '#ps-calibrate') && await shown(page, '#ps-printer'), '…which opens on Calibrate printer and Choose printer');
   await page.click('#ps-calibrate');
+  check(!(await shown(page, '#ps-tools-menu')), '…and closes as Calibrate printer runs');
   await page.click('button:text-is("Calibrate")', { timeout: 3000 });
   await page.waitForFunction(() => window.__zebra.length === 1, null, { timeout: 4000 });
   const cal = (await page.evaluate(() => window.__zebra))[0] || {};
@@ -181,7 +186,7 @@ await section('2. An associate at VIEW', async () => {
   check(!/Override price or retail/.test(await page.textContent('#ps-result')), '🛑 …and does not override');
   check(!(await shown(page, '#ps-result .ps-link[onclick="psOverride()"]')), '…nor get the category\'s Change link');
   check(!(await shown(page, '#ps-tab-reprint')), '…and no Reprint tab');
-  check(!(await shown(page, '#ps-calibrate')), '…and no Calibrate printer: it cannot print');
+  check(!(await shown(page, '#ps-tools-btn')), '…and no Printer tools: it cannot print');
   const calls = await page.evaluate(() => window.__calls);
   check(!calls.includes('sticker-check') && !calls.includes('sticker-history'),
         '…and the page never asks the print endpoints, which would refuse');
@@ -226,7 +231,7 @@ await section('5. A manager is untouched', async () => {
   await scan(page);
   check(/Override price or retail/.test(await page.textContent('#ps-result')), '…and Override');
   check(await shown(page, '#ps-print') && await shown(page, '#ps-ob'), '…and Print and the Buy picker');
-  check(await shown(page, '#ps-calibrate'), '…and Calibrate printer');
+  check(await shown(page, '#ps-tools-btn'), '…and Printer tools');
   // The bar only exists on a phone, so this has to be asked at phone width — at desktop
   // width it could never fail (it did not, when the gate was broken to prove it).
   const phone = await open({ authenticated: true, email: 'm@x.com', name: 'Alex M', role: 'manager',
@@ -246,17 +251,24 @@ await section('6. two printers on one PC', async () => {
     { uid: 'ZDesigner ZD410-203dpi ZPL', name: 'ZDesigner ZD410-203dpi ZPL', connection: 'driver' }]; });
   await page.evaluate(() => window.navigateToPage('merch-scan'));
   await page.waitForTimeout(400);
-  check((await page.textContent('#ps-printer')).trim() === 'Printer', 'no sticker printer chosen yet on this PC');
+  check((await page.textContent('#ps-printer-now')).trim() === 'Not set on this PC', 'no sticker printer chosen yet on this PC');
   await scan(page);
   await page.click('#ps-print');
   await page.click('button:text-is("ZD410")', { timeout: 3000 });
   await page.waitForFunction(() => window.__zebra.length === 1, null, { timeout: 4000 });
   const first = (await page.evaluate(() => window.__zebra))[0] || {};
   check(first.device && /ZD410/.test(first.device.name), `🔑 asked once, and the label went to the ZD410 (${first.device && first.device.name})`);
-  check((await page.textContent('#ps-printer')).trim() === 'Printer: ZD410', '…which the bar now names');
+  check((await page.textContent('#ps-printer-now')).trim() === 'Now: ZD410', '…which Printer tools now names');
   await page.click('#ps-print');
   await page.waitForFunction(() => window.__zebra.length === 2, null, { timeout: 4000 });
   check(/ZD410/.test(((await page.evaluate(() => window.__zebra))[1] || {}).device?.name || ''), '…and the next print goes there without asking');
+  // Choose printer, in Printer tools, asks again — and prints nothing.
+  await page.click('#ps-tools-btn');
+  await page.click('#ps-printer');
+  await page.click('button:text-is("ZD410")', { timeout: 3000 });
+  const said = await page.waitForFunction(() => /print on the ZD410/.test(document.getElementById('ps-status')?.textContent || ''),
+    null, { timeout: 4000 }).then(() => true, () => false);
+  check(said && (await page.evaluate(() => window.__zebra.length)) === 2, '…Choose printer asks again and says where stickers go, printing nothing');
   // The ZD410 unplugged: only the GX420d is listed.
   await page.evaluate(() => { window.__printers = [{ uid: 'ZDesigner GX420d', name: 'ZDesigner GX420d', connection: 'driver' }]; });
   await page.click('#ps-print');
