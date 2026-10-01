@@ -5087,6 +5087,10 @@
             <!-- A buy is a CONTEXT, not a mode: it applies to scanning and to manual pricing
                  alike, so it does not go through psChrome and does not take the body over. -->
             <button id="ps-ob" class="ps-link" onclick="psObToggle()" type="button" style="display:none">Buy</button>
+            <!-- Printer upkeep, offered wherever Print is (psCanPrint). Not a mode: it changes
+                 nothing on screen, it re-measures the sticker roll in the printer. -->
+            <button id="ps-calibrate" class="ps-link" onclick="psCalibrate()" type="button" style="display:none"
+                    title="Re-measure the sticker roll: after loading a roll, or when stickers skip or print across the gaps">Calibrate printer</button>
           </div>
           <div id="ps-body">
             <!-- 🔑 OUTSIDE #ps-barcode-mode ON PURPOSE. psChrome hides that div whole when a
@@ -24863,6 +24867,7 @@
     for (const id of ['ps-manual', 'ps-furniture']) {
       const b = el(id); if (b) b.style.display = canSeeFinancials(currentUser) ? '' : 'none';
     }
+    const cal = el('ps-calibrate'); if (cal) cal.style.display = psCanPrint() ? '' : 'none';
     psTabName = 'scan';   // and never on a tab the last visit left behind
     psApplyTab();
     psTplLoad();          // never blocks a scan: null just means the stock label
@@ -27198,6 +27203,64 @@
     }
   }
   window.psPrint = psPrint;
+
+  // 🔑 ZEBRA'S DOCUMENTED GAP/NOTCH CALIBRATION FOR LINK-OS PRINTERS (support article 000034877),
+  // with ~JC as the measuring step ("forces a label length measurement and recalibrates the media
+  // sensors"): declare die-cut labels and the gap sensor, measure the roll, save it with ^JUS, and
+  // unpause. The same as holding PAUSE + CANCEL, without having to know the combination.
+  //
+  // 🛑 WHY THIS EXISTS (2026-10-01): runs of 20+ stickers skipped labels and printed across the
+  // gaps. That is Zebra's "faulty registration" — the printer intermittently missing the gap. The
+  // ZD410 we read was on media_type auto_detect with power_up_action "no motion", so it never
+  // re-measures a roll on its own. ^JUS keeps the measurement through a power cycle. The labels
+  // themselves already say ^MNY; this makes the printer's own settings agree with them.
+  const PS_CALIBRATE_ZPL = [
+    '! U1 setvar "media.type" "label"',
+    '! U1 setvar "ezpl.media_type" "gap/notch"',
+    '! U1 setvar "device.sensor_select" "transmissive"',
+    '~JC^XA^JUS^XZ',
+    '! U1 do "device.unpause" "now"',
+  ].join('\r\n') + '\r\n';
+
+  async function psCalibrate() {
+    if (!psCanPrint()) return;
+    // A confirm, because it feeds blank stickers: a stray tap should not cost labels.
+    const go = await uiConfirm('The printer feeds a few blank stickers while it measures the roll, then stops. '
+      + 'Do this after loading a new roll, or when stickers skip or print across the gaps.',
+      { title: 'Calibrate the label printer?', okText: 'Calibrate' });
+    if (!go) return;
+    const btn = el('ps-calibrate');
+    if (btn) btn.disabled = true;
+    psStatus('Calibrating…');
+    try {
+      let probe;
+      try {
+        probe = await psZebraDevice();
+      } catch (e) {
+        return psStatus(e?.name === 'TimeoutError'
+          ? `Zebra Browser Print did not answer within ${PS_ZEBRA_PROBE_MS / 1000}s. It is probably starting up — try again in a moment.`
+          : `Zebra Browser Print is not answering on this machine (${e?.name || 'error'}), so the printer cannot be calibrated from here.`);
+      }
+      if (!probe.dev) return psStatus(psNoPrinter(probe.saw));
+      let r;
+      try {
+        // text/plain, as psPrint: anything else is preflighted, and Browser Print never answers it.
+        r = await fetch('http://127.0.0.1:9100/write', {
+          method: 'POST', headers: { 'Content-Type': 'text/plain' },
+          body: JSON.stringify({ device: probe.dev, data: PS_CALIBRATE_ZPL }),
+          signal: AbortSignal.timeout(5000),
+        });
+      } catch (e) {
+        return psStatus(`Could not reach the printer to calibrate it: ${e.message}`);
+      }
+      if (!r.ok) return psStatus(`Browser Print refused the calibration (${r.status}).`);
+      psStatus(`Calibrating ${probe.dev.name || 'the printer'}: it feeds a few blank stickers, then stops. `
+        + 'Then print 3 to check they line up.');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+  window.psCalibrate = psCalibrate;
   // ── Pricing into an opportunity buy ─────────────────────────────────────────
   //
   // 🔑 A BUY IS A CONTEXT, NOT A MODE. Brian's flow is "pick the PO, then price" — and

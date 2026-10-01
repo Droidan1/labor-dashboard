@@ -4980,5 +4980,90 @@ console.log('Price Scan');
      'it is registered for visibilitychange');
 }
 
+// ── Calibrate printer (2026-10-01) ─────────────────────────────────────────────
+// Runs of 20+ stickers skipped labels and printed across the gaps: Zebra's "faulty registration",
+// the printer intermittently missing the gap. The button sends Zebra's documented gap/notch
+// calibration for Link-OS printers (support article 000034877), ~JC as the measuring step, and
+// saves it — so the printer's own settings agree with the ^MNY every label already carries.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const src = sliceOrNull(html, '  const PS_CALIBRATE_ZPL', '  window.psCalibrate = psCalibrate;');
+  ok(src, 'psCalibrate and its command string are where the test expects them');
+
+  ok(/<button id="ps-calibrate"[^>]*onclick="psCalibrate\(\)"[^>]*style="display:none"/.test(html),
+     'the bar carries a Calibrate printer button, hidden until the page decides');
+  const init = sliceOrNull(html, '  function initPriceScan() {', '  window.initPriceScan');
+  ok(/el\('ps-calibrate'\);\s*if \(cal\) cal\.style\.display = psCanPrint\(\) \? '' : 'none';/.test(init || ''),
+     '🔑 …offered to exactly the people who can Print (psCanPrint)');
+
+  const stub = ({ canPrint = true, confirm = true, probe = { dev: { name: 'ZD410', uid: 'u1' } }, write = { ok: true, status: 200 } } = {}) => {
+    const log = { confirms: 0, probes: 0, writes: [], status: [] };
+    const fetchImpl = async (url, opts) => {
+      log.writes.push({ url, opts });
+      if (write instanceof Error) throw write;
+      return write;
+    };
+    const m = buildOrStub('psCalibrate', src,
+      ['psCanPrint', 'uiConfirm', 'el', 'psStatus', 'psZebraDevice', 'PS_ZEBRA_PROBE_MS', 'psNoPrinter', 'fetch', 'AbortSignal'],
+      [() => canPrint, async () => { log.confirms++; return confirm; }, () => null, (t) => log.status.push(t),
+       async () => { log.probes++; if (probe instanceof Error) throw probe; return probe; }, 5000,
+       (saw) => `NO PRINTER ${JSON.stringify(saw)}`, fetchImpl, { timeout: () => null }],
+      '{ psCalibrate, PS_CALIBRATE_ZPL }');
+    return { m, log };
+  };
+
+  {
+    const { m } = stub();
+    eq(m.PS_CALIBRATE_ZPL, '! U1 setvar "media.type" "label"\r\n! U1 setvar "ezpl.media_type" "gap/notch"\r\n'
+      + '! U1 setvar "device.sensor_select" "transmissive"\r\n~JC^XA^JUS^XZ\r\n! U1 do "device.unpause" "now"\r\n',
+      "🔑 the command is Zebra's gap/notch calibration, line for line, CRLF-terminated as SGD requires");
+  }
+  {
+    const { m, log } = stub();
+    await m.psCalibrate();
+    eq(log.confirms, 1, 'it asks first — calibrating feeds blank stickers');
+    eq(log.writes.length, 1, '…then sends ONE write');
+    const w = log.writes[0] || { opts: {} };
+    eq(w.url, 'http://127.0.0.1:9100/write', '…to Browser Print');
+    eq(w.opts.headers && w.opts.headers['Content-Type'], 'text/plain', '🛑 …as text/plain, so no CORS preflight goes out');
+    const body = JSON.parse(w.opts.body || '{}');
+    eq(body.data, m.PS_CALIBRATE_ZPL, '…carrying the calibration and nothing else');
+    eq(body.device && body.device.uid, 'u1', '…addressed to the printer the probe found');
+    ok(/Calibrating ZD410/.test(log.status.at(-1) || ''), 'and says it is calibrating, naming the printer');
+  }
+  {
+    const { log, m } = stub({ confirm: false });
+    await m.psCalibrate();
+    eq(JSON.stringify([log.probes, log.writes.length]), '[0,0]', '🛑 Cancel costs nothing: no probe, no write');
+  }
+  {
+    const { log, m } = stub({ canPrint: false });
+    await m.psCalibrate();
+    eq(JSON.stringify([log.confirms, log.writes.length]), '[0,0]', '🛑 without the print right it does nothing at all');
+  }
+  {
+    const slow = Object.assign(new Error('signal timed out'), { name: 'TimeoutError' });
+    const { log, m } = stub({ probe: slow });
+    await m.psCalibrate();
+    ok(/did not answer within 5s/.test(log.status.at(-1) || '') && !log.writes.length,
+       'a slow agent is told apart, and nothing is sent');
+  }
+  {
+    const { log, m } = stub({ probe: { saw: { printers: 0, others: 1 } } });
+    await m.psCalibrate();
+    ok(/^NO PRINTER/.test(log.status.at(-1) || '') && !log.writes.length, 'no printer is psNoPrinter\'s sentence, not a send');
+  }
+  {
+    const { log, m } = stub({ write: { ok: false, status: 500 } });
+    await m.psCalibrate();
+    ok(/refused the calibration \(500\)/.test(log.status.at(-1) || ''), 'a refused write says so, with the status');
+  }
+  {
+    const { log, m } = stub({ write: new TypeError('Failed to fetch') });
+    await m.psCalibrate();
+    ok(/Could not reach the printer/.test(log.status.at(-1) || ''), 'a write that never lands says so');
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

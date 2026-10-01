@@ -58,9 +58,12 @@ const SCAN = { ok: true, identifier: '078000035421', identifier_type: 'upc', tit
 
 function mocks({ who, SCAN }) {
   try { localStorage.setItem('bioPromptDismissed', '1'); localStorage.setItem('coachTipsDisabled', '1'); } catch (e) {}
-  window.__calls = []; window.__saved = [];
+  window.__calls = []; window.__saved = []; window.__zebra = [];
   const J = (x, status = 200) => new Response(JSON.stringify(x), { status, headers: { 'content-type': 'application/json' } });
   window.fetch = async (u, o = {}) => {
+    // Zebra Browser Print, stubbed: one printer, and every write recorded, never sent.
+    if (String(u).startsWith('http://127.0.0.1:9100/available')) return J({ printer: [{ uid: 'zd410-test', name: 'ZD410 (test)', connection: 'usb' }] });
+    if (String(u).startsWith('http://127.0.0.1:9100/write')) { try { window.__zebra.push(JSON.parse(o.body)); } catch (e) {} return new Response('', { status: 200 }); }
     const action = new URL(String(u), location.href).searchParams.get('action');
     window.__calls.push(action);
     if (action === 'merch-scan-save') { try { window.__saved.push(JSON.parse(o.body)); } catch (e) {} }
@@ -148,6 +151,15 @@ await section('1. An associate at EDIT', async () => {
   const bad = calls.filter(a => MANAGER_ONLY.includes(a));
   check(bad.length === 0, `🛑 the page called nothing a manager-only endpoint serves (${bad.join() || 'none'})`);
   check(!/Forbidden/.test(await page.textContent('#page-merch-scan')), 'no "Forbidden" anywhere on the page');
+  // Calibrate printer (2026-10-01): offered with Print, asks first, then sends the calibration.
+  check(await shown(page, '#ps-calibrate'), '🔑 edit can print, so it is offered Calibrate printer');
+  await page.click('#ps-calibrate');
+  await page.click('button:text-is("Calibrate")', { timeout: 3000 });
+  await page.waitForFunction(() => window.__zebra.length === 1, null, { timeout: 4000 });
+  const cal = (await page.evaluate(() => window.__zebra))[0] || {};
+  check(/~JC/.test(cal.data || '') && /gap\/notch/.test(cal.data || '') && /\^JUS/.test(cal.data || ''),
+        `…and after confirming, sends the gap calibration to the printer (${JSON.stringify((cal.data || '').slice(0, 40))}…)`);
+  check(/Calibrating ZD410/.test(await page.textContent('#ps-status')), '…saying so on the page');
   // A price with no Clover item behind it: a manager is offered to create one at every
   // store. An associate who can print is not — that endpoint is a manager's.
   await page.evaluate(() => { window.__noCloverItem = true; });
@@ -168,6 +180,7 @@ await section('2. An associate at VIEW', async () => {
   check(!/Override price or retail/.test(await page.textContent('#ps-result')), '🛑 …and does not override');
   check(!(await shown(page, '#ps-result .ps-link[onclick="psOverride()"]')), '…nor get the category\'s Change link');
   check(!(await shown(page, '#ps-tab-reprint')), '…and no Reprint tab');
+  check(!(await shown(page, '#ps-calibrate')), '…and no Calibrate printer: it cannot print');
   const calls = await page.evaluate(() => window.__calls);
   check(!calls.includes('sticker-check') && !calls.includes('sticker-history'),
         '…and the page never asks the print endpoints, which would refuse');
@@ -212,6 +225,7 @@ await section('5. A manager is untouched', async () => {
   await scan(page);
   check(/Override price or retail/.test(await page.textContent('#ps-result')), '…and Override');
   check(await shown(page, '#ps-print') && await shown(page, '#ps-ob'), '…and Print and the Buy picker');
+  check(await shown(page, '#ps-calibrate'), '…and Calibrate printer');
   // The bar only exists on a phone, so this has to be asked at phone width — at desktop
   // width it could never fail (it did not, when the gate was broken to prove it).
   const phone = await open({ authenticated: true, email: 'm@x.com', name: 'Alex M', role: 'manager',
