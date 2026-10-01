@@ -86,8 +86,9 @@ const EXPECT = {
   // 2026-09-30) — while the associate above, without it, keeps a three-tab bar.
   associateScan: { role: 'associate', associate: true, businesses: [BL], biz: 'bl',
     pages: { 'bin-dump': 'edit', 'mos': 'edit', 'merch-scan': 'edit', 'merch-signs': 'view' },
-    bar: ['Bin Dump', 'MOS', 'Price Scan', 'Menu'],
-    // Sign Studio (granted 2026-10-01) has no bar tab: it lives on the Menu, under Merchandising.
+    // Sign Studio (granted 2026-10-01) is a bar tab too — five tabs, still evenly shared — and is
+    // also listed on the Menu under Merchandising.
+    bar: ['Bin Dump', 'MOS', 'Price Scan', 'Sign Studio', 'Menu'],
     menu: [['Merchandising', ['merch-scan', 'merch-signs']], ['Inventory', ['bin-dump', 'mos']], ['Account', ['@signout']]] },
   ecom: { role: 'superuser', businesses: [BL, ECOM], biz: 'ecom',
     bar: ['eBay Cases', 'Menu'],

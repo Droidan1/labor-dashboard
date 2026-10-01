@@ -247,6 +247,24 @@ await section('1. roles', async () => {
        `${role}: ${canSave ? '🔑 the Save row is offered at edit' : '🛑 no Save row at view'}`);
     check(!errs.length, `${role}: no page errors (${errs.slice(0, 2).join(' | ')})`);
   }
+  // The phone bar (Brian, 2026-10-01): an associate holding Sign Studio gets it as a tab, as
+  // Bin Dump, MOS and Price Scan have. A manager does not — their bar has Dashboard instead.
+  for (const [role, want] of [['associate', true], ['associateView', true], ['manager', false]]) {
+    const { page, errs } = await open({ role, go: false, phone: true });
+    const tab = await page.evaluate(() => {
+      const t = document.getElementById('bn-merch-signs'), l = t && t.querySelector('.bn-lb');
+      return { shown: !!(t && t.offsetParent), fits: !!(l && t && l.getBoundingClientRect().width <= t.getBoundingClientRect().width) };
+    });
+    eq(tab.shown, want, `${role}: ${want ? '🔑 the phone bar has a Sign Studio tab' : '🛑 no Sign Studio tab on a manager\'s bar'}`);
+    if (want) {
+      check(tab.fits, `${role}: …and its label fits inside the tab`);
+      await page.click('#bn-merch-signs');
+      await page.waitForFunction(() => !document.getElementById('page-merch-signs').classList.contains('hidden'), null, { timeout: 5000 }).catch(() => {});
+      eq(await shown(page), ['page-merch-signs'], `${role}: …which opens Sign Studio`);
+      check(await page.evaluate(() => !document.getElementById('bn-merch-signs').classList.contains('text-opl-inkDim')), `${role}: …and lights while there`);
+    }
+    check(!errs.length, `${role} (phone): no page errors (${errs.slice(0, 2).join(' | ')})`);
+  }
   for (const role of ['executive', 'staff', 'associateNone']) {
     const { page, errs } = await open({ role, go: false });
     const vis = await page.evaluate(() => ({ group: !document.getElementById('nav-merch-group').classList.contains('hidden'),
