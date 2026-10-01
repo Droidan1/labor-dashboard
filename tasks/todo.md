@@ -1,3 +1,30 @@
+# Phone bar: a Buy tab for associates (2026-10-01)
+
+**Request (Brian):** *"add a Buy button to the associate phone bar"*
+
+**Plan:**
+- [x] `bn-merch-buy`, after Price Scan: gated like Price Scan's tab (`!seesDash` keeps it off
+      manager bars) plus `psCanPrint()` — the Buy link's own gate, so the two cannot disagree.
+- [x] Tap = Price Scan with the Buy sheet open (mid-buy, that is Change). Already on Price Scan
+      it does not re-enter the page (that clears the scan on screen); it re-syncs the bar.
+- [x] One lit tab: on Price Scan, Buy lights while a buy is being priced into, Price Scan the
+      rest of the time; psObPaint re-syncs the bar on every pick / Stop / drop.
+- [x] Verify at phone width (a desktop-width bar assertion is vacuous): edit has it, view and
+      managers do not, lighting follows pick / Stop, six tabs fit at 390 and 360 px. Mutations.
+
+
+**Review (2026-10-01):**
+- One app commit, no worker change. CACHE_NAME v270 → v271.
+- browser-associate-price-scan 88/88: edit has the tab, view and managers do not; from any page
+  it opens Price Scan with the sheet; Price Scan lit until a pick, Buy lit after, back on Stop;
+  tapped on Price Scan it keeps what was typed and still lights the right tab after a refused
+  trip; six tabs fit at 390 and 360 px. browser-mobile-menu 153/153 (associateScan's bar now
+  lists Buy). npm test 7636/7636. Mutations 6/6 + the nowrap fix 1/1.
+- Found on the way: at six tabs "Sign Studio" (and at 360 px "Price Scan") wrapped to two lines,
+  lifting its icon ~6 px above the rest. `.bn-lb` is now `nowrap`: every icon level, closest
+  labels still 5 px apart at 320 px; DESIGN.md §3.2 says so.
+---
+
 # Price Scan: the Buy sheet, and no scanning in Buy until a buy is picked (2026-10-01)
 
 **Request (Brian):** replace the "Price into" chip row (it will not scale to many buys) with

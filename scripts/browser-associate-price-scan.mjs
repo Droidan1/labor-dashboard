@@ -231,7 +231,66 @@ await section('4. On a phone, the Menu lists it', async () => {
     return { shown: !!(t && t.offsetParent), lit: !!(t && !t.classList.contains('text-opl-inkDim')) }; });
   check(tab.shown, '🔑 the phone bar has a Price Scan tab');
   check(tab.lit, '…lit while they are on the page');
+
+  // Buy (Brian, 2026-10-01): a tab of its own for an associate who can print. Not a page —
+  // it opens Price Scan's Buy sheet — so it lights while a buy is being priced into, and
+  // Price Scan lights the rest of the time. One lit tab, never two.
+  const lit = () => page.evaluate(() => Object.fromEntries(['bn-merch-scan', 'bn-merch-buy'].map(id => {
+    const t = document.getElementById(id); return [id, !!(t && t.offsetParent && !t.classList.contains('text-opl-inkDim'))]; })));
+  check(await shown(page, '#bn-merch-buy'), '🔑 the phone bar has a Buy tab');
+  await page.evaluate(() => window.navigateToPage('menu'));
+  await page.waitForTimeout(300);
+  await page.click('#bn-merch-buy');
+  await page.waitForSelector('#ps-ob-sheet [data-po]', { timeout: 4000 });
+  check(await shown(page, '#page-merch-scan'), '🔑 …which goes to Price Scan from anywhere, with the Buy sheet open');
+  check(JSON.stringify(await lit()) === '{"bn-merch-scan":true,"bn-merch-buy":false}',
+        `…Price Scan still lit while nothing is picked (${JSON.stringify(await lit())})`);
+  await page.click('#ps-ob-sheet [data-po="12345"]');
+  check(JSON.stringify(await lit()) === '{"bn-merch-scan":false,"bn-merch-buy":true}',
+        `🔑 a picked buy lights Buy instead (${JSON.stringify(await lit())})`);
+  await page.click('#bn-merch-buy');
+  await page.waitForSelector('#ps-ob-sheet [data-po]', { timeout: 4000 });
+  check(/Stop pricing into PO 12345/.test(await page.textContent('#ps-ob-sheet')), '…tapped mid-buy, it is Change, with Stop inside');
+  await page.click('#ps-obs-stop');
+  check(JSON.stringify(await lit()) === '{"bn-merch-scan":true,"bn-merch-buy":false}',
+        `…and Stop gives the light back to Price Scan (${JSON.stringify(await lit())})`);
+  // Tapped while already on Price Scan, after a trip the router refused (an associate has no
+  // Dashboard): it must not re-enter the page, which clears what is on screen, and the bar
+  // must still light the right tab rather than the refused page's.
+  await page.fill('#ps-input', '078000035421');
+  await page.evaluate(() => window.navigateToPage('dashboard'));
+  await page.waitForTimeout(300);
+  const stillHere = await shown(page, '#page-merch-scan');
+  await page.click('#bn-merch-buy');
+  await page.waitForSelector('#ps-ob-sheet [data-po]', { timeout: 4000 });
+  check(stillHere && (await page.inputValue('#ps-input')) === '078000035421', '…tapped on Price Scan, it keeps what was typed');
+  check(JSON.stringify(await lit()) === '{"bn-merch-scan":true,"bn-merch-buy":false}',
+        `…and lights Price Scan even after a refused trip (${JSON.stringify(await lit())})`);
+  await page.keyboard.press('Escape');
   await ctx.close();
+
+  // At VIEW they cannot print into a buy, so no tab — the same gate as the Buy link.
+  const v = await open(ASSOC({ 'merch-scan': 'view' }), { width: 390, height: 844, mobile: true });
+  check(await shown(v.page, '#bn-merch-scan') && !(await shown(v.page, '#bn-merch-buy')),
+        '🛑 an associate at VIEW gets Price Scan on the bar but no Buy');
+  await v.ctx.close();
+
+  // Every tool at once: six tabs. Each label must still fit its tab on a small phone.
+  for (const width of [390, 360]) {
+    const all = await open(ASSOC({ 'bin-dump': 'edit', mos: 'edit', 'merch-scan': 'edit', 'merch-signs': 'edit' }),
+      { width, height: 800, mobile: true });
+    const tabs = await all.page.evaluate(() => [...document.querySelectorAll('#bottom-nav .bn-tab')]
+      .filter(t => t.offsetParent).map(t => { const r = t.getBoundingClientRect(), l = t.querySelector('.bn-lb').getBoundingClientRect();
+        return { id: t.id, w: Math.round(r.width), icon: Math.round(t.querySelector('svg').getBoundingClientRect().top), lines: Math.round(l.height / 10),
+                 fits: l.width <= r.width + 0.5 && l.left >= r.left - 0.5 && l.right <= r.right + 0.5 }; }));
+    check(tabs.length === 6 && tabs.some(t => t.id === 'bn-merch-buy'), `${width}px: all six tabs are on the bar (${tabs.map(t => t.id).join()})`);
+    check(tabs.every(t => t.fits && t.w >= 44), `${width}px: every label fits its tab, and no tab is under 44 px (${tabs.map(t => t.w).join()})`);
+    // 🛑 One line each, so every icon sits level: "Sign Studio" wrapped at six tabs and its
+    // taller tab lifted its icon ~6px above the rest.
+    check(tabs.every(t => t.lines === 1) && new Set(tabs.map(t => t.icon)).size === 1,
+          `${width}px: every label on one line, every icon level (${tabs.map(t => t.lines + '@' + t.icon).join()})`);
+    await all.ctx.close();
+  }
 });
 
 // ── 5. A manager is untouched ─────────────────────────────────────────────
@@ -251,6 +310,7 @@ await section('5. A manager is untouched', async () => {
     stores: ['BL1', 'BL4'], pages: {}, businesses: ['bl'] }, { width: 390, height: 844, mobile: true });
   check(await shown(phone.page, '#bn-dashboard'), 'the manager\'s phone bar is on screen');
   check(!(await shown(phone.page, '#bn-merch-scan')), '🛑 …with no Price Scan tab — it left the manager bar on 2026-09-22');
+  check(!(await shown(phone.page, '#bn-merch-buy')), '🛑 …and no Buy tab: the Buy link on the page is theirs');
   await ctx.close();
 });
 

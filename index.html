@@ -721,7 +721,10 @@
        as TEXT, so light mode takes green-800: #16a34a measured 3.23:1 on the
        frosted bar; #166534 is 7.00:1. The icon keeps the brand hex (a fill,
        not text — DESIGN.md §4.8). */
-    .bn-lb { font-size: 10px; font-weight: 600; margin-top: 3px; letter-spacing: .01em; line-height: 1; }
+    /* nowrap (2026-10-01): with six tabs, "Sign Studio" wrapped to two lines and its taller tab
+       sat its icon ~6px above the rest. One line keeps every icon level; a label wider than an
+       equal share widens its own tab by a few px instead (scripts/browser-associate-price-scan §4). */
+    .bn-lb { font-size: 10px; font-weight: 600; margin-top: 3px; letter-spacing: .01em; line-height: 1; white-space: nowrap; }
     #bn-submit-photos .bn-lb { color: #166534; }
     .dark #bn-submit-photos .bn-lb { color: #22c55e; }
     /* Slightly stronger tint while the Submit page is the active tab. */
@@ -1246,6 +1249,12 @@
            above. Managers do not get it back: it left their bar for the Menu on 2026-09-22. -->
       <button id="bn-merch-scan" data-tab="merch-scan" aria-label="Price Scan" onclick="navigateToPage('merch-scan')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
         <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="8" x2="7" y2="16"/><line x1="10.5" y1="8" x2="10.5" y2="16"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="17" y1="8" x2="17" y2="16"/></svg><span class="bn-lb">Price Scan</span>
+      </button>
+      <!-- Buy for an associate who can print (2026-10-01): Price Scan with the Buy sheet open.
+           A buy is a context of Price Scan, not a page, so this lights while one is being
+           priced into and Price Scan lights the rest of the time (syncBottomNav). -->
+      <button id="bn-merch-buy" data-tab="merch-buy" aria-label="Buy" onclick="psBuyTab()" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg><span class="bn-lb">Buy</span>
       </button>
       <!-- Sign Studio for an associate granted it (2026-10-01), on the same terms as Price Scan. -->
       <button id="bn-merch-signs" data-tab="merch-signs" aria-label="Sign Studio" onclick="navigateToPage('merch-signs')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
@@ -27492,6 +27501,7 @@
   function psObPaint() {
     const btn = el('ps-ob');
     if (btn) btn.setAttribute('aria-pressed', psOb.po ? 'true' : 'false');
+    if (window.__syncBottomNav) window.__syncBottomNav();   // Buy or Price Scan lights
     const bar = el('ps-ob-bar');
     if (!bar) return;
     if (!psOb.po) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
@@ -27592,6 +27602,18 @@
     if (window.matchMedia && matchMedia('(pointer: fine)').matches) q.focus();
   }
   window.psObOpen = psObOpen;
+
+  // The phone bar's Buy tab: Price Scan with the Buy sheet open (mid-buy, that is Change).
+  function psBuyTab() {
+    const pg = () => el('page-merch-scan');
+    if (pg() && pg().classList.contains('hidden')) navigateToPage('merch-scan');
+    if (!pg() || pg().classList.contains('hidden')) return;   // the router said no
+    // Already here: tell the bar so, rather than re-entering the page and clearing the scan
+    // on screen. A refused navigation elsewhere can leave the bar remembering that page.
+    else if (window.__syncBottomNav) window.__syncBottomNav('merch-scan');
+    psObOpen();
+  }
+  window.psBuyTab = psBuyTab;
 
   function psObFilter(text) {
     const list = el('ps-obs-list');
@@ -38709,6 +38731,10 @@
       // Price Scan, on the same terms (Brian, 2026-09-30). `!seesDash` is what keeps it off
       // the manager bar, which gave this tab up for the Menu on 2026-09-22.
       gate('bn-merch-scan', roleReady && vis('nav-merch-scan') && !seesDash, 'flex');
+      // Buy, on the print right (Brian, 2026-10-01): psCanPrint is the Buy link's own gate on
+      // the page, so the tab and the link cannot disagree about who may pick a buy.
+      gate('bn-merch-buy', roleReady && vis('nav-merch-scan') && !seesDash
+        && typeof psCanPrint === 'function' && psCanPrint(), 'flex');
       // Sign Studio, the same way (Brian, 2026-10-01). A manager sees it in the sidebar too, so
       // `!seesDash` is what keeps it off their bar.
       gate('bn-merch-signs', roleReady && vis('nav-merch-signs') && !seesDash, 'flex');
@@ -38733,6 +38759,9 @@
       var barTab = cur && nav && nav.querySelector('.bn-tab[data-tab="' + cur + '"]:not(.hidden)');
       var detailPages = { 'store-detail': 1, 'all-stores-detail': 1 };
       var activeTab = barTab ? cur : (detailPages[cur] ? 'dashboard' : 'menu');
+      // One lit tab, never two: on Price Scan, Buy lights while a buy is being priced into.
+      if (activeTab === 'merch-scan' && typeof psObActive === 'function' && psObActive()
+          && nav.querySelector('#bn-merch-buy:not(.hidden)')) activeTab = 'merch-buy';
       (nav ? nav.querySelectorAll('.bn-tab') : []).forEach(function (t) {
         var on = t.getAttribute('data-tab') === activeTab;
         t.classList.toggle(ACTIVE, on);

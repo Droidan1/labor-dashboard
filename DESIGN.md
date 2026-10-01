@@ -205,18 +205,25 @@ V1 "comfortable" density:
 - **Bottom nav** (`#bottom-nav`, `lg:hidden`): a floating bar in which
   every visible tab takes an equal share of the width (`.bn-tab` is
   `flex-1`, and no tab carries side padding — under border-box that
-  padding floors a flex item's basis and makes it wider). Per role:
+  padding floors a flex item's basis and makes it wider). Labels never
+  wrap (`.bn-lb` is `nowrap`): a two-line label made its tab taller and
+  lifted its icon out of line, so a label wider than an equal share
+  widens its own tab by a few px instead. Per role:
   - Admin / superuser: Dashboard · Retail · Content · Flow · **Menu**
   - Manager: Dashboard · Retail · **Submit** · Supply · Menu. The Submit
     squircle is centred by having two tabs either side of it, not by a
     layout of its own. (Price Scan moved from this bar to the Menu,
     2026-09-22.)
-  - Associate: a tab for Bin Dump / MOS when they hold that page and no
-    dashboard, then Menu. E-Commerce: eBay Cases · Menu.
+  - Associate: a tab for Bin Dump / MOS / Price Scan / Sign Studio when
+    they hold that page and no dashboard, then Menu. **Buy** sits after
+    Price Scan for one who can print (`psCanPrint`): it opens Price Scan's
+    Buy sheet. E-Commerce: eBay Cases · Menu.
 
   Tabs mirror the sidebar (`vis('nav-…')`). The lit tab is **derived**:
   the page's own visible tab, Dashboard for the two detail pages,
-  otherwise Menu — no list of pages to keep in step.
+  otherwise Menu — no list of pages to keep in step. The one exception is
+  Buy, which is not a page: on Price Scan it lights while a buy is being
+  priced into, and Price Scan lights the rest of the time.
 - **Menu page** (`#page-menu`, the last tab): a real page, not an
   overlay, so it scrolls like any page and swipe-back works. Sticky app
   bar, a search box (16px, or iOS zooms on focus; Go opens the first
