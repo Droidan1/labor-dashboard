@@ -5014,6 +5014,7 @@ const ACTION_BUSINESS = new Map([
   ["ob-buy-detail", "bl"],
   ["ob-buy-open", "bl"],
   ["ob-buy-close", "bl"],
+  ["ps-buy-list", "bl"],
   ["truck-current", "bl"],
   ["truck-detail", "bl"],
   ["truck-pallet-scan", "bl"],
@@ -13289,6 +13290,43 @@ function obBuyRow(r) {
   };
 }
 
+// One query for every buy list: the Opportunity Buys page's and Price Scan's Buy sheet's.
+// The totals come from a LEFT JOIN so a buy with no prints yet still appears — a buy someone
+// opened this morning and has not priced into is exactly the row they are looking for, and
+// an INNER JOIN would hide it. COALESCE(qty, 1) is migration-069's rule applied here: NULL
+// means "printed before we counted", which is one label, and summing it as 0 would
+// under-report every historical row.
+async function obBuyListRows(env, filter) {
+  const rows = await env.DB.prepare(
+    `SELECT b.po, b.label, b.vendor, b.received_on, b.units, b.note, b.status,
+            b.opened_by, b.opened_at, b.closed_by, b.closed_at,
+            COUNT(p.id)                       AS print_rows,
+            -- THE EMPTY LEFT JOIN ROW IS NOT A LABEL. COALESCE(p.qty, 1) alone
+            -- fires on the all-NULL row that a buy with no prints produces, so an
+            -- untouched buy reported ONE label it never printed. The CASE asks
+            -- whether a print row exists at all before applying migration-069's
+            -- NULL-means-one rule, which only ever applies to a row that IS a print.
+            SUM(CASE WHEN p.id IS NULL THEN 0 ELSE COALESCE(p.qty, 1) END) AS labels,
+            COUNT(DISTINCT p.code)            AS items,
+            COUNT(DISTINCT p.store)           AS stores,
+            MIN(p.printed_at)                 AS first_print,
+            MAX(p.printed_at)                 AS last_print
+       FROM ob_buys b
+       LEFT JOIN sticker_prints p ON p.po = b.po
+      ${filter ? "WHERE b.status = ?" : ""}
+      GROUP BY b.po
+      ORDER BY (b.status = 'open') DESC, b.opened_at DESC`
+  ).bind(...(filter ? [filter] : [])).all();
+  return rows?.results || [];
+}
+
+// What the Buy sheet needs to choose a buy, and nothing else: see ps-buy-list.
+function psBuyRow(r) {
+  const b = obBuyRow(r);
+  return { po: b.po, label: b.label, vendor: b.vendor, received_on: b.received_on,
+           units: b.units, labels: b.labels, last_print: b.last_print };
+}
+
 // ─── Mark Out of Stock: reading a sticker code back ──────────────────────────
 //
 // The inverse of the two functions above, kept beside them so the encoding and the
@@ -14871,6 +14909,9 @@ const ACTION_PAGE = new Map([
   ["sticker-check",    ["merch-scan", "edit"]],
   ["sticker-printed",  ["merch-scan", "edit"]],
   ["sticker-history",  ["merch-scan", "edit"]],
+  // The open buys, for Price Scan's Buy sheet. EDIT, the print level: picking a buy is
+  // deciding what the next labels count against (Brian, 2026-10-01).
+  ["ps-buy-list",      ["merch-scan", "edit"]],
   ["merch-scan-save",  ["merch-scan", "edit"]],
   // Sign Studio (Brian, 2026-10-01). Making, printing and PDF-ing a sign never reach the worker;
   // these four are saved signs. View opens them — their own folder and All stores, as a manager
@@ -24008,40 +24049,35 @@ export default {
       try {
         const want = String(url.searchParams.get("status") || "all").toLowerCase();
         const filter = want === "open" || want === "closed" ? want : null;
-        // 🔑 ONE QUERY, NOT ONE PER BUY. The totals come from a LEFT JOIN so a buy with no
-        // prints yet still appears — a buy someone opened this morning and has not priced
-        // into is exactly the row they are looking for, and an INNER JOIN would hide it.
-        //
-        // COALESCE(qty, 1) is migration-069's rule applied here: NULL means "printed before
-        // we counted", which is one label, and summing it as 0 would under-report every
-        // historical row.
-        const rows = await env.DB.prepare(
-          `SELECT b.po, b.label, b.vendor, b.received_on, b.units, b.note, b.status,
-                  b.opened_by, b.opened_at, b.closed_by, b.closed_at,
-                  COUNT(p.id)                       AS print_rows,
-                  -- THE EMPTY LEFT JOIN ROW IS NOT A LABEL. COALESCE(p.qty, 1) alone
-                  -- fires on the all-NULL row that a buy with no prints produces, so an
-                  -- untouched buy reported ONE label it never printed. The CASE asks
-                  -- whether a print row exists at all before applying migration-069's
-                  -- NULL-means-one rule, which only ever applies to a row that IS a print.
-                  SUM(CASE WHEN p.id IS NULL THEN 0 ELSE COALESCE(p.qty, 1) END) AS labels,
-                  COUNT(DISTINCT p.code)            AS items,
-                  COUNT(DISTINCT p.store)           AS stores,
-                  MIN(p.printed_at)                 AS first_print,
-                  MAX(p.printed_at)                 AS last_print
-             FROM ob_buys b
-             LEFT JOIN sticker_prints p ON p.po = b.po
-            ${filter ? "WHERE b.status = ?" : ""}
-            GROUP BY b.po
-            ORDER BY (b.status = 'open') DESC, b.opened_at DESC`
-        ).bind(...(filter ? [filter] : [])).all();
+        // 🔑 ONE QUERY, NOT ONE PER BUY — shared with Price Scan's sheet; see obBuyListRows.
+        const rows = await obBuyListRows(env, filter);
         return new Response(JSON.stringify({
           ok: true,
           // Whether THIS caller may open or close one. The client uses it to decide what to
           // render rather than guessing from the role, so the two cannot disagree.
           can_edit: obMayEdit(currentUser, isAdminSecret),
-          buys: (rows?.results || []).map(obBuyRow),
+          buys: rows.map(obBuyRow),
         }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // ── Price Scan's Buy sheet: the open buys ─────────────────────────────────
+    //    GET ?action=ps-buy-list
+    //
+    // ob-buy-list belongs to the Opportunity Buys page, which an associate holding only
+    // Price Scan cannot reach — so they could never pick a buy to print into. This is the
+    // same list on Price Scan's own grant, at EDIT (the print level), OPEN buys only, and
+    // without the fields that are not about choosing one: no note, and no admin email in
+    // opened_by / closed_by on an associate's phone.
+    if (url.searchParams.get("action") === "ps-buy-list" && request.method === "GET") {
+      const denied = requirePage(currentUser, isAdminSecret, "merch-scan", "edit", corsJson);
+      if (denied) return denied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const rows = await obBuyListRows(env, "open");
+        return new Response(JSON.stringify({ ok: true, buys: rows.map(psBuyRow) }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }

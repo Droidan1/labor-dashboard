@@ -810,6 +810,62 @@ const cipherOf = (db, id) => db.prepare('SELECT pin_cipher c FROM users WHERE id
   }
 }
 
+// ── Price Scan's Buy sheet: the open buys (2026-10-01) ─────────────────────
+// Brian: everyone who can print picks a buy, associates included. ob-buy-list belongs to the
+// Opportunity Buys page, which a Price Scan grant does not reach, so ps-buy-list is the same
+// list on Price Scan's EDIT grant — open buys only, nothing that is not about choosing one.
+{
+  const { db, env } = env0();
+  for (const m of ['migration-041.sql', 'migration-042.sql', 'migration-043.sql', 'migration-056.sql',
+                   'migration-062.sql', 'migration-070.sql', 'migration-071.sql', 'migration-064.sql',
+                   'migration-072.sql'])
+    db.exec(fs.readFileSync(path.join(repo, m), 'utf8'));
+  applyMigrationAlters(db, repo);
+  const open = (body) => call('/?action=ob-buy-open', { user: 'u-su', method: 'POST', body, env });
+  eq((await open({ po: '12345', label: 'Drinks', vendor: 'Returns lot', received_on: '2026-09-28',
+                   units: 600, note: 'margin call with the vendor' })).status, 200, 'a superuser opens a buy');
+  eq((await open({ po: '40211', label: 'Kitchen' })).status, 200, '…and another');
+  eq((await open({ po: '777' })).status, 200, '…and a third');
+  eq((await call('/?action=ob-buy-close', { user: 'u-su', method: 'POST', body: { po: '777' }, env })).status, 200,
+     '…and closes the third');
+  db.prepare(`INSERT INTO sticker_prints (store, l3, price_cents, code, title, qty, po, printed_by, printed_at)
+              VALUES ('BL1', 'X', 250, 'BL-1-2_5', 'Cola', 4, '12345', 'u-su', '2026-09-30T15:00:00Z')`).run();
+
+  const view = await makeAssociate(env, { name: 'Vi Buy', pin: '112358', pages: { 'merch-scan': 'view' } });
+  const edit = await makeAssociate(env, { name: 'Ed Buy', pin: '132134', pages: { 'merch-scan': 'edit' } });
+  const none = await makeAssociate(env, { name: 'No Buy', pin: '558914', pages: { 'bin-dump': 'edit' } });
+  ok(view.status === 200 && edit.status === 200 && none.status === 200, 'three associates made');
+  const ask = async (sid, action) => {
+    const r = await worker.fetch(asSession(`/?action=${action}`, sid), env, ctx);
+    return { status: r.status, body: await json(r) };
+  };
+  const sV = (await signIn(env, 'Vi Buy', '112358')).sid;
+  const sE = (await signIn(env, 'Ed Buy', '132134')).sid;
+  const sN = (await signIn(env, 'No Buy', '558914')).sid;
+
+  const e = await ask(sE, 'ps-buy-list');
+  eq(e.status, 200, '🔑 an associate who can PRINT lists the open buys');
+  eq((e.body.buys || []).map(b => b.po).sort().join(), '12345,40211', '…the OPEN ones only — the closed buy is not offered');
+  const b = (e.body.buys || []).find(x => x.po === '12345') || {};
+  ok(b.label === 'Drinks' && b.vendor === 'Returns lot' && b.received_on === '2026-09-28' && b.units === 600,
+     `…with what picking one needs: name, vendor, received, units (${JSON.stringify(b)})`);
+  eq(b.labels, 4, '…and the labels already printed into it');
+  ok(!('note' in b) && !('opened_by' in b) && !('closed_by' in b),
+     '🛑 …but no note and no opened_by / closed_by');
+  ok(!JSON.stringify(e.body).includes('bhoward@bargainlane.com') && !JSON.stringify(e.body).includes('margin call'),
+     '🛑 …so no admin email and no note text reach an associate\'s phone');
+
+  const v = await ask(sV, 'ps-buy-list');
+  eq(v.status, 403, '🛑 at VIEW it is refused — picking a buy decides what labels count against');
+  eq(v.body.code, 'NEED_PAGE_EDIT', '…saying edit is what is missing');
+  eq((await ask(sN, 'ps-buy-list')).status, 403, '🛑 …and without Price Scan, refused');
+  eq((await ask(sE, 'ob-buy-list')).status, 403, '🔑 the Opportunity Buys page itself stays closed to them');
+
+  const m = await call('/?action=ps-buy-list', { user: 'u-mgr1', env });
+  eq(m.status, 200, 'a manager lists them too');
+  eq((await call('/?action=ps-buy-list', { user: 'u-staff', env })).status, 403, '🛑 staff without a grant do not');
+}
+
 // 🔑 THE GATE AND THE HANDLER MUST ASK THE SAME QUESTION. The financial gate reads
 // ACTION_PAGE; each handler writes its page and level out again as literals. They agree
 // today, and nothing pinned it — a handler left at "view" behind a map entry at "edit" is
