@@ -5065,5 +5065,78 @@ console.log('Price Scan');
   }
 }
 
+// ── Stickers only ever go to the sticker printer (2026-10-01) ───────────────────
+// The store's Windows PC has the ZD410 (stickers) AND a GX420d (pallet tags), and the probe sent
+// stickers to whichever printer Browser Print listed first. Driven with the GX420d listed FIRST,
+// because that is the order that printed stickers on a pallet tag.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const src = sliceOrNull(html, '  const PS_ZEBRA_PROBE_MS', '  async function psPrint()');
+  const ZD_USB = { uid: 'usb#vid_0a5f&pid_011c#50J213311631#bus_001#addr_004#model_ZTC ZD410-203dpi ZPL', name: 'ZD410-203dpi ZPL (50J213311631)', connection: 'usb' };
+  const ZD_DRV = { uid: 'ZDesigner ZD410-203dpi ZPL', name: 'ZDesigner ZD410-203dpi ZPL', connection: 'driver' };
+  const GX_DRV = { uid: 'ZDesigner GX420d', name: 'ZDesigner GX420d', connection: 'driver' };
+  const mk = ({ printers, saved = null, choose = undefined }) => {
+    const store = new Map(saved ? [['ps-sticker-printer', saved]] : []);
+    const log = { asked: [] };
+    const m = buildOrStub('psZebraDevice', src,
+      ['fetch', 'AbortSignal', 'setTimeout', 'localStorage', 'uiChoose'],
+      [async () => ({ json: async () => ({ printer: printers }) }), { timeout: () => null }, (f) => f(),
+       { getItem: k => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) },
+       async (title, msg, choices) => { log.asked.push(choices.map(c => c.value)); return choose === undefined ? null : choose; }],
+      '{ psZebraDevice, psNoPrinter, psPrinterModel }');
+    return { m, log, store };
+  };
+
+  {
+    const { m } = mk({ printers: [] });
+    eq(m.psPrinterModel(ZD_USB), 'ZD410', 'the model reads off a USB name');
+    eq(m.psPrinterModel(ZD_DRV), 'ZD410', '…and off a Windows driver name');
+    eq(m.psPrinterModel(GX_DRV), 'GX420D', '…and the pallet-tag printer is a different model');
+    eq(m.psPrinterModel({ uid: ZD_USB.uid }), 'ZD410', '…and off a bare uid, past the vid/pid/bus/addr parts');
+    eq(m.psPrinterModel({ name: 'Pallet Printer' }), 'Pallet Printer', 'a renamed printer keys on its name');
+  }
+  {
+    const { m, log } = mk({ printers: [ZD_DRV, ZD_USB] });
+    const got = await m.psZebraDevice();
+    eq(got.dev && got.dev.connection, 'usb', 'one model listed twice (USB + driver): its USB entry, as before');
+    eq(log.asked.length, 0, '…without asking anything');
+  }
+  {
+    const { m, log, store } = mk({ printers: [GX_DRV, ZD_DRV], choose: 'ZD410' });
+    const got = await m.psZebraDevice();
+    eq(JSON.stringify(log.asked), '[["GX420D","ZD410"]]', '🔑 two models and no choice yet: it ASKS, offering both');
+    eq(got.dev && got.dev.name, ZD_DRV.name, '…and prints on the one chosen, though the GX420d was listed first');
+    eq(store.get('ps-sticker-printer'), 'ZD410', '…and this PC remembers it');
+  }
+  {
+    const { m, log } = mk({ printers: [GX_DRV, ZD_DRV], saved: 'ZD410' });
+    const got = await m.psZebraDevice();
+    eq(got.dev && got.dev.name, ZD_DRV.name, '🔑 with the choice made, the ZD410 — the GX420d being first does not matter');
+    eq(log.asked.length, 0, '…and nobody is asked again');
+  }
+  {
+    const { m, log } = mk({ printers: [GX_DRV], saved: 'ZD410' });
+    const got = await m.psZebraDevice();
+    eq(got.dev, undefined, '🛑 the sticker printer unplugged: NO device — it never falls back to the GX420d');
+    eq(got.saw && got.saw.missing, 'ZD410', '…naming the printer it wanted');
+    eq(log.asked.length, 0, '…without asking (the choice stands)');
+    const msg = m.psNoPrinter(got.saw);
+    ok(/ZD410/.test(msg) && /GX420D/.test(msg) && /Nothing was printed/.test(msg),
+       `…and the refusal names both and says nothing printed (${msg.slice(0, 60)}…)`);
+  }
+  {
+    const { m } = mk({ printers: [GX_DRV, ZD_DRV] });
+    const got = await m.psZebraDevice();
+    eq(got.saw && got.saw.unchosen, true, '🛑 the question cancelled: nothing is chosen and nothing prints');
+    ok(/No sticker printer was chosen/.test(m.psNoPrinter(got.saw)), '…and says so');
+  }
+  {
+    const { m, log, store } = mk({ printers: [ZD_DRV, ZD_USB], saved: 'GX420D', choose: 'ZD410' });
+    const got = await m.psZebraDevice({ ask: true });
+    eq(log.asked.length, 1, 'Printer (ask) opens the question even with a choice saved');
+    eq([got.dev && got.dev.connection, store.get('ps-sticker-printer')].join(), 'usb,ZD410', '…and the new choice replaces the old');
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

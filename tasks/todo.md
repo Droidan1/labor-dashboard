@@ -1,3 +1,37 @@
+# Price Scan: stickers only ever go to the sticker printer (2026-10-01)
+
+**Request (Brian):** the store's Windows PC has the ZD410 (price stickers) *and* a Zebra GX420d
+(pallet tags). *"Is there a way for the app to check this before it prints so it doesn't print on
+that printer?"*
+
+**Cause:** `psZebraDevice` sends to `printers.find(p => p?.uid) || printers[0]` — whichever printer
+Browser Print happens to list first. Print, Reprint, Calibrate printer and the admin test label all
+go through it.
+
+**Plan:**
+- [x] `psPrinterModel`: the model from a device's name or uid (`ZD410`, `GX420D`); a renamed
+      Windows printer keys on its name.
+- [x] `psPickPrinter`: one model listed → it (a Mac lists its one ZD410 twice, USB + driver);
+      two or more → the model this PC chose (localStorage), asked once via `uiChoose`; the chosen
+      model not connected → refuse, naming what is listed. Never fall back to another printer.
+- [x] `psNoPrinter` explains "chosen printer missing" and "none chosen".
+- [x] A "Printer: ZD410" link in the Price Scan bar (where Print is offered) to choose again.
+- [x] Verify: test-price-scan drives psZebraDevice with GX420d listed FIRST (saved / unsaved /
+      missing / cancelled); browser-associate-price-scan prints with two stubbed printers.
+      Mutations: drop the saved-model lookup, fall back to another model, skip the chooser.
+
+**Review (2026-10-01):**
+- Shipped as one app commit (no worker change). CACHE_NAME v267 → v268.
+- test-price-scan: +20 checks driving psZebraDevice with the GX420d listed first — saved, unsaved,
+  missing, cancelled, forced re-choice — plus the model parser. Mutations killed: saved choice
+  ignored (4), fall back to another printer (2), no question with two models (5), model = whole name (11).
+- browser-associate-price-scan §6 (manager, two stubbed printers): asked once → ZD410; next print
+  silent; ZD410 unplugged → nothing sent, note names the GX420D. Fails on main, 47/47 here.
+- Not covered: a Windows printer renamed with no model in its name keys on the name, which works,
+  but the chooser then shows that name rather than a model.
+
+---
+
 # Sign Studio: saved signs, in folders by type and month (2026-09-29)
 
 **Request (Brian):** *"Let's create folders for managers to save signs. Have them organized by sign

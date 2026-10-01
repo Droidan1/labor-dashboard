@@ -5091,6 +5091,9 @@
                  nothing on screen, it re-measures the sticker roll in the printer. -->
             <button id="ps-calibrate" class="ps-link" onclick="psCalibrate()" type="button" style="display:none"
                     title="Re-measure the sticker roll: after loading a roll, or when stickers skip or print across the gaps">Calibrate printer</button>
+            <!-- Which printer the stickers go to, on this PC. Shown with Print, like Calibrate. -->
+            <button id="ps-printer" class="ps-link" onclick="psChangePrinter()" type="button" style="display:none"
+                    title="Choose which Zebra printer gets the price stickers on this PC">Printer</button>
           </div>
           <div id="ps-body">
             <!-- 🔑 OUTSIDE #ps-barcode-mode ON PURPOSE. psChrome hides that div whole when a
@@ -24868,6 +24871,8 @@
       const b = el(id); if (b) b.style.display = canSeeFinancials(currentUser) ? '' : 'none';
     }
     const cal = el('ps-calibrate'); if (cal) cal.style.display = psCanPrint() ? '' : 'none';
+    const prn = el('ps-printer'); if (prn) prn.style.display = psCanPrint() ? '' : 'none';
+    psPrinterLabel();
     psTabName = 'scan';   // and never on a tab the last visit left behind
     psApplyTab();
     psTplLoad();          // never blocks a scan: null just means the stock label
@@ -27088,10 +27093,53 @@
   // say "twice" and mean it.
   const PS_ZEBRA_RETRY_MS = 800;
 
+  // ── Which printer gets the stickers (2026-10-01) ──────────────────────────────
+  // 🛑 A PC CAN HAVE TWO ZEBRAS. The store's Windows PC runs the ZD410 (price stickers) and a
+  // GX420d (pallet tags), and stickers went to whichever Browser Print happened to list first.
+  // Now: ONE model listed → that one, as before (a Mac lists its one ZD410 twice, USB and
+  // driver). TWO OR MORE → the model this PC was told is the sticker printer — asked once, kept
+  // in localStorage. If that model is not connected, refuse: never fall back to another printer.
+  const PS_PRINTER_KEY = 'ps-sticker-printer';
+  // The model, from the name or the uid: "ZD410-203dpi ZPL (50J…)", "ZDesigner GX420d",
+  // "usb#…#model_ZTC ZD410-203dpi ZPL". A Windows printer renamed to something with no model in
+  // it is keyed by its name — still one stable key per printer. (A USB uid also carries the port
+  // address, which changes on a replug, so the uid itself is not the key.)
+  const psPrinterModel = (p) => {
+    for (const v of [p && p.name, p && p.uid]) {
+      const m = String(v || '').match(/\b([A-Z]{1,3}\d{3,4}[A-Z]?)\b/i);
+      if (m) return m[1].toUpperCase();
+    }
+    return String((p && (p.name || p.uid)) || 'printer');
+  };
+  // One model's best entry: the USB connection (it can be read from), then any with a uid.
+  const psEntryFor = (list, model) => {
+    const same = list.filter(p => psPrinterModel(p) === model);
+    return same.find(p => p.connection === 'usb' && p.uid) || same.find(p => p.uid) || same[0] || null;
+  };
+  const psSavedPrinter = () => { try { return localStorage.getItem(PS_PRINTER_KEY) || null; } catch (_) { return null; } };
+  // → { dev }, or { saw } carrying why there is none, for psNoPrinter. `ask` forces the choice.
+  async function psPickPrinter(list, ask) {
+    const models = [...new Set(list.map(psPrinterModel))];
+    const saved = psSavedPrinter();
+    if (saved && !ask) {
+      const dev = psEntryFor(list, saved);
+      return dev ? { dev } : { saw: { printers: list.length, others: 0, missing: saved, listed: models } };
+    }
+    if (models.length === 1 && !ask) return { dev: psEntryFor(list, models[0]) };
+    const chosen = await uiChoose('Which printer has the price stickers?',
+      (models.length > 1 ? 'This PC has more than one Zebra printer. ' : '')
+        + 'Pick the one loaded with the small price stickers, not the pallet tags. This PC will remember it.',
+      models.map(m => ({ label: m, value: m })));
+    if (!chosen) return { saw: { printers: list.length, others: 0, unchosen: true, listed: models } };
+    try { localStorage.setItem(PS_PRINTER_KEY, chosen); } catch (_) { /* still use it this time */ }
+    if (typeof psPrinterLabel === 'function') psPrinterLabel();
+    return { dev: psEntryFor(list, chosen) };
+  }
+
   // Returns { dev } once a printer is listed, else { saw } — the counts the agent actually
   // reported. Never a bare null: "no printer" and "no answer" send someone to two different
   // places, and only the agent knows which one this is.
-  async function psZebraDevice() {
+  async function psZebraDevice(opts) {
     let saw = { printers: 0, others: 0 };
     for (let attempt = 0; attempt < 2; attempt++) {
       if (attempt) await new Promise(done => setTimeout(done, PS_ZEBRA_RETRY_MS));
@@ -27109,7 +27157,10 @@
       // answer to a write is better evidence than our guess about a field we do not own,
       // and a listed-but-unaddressable device is a different fault, with a different fix.
       const dev = printers.find(p => p?.uid) || printers[0] || null;
-      if (dev) return { dev };
+      if (dev) {
+        const list = printers.filter(p => p && (p.uid || p.name));
+        return list.length ? psPickPrinter(list, !!(opts && opts.ask)) : { dev };
+      }
       const others = Array.isArray(d?.otherDevices) ? d.otherDevices : [];
       saw = { printers: printers.length, others: others.length };
     }
@@ -27120,7 +27171,12 @@
   // cause. The one line this replaces named the printer as the culprit on evidence that never
   // told it apart from an agent still starting up — and it reads as an instruction to go
   // check cables, which is a trip to the back room to confirm something already true.
-  const psNoPrinter = (saw) => saw.printers
+  const psNoPrinter = (saw) => saw.missing
+    ? `Stickers on this PC print on the ${saw.missing}, and it is not connected: Browser Print lists only `
+      + `${(saw.listed || []).join(', ')}. Nothing was printed, so nothing went to the wrong printer. `
+      + 'Check it is on and plugged in, or use Printer to choose another.'
+    : saw.unchosen ? 'No sticker printer was chosen, so nothing was printed.'
+    : saw.printers
     ? `Browser Print lists ${saw.printers} printer(s), but the agent gave none of them an id `
       + 'to print to. Restart Browser Print.'
     : 'Browser Print is running and answered twice, both times with no printer attached'
@@ -27261,6 +27317,24 @@
     }
   }
   window.psCalibrate = psCalibrate;
+
+  function psPrinterLabel() {
+    const b = el('ps-printer'); if (!b) return;
+    const saved = psSavedPrinter();
+    b.textContent = saved ? `Printer: ${saved}` : 'Printer';
+  }
+  // Choose again: the same list and the same chooser, forced open.
+  async function psChangePrinter() {
+    let probe;
+    try { probe = await psZebraDevice({ ask: true }); }
+    catch (e) {
+      return psStatus(`Zebra Browser Print is not answering on this machine (${e?.name || 'error'}), so the printers cannot be listed.`);
+    }
+    if (!probe.dev) return psStatus(psNoPrinter(probe.saw));
+    psStatus(`Stickers on this PC print on the ${psPrinterModel(probe.dev)}.`);
+    psPrinterLabel();
+  }
+  window.psChangePrinter = psChangePrinter;
   // ── Pricing into an opportunity buy ─────────────────────────────────────────
   //
   // 🔑 A BUY IS A CONTEXT, NOT A MODE. Brian's flow is "pick the PO, then price" — and

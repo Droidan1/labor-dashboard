@@ -62,7 +62,8 @@ function mocks({ who, SCAN }) {
   const J = (x, status = 200) => new Response(JSON.stringify(x), { status, headers: { 'content-type': 'application/json' } });
   window.fetch = async (u, o = {}) => {
     // Zebra Browser Print, stubbed: one printer, and every write recorded, never sent.
-    if (String(u).startsWith('http://127.0.0.1:9100/available')) return J({ printer: [{ uid: 'zd410-test', name: 'ZD410 (test)', connection: 'usb' }] });
+    if (String(u).startsWith('http://127.0.0.1:9100/available'))
+      return J({ printer: window.__printers || [{ uid: 'zd410-test', name: 'ZD410 (test)', connection: 'usb' }] });
     if (String(u).startsWith('http://127.0.0.1:9100/write')) { try { window.__zebra.push(JSON.parse(o.body)); } catch (e) {} return new Response('', { status: 200 }); }
     const action = new URL(String(u), location.href).searchParams.get('action');
     window.__calls.push(action);
@@ -233,6 +234,36 @@ await section('5. A manager is untouched', async () => {
   check(await shown(phone.page, '#bn-dashboard'), 'the manager\'s phone bar is on screen');
   check(!(await shown(phone.page, '#bn-merch-scan')), '🛑 …with no Price Scan tab — it left the manager bar on 2026-09-22');
   await ctx.close();
+});
+
+// ── 6. Two Zebras on one PC: stickers never go to the pallet-tag printer ────────
+// The store's Windows PC: a GX420d (pallet tags) listed FIRST, and the ZD410 (stickers).
+await section('6. two printers on one PC', async () => {
+  const { page, errs } = await open({ authenticated: true, email: 'm@x.com', name: 'Alex M', role: 'manager',
+    stores: ['BL1', 'BL4'], pages: {}, businesses: ['bl'] });
+  await page.evaluate(() => { window.__printers = [
+    { uid: 'ZDesigner GX420d', name: 'ZDesigner GX420d', connection: 'driver' },
+    { uid: 'ZDesigner ZD410-203dpi ZPL', name: 'ZDesigner ZD410-203dpi ZPL', connection: 'driver' }]; });
+  await page.evaluate(() => window.navigateToPage('merch-scan'));
+  await page.waitForTimeout(400);
+  check((await page.textContent('#ps-printer')).trim() === 'Printer', 'no sticker printer chosen yet on this PC');
+  await scan(page);
+  await page.click('#ps-print');
+  await page.click('button:text-is("ZD410")', { timeout: 3000 });
+  await page.waitForFunction(() => window.__zebra.length === 1, null, { timeout: 4000 });
+  const first = (await page.evaluate(() => window.__zebra))[0] || {};
+  check(first.device && /ZD410/.test(first.device.name), `🔑 asked once, and the label went to the ZD410 (${first.device && first.device.name})`);
+  check((await page.textContent('#ps-printer')).trim() === 'Printer: ZD410', '…which the bar now names');
+  await page.click('#ps-print');
+  await page.waitForFunction(() => window.__zebra.length === 2, null, { timeout: 4000 });
+  check(/ZD410/.test(((await page.evaluate(() => window.__zebra))[1] || {}).device?.name || ''), '…and the next print goes there without asking');
+  // The ZD410 unplugged: only the GX420d is listed.
+  await page.evaluate(() => { window.__printers = [{ uid: 'ZDesigner GX420d', name: 'ZDesigner GX420d', connection: 'driver' }]; });
+  await page.click('#ps-print');
+  await page.waitForFunction(() => /not connected/.test(document.getElementById('ps-print-note')?.textContent || ''), null, { timeout: 4000 });
+  check((await page.evaluate(() => window.__zebra.length)) === 2, '🛑 with the ZD410 gone, NOTHING is sent — not to the GX420d');
+  check(/GX420D/.test(await page.textContent('#ps-print-note')), '…and the note says what IS connected');
+  check(errs.length === 0, `no JS errors${errs.length ? ': ' + errs.join(' | ') : ''}`);
 });
 
 await b.close();
