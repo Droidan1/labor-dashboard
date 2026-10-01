@@ -13374,13 +13374,19 @@ function mosMonthOf(iso) {
 
    savedSignAccess is the whole rule, in one place. The page is gated to the same three roles
    (index.html, navigateToPage), and this is the gate that holds when a request doesn't come
-   from the page. Executives pass canSeeFinancials, so they are refused here, by role. Staff
-   and associates never get this far: these actions are in neither NON_FINANCIAL_ACTIONS nor
-   ACTION_PAGE, so the financial gate refuses them first. */
+   from the page. Executives pass canSeeFinancials, so they are refused here, by role.
+
+   Associates (Brian, 2026-10-01): one holding Sign Studio sees what a manager sees: their own
+   signs and All stores. At edit they save to their own folder; at view they save nowhere, and
+   ACTION_PAGE refuses the save and the delete before the handler. Staff WITHOUT the grant
+   never get this far: the financial gate refuses them first. */
 function savedSignAccess(user) {
   if (!user) return null;                     // no session, or the snapshot-secret caller
   if (user.role === "manager") return { view: "manager", saveTo: "own", scopes: ["all", "own"] };
   if (user.role === "admin" || user.role === "superuser") return { view: "admin", saveTo: "all", scopes: ["all"] };
+  if (isAssociate(user) && pageLevel(user, "merch-signs") >= PAGE_LEVELS.view) {
+    return { view: "manager", saveTo: pageLevel(user, "merch-signs") >= PAGE_LEVELS.edit ? "own" : null, scopes: ["all", "own"] };
+  }
   return null;
 }
 
@@ -13474,7 +13480,9 @@ function savedSignOut(row, access, user) {
   try { sign = JSON.parse(row.sign_json); } catch (_) { /* a row the page can't open is still listed */ }
   return {
     id: row.id, scope: row.scope, template: row.template, month: row.saved_month, saved_at: row.saved_at,
-    saved_by: row.scope === "all" ? row.owner_email : null, design_version: row.design_version, sign,
+    // An All stores sign names the admin who saved it, to managers and admins. Not to an
+    // associate: an admin's email is not something a floor phone needs (as sticker-template).
+    saved_by: row.scope === "all" && canSeeFinancials(user) ? row.owner_email : null, design_version: row.design_version, sign,
     can_delete: row.scope === access.saveTo && (row.scope === "all" || row.owner_id === user.id),
   };
 }
@@ -14864,6 +14872,14 @@ const ACTION_PAGE = new Map([
   ["sticker-printed",  ["merch-scan", "edit"]],
   ["sticker-history",  ["merch-scan", "edit"]],
   ["merch-scan-save",  ["merch-scan", "edit"]],
+  // Sign Studio (Brian, 2026-10-01). Making, printing and PDF-ing a sign never reach the worker;
+  // these four are saved signs. View opens them — their own folder and All stores, as a manager
+  // sees — and edit also saves and deletes their own. All stores stays the admins' to write;
+  // savedSignAccess holds that line exactly as it does for a manager.
+  ["saved-sign-folders", ["merch-signs", "view"]],
+  ["saved-sign-list",    ["merch-signs", "view"]],
+  ["saved-sign-save",    ["merch-signs", "edit"]],
+  ["saved-sign-delete",  ["merch-signs", "edit"]],
 ]);
 
 // The closed set an admin may tick, DERIVED from the map above rather than
@@ -26826,6 +26842,9 @@ export default {
     // 🔑 The owner is only ever currentUser.id. No request field names an owner or a scope.
     // GET ?action=saved-sign-folders → { view, save_to, folders: [{scope, template, month, count}] }
     if (url.searchParams.get("action") === "saved-sign-folders" && request.method === "GET") {
+      // The page grant first (financial roles pass), then the role rule, which still refuses an executive.
+      const pageDenied = requirePage(currentUser, isAdminSecret, "merch-signs", "view", corsJson);
+      if (pageDenied) return pageDenied;
       const access = savedSignAccess(currentUser);
       if (!access) return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_SIGN_STUDIO" }), { status: 403, headers: corsJson });
       if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
@@ -26853,6 +26872,9 @@ export default {
     // GET ?action=saved-sign-list&scope=own|all&template=price|pct|uvt&month=YYYY-MM[&limit=1..200]
     // One folder, newest first. `truncated` says there are more than `limit`.
     if (url.searchParams.get("action") === "saved-sign-list" && request.method === "GET") {
+      // The page grant first (financial roles pass), then the role rule, which still refuses an executive.
+      const pageDenied = requirePage(currentUser, isAdminSecret, "merch-signs", "view", corsJson);
+      if (pageDenied) return pageDenied;
       const access = savedSignAccess(currentUser);
       if (!access) return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_SIGN_STUDIO" }), { status: 403, headers: corsJson });
       if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
@@ -26889,6 +26911,9 @@ export default {
     // `id` is the page's crypto.randomUUID(), minted when Save is first tapped and reused on
     // every retry: saving it twice is one row. The scope comes from the role, never the body.
     if (url.searchParams.get("action") === "saved-sign-save" && request.method === "POST") {
+      // The page grant first (financial roles pass), then the role rule, which still refuses an executive.
+      const pageDenied = requirePage(currentUser, isAdminSecret, "merch-signs", "edit", corsJson);
+      if (pageDenied) return pageDenied;
       const access = savedSignAccess(currentUser);
       if (!access) return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_SIGN_STUDIO" }), { status: 403, headers: corsJson });
       if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
@@ -26928,6 +26953,9 @@ export default {
     // every list and count. A manager deletes their own signs; an admin or superuser deletes All
     // stores signs. A sign the caller can't see is "Not found", whoever's it is.
     if (url.searchParams.get("action") === "saved-sign-delete" && request.method === "POST") {
+      // The page grant first (financial roles pass), then the role rule, which still refuses an executive.
+      const pageDenied = requirePage(currentUser, isAdminSecret, "merch-signs", "edit", corsJson);
+      if (pageDenied) return pageDenied;
       const access = savedSignAccess(currentUser);
       if (!access) return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_SIGN_STUDIO" }), { status: 403, headers: corsJson });
       if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });

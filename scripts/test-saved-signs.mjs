@@ -43,17 +43,22 @@ const sign = o => R.normalizeSign(Object.assign(R.blankSign(), o));
 const pageRefuses = s => Object.keys(R.validate(R.signModel(s), null).msgs);
 
 const EMAIL = Object.fromEntries(USERS.map(u => [u[0], u[1]]));
-const ASSOC = 'u-assoc';
+const ASSOC = 'u-assoc', ASSOC_V = 'u-assoc-view', ASSOC_N = 'u-assoc-none';
 function env0() {
   const { db, env } = makeEnv(repo);
   db.exec(fs.readFileSync(path.join(repo, 'migration-075.sql'), 'utf8'));
   applyMigrationAlters(db, repo);   // 🔑 again, AFTER the migration created its table
   db.prepare("UPDATE sessions SET expires_at = '2099-01-01T00:00:00.000Z'").run();
-  // An associate holding a (forged) Sign Studio page grant: staff with a PIN and pages.
-  db.prepare(`INSERT INTO users (id, email, role, stores, status, created_at, name, pin_hash, pages) VALUES (?,?,?,?,?,?,?,?,?)`)
-    .run(ASSOC, 'dee@bargainlane.com', 'staff', '["BL1"]', 'active', '2026-01-01', 'Dee Ramirez', 'a'.repeat(64), '{"merch-signs":"edit"}');
-  db.prepare('INSERT INTO user_grants (user_id, business_id, role, units) VALUES (?,?,?,?)').run(ASSOC, 'bl', 'staff', '["BL1"]');
-  db.prepare('INSERT INTO sessions (id, user_id, expires_at, created_at) VALUES (?,?,?,?)').run('sess-' + ASSOC, ASSOC, '2099-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+  // Associates: staff with a PIN and page grants. Sign Studio became grantable 2026-10-01,
+  // so these are three real cases now — edit, view, and none — not a forged grant.
+  for (const [id, email, pages] of [[ASSOC, 'dee@bargainlane.com', '{"merch-signs":"edit"}'],
+                                    [ASSOC_V, 'vi@bargainlane.com', '{"merch-signs":"view"}'],
+                                    [ASSOC_N, 'nn@bargainlane.com', '{"bin-dump":"edit"}']]) {
+    db.prepare(`INSERT INTO users (id, email, role, stores, status, created_at, name, pin_hash, pages) VALUES (?,?,?,?,?,?,?,?,?)`)
+      .run(id, email, 'staff', '["BL1"]', 'active', '2026-01-01', 'Associate ' + id, 'a'.repeat(64), pages);
+    db.prepare('INSERT INTO user_grants (user_id, business_id, role, units) VALUES (?,?,?,?)').run(id, 'bl', 'staff', '["BL1"]');
+    db.prepare('INSERT INTO sessions (id, user_id, expires_at, created_at) VALUES (?,?,?,?)').run('sess-' + id, id, '2099-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+  }
   return { db, env };
 }
 let E = env0();
@@ -85,15 +90,18 @@ console.log('Access');
     ['save', u => call('/?action=saved-sign-save', { user: u, method: 'POST', body: { id: uid(), sign: OKS, design_version: 2 } })],
     ['delete', u => call('/?action=saved-sign-delete', { user: u, method: 'POST', body: { id: uid() } })],
   ];
+  // Staff without the page are refused by the financial gate, which names the page level they
+  // lack: view for folders and list, edit for save and delete.
+  const lack = name => (name === 'save' || name === 'delete') ? 'NEED_PAGE_EDIT' : 'NEED_PAGE_VIEW';
   for (const [who, status, code, why] of [
     ['u-exec', 403, 'NEED_SIGN_STUDIO', 'an executive: passes canSeeFinancials, refused by role'],
-    ['u-staff', 403, 'NO_FINANCIAL_ACCESS', 'staff: refused by the financial gate'],
-    [ASSOC, 403, 'NO_FINANCIAL_ACCESS', 'an associate holding a Sign Studio page grant'],
+    ['u-staff', 403, lack, 'staff without Sign Studio: refused by the financial gate'],
+    [ASSOC_N, 403, lack, 'an associate holding some OTHER page'],
     [null, 401, 'NO_SESSION', 'no session'],
   ]) {
     for (const [name, fn] of ACTIONS) {
       const before = count(), r = await fn(who), j = await J(r);
-      eq([r.status, j.code], [status, code], `${name}: ${why} is refused`);
+      eq([r.status, j.code], [status, typeof code === 'function' ? code(name) : code], `${name}: ${why} is refused`);
       eq(count(), before, `${name}: ${why} writes nothing`);
     }
   }
@@ -115,6 +123,43 @@ console.log('Access');
   eq((await call('/?action=saved-sign-folders', { user: 'u-mgr1' })).status, 200, 'a manager opens the folders');
   eq((await call('/?action=saved-sign-folders', { user: 'u-admin' })).status, 200, 'an admin opens the folders');
   eq((await call('/?action=saved-sign-folders', { user: 'u-su' })).status, 200, 'a superuser opens the folders');
+}
+
+// ── 1b. Associates holding Sign Studio (Brian, 2026-10-01) ───────────────────
+// What a manager sees — their own signs and All stores — at view; at edit they also save and
+// delete their OWN. All stores stays the admins' to write, and an admin's email is not sent.
+console.log('Associates');
+E = env0();
+{
+  const adminSign = await savedId('u-admin', sign({ groups: [{ name: 'Chain sale', price: '3', unit: 'each' }] }));
+  ok(adminSign, 'an admin saved an All stores sign to look at');
+
+  const fv = await folders(ASSOC_V);
+  eq([fv.view, fv.save_to], ['manager', null], '🔑 view: the folders a manager sees, saving nowhere');
+  const lv = await J(await list(ASSOC_V, 'all', 'price'));
+  eq((lv.signs || []).map(x => x.id), [adminSign], '…and All stores lists the admin\'s sign');
+  eq([lv.signs?.[0]?.saved_by, lv.signs?.[0]?.can_delete], [null, false], '🛑 …without the admin\'s email, and not theirs to delete');
+  const before = count();
+  for (const [name, fn] of [['save', () => save(ASSOC_V, OKS)], ['delete', () => call('/?action=saved-sign-delete', { user: ASSOC_V, method: 'POST', body: { id: adminSign } })]]) {
+    const r = await fn(), j = await J(r);
+    eq([r.status, j.code], [403, 'NEED_PAGE_EDIT'], `🛑 view: ${name} is refused, naming edit`);
+  }
+  eq(count(), before, '…and wrote nothing');
+
+  const fe = await folders(ASSOC);
+  eq([fe.view, fe.save_to], ['manager', 'own'], '🔑 edit: saves to their own folder, as a manager does');
+  const mine = await savedId(ASSOC, OKS);
+  ok(mine, '…and a save lands');
+  eq([rowOf(mine).owner_id, rowOf(mine).scope], [ASSOC, 'own'], '…owned by the associate, in own scope');
+  const le = await J(await list(ASSOC, 'own', 'price'));
+  eq((le.signs || []).map(x => [x.id, x.can_delete]), [[mine, true]], '…listed back to them, theirs to delete');
+  eq(await ids(await list('u-mgr1', 'own', 'price')), [], 'a manager does not see an associate\'s own signs');
+  const killAll = await call('/?action=saved-sign-delete', { user: ASSOC, method: 'POST', body: { id: adminSign } });
+  eq([killAll.status, (await J(killAll)).code], [403, 'NEED_ADMIN'], '🛑 edit still cannot delete an All stores sign');
+  eq((await call('/?action=saved-sign-delete', { user: ASSOC, method: 'POST', body: { id: mine } })).status, 200, '…but deletes their own');
+  eq(!!rowOf(mine).deleted_at, true, '…which is soft-deleted');
+  const lm = await J(await list('u-mgr1', 'all', 'price'));
+  eq(lm.signs?.[0]?.saved_by, EMAIL['u-admin'], 'a manager still sees who saved an All stores sign');
 }
 
 // ── 2. What a save stores ────────────────────────────────────────────────────
