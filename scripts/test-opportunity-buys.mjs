@@ -31,7 +31,7 @@ const { db, env } = makeEnv(repo);
 // swallowed, which is the helper's documented behaviour.
 for (const m of ['migration-041.sql', 'migration-042.sql', 'migration-043.sql',
                  'migration-056.sql', 'migration-062.sql', 'migration-070.sql',
-                 'migration-071.sql', 'migration-064.sql', 'migration-072.sql'])
+                 'migration-071.sql', 'migration-064.sql', 'migration-072.sql', 'migration-076.sql'])
   db.exec(fs.readFileSync(path.join(repo, m), 'utf8'));
 applyMigrationAlters(db, repo);
 
@@ -719,6 +719,131 @@ console.log('Opportunity buys');
   ok(/@media \(max-width: 640px\)/.test(page), 'there is a phone breakpoint');
   ok(/#ob-legend \{ gap: 7px 14px/.test(page),
      '…which tightens the legend, since it stacked taller than the data it explains');
+}
+
+// ── Editing a buy: units, and which stores got how many (2026-10-02) ─────────
+// Brian: admins and superusers, like opening and closing; the total becomes the stores
+// added up; the stores are the open ones (BL8 is closed).
+{
+  await openBuy('ED-1', SU, { label: 'Edit me', units: 500 });
+  const edit = (user, body) => call('/?action=ob-buy-edit', { user, method: 'POST', body });
+  const detail = async () => (await call('/?action=ob-buy-detail&po=ED-1', { user: SU })).j || {};
+
+  const m = await edit(MGR, { po: 'ED-1', stores: { BL1: 10 } });
+  eq(m.status, 403, '🛑 A MANAGER CANNOT EDIT A BUY — the same explicit role check as open and close');
+  eq(m.j?.code, 'NEED_INVENTORY', '…saying which right is missing');
+  ok(/Editing a buy/.test(m.j?.error || ''), `…in words about editing, not opening (${m.j?.error})`);
+  eq((await edit(EXEC, { po: 'ED-1', stores: { BL1: 10 } })).status, 403, 'nor an executive');
+  eq((await edit(STAFF, { po: 'ED-1', stores: { BL1: 10 } })).status, 403, 'nor staff');
+  let d = await detail();
+  ok(JSON.stringify(d.alloc) === '{}' && d.buy?.units === 500, '🔑 …and the refusals wrote nothing');
+  eq(JSON.stringify(d.store_list), JSON.stringify(['BL1', 'BL2', 'BL4', 'BL14', 'BL16']),
+     'the detail offers the open stores for the dialog — BL8 is closed');
+
+  eq((await edit(ADMIN, { po: 'NOPE-9', stores: {} })).status, 404, 'an unknown buy is a 404');
+  eq((await edit(ADMIN, { po: '', stores: {} })).j?.code, 'BAD_PO', 'no PO is refused');
+  eq((await edit(ADMIN, { po: 'ED-1' })).j?.code, 'BAD_STORES', 'the stores are required');
+  eq((await edit(ADMIN, { po: 'ED-1', stores: { BL8: 5 } })).j?.code, 'BAD_STORE', '🛑 a closed store is refused');
+  eq((await edit(ADMIN, { po: 'ED-1', stores: { BL99: 5 } })).j?.code, 'BAD_STORE', '…and so is one that is not a store');
+  eq((await edit(ADMIN, { po: 'ED-1', stores: { BL1: 2.5 } })).j?.code, 'BAD_UNITS', 'a fraction of a unit is refused');
+  eq((await edit(ADMIN, { po: 'ED-1', stores: { BL1: -3 } })).j?.code, 'BAD_UNITS', 'so is a negative');
+  eq((await edit(ADMIN, { po: 'ED-1', stores: { BL1: 'lots' } })).j?.code, 'BAD_UNITS', 'and words');
+  d = await detail();
+  ok(JSON.stringify(d.alloc) === '{}' && d.buy?.units === 500, '…none of which wrote anything');
+
+  const w = await edit(ADMIN, { po: 'ed-1', stores: { BL1: 120, bl4: '80', BL2: '', BL14: 0 } });
+  eq(w.status, 200, 'an admin sets units per store');
+  eq(JSON.stringify(w.j?.alloc), '{"BL1":120,"BL4":80}', '🔑 blank and zero leave a store out of the buy; the rest are kept');
+  eq(w.j?.units, 200, '🔑 the total becomes the stores added up');
+  d = await detail();
+  ok(JSON.stringify(d.alloc) === '{"BL1":120,"BL4":80}' && d.buy?.units === 200, '…and that is what reads back');
+
+  const w2 = await edit(SU, { po: 'ED-1', stores: { BL16: 30 } });
+  eq(JSON.stringify(w2.j?.alloc), '{"BL16":30}', '🔑 an edit REPLACES the stores: ones not named are taken out');
+  eq(w2.j?.units, 30, '…and the total follows');
+  const w3 = await edit(ADMIN, { po: 'ED-1', stores: {}, units: 450 });
+  ok(JSON.stringify(w3.j?.alloc) === '{}' && w3.j?.units === 450, 'clearing every store takes them out, and the typed total stands');
+  eq((await edit(ADMIN, { po: 'ED-1', stores: {} })).j?.units, 450, 'leaving units out keeps the total as it is');
+  eq((await edit(ADMIN, { po: 'ED-1', stores: { BL1: 5 }, units: 999 })).j?.units, 5,
+     '🔑 with stores set, a typed total is ignored: the stores are the total');
+}
+
+// ── The Reports tab: every buy, by store (2026-10-02) ───────────────────────
+{
+  await openBuy('RP-1', SU, { label: 'Report me', received_on: '2026-09-25' });
+  await openBuy('RP-2', SU, { label: 'Closed one', units: 40 });
+  await call('/?action=ob-buy-close', { user: SU, method: 'POST', body: { po: 'RP-2' } });
+  await call('/?action=ob-buy-edit', { user: ADMIN, method: 'POST', body: { po: 'RP-1', stores: { BL1: 100, BL4: 50 } } });
+  const pr = db.prepare(`INSERT INTO sticker_prints (store, l3, price_cents, code, title, qty, po, printed_by, printed_at)
+                         VALUES (?, 'X', 250, ?, 'T', ?, ?, 'u', '2026-09-26T12:00:00Z')`);
+  pr.run('BL1', 'BL-1-2_5-PRP-1', 3, 'RP-1');
+  pr.run('BL4', 'BL-4-2_5-PRP-1', 2, 'RP-1');
+  pr.run('BL2', 'BL-2-2_5-PRP-1', 1, 'RP-1');   // a store with labels and no units set
+  pr.run('BL8', 'BL-8-2_5-PRP-1', 1, 'RP-1');   // history at a store since closed
+  const sale = db.prepare(`INSERT INTO payment_archive_items (store, date, order_id, seq, name, qty, price, refunded, banked_at, code)
+                           VALUES (?, '2026-09-27', ?, 0, 'X', ?, 2.5, ?, 't', ?)`);
+  sale.run('BL1', 'r1', 2, 0, 'BL-1-2_5-PRP-1');
+  sale.run('BL1', 'r2', 1, 1, 'BL-1-2_5-PRP-1');   // a refund, counted apart
+  sale.run('BL2', 'r3', 1, 0, 'BL-2-2_5-PRP-1');
+  sale.run('BL4', 'r4', 7, 0, 'BL-4-2_5-P99999');  // another buy's code at the same store
+
+  const r = await call('/?action=ob-report', { user: MGR });
+  eq(r.status, 200, 'a manager reads the report (it is the page\'s view grant)');
+  eq(r.j?.can_edit, false, '…and is told it may not edit');
+  eq((await call('/?action=ob-report', { user: ADMIN })).j?.can_edit, true, 'an admin is told it may');
+  eq((await call('/?action=ob-report', { user: STAFF })).status, 403, '🛑 staff without the page cannot');
+  eq(r.j?.tracked_from, '2026-09-21', 'the tracking boundary rides along, from the earliest coded sale');
+  eq(JSON.stringify(r.j?.stores), JSON.stringify(['BL1', 'BL2', 'BL4', 'BL8', 'BL14', 'BL16']),
+     '🔑 the columns are the open stores, plus BL8 only because a buy still has history there');
+  eq(JSON.stringify(r.j?.store_list), JSON.stringify(['BL1', 'BL2', 'BL4', 'BL14', 'BL16']),
+     '…while the stores Edit offers stay the open ones');
+  const b = (r.j?.buys || []).find(x => x.po === 'RP-1') || {};
+  eq(b.units, 150, 'the buy\'s units are its stores added up');
+  eq(JSON.stringify(b.stores?.BL1), '{"units":100,"labels":3,"sold":2,"refunded":1}',
+     '🔑 per store: units sent, labels printed, units sold, refunds apart');
+  eq(JSON.stringify(b.stores?.BL4), '{"units":50,"labels":2,"sold":0,"refunded":0}',
+     '…a store that has sold none reads 0 — not another buy\'s sales at the same store');
+  eq(JSON.stringify(b.stores?.BL2), '{"units":null,"labels":1,"sold":1,"refunded":0}',
+     '🔑 sold with no units set stays null, never an invented 0');
+  ok(b.sold === 3 && b.refunded === 1, `the buy's totals add its stores (${b.sold} sold, ${b.refunded} refunded)`);
+  ok(b.received_on === '2026-09-25' && b.label === 'Report me', 'it carries what the row shows: name and received date');
+  ok(!(r.j?.buys || []).some(x => x.po === 'RP-2'), 'the default is open buys: the closed one is not in it');
+  const all = await call('/?action=ob-report&status=all', { user: MGR });
+  ok((all.j?.buys || []).some(x => x.po === 'RP-2') && (all.j?.buys || []).some(x => x.po === 'RP-1'), '…all has both');
+  const closed = await call('/?action=ob-report&status=closed', { user: MGR });
+  ok((closed.j?.buys || []).every(x => x.status === 'closed') && (closed.j?.buys || []).some(x => x.po === 'RP-2'), '…closed has only closed');
+  ok(!JSON.stringify(r.j).includes('bhoward@bargainlane.com'), 'no admin email rides along in the report');
+}
+
+// ── Before migration-076 is applied, the pages people already use still load ─────
+// The deploy order is migration → worker → app, but if it slips, the buy list and a buy's
+// own page must not 500 over a table they only read for the new numbers.
+{
+  const fresh = makeEnv(repo);
+  for (const m of ['migration-041.sql', 'migration-042.sql', 'migration-043.sql',
+                   'migration-056.sql', 'migration-062.sql', 'migration-070.sql',
+                   'migration-071.sql', 'migration-064.sql', 'migration-072.sql'])
+    fresh.db.exec(fs.readFileSync(path.join(repo, m), 'utf8'));
+  applyMigrationAlters(fresh.db, repo);
+  const c2 = async (url, opts) => { const r = await worker.fetch(req(url, opts), fresh.env, ctx);
+    let j = null; try { j = JSON.parse(await r.clone().text()); } catch (_) {} return { status: r.status, j }; };
+  await c2('/?action=ob-buy-open', { user: SU, method: 'POST', body: { po: 'OLD-1', units: 10 } });
+  const d = await c2('/?action=ob-buy-detail&po=OLD-1', { user: MGR });
+  ok(d.status === 200 && JSON.stringify(d.j?.alloc) === '{}', '🔑 without the table, a buy\'s page still loads, with no units per store');
+  const r = await c2('/?action=ob-report', { user: MGR });
+  ok(r.status === 200 && (r.j?.buys || []).some(b => b.po === 'OLD-1'), '…and so does the report');
+  eq(JSON.stringify(r.j?.stores), JSON.stringify(['BL1', 'BL2', 'BL4', 'BL14', 'BL16']),
+     '🔑 with no history anywhere, a closed store is not a column');
+}
+
+// ── The registries, for the two new actions ─────────────────────────────────
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  for (const a of ['ob-buy-edit', 'ob-report']) {
+    ok(new RegExp(`\\["${a}", "bl"\\]`).test(src), `🛑 ${a} is classified in ACTION_BUSINESS — an unclassified action 403s in production`);
+  }
+  ok(/\["ob-report",\s*\["opportunity-buys", "view"\]\]/.test(src), 'ob-report is the page\'s view grant');
+  ok(!/\["ob-buy-edit",\s*\["opportunity-buys"/.test(src), '🔑 …and edit is NOT in ACTION_PAGE: a page level cannot say "not managers"');
 }
 
 console.log(`\n${assertions - failures} passed, ${failures} failed`);

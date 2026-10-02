@@ -5015,6 +5015,8 @@ const ACTION_BUSINESS = new Map([
   ["ob-buy-open", "bl"],
   ["ob-buy-close", "bl"],
   ["ps-buy-list", "bl"],
+  ["ob-buy-edit", "bl"],
+  ["ob-report", "bl"],
   ["truck-current", "bl"],
   ["truck-detail", "bl"],
   ["truck-pallet-scan", "bl"],
@@ -13254,12 +13256,9 @@ function obPo(raw) {
 function obMayEdit(user, isAdminSecret) {
   return !!isAdminSecret || canAccessInventory(user);
 }
-function obRequireEdit(user, isAdminSecret, corsJson) {
+function obRequireEdit(user, isAdminSecret, corsJson, error = "Opening and closing a buy is an admin job") {
   if (obMayEdit(user, isAdminSecret)) return null;
-  return new Response(JSON.stringify({
-    error: "Opening and closing a buy is an admin job",
-    code: "NEED_INVENTORY",
-  }), { status: 403, headers: corsJson });
+  return new Response(JSON.stringify({ error, code: "NEED_INVENTORY" }), { status: 403, headers: corsJson });
 }
 
 // One shape for a buy, so the list and the detail cannot describe the same row differently.
@@ -13325,6 +13324,32 @@ function psBuyRow(r) {
   const b = obBuyRow(r);
   return { po: b.po, label: b.label, vendor: b.vendor, received_on: b.received_on,
            units: b.units, labels: b.labels, last_print: b.last_print };
+}
+
+// The stores a buy can be sent to: every store that is not closed (Brian, 2026-10-02: BL1, BL2,
+// BL4, BL14, BL16). The report's columns start here and add a closed store only if it still
+// has data, so history never silently drops out of a total.
+const OB_STORES = ALL_STORES.filter(s => !STORE_CLOSED_FROM[s]);
+
+// Units per store (migration-076) for one buy, or for every buy: Map po → { store: units }.
+// 🔑 A MISSING TABLE MEANS "NO UNITS SET", NEVER A 500. migration-076 lands before this worker,
+// but if that order ever slips, the buy pages people already use must not break over it; only
+// the new numbers wait. Any OTHER error still throws.
+async function obAllocations(env, po) {
+  try {
+    const rows = po
+      ? await env.DB.prepare(`SELECT po, store, units FROM ob_buy_stores WHERE po = ?`).bind(po).all()
+      : await env.DB.prepare(`SELECT po, store, units FROM ob_buy_stores`).all();
+    const out = new Map();
+    for (const r of rows?.results || []) {
+      if (!out.has(r.po)) out.set(r.po, {});
+      out.get(r.po)[r.store] = Number(r.units) || 0;
+    }
+    return out;
+  } catch (e) {
+    if (/no such table: ob_buy_stores/i.test(String((e && e.message) || e))) return new Map();
+    throw e;
+  }
 }
 
 // ─── Mark Out of Stock: reading a sticker code back ──────────────────────────
@@ -14855,9 +14880,11 @@ const PAGE_LEVELS = { view: 1, edit: 2 };
 const ACTION_PAGE = new Map([
   // Viewing a buy is a page grant like any other. Opening and closing one is NOT — see
   // obRequireEdit; a manager passes every page check, so "edit" here would not mean what
-  // it says. These two are the only ob actions an associate can ever be granted.
+  // it says. These three are the only ob actions an associate can ever be granted
+  // (ob-buy-edit, like open and close, is absent on purpose).
   ["ob-buy-list",   ["opportunity-buys", "view"]],
   ["ob-buy-detail", ["opportunity-buys", "view"]],
+  ["ob-report",     ["opportunity-buys", "view"]],
   ["bin-dump-list",   ["bin-dump", "view"]],
   ["bin-dump-photo",  ["bin-dump", "view"]],
   ["bin-dump-scan",   ["bin-dump", "edit"]],
@@ -24190,10 +24217,16 @@ export default {
           ).bind(po).first(),
         ]);
 
+        const alloc = (await obAllocations(env, po)).get(po) || {};
+
         return new Response(JSON.stringify({
           ok: true,
           can_edit: obMayEdit(currentUser, isAdminSecret),
           buy: obBuyRow(buy),
+          // Units per store (migration-076), for the Edit dialog; {} when none are set. And the
+          // stores that dialog offers: the open ones.
+          alloc,
+          store_list: OB_STORES,
           // NULL until the first day is banked under Phase 3's worker. The client reads a
           // null here as "nothing is attributable yet", not as "nothing sold".
           tracked_from: (tracked && tracked.from_date) || null,
@@ -24228,6 +24261,89 @@ export default {
             sold: (soldBy.get(`${r.store}\u0000${r.code}`) || {}).sold || 0,
             refunded_units: (soldBy.get(`${r.store}\u0000${r.code}`) || {}).refunded || 0,
           })),
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // ── The Reports tab: every buy, by store ──────────────────────────────────
+    //    GET ?action=ob-report[&status=open|closed|all]
+    //
+    // Brian, 2026-10-02: "show all POs data and add units and units sold per store", plus days
+    // since received (the client works that out from received_on). One response for the whole
+    // tab, from four reads rather than one per buy:
+    //   units   ob_buy_stores (migration-076): what each store was sent
+    //   labels  sticker_prints, by buy and store
+    //   sold    payment_archive_items by item code. Since Phase 2 a buy's codes carry its PO, so
+    //           a code belongs to one buy. Refunds are counted apart, never netted (ob-buy-detail).
+    // 🛑 SOLD STARTS AT tracked_from. Before that day archived sales carry no code and never
+    // will (migration-072), so the client marks a buy received earlier as partial rather than
+    // letting it read as slow.
+    if (url.searchParams.get("action") === "ob-report" && request.method === "GET") {
+      const denied = requirePage(currentUser, isAdminSecret, "opportunity-buys", "view", corsJson);
+      if (denied) return denied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const want = String(url.searchParams.get("status") || "open").toLowerCase();
+        const filter = want === "open" || want === "closed" ? want : null;
+        const [buys, alloc, labels, sold, tracked] = await Promise.all([
+          obBuyListRows(env, filter),
+          obAllocations(env),
+          env.DB.prepare(
+            `SELECT po, store, SUM(COALESCE(qty, 1)) AS labels
+               FROM sticker_prints WHERE po IS NOT NULL GROUP BY po, store`
+          ).all(),
+          env.DB.prepare(
+            `SELECT sp.po AS po, pa.store AS store,
+                    SUM(CASE WHEN pa.refunded = 0 THEN pa.qty ELSE 0 END) AS sold,
+                    SUM(CASE WHEN pa.refunded = 1 THEN pa.qty ELSE 0 END) AS refunded
+               FROM payment_archive_items pa
+               JOIN (SELECT DISTINCT po, code FROM sticker_prints WHERE po IS NOT NULL) sp
+                 ON sp.code = pa.code
+              WHERE pa.code IS NOT NULL
+              GROUP BY sp.po, pa.store`
+          ).all(),
+          env.DB.prepare(`SELECT MIN(date) AS from_date FROM payment_archive_items WHERE code IS NOT NULL`).first(),
+        ]);
+        // po → store → { units, labels, sold, refunded }. units stays null where nobody set it:
+        // "sold, but no units" is a real state and the report says so rather than inventing 0 %.
+        const per = new Map();
+        const at = (po, store) => {
+          if (!per.has(po)) per.set(po, {});
+          const m = per.get(po);
+          if (!m[store]) m[store] = { units: null, labels: 0, sold: 0, refunded: 0 };
+          return m[store];
+        };
+        for (const [po, m] of alloc) for (const [store, units] of Object.entries(m)) at(po, store).units = units;
+        for (const r of labels?.results || []) at(r.po, r.store).labels = Number(r.labels) || 0;
+        for (const r of sold?.results || []) {
+          const c = at(r.po, r.store);
+          c.sold = Number(r.sold) || 0;
+          c.refunded = Number(r.refunded) || 0;
+        }
+        const seen = new Set();
+        for (const m of per.values()) for (const st of Object.keys(m)) seen.add(st);
+        return new Response(JSON.stringify({
+          ok: true,
+          can_edit: obMayEdit(currentUser, isAdminSecret),
+          tracked_from: (tracked && tracked.from_date) || null,
+          // The columns, in store order: the open stores, and a closed one only with history.
+          stores: ALL_STORES.filter(st => OB_STORES.includes(st) || seen.has(st)),
+          // The stores a buy can be given units in (the Edit dialog's rows): the open ones.
+          store_list: OB_STORES,
+          buys: buys.map(r => {
+            const b = obBuyRow(r);
+            const m = per.get(b.po) || {};
+            const cells = Object.values(m);
+            return {
+              po: b.po, label: b.label, vendor: b.vendor, status: b.status,
+              received_on: b.received_on, opened_at: b.opened_at, units: b.units, labels: b.labels,
+              sold: cells.reduce((a, c) => a + c.sold, 0),
+              refunded: cells.reduce((a, c) => a + c.refunded, 0),
+              stores: m,
+            };
+          }),
         }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
@@ -24310,6 +24426,75 @@ export default {
           ).bind((currentUser && currentUser.email) || "unknown", now, po).run();
         }
         return new Response(JSON.stringify({ ok: true, po, status: reopen ? "open" : "closed" }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // ── Editing a buy: its units, and which stores got how many ───────────────
+    //    POST ?action=ob-buy-edit  { po, stores: { BL1: 120, ... }, units? }
+    //
+    // Brian, 2026-10-02: admins and superusers, like opening and closing (obRequireEdit: a page
+    // level cannot say "not managers"). Once any store has units the buy's total IS the stores
+    // added up; with none set, `units` sets the typed total as before. The stores REPLACE the
+    // buy's rows, so a store left blank or at zero is taken out of the buy, not kept at zero.
+    if (url.searchParams.get("action") === "ob-buy-edit" && request.method === "POST") {
+      const denied = obRequireEdit(currentUser, isAdminSecret, corsJson, "Editing a buy is an admin job");
+      if (denied) return denied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const bad = (error, code) => new Response(JSON.stringify({ error, code }), { status: 400, headers: corsJson });
+        const po = obPo(body?.po);
+        if (!po) return bad("That is not a purchase order", "BAD_PO");
+        const buy = await env.DB.prepare(`SELECT po FROM ob_buys WHERE po = ?`).bind(po).first();
+        if (!buy) return new Response(JSON.stringify({ error: "No such buy", code: "NO_BUY" }),
+          { status: 404, headers: corsJson });
+        const given = body?.stores;
+        if (!given || typeof given !== "object" || Array.isArray(given)) {
+          return bad("Say which stores got how many units", "BAD_STORES");
+        }
+        const stores = {};
+        for (const [k, v] of Object.entries(given)) {
+          const store = String(k).trim().toUpperCase();
+          if (!OB_STORES.includes(store)) {
+            return bad(ALL_STORES.includes(store) ? `${store} is closed` : `${store} is not a store`, "BAD_STORE");
+          }
+          if (v === null || v === undefined || v === "") continue;
+          const n = Number(v);
+          if (!Number.isInteger(n) || n < 0 || n > 1000000) {
+            return bad(`Units for ${store} must be a whole number`, "BAD_UNITS");
+          }
+          if (n > 0) stores[store] = n;
+        }
+        const sum = Object.values(stores).reduce((a, b) => a + b, 0);
+        let units;   // undefined leaves the total as it is
+        if (sum > 0) units = sum;
+        else if (body?.units !== undefined) {
+          if (body.units === null || body.units === "") units = null;
+          else {
+            const n = Number(body.units);
+            if (!Number.isInteger(n) || n < 0 || n > 10000000) return bad("Units bought must be a whole number", "BAD_UNITS");
+            units = n;
+          }
+        }
+        const now = new Date().toISOString();
+        const who = (currentUser && currentUser.email) || "unknown";
+        const stmts = [env.DB.prepare(`DELETE FROM ob_buy_stores WHERE po = ?`).bind(po)];
+        for (const [store, n] of Object.entries(stores)) {
+          stmts.push(env.DB.prepare(
+            `INSERT INTO ob_buy_stores (po, store, units, updated_by, updated_at) VALUES (?, ?, ?, ?, ?)`
+          ).bind(po, store, n, who, now));
+        }
+        if (units !== undefined) stmts.push(env.DB.prepare(`UPDATE ob_buys SET units = ? WHERE po = ?`).bind(units, po));
+        await env.DB.batch(stmts);
+        // Read back rather than echoed: D1's meta.changes is not trusted in this codebase.
+        const after = await env.DB.prepare(`SELECT units FROM ob_buys WHERE po = ?`).bind(po).first();
+        return new Response(JSON.stringify({
+          ok: true, po,
+          units: after && after.units !== null && after.units !== undefined ? Number(after.units) : null,
+          alloc: (await obAllocations(env, po)).get(po) || {},
+        }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
