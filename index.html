@@ -4025,6 +4025,8 @@
             <option value="closed">Closed</option>
           </select>
           <span style="flex:1"></span>
+          <!-- Reports only (2026-10-02): the report as a spreadsheet. -->
+          <button id="ob-csv" class="ob-btn" hidden onclick="obReportCsv()"><span class="hidden sm:inline">Download CSV</span><span class="sm:hidden">CSV</span></button>
           <button id="ob-back" class="ob-btn" hidden onclick="obShowList()">← All buys</button>
         </div>
 
@@ -32026,6 +32028,7 @@
       if (b) { b.classList.toggle('on', t === tab); b.setAttribute('aria-selected', t === tab ? 'true' : 'false'); }
     }
     const hero = el('ob-hero'); if (hero && tab !== 'reports') { hero.hidden = true; hero.innerHTML = ''; }
+    const csv = el('ob-csv'); if (csv && tab !== 'reports') csv.hidden = true;
     const leg = el('ob-legend'); if (leg && tab !== 'reports' && obLegendBuys !== null) leg.innerHTML = obLegendBuys;
   }
   function obSetTab(tab) {
@@ -32049,6 +32052,7 @@
     if (status !== 200 || !j || !j.ok) {
       obSay((j && j.error) || `Could not load the report (${status}).`);
       el('ob-body').innerHTML = '';
+      const csvBtn = el('ob-csv'); if (csvBtn) csvBtn.hidden = true;
       const hero = el('ob-hero'); if (hero) { hero.hidden = true; hero.innerHTML = ''; }
       return;
     }
@@ -32086,6 +32090,7 @@
     const buys = R.buys || [];
     const tracked = R.tracked_from || null;
     const hero = el('ob-hero');
+    const csvBtn = el('ob-csv'); if (csvBtn) csvBtn.hidden = !buys.length;
     if (!buys.length) {
       if (hero) { hero.hidden = true; hero.innerHTML = ''; }
       el('ob-body').innerHTML = `<div class="ob-empty">No ${R.want === 'all' ? '' : R.want + ' '}buys to report on.</div>`;
@@ -32197,6 +32202,50 @@
         <tbody>${rows}</tbody></table>` : '<div class="ob-dim" style="font-size:12.5px">Nothing set, printed or sold at any store yet.</div>'}
     </td></tr>`;
   }
+  // ── The report as a CSV (Brian, 2026-10-02) ─────────────────────────────────
+  //
+  // One row per buy, as on screen, and nothing the screen does not say: the PO's own
+  // numbers, then units / labeled / sold / refunded for each store column. No title lines
+  // above the header and no totals row below, so it sorts, filters and pivots as it opens.
+  // 🛑 UNKNOWN IS BLANK, NEVER 0, exactly as on screen: sold before tracked_from, a store's
+  // units nobody set, a sell-through with no units. "Sales counted from" rides on every row
+  // and Partial marks a buy received before it, because a file travels without the legend.
+  function obReportCsv() {
+    const R = obReport;
+    if (!R || !(R.buys || []).length) return;
+    const stores = R.stores || [];
+    const tracked = R.tracked_from || null;
+    const cellOf = v => {
+      const s = v === null || v === undefined ? '' : String(v);
+      return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const head = ['PO', 'Name', 'Vendor', 'Status', 'Received', 'Days since received', 'Units bought',
+      'Labeled', 'Sold', 'Refunded', 'Sell-through %', 'Partial', 'Sales counted from']
+      .concat(...stores.map(st => [`${st} units`, `${st} labeled`, `${st} sold`, `${st} refunded`]));
+    const rows = R.buys.map(b => {
+      const pct = tracked ? obPct(b.sold, b.units) : null;
+      return [b.po, b.label, b.vendor, b.status, b.received_on, obDaysSince(b), b.units || null,
+        b.labels, tracked ? b.sold : null, tracked ? b.refunded : null, pct,
+        obPartial(b, tracked) ? 'yes' : '', tracked]
+        .concat(...stores.map(st => {
+          const c = (b.stores || {})[st];
+          if (!c) return [null, null, null, null];
+          return [c.units || null, c.labels, tracked ? c.sold : null, tracked ? c.refunded : null];
+        }));
+    });
+    const csv = [head].concat(rows).map(r => r.map(cellOf).join(',')).join('\r\n');
+    // UTF-8 BOM, like the other exports: Excel otherwise mangles an en-dash in a name.
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `opportunity-buys-${R.want || 'open'}-${etTodayStr()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  window.obReportCsv = obReportCsv;
+
   function obToggleRow(po) {
     obOpenRow = obOpenRow === po ? null : po;
     obRenderReport();

@@ -366,7 +366,7 @@ const REPORT = { ok: true, can_edit: true, tracked_from: ago(9),
     { po: '12345', label: 'Drinks', vendor: 'Returns lot', status: 'open', received_on: ago(4), opened_at: `${ago(2)}T14:00:00Z`,
       units: 600, labels: 538, sold: 280, refunded: 3, stores: { BL1: cellOf(120, 120, 88, 2), BL2: cellOf(120, 118, 61),
         BL4: cellOf(120, 96, 20), BL14: cellOf(120, 120, 79, 1), BL16: cellOf(120, 84, 32) } },
-    { po: '40302', label: 'Toys Q4', vendor: 'Walmart overstock', status: 'open', received_on: ago(6), opened_at: `${ago(6)}T14:00:00Z`,
+    { po: '40302', label: 'Toys, Q4', vendor: 'Walmart overstock', status: 'open', received_on: ago(6), opened_at: `${ago(6)}T14:00:00Z`,
       units: 900, labels: 860, sold: 165, refunded: 0, stores: { BL1: cellOf(null, 300, 90), BL2: cellOf(null, 556, 74), BL8: cellOf(null, 4, 1) } },
     { po: '40355', label: 'HBA', vendor: 'CVS closeouts', status: 'open', received_on: ago(12), opened_at: `${ago(12)}T14:00:00Z`,
       units: 1200, labels: 1100, sold: 120, refunded: 1, stores: { BL1: cellOf(300, 300, 40, 1), BL2: cellOf(300, 300, 30),
@@ -479,6 +479,34 @@ for (const view of [{ name: 'phone', width: 390, height: 844 }, { name: 'desktop
           `${tag}: the legend explains every cell state`);
     check(/565 sold/.test(st.sentence) && /Sales count from/.test(st.sentence), `${tag}: one sentence reads the numbers back (${st.sentence})`);
 
+    // Download CSV (2026-10-02): the report as a spreadsheet. Captured in the page rather than
+    // through a download event — the blob and the filename are what this code decides.
+    const grabCsv = () => page.evaluate(async () => {
+      const blobs = [], names = [];
+      const oc = URL.createObjectURL, ac = HTMLAnchorElement.prototype.click;
+      URL.createObjectURL = (bl) => { blobs.push(bl); return oc.call(URL, bl); };
+      HTMLAnchorElement.prototype.click = function () { if (this.download) { names.push(this.download); return; } return ac.call(this); };
+      try { document.getElementById('ob-csv').click(); } finally { URL.createObjectURL = oc; HTMLAnchorElement.prototype.click = ac; }
+      // Blob.text() decodes UTF-8 and DROPS a leading BOM, so the BOM is read as bytes.
+      const head = blobs[0] ? [...new Uint8Array(await blobs[0].slice(0, 3).arrayBuffer())] : [];
+      return { name: names[0] || null, text: blobs[0] ? await blobs[0].text() : null, bom: head.join() === '239,187,191',
+               shown: !document.getElementById('ob-csv').hidden && !!document.getElementById('ob-csv').offsetParent };
+    });
+    const c1 = await grabCsv();
+    const lines = (c1.text || '').replace(/^\ufeff/, '').split('\r\n');
+    const storeCols = ['BL1', 'BL2', 'BL4', 'BL8', 'BL14', 'BL16'].map(x => `${x} units,${x} labeled,${x} sold,${x} refunded`).join(',');
+    check(c1.shown, `${tag}: the Reports bar offers Download CSV`);
+    check(c1.name === `opportunity-buys-open-${today}.csv`, `${tag}: …named for the filter and the day (${c1.name})`);
+    check(c1.bom, `${tag}: …starting with the UTF-8 BOM Excel needs (EF BB BF)`);
+    check(lines[0] === 'PO,Name,Vendor,Status,Received,Days since received,Units bought,Labeled,Sold,Refunded,Sell-through %,Partial,Sales counted from,' + storeCols,
+          `${tag}: 🔑 the header: the buy's numbers, then four columns per store (${lines[0]})`);
+    check(lines.length === 4, `${tag}: one row per buy, no title lines and no totals row (${lines.length} lines)`);
+    check(lines[1] === `12345,Drinks,Returns lot,open,${ago(4)},4,600,538,280,3,47,,${ago(9)},120,120,88,2,120,118,61,0,120,96,20,0,,,,,120,120,79,1,120,84,32,0`,
+          `${tag}: 🔑 a buy's row matches the screen, with a store it skipped left blank (${lines[1]})`);
+    check(lines[2].startsWith('40302,"Toys, Q4",Walmart overstock,') && lines[2].includes(',,300,90,0,'),
+          `${tag}: a name with a comma is quoted, and units nobody set are blank, not 0 (${lines[2]})`);
+    check(/^40355,HBA,.*,yes,/.test(lines[3]), `${tag}: Partial travels with the file`);
+
     // Trap 6: every pair measured on what is painted under it.
     await reads('a hero number', '#ob-hero .ob-hv');
     await reads('a hero caption', '#ob-hero .ob-hk');
@@ -572,8 +600,8 @@ for (const view of [{ name: 'phone', width: 390, height: 844 }, { name: 'desktop
     await page.click('#ob-tab-buys');
     await page.waitForTimeout(300);
     const buysBack = await page.evaluate(() => ({ hero: document.getElementById('ob-hero').hidden,
-      legend: /taking labels/.test(document.getElementById('ob-legend').textContent) }));
-    check(buysBack.hero && buysBack.legend, `${tag}: Buys puts its own legend back and hides the report's totals`);
+      legend: /taking labels/.test(document.getElementById('ob-legend').textContent), csv: document.getElementById('ob-csv').hidden }));
+    check(buysBack.hero && buysBack.legend && buysBack.csv, `${tag}: Buys puts its own legend back and hides the report's totals and CSV`);
     await page.evaluate(() => { window.__rep.can_edit = false; window.__repAll.can_edit = false; });
     await page.click('#ob-tab-reports');
     await page.waitForSelector('#ob-rep tr.ob-row[data-po="12345"]', { timeout: 3000 });
@@ -581,6 +609,14 @@ for (const view of [{ name: 'phone', width: 390, height: 844 }, { name: 'desktop
     const noEdit = await page.evaluate(() => !!document.querySelector('#ob-rep tr.ob-kid') &&
       ![...document.querySelectorAll('#ob-rep tr.ob-kid button')].some(b => /Edit/.test(b.textContent)));
     check(noEdit, `${tag}: 🛑 with can_edit false (a manager), there is no Edit`);
+    // Nothing attributable yet: the file says so with blanks, never 0 sold.
+    await page.evaluate(() => { window.__rep.tracked_from = null; window.__repAll.tracked_from = null; });
+    await page.click('#ob-tab-reports');
+    await page.waitForFunction(() => /cannot be traced/.test(document.getElementById('ob-status').textContent), null, { timeout: 3000 }).catch(() => {});
+    const c2 = await grabCsv();
+    const r12 = ((c2.text || '').split('\r\n').find(l => l.startsWith('12345,')) || '').split(',');
+    check(c2.name === `opportunity-buys-all-${today}.csv` && r12[8] === '' && r12[9] === '' && r12[10] === '' && r12[12] === '' && r12[15] === '' && r12[13] === '120',
+          `${tag}: 🛑 with nothing tracked, sold, refunded and sell-through are blank — units stay (${r12.slice(6, 16).join('|')})`);
     check(errs.length === 0, `${tag}: no page errors${errs.length ? ' — ' + errs.slice(0, 2).join(' | ') : ''}`);
     await ctx.close();
   }

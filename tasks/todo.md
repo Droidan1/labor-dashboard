@@ -1,3 +1,26 @@
+# Opportunity Buys Reports: Download CSV (2026-10-02)
+
+**Request (Brian):** *"add a CSV download to the Reports tab"*
+
+- [x] "Download CSV" in the report's bar (§4.8: a control acting on the table lives there),
+      shown only on Reports with at least one buy; "CSV" on a phone.
+- [x] One row per buy, as on screen: PO, name, vendor, status, received, days since received,
+      units, labeled, sold, refunded, sell-through %, Partial, sales counted from — then units /
+      labeled / sold / refunded per store column. No title lines, no totals row, so it sorts and
+      pivots as it opens. Unknown is BLANK, never 0 (as on screen). UTF-8 BOM, like the other
+      exports. Named `opportunity-buys-<filter>-<ET date>.csv`.
+- [x] Verify: browser-opportunity-buys captures the blob in the page (filename, BOM bytes, exact
+      header, a full row, a quoted comma, blank units, Partial, nothing-tracked blanks, hidden on
+      Buys). Mutations.
+
+
+**Review (2026-10-02):** one app commit, no worker change; CACHE_NAME v272 → v273.
+browser-opportunity-buys 340/340 (+36), npm test 7695/7695. Mutations 7/7: no BOM, untracked sold
+as a number, a skipped store as zeros, no quoting, CSV left on Buys, filename without the filter,
+unset units as 0. Found on the way: the BOM was a literal invisible U+FEFF in source (as in two
+older exports), which no search could see; this one is now the `\ufeff` escape.
+---
+
 # Opportunity Buys: Edit units per store, and a Reports tab (2026-10-02)
 
 **Request (Brian):** an Edit button for a buy's units and stores, and a Reports tab with every
