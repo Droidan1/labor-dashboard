@@ -1,3 +1,22 @@
+# Opportunity Buys: Download CSV on the Buys tab (2026-10-02)
+
+**Request (Brian):** *"add a CSV download to the Buys tab"*
+
+- [x] The bar's Download CSV now exports the view on screen: the buys list (one row per buy:
+      the list's columns plus opened / closed and by whom), a buy's page (one row per line, as
+      its table), or the report (unchanged). One writer, `obCsvSave`, for all three.
+- [x] Each render shows the button once it has rows; a tab switch or a failed load hides it.
+- [x] Verify: browser-opportunity-buys reads each file in the page (name, BOM bytes, header, a
+      full row, blanks for untracked sales). Mutations.
+
+
+**Review (2026-10-02):** one app commit; CACHE_NAME v273 → v274. browser-opportunity-buys 364/364
+(+24), npm test 7695/7695. Mutations 5/5: the list or a buy's page never offering it, one export
+for every view, untracked line sales written as numbers, prices unformatted. Found on the way:
+the shared writer's BOM landed as the literal U+FEFF again (from the edit itself); fixed to the
+escape, and the file's remaining 3 literal BOMs are the older exports.
+---
+
 # Opportunity Buys Reports: Download CSV (2026-10-02)
 
 **Request (Brian):** *"add a CSV download to the Reports tab"*

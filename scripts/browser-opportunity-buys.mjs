@@ -79,6 +79,20 @@ const LINES = [
 
 const results = [];
 const check = (c, m) => { results.push([!!c, m]); };
+const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+// Download CSV, captured in the page rather than through a download event: the blob and the
+// filename are what the page decides. Blob.text() decodes UTF-8 and DROPS a leading BOM, so
+// the BOM is read as bytes.
+const grabCsvFrom = (page) => page.evaluate(async () => {
+  const blobs = [], names = [];
+  const oc = URL.createObjectURL, ac = HTMLAnchorElement.prototype.click;
+  URL.createObjectURL = (bl) => { blobs.push(bl); return oc.call(URL, bl); };
+  HTMLAnchorElement.prototype.click = function () { if (this.download) { names.push(this.download); return; } return ac.call(this); };
+  try { document.getElementById('ob-csv').click(); } finally { URL.createObjectURL = oc; HTMLAnchorElement.prototype.click = ac; }
+  const head = blobs[0] ? [...new Uint8Array(await blobs[0].slice(0, 3).arrayBuffer())] : [];
+  return { name: names[0] || null, text: blobs[0] ? await blobs[0].text() : null, bom: head.join() === '239,187,191',
+           shown: !document.getElementById('ob-csv').hidden && !!document.getElementById('ob-csv').offsetParent };
+});
 const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
 const rgb = (s) => (String(s).match(/\d+(\.\d+)?/g) || []).map(Number);
 const L = (s) => { const [r, g, b] = rgb(s); return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b); };
@@ -184,6 +198,16 @@ for (const view of [{ name: 'phone', width: 390, height: 844 }, { name: 'desktop
     }
     check(errs.length === 0, `${tag}: no page errors${errs.length ? ' — ' + errs.slice(0, 2).join(' | ') : ''}`);
 
+    // Download CSV on the Buys tab (2026-10-02): the list, as a spreadsheet.
+    const lc = await grabCsvFrom(page);
+    const ll = (lc.text || '').split('\r\n');
+    check(lc.shown && lc.bom && lc.name === `opportunity-buys-list-open-${today}.csv`,
+      `${tag}: the Buys list offers Download CSV, named for the filter and day, with the BOM (${lc.name})`);
+    check(ll[0] === 'PO,Name,Vendor,Status,Units bought,Labels,Items,Stores,Received,Opened,Opened by,Closed,Closed by',
+      `${tag}: …its header is the list's columns plus who opened and closed it (${ll[0]})`);
+    check(ll.length === 2 && ll[1] === '99999,test,Tester,open,5,11,2,1,,2026-09-21,bhoward@bargainlane.com,,',
+      `${tag}: 🔑 …one row per buy, a missing received date blank (${ll[1]})`);
+
     const shot = `/tmp/claude-0/-home-user-labor-dashboard/50e6f723-4395-5d11-8524-2f90bfbfab23/scratchpad/ob-${view.name}-${scheme}.png`;
     await page.screenshot({ path: shot, fullPage: view.name === 'phone' });
     console.log(`  shot: ${shot}`);
@@ -195,6 +219,16 @@ for (const view of [{ name: 'phone', width: 390, height: 844 }, { name: 'desktop
     // verified and the wider half ships broken.
     await page.evaluate(() => window.obOpenDetail && window.obOpenDetail('99999'));
     await page.waitForTimeout(700);
+    // Download CSV on a buy's page: its lines. Sold and Refunded are blank — the mock has no
+    // tracked_from, which the page says as "not tracked", never 0.
+    const dc = await grabCsvFrom(page);
+    const dl = (dc.text || '').split('\r\n');
+    check(dc.shown && dc.bom && dc.name === `opportunity-buy-99999-${today}.csv`, `${tag}: a buy's page offers its lines as a CSV (${dc.name})`);
+    check(dl[0] === 'PO,Store,Item,Category,Code,Our price,Street price,Labels,Sold,Refunded,Presses,First print,Last print',
+      `${tag}: …with the table's columns (${dl[0]})`);
+    check(dl.length === 3 && dl[1] === '99999,BL2,LIFEWTR Enhanced Water,FG BL CONSUMABLES - FOOD - BEVERAGES,BL-50002-1_5,1.50,2.48,10,,,2,2026-09-21,2026-09-21'
+      && dl[2].includes(',BL-50002-1_5-P99999,'),
+      `${tag}: 🔑 …one row per line, the two codes kept apart, untracked sales blank (${dl[1]})`);
     const d = await page.evaluate(() => {
       // Walks ancestors, not just the element: a cell inside a display:none row is not
       // visible however its own computed style reads.
@@ -357,7 +391,6 @@ for (const view of [{ name: 'phone', width: 390, height: 844 }, { name: 'desktop
 // admins and superusers, the total being the stores added up. Three buys cover every cell
 // state: tinted, plain, no units, not in the buy, a closed store's history, and a buy received
 // before sales carried a code (partial, never shaded).
-const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
 const ago = (n) => { const d = new Date(`${today}T12:00:00Z`); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10); };
 const cellOf = (units, labels, sold, refunded = 0) => ({ units, labels, sold, refunded });
 const REPORT = { ok: true, can_edit: true, tracked_from: ago(9),
@@ -481,17 +514,7 @@ for (const view of [{ name: 'phone', width: 390, height: 844 }, { name: 'desktop
 
     // Download CSV (2026-10-02): the report as a spreadsheet. Captured in the page rather than
     // through a download event — the blob and the filename are what this code decides.
-    const grabCsv = () => page.evaluate(async () => {
-      const blobs = [], names = [];
-      const oc = URL.createObjectURL, ac = HTMLAnchorElement.prototype.click;
-      URL.createObjectURL = (bl) => { blobs.push(bl); return oc.call(URL, bl); };
-      HTMLAnchorElement.prototype.click = function () { if (this.download) { names.push(this.download); return; } return ac.call(this); };
-      try { document.getElementById('ob-csv').click(); } finally { URL.createObjectURL = oc; HTMLAnchorElement.prototype.click = ac; }
-      // Blob.text() decodes UTF-8 and DROPS a leading BOM, so the BOM is read as bytes.
-      const head = blobs[0] ? [...new Uint8Array(await blobs[0].slice(0, 3).arrayBuffer())] : [];
-      return { name: names[0] || null, text: blobs[0] ? await blobs[0].text() : null, bom: head.join() === '239,187,191',
-               shown: !document.getElementById('ob-csv').hidden && !!document.getElementById('ob-csv').offsetParent };
-    });
+    const grabCsv = () => grabCsvFrom(page);
     const c1 = await grabCsv();
     const lines = (c1.text || '').replace(/^\ufeff/, '').split('\r\n');
     const storeCols = ['BL1', 'BL2', 'BL4', 'BL8', 'BL14', 'BL16'].map(x => `${x} units,${x} labeled,${x} sold,${x} refunded`).join(',');
@@ -601,7 +624,7 @@ for (const view of [{ name: 'phone', width: 390, height: 844 }, { name: 'desktop
     await page.waitForTimeout(300);
     const buysBack = await page.evaluate(() => ({ hero: document.getElementById('ob-hero').hidden,
       legend: /taking labels/.test(document.getElementById('ob-legend').textContent), csv: document.getElementById('ob-csv').hidden }));
-    check(buysBack.hero && buysBack.legend && buysBack.csv, `${tag}: Buys puts its own legend back and hides the report's totals and CSV`);
+    check(buysBack.hero && buysBack.legend && buysBack.csv, `${tag}: Buys puts its own legend back, hides the report's totals, and offers no CSV for an empty list`);
     await page.evaluate(() => { window.__rep.can_edit = false; window.__repAll.can_edit = false; });
     await page.click('#ob-tab-reports');
     await page.waitForSelector('#ob-rep tr.ob-row[data-po="12345"]', { timeout: 3000 });
