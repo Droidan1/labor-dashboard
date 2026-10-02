@@ -209,6 +209,21 @@ Approach A's price.
   into one archive row and the PO split is lost at the last step.
 - Then: sale → `code` → PO → `ob_buys`. Sell-through, units remaining, days-to-sell.
 
+### Reports and units per store (shipped 2026-10-02)
+
+Brian asked for an Edit button for a buy's units and stores, and a Reports tab with every PO
+and its units and units sold per store. Previewed first; his answers: edit is admins and
+superusers (obRequireEdit, like open and close); once any store has units the buy's total is
+the stores added up; the stores are the open ones (BL8 is closed); add days since received;
+tint 60 % and up green, under 25 % amber.
+
+- `migration-076.sql` — `ob_buy_stores (po, store, units, updated_by, updated_at)`. A store not
+  in the buy has no row; "not in the buy" and "zero units" are different answers.
+- `POST ob-buy-edit` replaces a buy's stores; `GET ob-report` returns every buy with per-store
+  units, labels, sold and refunded in one call.
+- A buy received before `tracked_from` is marked **partial** and never shaded: its early sales
+  can never be attributed, so amber would call it slow for sales nobody can see.
+
 ## ⚠️ Things to be careful about
 
 **Corrected 2026-09-21 while starting Phase 2.** An earlier draft of this section called

@@ -114,8 +114,14 @@ for (const view of [{ name: 'phone', width: 390, height: 844 }, { name: 'desktop
           name: 'Brian', role: 'superuser', stores: [], pages: {}, businesses: ['bl'] });
         if (s.includes('ob-buy-detail')) return J({ ok: true, can_edit: true, buy: BUY, lines: LINES,
           tracked_from: null, sold: 0, refunded_units: 0,
+          alloc: { BL2: 5 }, store_list: ['BL1', 'BL2', 'BL4', 'BL14', 'BL16'],
           manifest: window.__OB_MANIFEST, manifest_history: window.__OB_MANIFEST ? 2 : 0 });
         if (s.includes('ob-buy-list')) return J({ ok: true, can_edit: true, buys: [BUY] });
+        // 🛑 NEVER THE NETWORK for the API. This used to fall through to the real fetch, so the
+        // page's other calls (ly-sales) went to PRODUCTION from a test, and four checks failed
+        // on the CORS error. Anything this harness does not answer is refused here instead.
+        if (s.includes('?action=')) return new Response(JSON.stringify({ ok: false, error: 'not in this harness' }),
+          { status: 404, headers: { 'content-type': 'application/json' } });
         return real(u, o);
       };
     }, { BUY, LINES });
@@ -326,6 +332,14 @@ for (const view of [{ name: 'phone', width: 390, height: 844 }, { name: 'desktop
     check(bare && ratio(bare.noneColor, bare.bg) >= 4.5,
       `${tag}: …and "none yet" reads against the card (${bare ? ratio(bare.noneColor, bare.bg).toFixed(2) : '?'}:1)`);
 
+    // Edit units and stores, from the buy's own page (2026-10-02): its stores, prefilled.
+    await page.click('button:text-is("Edit units and stores")').catch(() => {});
+    const ed = await page.evaluate(() => ({ open: !!document.getElementById('ob-edit'),
+      stores: [...document.querySelectorAll('#ob-edit input[data-store]')].map(i => i.dataset.store + '=' + i.value).join() }));
+    check(ed.open && ed.stores === 'BL1=,BL2=5,BL4=,BL14=,BL16=',
+      `${tag}: the buy's page offers Edit units and stores, prefilled from the buy (${ed.stores})`);
+    await page.keyboard.press('Escape');
+
     // Put the sheet back so the screenshot below shows the fuller card.
     await page.evaluate(async (m) => { window.__OB_MANIFEST = m; await window.obOpenDetail('99999'); }, MANIFEST);
     await page.waitForTimeout(250);
@@ -336,6 +350,242 @@ for (const view of [{ name: 'phone', width: 390, height: 844 }, { name: 'desktop
     await ctx.close();
   }
 }
+// ── The Reports tab and the Edit dialog (2026-10-02) ──────────────────────────
+//
+// Brian's preview, approved the same day: every buy, sold over units per store, tinted 60 %
+// and up / under 25 %, days since received, a totals row, tap a row for its stores; Edit for
+// admins and superusers, the total being the stores added up. Three buys cover every cell
+// state: tinted, plain, no units, not in the buy, a closed store's history, and a buy received
+// before sales carried a code (partial, never shaded).
+const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+const ago = (n) => { const d = new Date(`${today}T12:00:00Z`); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10); };
+const cellOf = (units, labels, sold, refunded = 0) => ({ units, labels, sold, refunded });
+const REPORT = { ok: true, can_edit: true, tracked_from: ago(9),
+  stores: ['BL1', 'BL2', 'BL4', 'BL8', 'BL14', 'BL16'], store_list: ['BL1', 'BL2', 'BL4', 'BL14', 'BL16'],
+  buys: [
+    { po: '12345', label: 'Drinks', vendor: 'Returns lot', status: 'open', received_on: ago(4), opened_at: `${ago(2)}T14:00:00Z`,
+      units: 600, labels: 538, sold: 280, refunded: 3, stores: { BL1: cellOf(120, 120, 88, 2), BL2: cellOf(120, 118, 61),
+        BL4: cellOf(120, 96, 20), BL14: cellOf(120, 120, 79, 1), BL16: cellOf(120, 84, 32) } },
+    { po: '40302', label: 'Toys Q4', vendor: 'Walmart overstock', status: 'open', received_on: ago(6), opened_at: `${ago(6)}T14:00:00Z`,
+      units: 900, labels: 860, sold: 165, refunded: 0, stores: { BL1: cellOf(null, 300, 90), BL2: cellOf(null, 556, 74), BL8: cellOf(null, 4, 1) } },
+    { po: '40355', label: 'HBA', vendor: 'CVS closeouts', status: 'open', received_on: ago(12), opened_at: `${ago(12)}T14:00:00Z`,
+      units: 1200, labels: 1100, sold: 120, refunded: 1, stores: { BL1: cellOf(300, 300, 40, 1), BL2: cellOf(300, 300, 30),
+        BL4: cellOf(300, 250, 25), BL14: cellOf(300, 250, 25) } },
+  ] };
+const REPORT_ALL = Object.assign({}, REPORT, { buys: REPORT.buys.concat([
+  { po: '40488', label: 'Books', vendor: 'Amazon returns', status: 'closed', received_on: ago(20), opened_at: `${ago(20)}T14:00:00Z`,
+    units: 400, labels: 400, sold: 232, refunded: 0, stores: { BL1: cellOf(100, 100, 61), BL2: cellOf(100, 100, 52),
+      BL4: cellOf(100, 100, 55), BL14: cellOf(100, 100, 64) } }]) });
+const over = (t, b) => [0, 1, 2].map(i => t[i] * t[3] + b[i] * (1 - t[3])).concat(1);
+const rgba = (s) => { const v = rgb(s); return [v[0], v[1], v[2], v.length > 3 ? v[3] : 1]; };
+const ratio4 = (fg, bgs) => {   // fg over the stack of backgrounds, innermost first
+  let base = rgba(bgs[bgs.length - 1]);
+  for (let i = bgs.length - 2; i >= 0; i--) base = over(rgba(bgs[i]), base);
+  const f = over(rgba(fg), base);
+  const Lc = (c) => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+  const [hi, lo] = [Lc(f), Lc(base)].sort((x, y) => y - x);
+  return { r: (hi + 0.05) / (lo + 0.05), opaque: rgba(bgs[bgs.length - 1])[3] === 1 };
+};
+for (const view of [{ name: 'phone', width: 390, height: 844 }, { name: 'desktop', width: 1180, height: 1000 }]) {
+  for (const scheme of ['dark', 'light']) {
+    const ctx = await b.newContext({ viewport: { width: view.width, height: view.height } });
+    const page = await ctx.newPage();
+    const errs = [];
+    page.on('pageerror', e => errs.push(String(e)));
+    page.on('console', m => {
+      if (m.type() !== 'error') return;
+      const t = m.text();
+      if (/ERR_CERT_AUTHORITY_INVALID|ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY|ERR_NAME_NOT_RESOLVED|fonts\.googleapis|fonts\.gstatic|status of 404/.test(t)) return;
+      errs.push('console: ' + t);
+    });
+    await page.addInitScript((s) => { try { localStorage.setItem('darkMode', String(s === 'dark')); localStorage.setItem('bioPromptDismissed', '1'); localStorage.setItem('coachTipsDisabled', '1'); } catch {} }, scheme);
+    await page.addInitScript(({ REP, REP_ALL }) => {
+      window.__rep = REP; window.__repAll = REP_ALL; window.__edits = []; window.__repCalls = 0;
+      const real = window.fetch;
+      window.fetch = async (u, o = {}) => {
+        const s = String(u);
+        const J = (x, st = 200) => new Response(JSON.stringify(x), { status: st, headers: { 'content-type': 'application/json' } });
+        if (s.includes('auth-me')) return J({ authenticated: true, email: 'bhoward@bargainlane.com',
+          name: 'Brian', role: 'superuser', stores: [], pages: {}, businesses: ['bl'] });
+        if (s.includes('ob-report')) { window.__repCalls++; return J(s.includes('status=all') ? window.__repAll : window.__rep); }
+        if (s.includes('ob-buy-edit')) {
+          const bd = JSON.parse(o.body); window.__edits.push(bd);
+          return J({ ok: true, po: bd.po, units: Object.values(bd.stores).reduce((a, c) => a + c, 0) || bd.units, alloc: bd.stores });
+        }
+        if (s.includes('ob-buy-list')) return J({ ok: true, can_edit: true, buys: [] });
+        if (s.includes('?action=')) return J({ ok: false, error: 'not in this harness' }, 404);   // never the network
+        return real(u, o);
+      };
+    }, { REP: REPORT, REP_ALL: REPORT_ALL });
+    await page.goto('http://127.0.0.1:8098/', { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(1200);
+    await page.evaluate(() => window.navigateToPage && window.navigateToPage('opportunity-buys'));
+    await page.waitForTimeout(700);
+    await page.click('#ob-tab-reports');
+    await page.waitForSelector('#ob-rep', { timeout: 5000 });
+    const tag = `report ${view.name}/${scheme}`;
+    const paint = (sel) => page.evaluate((q) => {
+      const n = document.querySelector(q); if (!n) return null;
+      const chain = [];
+      for (let p = n; p; p = p.parentElement) {
+        const bg = getComputedStyle(p).backgroundColor; chain.push(bg);
+        const a = (bg.match(/[\d.]+/g) || [])[3];
+        if (a == null || +a === 1) break;
+      }
+      return { fg: getComputedStyle(n).color, chain };
+    }, sel);
+    const reads = async (what, sel) => {
+      const p = await paint(sel);
+      if (!p) return check(false, `${tag}: ${what} is on the page (${sel})`);
+      const x = ratio4(p.fg, p.chain);
+      check(x.opaque && x.r >= 4.5, `${tag}: ${what} reads ${x.r.toFixed(2)}:1`);
+    };
+
+    // What the hero says, the cells' states, and the days.
+    const st = await page.evaluate(() => {
+      const row = (po) => document.querySelector(`#ob-rep tr.ob-row[data-po="${po}"]`);
+      const cells = (po) => [...row(po).querySelectorAll('td')];
+      const heads = [...document.querySelectorAll('#ob-rep thead th')].map(t => t.textContent.trim());
+      const at = (po, store) => cells(po)[heads.indexOf(store)];
+      return {
+        tabOn: document.getElementById('ob-tab-reports').getAttribute('aria-selected'),
+        hero: [...document.querySelectorAll('#ob-hero .ob-hv')].map(n => n.textContent.trim()),
+        heads,
+        days: cells('12345')[1].textContent.trim(),
+        good: at('12345', 'BL1').querySelector('.ob-hc').className, plain: at('12345', 'BL2').querySelector('.ob-hc').className,
+        slow: at('12345', 'BL4').querySelector('.ob-hc').className, notIn: at('12345', 'BL8').textContent.trim(),
+        noUnits: [...at('40302', 'BL1').querySelectorAll('b, small')].map(n => n.textContent.trim()).join(' '),
+        closedHist: [...at('40302', 'BL8').querySelectorAll('b, small')].map(n => n.textContent.trim()).join(' '),
+        partial: !!row('40355').querySelector('.ob-part'), partialTinted: !!row('40355').querySelector('.ob-hc.good, .ob-hc.slow'),
+        total: (document.querySelector('#ob-rep tr.ob-tot td') || {}).textContent,
+        legend: document.getElementById('ob-legend').textContent.replace(/\s+/g, ' '),
+        sentence: document.getElementById('ob-status').textContent,
+      };
+    });
+    check(st.tabOn === 'true', `${tag}: the Reports tab is the one selected`);
+    check(JSON.stringify(st.hero) === JSON.stringify(['2,700', '2,498', '565', '21%']),
+          `${tag}: the totals read units 2,700, labeled 2,498, sold 565, sell-through 21% (${st.hero.join(' · ')})`);
+    check(JSON.stringify(st.heads) === JSON.stringify(['PO', 'Days', 'Units', 'Sold', '%', 'BL1', 'BL2', 'BL4', 'BL8', 'BL14', 'BL16']),
+          `${tag}: the columns: PO, Days, Units, Sold, %, then a store each (${st.heads.join(',')})`);
+    check(st.days === '4', `${tag}: 🔑 days since received is counted from the received date, not the day it was opened (${st.days})`);
+    check(/ good/.test(st.good) && !/good|slow/.test(st.plain.replace('ob-hc', '')) && / slow/.test(st.slow),
+          `${tag}: 73% shades good, 51% plain, 17% slow (${st.good} | ${st.plain} | ${st.slow})`);
+    check(st.notIn === '—', `${tag}: a store not in the buy reads —`);
+    check(st.noUnits === '90 no units', `${tag}: 🔑 sold with no units set says so rather than inventing a % (${st.noUnits})`);
+    check(st.closedHist === '1 no units', `${tag}: a closed store's history still shows (${st.closedHist})`);
+    check(st.partial && !st.partialTinted, `${tag}: 🛑 a buy received before tracking is marked partial and never shaded`);
+    check(/All 3 buys/.test(st.total || ''), `${tag}: a totals row closes the table`);
+    check(/60% or more sold/.test(st.legend) && /Partial/.test(st.legend) && /no units/.test(st.legend),
+          `${tag}: the legend explains every cell state`);
+    check(/565 sold/.test(st.sentence) && /Sales count from/.test(st.sentence), `${tag}: one sentence reads the numbers back (${st.sentence})`);
+
+    // Trap 6: every pair measured on what is painted under it.
+    await reads('a hero number', '#ob-hero .ob-hv');
+    await reads('a hero caption', '#ob-hero .ob-hk');
+    await reads('the PO', '#ob-rep tr.ob-row .ob-po');
+    await reads('the buy\'s name', '#ob-rep tr.ob-row .ob-sub');
+    await reads('a shaded-good cell', '#ob-rep tr.ob-row .ob-hc.good b');
+    await reads('…and its green "of" line', '#ob-rep tr.ob-row .ob-hc.good small');
+    await reads('a slow cell', '#ob-rep tr.ob-row .ob-hc.slow b');
+    await reads('…and its amber "of" line', '#ob-rep tr.ob-row .ob-hc.slow small');
+    await reads('the Partial tag', '#ob-rep .ob-part');
+    await reads('the totals row', '#ob-rep tr.ob-tot td');
+    await reads('the legend', '#ob-legend');
+    await reads('the selected tab', '#ob-tab-reports');
+    await reads('the other tab', '#ob-tab-buys');
+    await reads('the sentence', '#ob-status');
+
+    // Trap 2: the PO column stays put, opaque, when the table scrolls sideways.
+    const sticky = await page.evaluate(async () => {
+      const box = document.getElementById('ob-scroll'), cell = document.querySelector('#ob-rep tr.ob-row .ob-l');
+      const before = cell.getBoundingClientRect().left;
+      box.scrollLeft = 400; await new Promise(r => setTimeout(r, 80));
+      const r = cell.getBoundingClientRect();
+      const top = document.elementFromPoint(r.left + 20, r.top + r.height / 2);
+      const bg = (getComputedStyle(cell).backgroundColor.match(/[\d.]+/g) || [])[3];
+      const res = { moved: Math.abs(r.left - before), onTop: !!(top && top.closest('.ob-l')), opaque: bg == null || +bg === 1, scrolled: box.scrollLeft };
+      box.scrollLeft = 0; return res;
+    });
+    if (sticky.scrolled > 0) check(sticky.moved < 1 && sticky.onTop && sticky.opaque, `${tag}: the PO column stays put, on top and opaque while the stores scroll (${JSON.stringify(sticky)})`);
+    if (view.name === 'phone') {
+      const ph = await page.evaluate(() => ({ cols: getComputedStyle(document.getElementById('ob-hero')).gridTemplateColumns.split(' ').length,
+        over: document.getElementById('ob-scroll').scrollWidth - document.getElementById('ob-scroll').clientWidth,
+        fade: document.getElementById('ob-scroll').classList.contains('ob-more'),
+        page: document.documentElement.scrollWidth - document.documentElement.clientWidth }));
+      check(ph.cols === 2, `${tag}: the totals sit two by two on a phone`);
+      check(ph.over > 1 && ph.fade && ph.page <= 1, `${tag}: the stores scroll inside the panel, say so, and the page does not (${JSON.stringify(ph)})`);
+    }
+
+    // A row unfolds into its stores, with Edit for an admin.
+    await page.click('#ob-rep tr.ob-row[data-po="12345"]');
+    const kid = await page.evaluate(() => { const k = document.querySelector('#ob-rep tr.ob-kid'); return k && {
+      rows: k.querySelectorAll(':scope table > tbody > tr').length, edit: [...k.querySelectorAll('button')].some(b => /Edit units and stores/.test(b.textContent)) }; });
+    check(kid && kid.rows === 5 && kid.edit, `${tag}: tapping a buy unfolds its 5 stores, with Edit (${JSON.stringify(kid)})`);
+    await reads('the unfolded stores', '#ob-rep tr.ob-kid table tbody td');
+
+    // The dialog: open stores only, the total is the stores added up, Save posts them.
+    await page.click('#ob-rep tr.ob-kid button:text-is("Edit units and stores")');
+    await page.waitForSelector('#ob-edit input[data-store]', { timeout: 3000 });
+    const dlg = await page.evaluate(() => ({ stores: [...document.querySelectorAll('#ob-edit input[data-store]')].map(i => i.dataset.store + '=' + i.value),
+      tot: document.getElementById('ob-edit-tot').textContent.trim(), type: document.querySelector('#ob-edit input[data-store]').getAttribute('type') }));
+    check(dlg.stores.join() === 'BL1=120,BL2=120,BL4=120,BL14=120,BL16=120', `${tag}: 🔑 Edit offers the open stores only — no BL8 — with their units (${dlg.stores.join()})`);
+    check(dlg.tot === '600' && dlg.type === 'text', `${tag}: …the total is them added up, inputs are type=text (trap 1)`);
+    await reads('the dialog title', '#ob-edit .ob-et');
+    await reads('the dialog note', '#ob-edit .ob-ed');
+    await reads('a store input', '#ob-edit input[data-store]');
+    await reads('Cancel', '#ob-edit .ob-ecancel');
+    await page.fill('#ob-edit input[data-store="BL1"]', '150');
+    await page.fill('#ob-edit input[data-store="BL16"]', '');
+    check((await page.textContent('#ob-edit-tot')).trim() === '510', `${tag}: the total follows the stores as they are typed`);
+    const calls0 = await page.evaluate(() => window.__repCalls);
+    await page.click('#ob-edit-save');
+    await page.waitForFunction(() => !document.getElementById('ob-edit'), null, { timeout: 3000 }).catch(() => {});
+    const e1 = await page.evaluate(() => window.__edits[0]);
+    check(JSON.stringify(e1) === JSON.stringify({ po: '12345', stores: { BL1: 150, BL2: 120, BL4: 120, BL14: 120 } }),
+          `${tag}: 🔑 Save posts the stores, a blank one left out (${JSON.stringify(e1)})`);
+    check(await page.evaluate((c) => !document.getElementById('ob-edit') && window.__repCalls > c, calls0),
+          `${tag}: …closes, and the report reloads`);
+
+    // A buy with no store units: the total itself is typed.
+    await page.click('#ob-rep tr.ob-row[data-po="40302"]');
+    await page.click('#ob-rep tr.ob-kid button:text-is("Edit units and stores")');
+    await page.waitForSelector('#ob-edit-units', { timeout: 3000 });
+    check((await page.inputValue('#ob-edit-units')) === '900', `${tag}: with no store set, the dialog offers the typed total (900)`);
+    await page.fill('#ob-edit-units', '950');
+    await page.click('#ob-edit-save');
+    await page.waitForFunction(() => window.__edits.length === 2, null, { timeout: 3000 }).catch(() => {});
+    check(JSON.stringify(await page.evaluate(() => window.__edits[1])) === JSON.stringify({ po: '40302', stores: {}, units: 950 }),
+          `${tag}: …and Save sends it as the total`);
+    await page.click('#ob-rep tr.ob-row[data-po="40302"]');   // fold it away again (it stays open across the reload)
+    await page.click('#ob-rep tr.ob-row[data-po="40302"]');
+    await page.click('#ob-rep tr.ob-kid button:text-is("Edit units and stores")');
+    await page.waitForSelector('#ob-edit', { timeout: 3000 });
+    await page.keyboard.press('Escape');
+    check(!(await page.$('#ob-edit')), `${tag}: Escape cancels the dialog`);
+
+    // Trap 8: the second render. The filter, then away to Buys and back.
+    await page.selectOption('#ob-filter', 'all');
+    await page.waitForFunction(() => !!document.querySelector('#ob-rep tr.ob-row[data-po="40488"]'), null, { timeout: 3000 }).catch(() => {});
+    const second = await page.evaluate(() => ({ closed: !!document.querySelector('#ob-rep tr.ob-row[data-po="40488"] .ob-badge'),
+      hero: document.querySelector('#ob-hero .ob-hv').textContent.trim() }));
+    check(second.closed && second.hero === '3,100', `${tag}: switching to All re-renders: the closed buy appears, the totals follow (${JSON.stringify(second)})`);
+    await page.click('#ob-tab-buys');
+    await page.waitForTimeout(300);
+    const buysBack = await page.evaluate(() => ({ hero: document.getElementById('ob-hero').hidden,
+      legend: /taking labels/.test(document.getElementById('ob-legend').textContent) }));
+    check(buysBack.hero && buysBack.legend, `${tag}: Buys puts its own legend back and hides the report's totals`);
+    await page.evaluate(() => { window.__rep.can_edit = false; window.__repAll.can_edit = false; });
+    await page.click('#ob-tab-reports');
+    await page.waitForSelector('#ob-rep tr.ob-row[data-po="12345"]', { timeout: 3000 });
+    await page.click('#ob-rep tr.ob-row[data-po="12345"]');
+    const noEdit = await page.evaluate(() => !!document.querySelector('#ob-rep tr.ob-kid') &&
+      ![...document.querySelectorAll('#ob-rep tr.ob-kid button')].some(b => /Edit/.test(b.textContent)));
+    check(noEdit, `${tag}: 🛑 with can_edit false (a manager), there is no Edit`);
+    check(errs.length === 0, `${tag}: no page errors${errs.length ? ' — ' + errs.slice(0, 2).join(' | ') : ''}`);
+    await ctx.close();
+  }
+}
+
 await b.close();
 srv.close();
 

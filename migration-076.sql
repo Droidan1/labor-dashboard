@@ -29,13 +29,14 @@
 -- PRAGMA says (memory: d1-table-rebuild-cascade), and a buy is never deleted anyway.
 --
 -- ── Apply ────────────────────────────────────────────────────────────────────────────────
--- Address databases by UUID; the staging one lives under [env.staging] and a bare name does
--- not resolve. STAGING FIRST:
---   staging:     npx wrangler d1 execute b40982c2-4009-4842-bc17-fa0977468b07 --remote -y --file=migration-076.sql
---   production:  npx wrangler d1 execute 3fa911d7-31d6-438c-985f-7ac08c407d2d --remote -y --file=migration-076.sql
+-- 🛑 BY NAME, NOT UUID. wrangler 4.80 reads the argument as a database NAME: the UUID form this
+-- header first gave failed on 2026-10-02 with "Couldn't find DB with name '3fa911d7-…'". The
+-- staging database lives under [env.staging], so it needs --env staging. STAGING FIRST:
+--   staging:     wrangler d1 execute labor-dashboard-db-staging --env staging --remote -y --file=migration-076.sql
+--   production:  wrangler d1 execute labor-dashboard-db --remote -y --file=migration-076.sql
 --
 -- Confirm it landed (expects 5 rows: po, store, units, updated_by, updated_at):
---   npx wrangler d1 execute <uuid> --remote -y --json \
+--   wrangler d1 execute labor-dashboard-db --remote --json \
 --     --command="SELECT name FROM pragma_table_info('ob_buy_stores') ORDER BY cid"
 --
 -- RE-RUNNABLE: IF NOT EXISTS, so a second run changes nothing.

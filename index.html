@@ -3729,11 +3729,11 @@
          Phase 1 of docs/feature-opportunity-buys.md: a purchase order you can name,
          and every label printed against it.
 
-         🛑 THIS PAGE CANNOT SHOW SELL-THROUGH AND MUST NOT IMPLY IT. payment_archive_items
-         keeps only a category-shared name, so nothing about a SALE can be traced to a PO.
-         Every number here counts labels PRINTED, which is what the column headers say.
-         "Labels" is not "sold" and the legend says so in as many words — a page that let
-         someone read one as the other would be worse than no page.
+         🛑 LABELS ARE NOT SALES, AND SALES START AT tracked_from. Since migration-072 an
+         archived sale carries its item code, and a buy's codes carry its PO, so Sold is real —
+         but only from the first day a code was banked. Before that it can never be known, so
+         the page says "not tracked" / "partial" rather than printing a confident 0.
+         Reports (2026-10-02): every buy by store, with units per store set by Edit.
 
          Built to DESIGN.md §4.8: one panel owns bar + table + legend; page actions live in
          the page header; rows 42px; numbers right-aligned tabular-nums. -->
@@ -3895,6 +3895,90 @@
         .dark #ob-scroll.ob-more::after {
           background: linear-gradient(to right, rgba(16,24,38,0), rgb(var(--op-panel)));
         }
+
+        /* ── Buys | Reports (2026-10-02) ─────────────────────────────────────
+           The tabs are Price Scan's (.ps-tab), the same pair measured there. The report is
+           §4.8's scorecard variant: a hero, one sentence (#ob-status), a heatmap whose cells
+           carry two numbers (sold over units) tinted by state, a totals row, a legend.
+           The tint is background + inset ring, never text colour. Every pair is measured in
+           scripts/browser-opportunity-buys.mjs in light and dark (trap 6). */
+        #ob-tabs{display:flex;gap:6px;margin-top:10px}
+        .ob-tab{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;border-radius:8px;
+          padding:6px 11px;cursor:pointer;border:none;background:transparent;color:#6b6453;font-family:inherit}
+        .dark .ob-tab{color:rgb(var(--op-inkDim))}
+        .ob-tab.on{background:rgba(34,197,94,.16);color:#1c7a33}
+        .dark .ob-tab.on{color:#5fd170}
+        #ob-hero{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;padding:14px 18px;
+          border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark #ob-hero{border-bottom-color:rgba(255,255,255,.09)}
+        #ob-hero .ob-hk{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6b6453}
+        .dark #ob-hero .ob-hk{color:rgb(var(--op-inkDim))}
+        #ob-hero .ob-hv{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:2px;color:#14110a}
+        .dark #ob-hero .ob-hv{color:rgb(var(--op-ink))}
+        @media (max-width:639px){#ob-hero{grid-template-columns:repeat(2,minmax(0,1fr));padding:12px 14px}}
+        /* #page-opportunity-buys first: the page's own tbody td / thead th rules outrank a bare id. */
+        #page-opportunity-buys #ob-rep td{height:auto;padding:5px 10px}
+        #page-opportunity-buys #ob-rep th{padding:0 10px}
+        #ob-rep th.ob-num,#ob-rep td.ob-num{text-align:right}
+        /* Trap 2: a sticky column needs its own opaque background, in both themes. */
+        #ob-rep .ob-l{position:sticky;left:0;z-index:1;background:#ffffff;min-width:140px}
+        .dark #ob-rep .ob-l{background:rgb(var(--op-panel))}
+        #ob-rep thead .ob-l{background:#fafaf6}
+        .dark #ob-rep thead .ob-l{background:rgb(var(--op-panelHi))}
+        #ob-rep tr.ob-row:hover .ob-l{background:#fafaf6}
+        .dark #ob-rep tr.ob-row:hover .ob-l{background:rgb(var(--op-panelHi))}
+        #ob-rep .ob-sub{display:block;font-size:11.5px;color:#6b6453;font-weight:400}
+        .dark #ob-rep .ob-sub{color:rgb(var(--op-inkDim))}
+        #ob-rep .ob-hc{display:inline-block;min-width:58px;padding:4px 7px;border-radius:8px;text-align:right;line-height:1.25}
+        #ob-rep .ob-hc b{display:block;font-size:13px}
+        #ob-rep .ob-hc small{display:block;font-size:11px;color:#6b6453}
+        .dark #ob-rep .ob-hc small{color:rgb(var(--op-inkDim))}
+        #ob-rep .ob-hc.good,#ob-legend .ob-sw.good{background:rgba(34,197,94,.14);box-shadow:inset 0 0 0 1px rgba(22,101,52,.30)}
+        /* Dark washes are .12, not .16: at .16 the inkDim "of" line on green measured 4.36:1. */
+        .dark #ob-rep .ob-hc.good,.dark #ob-legend .ob-sw.good{background:rgba(34,197,94,.12);box-shadow:inset 0 0 0 1px rgba(74,222,128,.38)}
+        #ob-rep .ob-hc.slow,#ob-legend .ob-sw.slow{background:rgba(245,158,11,.15);box-shadow:inset 0 0 0 1px rgba(180,83,9,.36)}
+        .dark #ob-rep .ob-hc.slow,.dark #ob-legend .ob-sw.slow{background:rgba(245,158,11,.12);box-shadow:inset 0 0 0 1px rgba(251,191,36,.38)}
+        #ob-legend .ob-sw{display:inline-block;width:14px;height:12px;border-radius:4px;vertical-align:-2px;margin-right:5px;
+          box-shadow:inset 0 0 0 1px rgba(20,16,8,.18)}
+        .dark #ob-legend .ob-sw{box-shadow:inset 0 0 0 1px rgba(255,255,255,.16)}
+        /* Received before sales carried a code: amber, the repo's "not the whole story" colour. */
+        #page-opportunity-buys .ob-part{font-size:9.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;
+          color:#8a4b00;border:1px solid rgba(138,75,0,.35);border-radius:5px;padding:0 4px;margin-left:5px}
+        .dark #page-opportunity-buys .ob-part{color:#fbbf24;border-color:rgba(251,191,36,.40)}
+        #ob-rep tr.ob-tot td{font-weight:700;background:#fafaf6;border-top:2px solid rgba(20,16,8,.14)}
+        .dark #ob-rep tr.ob-tot td{background:rgb(var(--op-panelHi));border-top-color:rgba(255,255,255,.14)}
+        #ob-rep tr.ob-kid > td{background:#fafaf6;padding:10px 14px 14px 26px;white-space:normal}
+        .dark #ob-rep tr.ob-kid > td{background:rgb(var(--op-panelHi))}
+        #ob-rep tr.ob-kid table{width:auto;min-width:420px}
+        #ob-rep tr.ob-kid th{background:transparent;height:28px}
+        #ob-rep tr.ob-kid td{height:30px;padding:0 10px;white-space:nowrap;background:transparent}
+        #ob-rep .ob-kidbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+
+        /* The Edit dialog lives on <body>, outside this page, so nothing above reaches it: it
+           states its own colours for both themes (trap 3). Inputs are explicit type="text"
+           (trap 1) at 16px, or iOS zooms the page on focus. */
+        #ob-edit{position:fixed;inset:0;z-index:99990;display:flex;align-items:center;justify-content:center;
+          padding:16px;background:rgba(0,0,0,.5)}
+        #ob-edit .ob-eb{width:100%;max-width:360px;max-height:90vh;max-height:90dvh;overflow:auto;background:#ffffff;
+          color:#14110a;border:1px solid rgba(20,16,8,.10);border-radius:16px;padding:18px}
+        .dark #ob-edit .ob-eb{background:rgb(var(--op-panel));color:rgb(var(--op-ink));border-color:rgba(255,255,255,.09)}
+        #ob-edit .ob-et{font-size:16px;font-weight:700}
+        #ob-edit .ob-ed{font-size:12.5px;color:#6b6453;margin:3px 0 12px;line-height:1.4}
+        .dark #ob-edit .ob-ed{color:rgb(var(--op-inkDim))}
+        #ob-edit .ob-er{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 0;
+          border-top:1px solid rgba(20,16,8,.10);font-weight:600}
+        .dark #ob-edit .ob-er{border-top-color:rgba(255,255,255,.09)}
+        #ob-edit input[type=text]{width:110px;font:inherit;font-size:16px;text-align:right;padding:6px 10px;border-radius:9px;
+          border:1px solid rgba(20,16,8,.18);background:#ffffff;color:#14110a}
+        .dark #ob-edit input[type=text]{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.16);color:rgb(var(--op-ink))}
+        #ob-edit .ob-err{color:#c0392b;font-size:12.5px;min-height:16px;margin:6px 0}
+        .dark #ob-edit .ob-err{color:#f87171}
+        #ob-edit .ob-eact{display:flex;gap:8px;justify-content:flex-end}
+        #ob-edit button{font:inherit;font-size:13px;border-radius:9px;padding:8px 14px;cursor:pointer}
+        #ob-edit .ob-ecancel{background:transparent;border:1px solid rgba(20,16,8,.18);color:#14110a}
+        .dark #ob-edit .ob-ecancel{border-color:rgba(255,255,255,.16);color:rgb(var(--op-ink))}
+        #ob-edit .ob-esave{background:#22c55e;color:#06210f;border:none;font-weight:700}
+        #ob-edit .ob-esave:disabled{opacity:.5;cursor:default}
       </style>
 
       <!-- 🛑 A STICKY APP BAR, NOT A PLAIN DIV. DESIGN.md §3.3: every page begins with one,
@@ -3911,9 +3995,15 @@
                  Shortened below sm: the full sentence wrapped to three lines on a phone and
                  pushed the table below the fold before anyone had read a number. -->
             <p class="text-xs sm:text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">
-              <span class="hidden sm:inline">A purchase order, and every label printed against it. Counts are labels printed — not units sold.</span>
-              <span class="sm:hidden">Labels printed, not units sold.</span>
+              <span class="hidden sm:inline">Every PO: units bought, labels printed, and what has sold, by store.</span>
+              <span class="sm:hidden">Units, labels and sales by PO.</span>
             </p>
+            <!-- Buys | Reports (2026-10-02). The report reads every buy by store; Buys is the
+                 list and a buy's own page, as before. -->
+            <div id="ob-tabs" role="tablist">
+              <button id="ob-tab-buys" class="ob-tab on" type="button" role="tab" aria-selected="true" onclick="obSetTab('buys')">Buys</button>
+              <button id="ob-tab-reports" class="ob-tab" type="button" role="tab" aria-selected="false" onclick="obSetTab('reports')">Reports</button>
+            </div>
           </div>
           <!-- §4.8: page actions live in the page header, not in the table bar. Hidden until
                the worker says this account may edit, so the button and the API agree. It sits
@@ -3960,6 +4050,7 @@
 
         <!-- One sentence reading the numbers back. Outside #ob-body, same reason. -->
         <div id="ob-status">Loading…</div>
+        <div id="ob-hero" hidden></div>
         <div id="ob-scroll"><div id="ob-body"></div></div>
         <div id="ob-legend">
           <span><span class="ob-badge ob-open">Open</span> taking labels</span>
@@ -31505,10 +31596,9 @@
 
   // ── Opportunity Buys ────────────────────────────────────────────────────────
   //
-  // Phase 1 of docs/feature-opportunity-buys.md. The page answers "what is in this buy,
-  // where did it go, how many labels went out" and deliberately cannot answer sell-through:
-  // payment_archive_items keeps only a category-shared name, so no sale can be traced to a
-  // PO until an OB item's code carries one. Every number here is labels PRINTED.
+  // docs/feature-opportunity-buys.md. The page answers "what is in this buy, where did it
+  // go, how many labels went out, and what has sold" — sold only from tracked_from, the first
+  // day archived sales carried an item code (migration-072). Reports and Edit: 2026-10-02.
   //
   // 🔑 WHETHER THE OPEN/CLOSE CONTROLS EXIST IS THE WORKER'S ANSWER, NOT A ROLE CHECK HERE.
   // The server sends `can_edit` on every read, and the page renders off that. A role test in
@@ -31517,6 +31607,9 @@
   // manager and only obRequireEdit does not.
   let obCanEdit = false;
   let obView = { mode: 'list', po: null };
+  // Buys | Reports (2026-10-02). obReport is the last ob-report answer, obOpenRow the buy
+  // whose stores are unfolded in it, obDetail the last ob-buy-detail answer (for Edit).
+  let obTab = 'buys', obReport = null, obOpenRow = null, obDetail = null, obLegendBuys = null;
 
   function obSay(msg) { const n = el('ob-status'); if (n) n.textContent = msg; }
 
@@ -31549,12 +31642,14 @@
     // load would attach before the page is ever shown and re-attach on every visit.
     const box = el('ob-scroll');
     if (box && !box.dataset.obBound) { box.dataset.obBound = '1'; box.addEventListener('scroll', obFade); }
-    obShowList();
+    if (obLegendBuys === null) obLegendBuys = (el('ob-legend') || {}).innerHTML || '';
+    obSetTab(obTab);
   }
   window.initOppBuys = initOppBuys;
 
   function obShowList() {
     obView = { mode: 'list', po: null };
+    obTabPaint('buys');
     const back = el('ob-back'); if (back) back.hidden = true;
     const lbl = el('ob-barlbl'); if (lbl) lbl.textContent = 'Buys';
     const filt = el('ob-filter'); if (filt) filt.hidden = false;
@@ -31563,6 +31658,7 @@
   window.obShowList = obShowList;
 
   async function obLoad() {
+    if (obTab === 'reports') return obLoadReport();
     const want = (el('ob-filter') || {}).value || 'open';
     obSay('Loading…');
     const { status, j } = await obApi(`?action=ob-buy-list&status=${encodeURIComponent(want)}`);
@@ -31634,6 +31730,7 @@
 
   async function obOpenDetail(po) {
     obView = { mode: 'detail', po };
+    obTabPaint('buys');
     const back = el('ob-back'); if (back) back.hidden = false;
     const filt = el('ob-filter'); if (filt) filt.hidden = true;
     obToggleNew(false);
@@ -31645,6 +31742,7 @@
       return;
     }
     obCanEdit = !!j.can_edit;
+    obDetail = j;
     // Set BEFORE the render, which reads it for every Sold cell.
     obTracked = j.tracked_from || null;
     const lbl = el('ob-barlbl');
@@ -31683,6 +31781,7 @@
 
     const act = obCanEdit
       ? `<div style="padding:14px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+           <button class="ob-btn" onclick="obEditOpen('${escapeHtml(buy.po)}')">Edit units and stores</button>
            <button class="ob-btn" onclick="obSetClosed('${escapeHtml(buy.po)}', ${buy.status === 'open'})">
              ${buy.status === 'open' ? 'Close this buy' : 'Reopen this buy'}
            </button>
@@ -31914,6 +32013,297 @@
     obOpenDetail(po);
   }
   window.obSetClosed = obSetClosed;
+
+  // ── Buys | Reports (Brian, 2026-10-02) ──────────────────────────────────────
+  //
+  // The report is every buy at once, by store: units sent (set with Edit), sold over units
+  // per store, tinted 60 % and up / under 25 %, days since received, a totals row. One
+  // ob-report call; the status filter in the bar is shared with Buys.
+  function obTabPaint(tab) {
+    obTab = tab;
+    for (const t of ['buys', 'reports']) {
+      const b = el(`ob-tab-${t}`);
+      if (b) { b.classList.toggle('on', t === tab); b.setAttribute('aria-selected', t === tab ? 'true' : 'false'); }
+    }
+    const hero = el('ob-hero'); if (hero && tab !== 'reports') { hero.hidden = true; hero.innerHTML = ''; }
+    const leg = el('ob-legend'); if (leg && tab !== 'reports' && obLegendBuys !== null) leg.innerHTML = obLegendBuys;
+  }
+  function obSetTab(tab) {
+    obTabPaint(tab);
+    if (tab === 'buys') return obShowList();
+    obView = { mode: 'report', po: null };
+    obOpenRow = null;
+    obToggleNew(false);
+    const back = el('ob-back'); if (back) back.hidden = true;
+    const lbl = el('ob-barlbl'); if (lbl) lbl.textContent = 'Report';
+    const filt = el('ob-filter'); if (filt) filt.hidden = false;
+    obLoadReport();
+  }
+  window.obSetTab = obSetTab;
+
+  async function obLoadReport() {
+    const want = (el('ob-filter') || {}).value || 'open';
+    obSay('Loading…');
+    const { status, j } = await obApi(`?action=ob-report&status=${encodeURIComponent(want)}`);
+    if (obTab !== 'reports') return;   // left the tab while this loaded
+    if (status !== 200 || !j || !j.ok) {
+      obSay((j && j.error) || `Could not load the report (${status}).`);
+      el('ob-body').innerHTML = '';
+      const hero = el('ob-hero'); if (hero) { hero.hidden = true; hero.innerHTML = ''; }
+      return;
+    }
+    obCanEdit = !!j.can_edit;
+    const newBtn = el('ob-new'); if (newBtn) newBtn.hidden = !obCanEdit;
+    obReport = Object.assign({}, j, { want });
+    obRenderReport();
+  }
+
+  // Days since it came in: the received date, or the day it was opened when nobody gave one.
+  function obDaysSince(b) {
+    const base = b.received_on || String(b.opened_at || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(base)) return null;
+    const d = Math.round((Date.parse(`${etTodayStr()}T00:00:00Z`) - Date.parse(`${base}T00:00:00Z`)) / 86400000);
+    return d >= 0 ? d : 0;
+  }
+  // 🔑 A BUY RECEIVED BEFORE SALES CARRIED A CODE READS LOW, NOT SLOW. Its early sales can
+  // never be attributed (migration-072), so it is marked partial and never tinted: amber on
+  // it would call a buy slow for sales we simply cannot see.
+  function obPartial(b, tracked) {
+    const base = b.received_on || String(b.opened_at || '').slice(0, 10);
+    return !!(tracked && base && base < tracked);
+  }
+  function obTint(pct, partial) {
+    if (pct === null || partial) return '';
+    return pct >= 60 ? ' good' : pct < 25 ? ' slow' : '';
+  }
+  function obPct(sold, units) { return units ? Math.round(100 * sold / units) : null; }
+  function obN(n) { return Number(n || 0).toLocaleString('en-US'); }
+
+  function obRenderReport() {
+    const R = obReport;
+    if (!R) return;
+    const stores = R.stores || [];
+    const buys = R.buys || [];
+    const tracked = R.tracked_from || null;
+    const hero = el('ob-hero');
+    if (!buys.length) {
+      if (hero) { hero.hidden = true; hero.innerHTML = ''; }
+      el('ob-body').innerHTML = `<div class="ob-empty">No ${R.want === 'all' ? '' : R.want + ' '}buys to report on.</div>`;
+      obSay('Nothing here yet.');
+      obFade();
+      return;
+    }
+    // The totals. Sell-through is over buys whose units are KNOWN: a buy of undeclared size
+    // has sales and no denominator, and folding it in would inflate the percentage.
+    let units = 0, labels = 0, sold = 0, refunded = 0, soldKnown = 0;
+    for (const b of buys) {
+      labels += b.labels || 0; sold += b.sold || 0; refunded += b.refunded || 0;
+      if (b.units) { units += b.units; soldKnown += b.sold || 0; }
+    }
+    const pct = obPct(soldKnown, units);
+    if (hero) {
+      hero.hidden = false;
+      hero.innerHTML = [['Units bought', units ? obN(units) : '—'], ['Labeled', obN(labels)],
+                        ['Sold', tracked ? obN(sold) : 'not tracked'],
+                        ['Sell-through', tracked && pct !== null ? `${pct}%` : '—']]
+        .map(([k, v]) => `<div><div class="ob-hk">${k}</div><div class="ob-hv">${v}</div></div>`).join('');
+    }
+    obSay(tracked
+      ? `${buys.length} ${R.want === 'all' ? '' : R.want + ' '}buy${buys.length === 1 ? '' : 's'}: `
+        + `${obN(sold)} sold${units ? ` of ${obN(units)} units with a known size${pct !== null ? ` (${pct}%)` : ''}` : ''}`
+        + `${refunded ? `, ${obN(refunded)} refunded` : ''}. Sales count from ${obDay(tracked)}, the day they began carrying the PO.`
+      : 'Sales cannot be traced to a buy yet: nothing has been banked since item codes started being recorded.');
+
+    const cell = (c, partial) => {
+      if (!c) return '<td class="ob-num"><span class="ob-dim">—</span></td>';
+      const big = tracked ? obN(c.sold) : '<span class="ob-none">not tracked</span>';
+      if (c.units === null || c.units === undefined) {
+        return `<td class="ob-num"><span class="ob-hc"><b>${big}</b><small>no units</small></span></td>`;
+      }
+      const p = tracked ? obPct(c.sold, c.units) : null;
+      return `<td class="ob-num"><span class="ob-hc${obTint(p, partial)}"><b>${big}</b><small>of ${obN(c.units)}</small></span></td>`;
+    };
+    const rows = buys.map(b => {
+      const partial = obPartial(b, tracked);
+      const p = tracked ? obPct(b.sold, b.units) : null;
+      const days = obDaysSince(b);
+      const po = escapeHtml(b.po);
+      let tr = `<tr class="ob-row" data-po="${po}" onclick="obToggleRow('${po}')">
+        <td class="ob-l"><span class="ob-po">PO ${po}</span>${b.status === 'closed' ? ' <span class="ob-badge ob-closed">Closed</span>' : ''}
+          <span class="ob-sub">${escapeHtml(b.label || b.vendor || '')}${partial ? '<span class="ob-part">Partial</span>' : ''}</span></td>
+        <td class="ob-num">${days === null ? '<span class="ob-dim">—</span>' : days}</td>
+        <td class="ob-num">${b.units ? obN(b.units) : '<span class="ob-dim">—</span>'}</td>
+        <td class="ob-num"><b>${tracked ? obN(b.sold) : '<span class="ob-none">not tracked</span>'}</b></td>
+        <td class="ob-num"><span class="ob-hc${obTint(p, partial)}" style="min-width:46px"><b>${p === null ? '—' : p + '%'}</b></span></td>
+        ${stores.map(st => cell((b.stores || {})[st], partial)).join('')}
+      </tr>`;
+      if (obOpenRow === b.po) tr += obKidRow(b, stores, tracked);
+      return tr;
+    }).join('');
+    // Per store across every buy: sold, over the units of the buys that SET units there.
+    const tot = stores.map(st => {
+      let u = 0, sAll = 0, sKnown = 0;
+      for (const b of buys) {
+        const c = (b.stores || {})[st]; if (!c) continue;
+        sAll += c.sold || 0;
+        if (c.units) { u += c.units; sKnown += c.sold || 0; }
+      }
+      const p = tracked ? obPct(sKnown, u) : null;
+      return `<td class="ob-num"><span class="ob-hc${obTint(p, false)}"><b>${tracked ? obN(sAll) : '—'}</b><small>${u ? 'of ' + obN(u) : 'no units'}</small></span></td>`;
+    }).join('');
+    el('ob-body').innerHTML = `<table id="ob-rep">
+      <thead><tr><th class="ob-l">PO</th><th class="ob-num" title="Days since received">Days</th>
+        <th class="ob-num">Units</th><th class="ob-num">Sold</th><th class="ob-num">%</th>
+        ${stores.map(st => `<th class="ob-num">${escapeHtml(st)}</th>`).join('')}</tr></thead>
+      <tbody>${rows}
+        <tr class="ob-tot"><td class="ob-l">All ${buys.length} buy${buys.length === 1 ? '' : 's'}</td><td></td>
+          <td class="ob-num">${units ? obN(units) : '—'}</td><td class="ob-num">${tracked ? obN(sold) : '—'}</td>
+          <td class="ob-num">${tracked && pct !== null ? pct + '%' : '—'}</td>${tot}</tr>
+      </tbody></table>`;
+    const leg = el('ob-legend');
+    if (leg) leg.innerHTML = `
+      <span><span class="ob-sw good"></span>60% or more sold</span>
+      <span><span class="ob-sw"></span>25–59%</span>
+      <span><span class="ob-sw slow"></span>under 25%: slow</span>
+      <span><span class="ob-dim">—</span> not in this buy</span>
+      <span><strong>no units</strong> sold there, but its units are not set (Edit)</span>
+      ${tracked ? `<span><span class="ob-part">Partial</span> received before ${escapeHtml(obDay(tracked))}: its early sales cannot be counted, so it is not shaded</span>` : ''}
+      <span><strong>Days</strong> since received · <strong>Sold</strong> rang up at a register, refunds counted apart</span>`;
+    obFade();
+  }
+
+  // A buy's stores, unfolded under its row: §4.8's child row.
+  function obKidRow(b, stores, tracked) {
+    const here = stores.filter(st => (b.stores || {})[st]);
+    const rows = here.map(st => {
+      const c = b.stores[st];
+      const p = tracked ? obPct(c.sold, c.units) : null;
+      return `<tr><td>${escapeHtml(st)}</td>
+        <td class="ob-num">${c.units ? obN(c.units) : '<span class="ob-dim">not set</span>'}</td>
+        <td class="ob-num">${obN(c.labels)}</td>
+        <td class="ob-num">${tracked ? obN(c.sold) : '<span class="ob-none">not tracked</span>'}</td>
+        <td class="ob-num">${obN(c.refunded)}</td>
+        <td class="ob-num">${p === null ? '<span class="ob-dim">needs units</span>' : p + '%'}</td></tr>`;
+    }).join('');
+    const po = escapeHtml(b.po);
+    return `<tr class="ob-kid"><td colspan="${5 + stores.length}">
+      <div class="ob-kidbar"><span class="ob-barlbl" style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase">PO ${po} by store</span>
+        <span class="ob-dim" style="font-size:12px">${escapeHtml([b.vendor, b.received_on ? 'received ' + b.received_on : ''].filter(Boolean).join(' · '))}</span>
+        <span style="flex:1"></span>
+        ${obCanEdit ? `<button class="ob-btn" onclick="event.stopPropagation(); obEditOpen('${po}')">Edit units and stores</button>` : ''}
+        <button class="ob-btn" onclick="event.stopPropagation(); obOpenDetail('${po}')">Labels</button></div>
+      ${here.length ? `<table><thead><tr><th>Store</th><th class="ob-num">Units</th><th class="ob-num">Labeled</th>
+        <th class="ob-num">Sold</th><th class="ob-num">Refunded</th><th class="ob-num">Sell-through</th></tr></thead>
+        <tbody>${rows}</tbody></table>` : '<div class="ob-dim" style="font-size:12.5px">Nothing set, printed or sold at any store yet.</div>'}
+    </td></tr>`;
+  }
+  function obToggleRow(po) {
+    obOpenRow = obOpenRow === po ? null : po;
+    obRenderReport();
+  }
+  window.obToggleRow = obToggleRow;
+
+  // ── Edit units and stores ───────────────────────────────────────────────────
+  //
+  // Brian, 2026-10-02: admins and superusers (offered only when the worker says can_edit;
+  // ob-buy-edit refuses everyone else). Units per open store; the total is the stores added
+  // up, and only when no store has units is the total itself typed. Saving replaces the
+  // buy's stores: a store left blank is not in the buy.
+  function obEditClose() {
+    const d = el('ob-edit'); if (d) d.remove();
+    document.removeEventListener('keydown', obEditKey);
+  }
+  window.obEditClose = obEditClose;
+  function obEditKey(e) { if (e.key === 'Escape') obEditClose(); }
+
+  function obEditOpen(po) {
+    // From the report or from the buy's page: whichever holds this buy.
+    const fromRep = obReport && (obReport.buys || []).find(b => b.po === po);
+    const fromDet = obDetail && obDetail.buy && obDetail.buy.po === po ? obDetail : null;
+    let label = '', units = null, alloc = {}, stores = [];
+    if (fromDet) {
+      label = fromDet.buy.label || ''; units = fromDet.buy.units;
+      alloc = fromDet.alloc || {}; stores = fromDet.store_list || [];
+    } else if (fromRep) {
+      label = fromRep.label || ''; units = fromRep.units;
+      for (const [st, c] of Object.entries(fromRep.stores || {})) if (c.units) alloc[st] = c.units;
+      // The OPEN stores: the report's columns can include a closed one with history, which
+      // the worker would refuse to give units to.
+      stores = obReport.store_list || [];
+    } else return;
+    obEditClose();
+    const open = stores.length ? stores : Object.keys(alloc);
+    const wrap = document.createElement('div');
+    wrap.id = 'ob-edit';
+    wrap.setAttribute('role', 'dialog'); wrap.setAttribute('aria-modal', 'true'); wrap.setAttribute('aria-labelledby', 'ob-edit-t');
+    wrap.innerHTML = `<div class="ob-eb">
+      <div class="ob-et" id="ob-edit-t">Edit PO ${escapeHtml(po)}${label ? ' · ' + escapeHtml(label) : ''}</div>
+      <div class="ob-ed">Units each store got. Leave a store blank if this buy did not go there.</div>
+      ${open.map(st => `<label class="ob-er"><span>${escapeHtml(st)}</span>
+        <input type="text" inputmode="numeric" autocomplete="off" data-store="${escapeHtml(st)}"
+               value="${alloc[st] ? alloc[st] : ''}" placeholder="—" aria-label="Units at ${escapeHtml(st)}"></label>`).join('')}
+      <label class="ob-er"><span>Units bought</span><span id="ob-edit-tot"></span></label>
+      <div class="ob-ed" id="ob-edit-note" style="margin:4px 0 0"></div>
+      <div class="ob-err" id="ob-edit-err" role="alert"></div>
+      <div class="ob-eact"><button type="button" class="ob-ecancel" onclick="obEditClose()">Cancel</button>
+        <button type="button" class="ob-esave" id="ob-edit-save">Save</button></div>
+    </div>`;
+    wrap.addEventListener('click', (e) => { if (e.target === wrap) obEditClose(); });
+    document.body.appendChild(wrap);
+    document.addEventListener('keydown', obEditKey);
+    const typed = String(units === null || units === undefined ? '' : units);
+    // The total: the stores added up once any has units, else a box for the typed total.
+    const paintTotal = () => {
+      const sum = [...wrap.querySelectorAll('input[data-store]')]
+        .reduce((a, i) => a + (/^\d+$/.test(i.value.trim()) ? Number(i.value.trim()) : 0), 0);
+      const tot = el('ob-edit-tot'), note = el('ob-edit-note');
+      if (sum > 0) {
+        tot.textContent = obN(sum);
+        note.textContent = 'The stores added up.';
+      } else if (!el('ob-edit-units')) {
+        tot.innerHTML = `<input type="text" inputmode="numeric" autocomplete="off" id="ob-edit-units" value="${escapeHtml(typed)}" placeholder="—" aria-label="Units bought">`;
+        note.textContent = 'With no store set, this is the whole buy.';
+      }
+    };
+    wrap.querySelectorAll('input[data-store]').forEach(i => i.addEventListener('input', paintTotal));
+    paintTotal();
+    el('ob-edit-save').addEventListener('click', () => obEditSave(po));
+    const first = wrap.querySelector('input[data-store]');
+    if (first && window.matchMedia && matchMedia('(pointer: fine)').matches) first.focus();
+  }
+  window.obEditOpen = obEditOpen;
+
+  async function obEditSave(po) {
+    const err = el('ob-edit-err'), save = el('ob-edit-save');
+    const stores = {};
+    for (const i of document.querySelectorAll('#ob-edit input[data-store]')) {
+      const v = i.value.trim();
+      if (v === '') continue;
+      if (!/^\d+$/.test(v)) { err.textContent = `Units for ${i.dataset.store} must be a whole number.`; i.focus(); return; }
+      stores[i.dataset.store] = Number(v);
+    }
+    const body = { po, stores };
+    const u = el('ob-edit-units');
+    if (u && !Object.values(stores).some(n => n > 0)) {
+      const v = u.value.trim();
+      if (v !== '' && !/^\d+$/.test(v)) { err.textContent = 'Units bought must be a whole number.'; u.focus(); return; }
+      body.units = v === '' ? null : Number(v);
+    }
+    err.textContent = '';
+    save.disabled = true; save.textContent = 'Saving…';
+    const { status, j } = await obApi('?action=ob-buy-edit', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (status !== 200 || !j || !j.ok) {
+      save.disabled = false; save.textContent = 'Save';
+      err.textContent = (j && j.error) || `That did not save (${status}).`;
+      return;
+    }
+    obEditClose();
+    if (obTab === 'reports') obLoadReport();
+    else if (obView.mode === 'detail') obOpenDetail(po);
+    else obLoad();
+  }
 
 
   // Keeps the typed code: after "Pick the store…", picking one must not throw away what

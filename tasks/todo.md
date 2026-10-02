@@ -1,3 +1,42 @@
+# Opportunity Buys: Edit units per store, and a Reports tab (2026-10-02)
+
+**Request (Brian):** an Edit button for a buy's units and stores, and a Reports tab with every
+PO's data plus units and units sold per store. Previewed first; his answers: edit = admins and
+superusers; 60 % / 25 % tints fine; total units = the stores added up; stores BL1 BL2 BL4 BL14
+BL16 (BL8 closed); add days since received.
+
+**Plan:**
+- [x] migration-076: `ob_buy_stores (po, store, units, updated_by, updated_at)`, PK (po, store),
+      no FK (the D1 cascade lesson). Idempotent. Brian applies it.
+- [x] Worker: `ob-buy-edit` (POST; obRequireEdit = admin/superuser; open stores only; whole
+      numbers; replaces the buy's rows; units = the stores added up, or the typed total when no
+      store is set); `ob-report` (GET; opportunity-buys view; every buy with per-store units,
+      labels, sold, refunded, plus tracked_from and the store columns); ob-buy-detail carries
+      the per-store units for the dialog. Missing table → no allocations, never a 500.
+- [x] App: Buys | Reports tabs; report = totals + sentence, one row per PO (days since
+      received, units, sold, %, a sold-over-units cell per store tinted ≥ 60 % / < 25 %),
+      totals row, legend, tap a row for its stores; Edit dialog from the buy's page and the
+      report row (admins only, from the worker's can_edit).
+- [x] Tests: test-opportunity-buys (gate, validation, write semantics, report numbers,
+      registries); browser-opportunity-buys (both tabs, desktop + phone, light + dark, contrast,
+      second render, the dialog's POST). Mutations.
+- [ ] Ship in order: migration → worker → app.
+
+
+**Review (2026-10-02):**
+- Two commits, worker first (migration-076 + worker), then the app. CACHE_NAME v271 → v272.
+- test-opportunity-buys 223/223 (+49: the edit gate, validation, replace + sum semantics, the
+  report's per-store numbers, store columns, missing-table resilience, registries);
+  test-migration-076 8/8; npm test 7694/7694 (94 suites).
+- browser-opportunity-buys 304/304 (was 114 + 4 failing): the 4 were the harness fetching
+  PRODUCTION ly-sales and failing on CORS — unstubbed API calls are now refused in the page.
+  The Reports section, phone + desktop × light + dark: totals, columns, days, every cell state,
+  contrast on what is painted (lowest 4.5+ after the dark washes went .16 → .12: the inkDim
+  "of" line on green measured 4.36:1), sticky opaque PO column, unfold, Edit (open stores only,
+  live total, the POST, typed total with no stores, Escape), the second render, can_edit false.
+- Mutations 19/19 killed (9 worker, 10 app).
+---
+
 # Phone bar: a Buy tab for associates (2026-10-01)
 
 **Request (Brian):** *"add a Buy button to the associate phone bar"*
