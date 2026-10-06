@@ -5016,6 +5016,7 @@ const ACTION_BUSINESS = new Map([
   ["ob-buy-close", "bl"],
   ["ps-buy-list", "bl"],
   ["ob-buy-edit", "bl"],
+  ["ob-buy-delete", "bl"],
   ["ob-report", "bl"],
   ["truck-current", "bl"],
   ["truck-detail", "bl"],
@@ -11240,17 +11241,40 @@ function manifestMissing(map, headers) {
 // way. A scorer line with no identifier is still a line you can cost, classify and score.
 // An OB line with no barcode can never be reached by a scan — which is the entire reason
 // this sheet is being uploaded — so accepting one would file a row that looks present and
-// is permanently unreachable. Same argument for the price: the scorer DERIVES a price and
-// can manage without a column, whereas on this sheet the column IS the answer.
+// is permanently unreachable.
+//
+// 🔑 THE PRICE IS NOT REQUIRED (Brian, 2026-10-06: "if no price then have app look up retail
+// price when user scans the upc"). A line with no price is still found by a scan, which
+// takes the sheet's name and quantity and prices it the ordinary way: street-price lookup,
+// then the ladder. That fallback already existed for a blank price CELL; this lets a whole
+// sheet without the column through. The upload reports `ob_price_column` so the page can
+// say which way it will price, because a price header we failed to recognise and a sheet
+// with no prices now both load, and only that line tells them apart.
 //
 // 🔑 Reported in Brian's words, not the field names, because this message is read by the
 // person looking at their own spreadsheet: "UPC", not "identifier".
 const MANIFEST_OB_REQUIRED = [
-  ["identifier", "UPC"], ["description", "description"], ["qty", "quantity"], ["ob_price", "our price"],
+  ["identifier", "UPC"], ["description", "description"], ["qty", "quantity"],
 ];
 function manifestObMissing(map, headers) {
   const has = (f) => map[f] && headers.includes(map[f]);
   return MANIFEST_OB_REQUIRED.filter(([f]) => !has(f)).map(([, label]) => label);
+}
+
+// What a buy sheet's upload needs to tell the person who just uploaded it, beyond the counts:
+// the lines a scan can never find, and where the price will come from when the sheet has none.
+function obUploadNote(wrote, priceColumn) {
+  const n = wrote?.written ?? 0, reach = wrote?.obMatchable ?? 0, priced = wrote?.obPriced ?? 0;
+  const notes = [];
+  if (reach !== n) {
+    notes.push(`${n - reach} of ${n} lines cannot be reached by a scan — they have no barcode. Check the flags on those lines.`);
+  }
+  if (!priceColumn) {
+    notes.push("There is no price column, so a scan looks up the street price and prices each item the usual way.");
+  } else if (priced < n) {
+    notes.push(`${n - priced} line${n - priced === 1 ? " has" : "s have"} no price, so a scan looks those up.`);
+  }
+  return notes.length ? notes.join(" ") : null;
 }
 
 // RFC-4180 enough for vendor exports: quoted fields, doubled quotes inside them, commas
@@ -12195,11 +12219,13 @@ async function manifestWriteLines(env, manifestId, headers, dataRows, map, costB
   }
   // 🔑 An OB upload is reported by what it can actually DO, not by how many rows were
   // read. A sheet of 240 lines that yields 12 matchable ones is a sheet with a problem,
-  // and the only moment anyone will look is right after uploading it.
+  // and the only moment anyone will look is right after uploading it. Matchable is a
+  // barcode a scan can find; a line found with no price is priced by the lookup, so it
+  // counts (priced is reported apart).
   return {
     written: parsed.length, skippedHeaders, skippedSubtotals,
     obPriced: parsed.filter(l => l.ob_price !== null).length,
-    obMatchable: parsed.filter(l => obUpcOf(l) && l.ob_price !== null).length,
+    obMatchable: parsed.filter(l => obUpcOf(l)).length,
     obUnits: parsed.reduce((a, l) => a + (l.qty > 0 ? l.qty : 0), 0),
   };
 }
@@ -22613,8 +22639,13 @@ export default {
         // working sheet is gone, every scan answers "not on this manifest", and the retry
         // collides with the husk. Nothing is written until the columns are all there.
         if (loadId && missing.length) {
+          // A buy that never had a sheet must not be told it "still has the manifest it had":
+          // on the Open-a-buy path that is every first upload, and it reads as a success.
+          const live = await env.DB.prepare(
+            `SELECT 1 AS x FROM manifests WHERE load_id = ? AND superseded_at IS NULL LIMIT 1`).bind(loadId).first();
           return new Response(JSON.stringify({
-            error: `This sheet is missing ${missing.join(", ")}. Nothing was changed — buy ${loadId} still has the manifest it had.`,
+            error: `This sheet is missing ${missing.join(", ")}. Nothing was changed — buy ${loadId} `
+              + (live ? "still has the manifest it had." : "still has no manifest."),
             code: "MISSING_COLUMNS", missing, headers, column_map: map,
             header_row: hdr.headerRow + 1,
           }), { status: 400, headers: corsJson });
@@ -22715,6 +22746,8 @@ export default {
           ob_priced: loadId ? (wrote?.obPriced ?? 0) : undefined,
           ob_matchable: loadId ? (wrote?.obMatchable ?? 0) : undefined,
           ob_units: loadId ? (wrote?.obUnits ?? 0) : undefined,
+          // false: no price column was recognised, so every scan prices by lookup.
+          ob_price_column: loadId ? !!(map?.ob_price && headers.includes(map.ob_price)) : undefined,
           replaced: loadId ? (replaced ? {
             id: replaced.id, filename: replaced.filename || null,
             uploaded_at: replaced.uploaded_at, uploaded_by: replaced.uploaded_by || null,
@@ -22723,9 +22756,7 @@ export default {
           note: missing.length
             ? `Map ${missing.join(", ")} before this can be scored.`
             : loadId
-              ? ((wrote?.obMatchable ?? 0) === (wrote?.written ?? 0)
-                  ? null
-                  : `${(wrote?.written ?? 0) - (wrote?.obMatchable ?? 0)} of ${wrote?.written ?? 0} lines cannot be reached by a scan — they have no barcode or no price. Check the flags on those lines.`)
+              ? obUploadNote(wrote, !!(map?.ob_price && headers.includes(map.ob_price)))
               : (map.cost && headers.includes(map.cost)
                 ? null
                 : "No per-line cost on this sheet — set the % of retail (or the load cost) in the cost basis to price it."),
@@ -24222,10 +24253,10 @@ export default {
         // ── The buy's manifest ──────────────────────────────────────────────
         //
         // 🔑 COUNTED BY WHAT A SCAN CAN REACH, not by how many rows were uploaded. A line
-        // with no barcode, or with a blank price cell, is on the sheet and is invisible to
-        // the floor — "240 lines" would read as done when 12 of them work. `priced` and
-        // `matchable` are separate because they fail for different reasons and are fixed
-        // in different columns of the spreadsheet.
+        // with no barcode is on the sheet and is invisible to the floor — "240 lines" would
+        // read as done when 12 of them work. A line with no price IS reachable since
+        // 2026-10-06: the scan finds it and prices it by lookup. `priced` and `matchable`
+        // stay separate because they are fixed in different columns of the spreadsheet.
         //
         // The superseded count is read even when there is no live manifest: a buy whose
         // upload failed partway has history and no sheet, and that is worth seeing rather
@@ -24235,8 +24266,7 @@ export default {
             `SELECT m.id, m.filename, m.uploaded_at, m.uploaded_by,
                     COUNT(l.id)                                                        AS lines,
                     SUM(CASE WHEN l.ob_price IS NOT NULL THEN 1 ELSE 0 END)            AS priced,
-                    SUM(CASE WHEN l.ob_upc IS NOT NULL AND l.ob_price IS NOT NULL
-                             THEN 1 ELSE 0 END)                                        AS matchable,
+                    SUM(CASE WHEN l.ob_upc IS NOT NULL THEN 1 ELSE 0 END)              AS matchable,
                     SUM(CASE WHEN l.qty > 0 THEN l.qty ELSE 0 END)                     AS units
                FROM manifests m LEFT JOIN manifest_lines l ON l.manifest_id = m.id
               WHERE m.load_id = ? AND m.superseded_at IS NULL
@@ -24524,6 +24554,64 @@ export default {
           ok: true, po,
           units: after && after.units !== null && after.units !== undefined ? Number(after.units) : null,
           alloc: (await obAllocations(env, po)).get(po) || {},
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // ── Deleting a buy ────────────────────────────────────────────────────────
+    //    POST ?action=ob-buy-delete  { po, confirm }   — confirm must repeat the PO
+    //
+    // Brian, 2026-10-06: admins delete a buy, and its printed labels are UNLINKED, not
+    // deleted (asked; the other choices were "only label-free buys" and "leave labels
+    // tagged"). So the buy, its store units and every manifest it had (live and replaced)
+    // go; sticker_prints keeps its rows with po set NULL, because a print happened and the
+    // label is on a shelf, but it no longer counts toward a buy — and a later buy under the
+    // same PO starts with none. Closing stays the reversible option; this is not one.
+    //
+    // 🛑 `confirm` MUST EQUAL THE PO. Nothing else on this page is irreversible, so a stray
+    // or replayed request is refused at input validation rather than trusted.
+    // 🛑 A SIGNED-IN ADMIN ONLY: the snapshot secret does not admit this one, though it admits
+    // open, close and edit. It sat in a public repo for months and is not yet rotated
+    // (MEMORY: snapshot-secret-exposure), and this is the first OB action with no way back.
+    // 🔑 ONE BATCH: D1 runs it as a transaction, so a failure leaves the buy whole rather
+    // than a buy with no manifest or a manifest with no buy.
+    if (url.searchParams.get("action") === "ob-buy-delete" && request.method === "POST") {
+      const denied = obRequireEdit(currentUser, false, corsJson, "Deleting a buy is an admin job");
+      if (denied) return denied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const po = obPo(body?.po);
+        if (!po) return new Response(JSON.stringify({ error: "That is not a purchase order", code: "BAD_PO" }),
+          { status: 400, headers: corsJson });
+        if (obPo(body?.confirm) !== po) {
+          return new Response(JSON.stringify({ error: `Confirm the delete by sending the PO (${po}) again`, code: "CONFIRM_PO" }),
+            { status: 400, headers: corsJson });
+        }
+        const buy = await env.DB.prepare(`SELECT po FROM ob_buys WHERE po = ?`).bind(po).first();
+        if (!buy) return new Response(JSON.stringify({ error: "No such buy", code: "NO_BUY" }),
+          { status: 404, headers: corsJson });
+        // Counted before, so the answer says what went. Read, not taken from meta.changes,
+        // which this codebase does not trust.
+        const [prints, sheets] = await Promise.all([
+          env.DB.prepare(`SELECT COUNT(*) AS n FROM sticker_prints WHERE po = ?`).bind(po).first(),
+          env.DB.prepare(`SELECT COUNT(*) AS n FROM manifests WHERE load_id = ?`).bind(po).first(),
+        ]);
+        await env.DB.batch([
+          env.DB.prepare(`DELETE FROM manifest_lines WHERE manifest_id IN (SELECT id FROM manifests WHERE load_id = ?)`).bind(po),
+          env.DB.prepare(`DELETE FROM manifests WHERE load_id = ?`).bind(po),
+          env.DB.prepare(`DELETE FROM ob_buy_stores WHERE po = ?`).bind(po),
+          env.DB.prepare(`UPDATE sticker_prints SET po = NULL WHERE po = ?`).bind(po),
+          env.DB.prepare(`DELETE FROM ob_buys WHERE po = ?`).bind(po),
+        ]);
+        const still = await env.DB.prepare(`SELECT po FROM ob_buys WHERE po = ?`).bind(po).first();
+        if (still) return new Response(JSON.stringify({ error: `PO ${po} was not deleted` }), { status: 500, headers: corsJson });
+        return new Response(JSON.stringify({
+          ok: true, po,
+          prints_unlinked: Number(prints?.n) || 0,
+          manifests_deleted: Number(sheets?.n) || 0,
         }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
@@ -26671,7 +26759,9 @@ export default {
           if (!ob) missFlags.push(`buy ${scanPo} has no manifest`);
           else if (!identifier) missFlags.push("scan the barcode to match this buy's manifest");
           else if (!obMatched) missFlags.push(`this barcode is not on buy ${scanPo}'s manifest`);
-          else if (obPrice === null) missFlags.push(`buy ${scanPo}'s manifest carries no price for this line`);
+          // Found, with no price on the sheet: the lookup and the ladder below price it, and
+          // the flag says so rather than letting a derived price pass for the sheet's.
+          else if (obPrice === null) missFlags.push(`no price on buy ${scanPo}'s manifest, so this price comes from the lookup`);
           // 🛑 ONE BARCODE, TWO PRICES, AND WE PICKED ONE. A UPC listed twice on the sheet
           // is a sheet that contradicts itself; the lowest row_no answers, but silently
           // choosing between two prices a person wrote is not something to do quietly.
