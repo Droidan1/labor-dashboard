@@ -36,6 +36,22 @@ The 5 "different SHA" commits are not reachable from `main`, so this clone keeps
 | `claude/product-mapping-other-l3-pcm3wl` | `3106bfde0386e9f5812787cefc4e88c78a07e1a3` | same change on main, different SHA |
 | `claude/scan-price-missing-data-4o5z2e` | `e811c6fa65f8f497f8cc1f765e1e0e93bf535cbd` | same change on main, different SHA |
 
+**Three more, same day, after a closer look.** `git cherry` called these unmerged, but each had merged
+`main` into itself, which puts the squash-merged twin of its own commit at or below the merge-base,
+outside the range cherry compares. Matched instead by subject and code diff (`sw.js`, the
+shell-cache fixture and `tasks/` excluded). Tips archived locally under `refs/archive/claude/*`.
+
+| Branch | Last commit | Its changes on main |
+|---|---|---|
+| `claude/agent-feature-review-4bl2zx` | `0a0f4da1fb66950dd92214bc99973689a0dce129` | #180–#185 (#185 = `cabcb9a` + `0a0f4da`) |
+| `claude/l3-rules-rescue-pcm3wl` | `96e24caf581b8a3546ccd794d321940880968940` | #186, #187 |
+| `claude/auction-sales-daily-report-92t6lu` | `c05256f85f3c02a43d467ad081bbb036c83e40f6` | #191 |
+
+`claude/kind-curie-psnox4`: its two still-true notes (migration-074 + worker deploy record, the five
+duplicate Clover items deleted) were cherry-picked to `main`. Its third, `ad6e722` ("^PQ verified on the
+real ZD410"), was NOT: it is superseded by the 2026-09-30 note (copies crept, `^MNY`), and it would have
+put a false "✅ VERIFIED" comment into `psZpl`. Delete that branch once this lands.
+
 ---
 
 # Retail Summary › Categories: y-axis labels said "$2k" twice (2026-10-06)
@@ -4607,7 +4623,7 @@ consumers, so the column is not another `load_id` sitting unread for months:
 Migration → worker → frontend. The new worker writes `title_source`, so against a database
 without it every scan that learns anything throws.
 
-## Review — built and tested; nothing deployed
+## Review — built, tested, migration and worker deployed
 
 **5,580 source assertions across 80 suites pass. 118 browser assertions pass.**
 `migration-074.sql`, ~90 lines of `worker.js`, ~15 of `index.html`,
@@ -4663,13 +4679,41 @@ its own change — folded into this PR it would be invisible. Filed as a separat
 suite passes under `TZ=America/New_York`; it only fails on a UTC runner between 20:00 and
 midnight Eastern, which is why it has never been seen. No workflow runs `npm test`.
 
-### Deploy order
+### Deployed 2026-09-22, on Brian's go-ahead
 
-Migration → worker → frontend. The new worker names `title_source` in the item_cache upsert,
-which runs on **every** scan that learns anything — so against a database without the column
-Price Scan breaks for every user, not one endpoint.
+**migration-074** — staging (`b40982c2`) then production (`3fa911d7`). One nullable column on
+`item_cache`. Production unchanged across it, checked rather than assumed:
 
-🛑 **Nothing is deployed.** The migration needs an explicit go-ahead.
+| | before | after |
+|---|---|---|
+| cached items | 511 | 511 |
+| named | 496 | 496 |
+| hand-set categories | 1 | 1 |
+| Σ street prices | $3,057.67 | $3,057.67 |
+| `title_source` set | — | 0 — every existing name still reads as the lookup it was |
+
+**Worker `clover-sales-api`** — version `dd98aa1e-133c-4ae7-83c4-f7440b253927`, three
+consecutive clean passes. 🛑 The poller was proved able to FAIL first: all four markers read
+as *absent* from the live bundle before deploying, and the HTTP status matched against
+`^[1-4][0-9][0-9]$` so a blocked tunnel cannot pass as a response.
+
+Cross-checked afterwards (rule 4): all 17 `item_cache` columns the upsert names exist in
+production — that upsert runs on every scan that learns anything, so a mismatch would break
+Price Scan for every user rather than one endpoint.
+
+**Frontend** — #274 merged; Pages run #413 published `bc642db`, whose tree carries
+`dashboard-cache-v225`, the identity line's `title_source === 'manifest'`, and `obSheetName`.
+
+⚠️ **Wider blast radius than the manifest work, and it is live.** That change only touched
+scans carrying a PO. This one also changes later scans *without* one, because a barcode first
+named from a sheet stays named — which is the whole saving, and why the overwrite guard
+shipped with it rather than after it.
+
+🛑 **www.retjghub.com could not be polled from this container**: the agent proxy answers 403
+to CONNECT for that host and for github.io (`api.retjghub.com` is allowed, which is why the
+worker poll worked). The proxy's README says to report a blocked host rather than route
+around it. So the chain verified is: GitHub published `bc642db` → `bc642db` carries the
+change. The CDN edge serving those bytes is the one hop not confirmed from here.
 
 
 # Opportunity buys — a CSV manifest per PO (2026-09-21)
@@ -5423,8 +5467,12 @@ Logged late, because it belongs in the record.
   versions. Nothing in the suite could have caught the original, because every assertion was
   about source text and the defect was in behaviour against a server that answers differently.
 
-**Brian still has to delete the five duplicates** — Admin → Inventory, keep one per store,
-and check all six stores.
+~~**Brian still has to delete the five duplicates**~~ — **done 2026-09-22**, Brian deleted
+them himself. The cleanup was the one-time half; the guard that stops them coming back was
+verified live in the deployed bundle the same day (`cloverCodeInUse` / `duplicate-check` /
+"Nothing was created"), so `create-clover-item` now FAILS CLOSED when it cannot determine
+whether a code is in use, rather than shrugging and creating anyway. `isObCode` / `obFallback`
+are live too, so a PO-carrying sticker code cannot collide with its ordinary sibling.
 
 
 # Price Scan — print quantity, and a manual (no-lookup) mode (2026-09-21)
