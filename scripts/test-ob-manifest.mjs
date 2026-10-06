@@ -152,11 +152,14 @@ console.log('OB manifest');
 
   const r = await upload({ load_id: 'OB-1', csv: OB_CSV, filename: 'again.csv' });
   eq(r.body.rows, 4, 'the upload reports what it read');
-  eq(r.body.ob_matchable, 2, '🔑 …and, separately, how many lines a scan can actually reach');
+  eq(r.body.ob_matchable, 3, '🔑 …and, separately, how many lines a scan can actually reach (a blank price is still found)');
   eq(r.body.ob_priced, 3, '…and how many carry a price');
+  eq(r.body.ob_price_column, true, '…having found the price column');
   eq(r.body.ob_units, 89, '…and the units the sheet accounts for');
-  ok(/cannot be reached by a scan/.test(r.body.note || ''),
+  ok(/1 of 4 lines cannot be reached by a scan/.test(r.body.note || ''),
      '…with the shortfall spelled out rather than left to be noticed');
+  ok(/1 line has no price, so a scan looks those up/.test(r.body.note || ''),
+     '…and the blank price cell named, with where its price will come from');
 }
 
 // ── A price column means the opposite thing on a vendor's sheet ──────────────
@@ -236,21 +239,64 @@ console.log('OB manifest');
   const liveBefore = db.prepare(
     `SELECT id, filename FROM manifests WHERE load_id = 'OB-1' AND superseded_at IS NULL`).get();
 
-  // No price column at all. Under the Scorer's rule this would insert the manifest, skip
+  // No barcode column at all. Under the Scorer's rule this would insert the manifest, skip
   // the lines and ask the human to fix the mapping — which here means an EMPTY sheet
   // holding the one-live-per-PO slot while every scan answers nothing.
   const r = await upload({ load_id: 'OB-1', filename: 'broken.csv', csv: [
-    'UPC,Description,Qty', '038000138416,Pringles,24',
+    'Description,Qty,Our Price', 'Pringles,24,1.50',
   ].join('\n') });
-  eq(r.status, 400, '🛑 a buy sheet with no price column is refused');
+  eq(r.status, 400, '🛑 a buy sheet with no barcode column is refused');
   eq(r.body.code, 'MISSING_COLUMNS', '…by name');
-  eq(JSON.stringify(r.body.missing), '["our price"]', "…naming the column in Brian's words");
+  eq(JSON.stringify(r.body.missing), '["UPC"]', "…naming the column in Brian's words");
+  ok(/still has the manifest it had/.test(r.body.error || ''), '…and says the sheet it had is still there');
 
   const liveAfter = db.prepare(
     `SELECT id, filename FROM manifests WHERE load_id = 'OB-1' AND superseded_at IS NULL`).get();
   eq(liveAfter.id, liveBefore.id, '🔑 …and the buy still has the sheet it had');
   eq(db.prepare(`SELECT COUNT(*) c FROM manifests WHERE filename = 'broken.csv'`).get().c, 0,
      '…nothing was written at all, not even an inert row');
+}
+
+// ── A sheet with no price column (Brian, 2026-10-06) ─────────────────────────
+// "if no price then have app look up retail price when user scans the upc". His own
+// test.csv was UPC, Description, QTY. and was refused for it.
+{
+  await openBuy('OB-NOPX');
+  // Refused for a different column on a buy that never had a sheet: the message must not
+  // claim it "still has the manifest it had" — it reads as a success on the Open-a-buy path.
+  const first = await upload({ load_id: 'OB-NOPX', csv: 'Description,QTY.\nPringles,24' });
+  eq(first.status, 400, 'a sheet with no barcode column is still refused');
+  ok(/still has no manifest\./.test(first.body.error || ''), `🛑 …and a buy with no sheet is told it has none (${first.body.error})`);
+  ok(!/manifest it had/.test(first.body.error || ''), '…never that it still has the one it had');
+
+  const r = await upload({ load_id: 'OB-NOPX', filename: 'test.csv', csv: [
+    'UPC,Description,QTY.', '044663001127,Cookie Sheet 3pk,24', '044663001134,Mystery Item,12',
+  ].join('\n') });
+  eq(r.status, 200, '🔑 a buy sheet with no price column loads');
+  eq(r.body.ob_price_column, false, '…reporting that it found no price column');
+  eq(r.body.ob_priced, 0, '…so no line carries a price');
+  eq(r.body.ob_matchable, 2, '🔑 …and every barcode is still reachable by a scan');
+  ok(/no price column, so a scan looks up the street price/.test(r.body.note || ''),
+     `…with where the price will come from spelled out (${r.body.note})`);
+
+  // The lookup is made to find a street price here; everywhere else in this suite it finds none.
+  searchResults = [{ position: 1, url: 'https://www.walmart.com/ip/cs', title: 'Cookie Sheet 3pk', snippet: '$12.99' }];
+  snippetPrices = [{ url: 'https://www.walmart.com/ip/cs', price: 12.99, title: 'Cookie Sheet 3pk', pack: 1, in_stock: true, sold_by: 'Walmart.com' }];
+  const sc = await scan({ identifier: '044663001127', po: 'OB-NOPX' });
+  searchResults = []; snippetPrices = [];
+  eq(sc.status, 200, 'a scan of a line on that sheet answers');
+  eq(sc.body.manifest.matched, true, '…finding the line');
+  eq(sc.body.manifest.price, null, '…which has no price');
+  eq(sc.body.manifest.qty, 24, '…and still carries the quantity');
+  eq(sc.body.title, 'Cookie Sheet 3pk', '…and the name, so the lookup has something to search');
+  eq(sc.body.retail, 12.99, '🔑 …and the scan looks up the street price');
+  ok(sc.body.price_basis !== "the buy's manifest", '…never claiming the sheet priced it');
+  ok((sc.body.flags || []).some(f => /no price on buy OB-NOPX's manifest, so this price comes from the lookup/.test(f)),
+     '…and says so');
+
+  const d = await get('ob-buy-detail&po=OB-NOPX');
+  eq(d.body.manifest.priced, 0, 'the buy page reports no priced lines');
+  eq(d.body.manifest.matchable, 2, '…and both lines reachable');
 }
 
 // ── The scan: the sheet outranks the ladder ──────────────────────────────────
@@ -307,7 +353,11 @@ console.log('OB manifest');
   const blank = await scan({ identifier: '070330731608', po: 'OB-1' });
   eq(blank.body.manifest.matched, true, 'a line with no price still matches');
   eq(blank.body.manifest.price, null, '…reporting no price rather than 0.00');
-  ok(/carries no price for this line/.test(flags(blank)), '…and says which of the three problems it is');
+  ok(/no price on buy OB-1's manifest, so this price comes from the lookup/.test(flags(blank)),
+     '…and says which of the three problems it is, and where the price came from instead');
+  const sBlank = searchCalls;
+  await scan({ identifier: '070330731608', po: 'OB-1' });
+  ok(searchCalls > sBlank, '🔑 …and goes on to look the price up');
   ok(blank.body.price_basis !== "the buy's manifest", '…and does not claim the sheet priced it');
 
   // 4. A PO that cannot be read is an error, never a quiet ordinary scan.
@@ -330,7 +380,7 @@ console.log('OB manifest');
   eq(d.status, 200, 'the buy detail answers');
   eq(d.body.manifest.lines, 4, 'it reports the sheet');
   eq(d.body.manifest.priced, 3, '…how many lines carry a price');
-  eq(d.body.manifest.matchable, 2, '🔑 …and how many a scan can actually reach');
+  eq(d.body.manifest.matchable, 3, '🔑 …and how many a scan can actually reach (the unpriced line included)');
   eq(d.body.manifest.units, 89, '…and the units the sheet accounts for');
   eq(d.body.manifest.filename, 'third.csv', '…naming the live file');
   eq(d.body.manifest_history, 2, '…with the replaced sheets counted, not hidden');
@@ -663,8 +713,10 @@ console.log('OB manifest');
   // would not open, which would send someone hunting for a buy sitting right there.
   ok(create.indexOf('ob-buy-open') < create.indexOf('obUploadCsv'),
      '🛑 obCreate opens the buy BEFORE uploading its sheet');
-  ok(/manifestErr/.test(create) && /is open\. The manifest did not load/.test(create),
+  ok(/manifestErr/.test(create) && /is open, but its manifest did not load/.test(create),
      '…and a failed sheet is reported against a buy that IS open, never as a failed open');
+  ok(/obManifestWarn\(`PO \$\{j\.po\} is open/.test(create),
+     '…in the warning box at the manifest card, not the grey status line (browser-opportunity-buys drives it)');
   ok(!/ob-buy-close/.test(create), '…nothing closes or rolls the buy back');
 
   const card = decomment(html.slice(html.indexOf('  function obManifestCard(buy) {'),
@@ -672,6 +724,25 @@ console.log('OB manifest');
   ok(/none yet/.test(card), '🛑 a buy with no sheet reads "none yet"');
   ok(/cannot be found by a scan/.test(card), '…and an incomplete sheet says how many lines are unreachable');
   ok(/buy\.status === 'open'/.test(card), '…while a closed buy is not offered an upload it would be refused');
+}
+
+// ── Last, because it publishes criteria the blocks above were written without ──
+// An unpriced manifest line is priced exactly the way the same barcode is with no PO:
+// the street price the lookup found, through the ladder. Criteria as in test-price-scan.
+{
+  await post('merch-criteria-draft', { cells: [
+    { category: null, field: 'price_cap_pct_retail', value: '50' },
+    { category: null, field: 'min_gross_margin_pct', value: '30' },
+  ]});
+  await post('merch-criteria-publish', { note: 'ob no-price test criteria' });
+  searchResults = [{ position: 1, url: 'https://www.walmart.com/ip/mi', title: 'Mystery Item', snippet: '$10.00' }];
+  snippetPrices = [{ url: 'https://www.walmart.com/ip/mi', price: 10, title: 'Mystery Item', pack: 1, in_stock: true, sold_by: 'Walmart.com' }];
+  const onSheet = await scan({ identifier: '044663001134', po: 'OB-NOPX' });
+  const plain = await scan({ identifier: '044663001134' });
+  searchResults = []; snippetPrices = [];
+  eq(onSheet.body.retail, 10, 'a line with no price gets the street price the lookup found');
+  ok(onSheet.body.price > 0, `🔑 …and a price off it (${onSheet.body.price})`);
+  eq(onSheet.body.price, plain.body.price, '🔑 …the same price the barcode gets with no PO at all');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

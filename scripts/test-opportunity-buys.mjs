@@ -836,14 +836,97 @@ console.log('Opportunity buys');
      '🔑 with no history anywhere, a closed store is not a column');
 }
 
+// ── Deleting a buy (2026-10-06) ─────────────────────────────────────────────
+// Brian chose: the buy, its store units and its manifests go; its printed labels stay as
+// print history with the PO taken off them. `confirm` must repeat the PO.
+{
+  await openBuy('DL-1', SU, { label: 'Delete me', units: 30 });
+  await openBuy('DL-2', SU, { label: 'Keep me' });
+  await call('/?action=ob-buy-edit', { user: ADMIN, method: 'POST', body: { po: 'DL-1', stores: { BL1: 20, BL4: 10 } } });
+  await call('/?action=ob-buy-edit', { user: ADMIN, method: 'POST', body: { po: 'DL-2', stores: { BL2: 5 } } });
+  const pr = db.prepare(`INSERT INTO sticker_prints (store, l3, price_cents, code, title, qty, po, printed_by, printed_at)
+                         VALUES (?, 'X', 250, ?, 'T', 1, ?, 'u', '2026-10-01T12:00:00Z')`);
+  pr.run('BL1', 'BL-1-2_5-PDL-1', 'DL-1');
+  pr.run('BL4', 'BL-4-2_5-PDL-1', 'DL-1');
+  pr.run('BL2', 'BL-2-2_5-PDL-2', 'DL-2');
+  const man = db.prepare(`INSERT INTO manifests (id, vendor, uploaded_at, load_id, superseded_at) VALUES (?, 'V', '2026-10-01', ?, ?)`);
+  man.run('m-dl1-live', 'DL-1', null);
+  man.run('m-dl1-old', 'DL-1', '2026-10-01');
+  man.run('m-dl2', 'DL-2', null);
+  man.run('m-scorer', null, null);
+  const line = db.prepare(`INSERT INTO manifest_lines (manifest_id, row_no, description) VALUES (?, 1, 'x')`);
+  for (const id of ['m-dl1-live', 'm-dl1-old', 'm-dl2', 'm-scorer']) line.run(id);
+
+  const n = (sql, ...a) => db.prepare(sql).get(...a).c;
+  const snapshot = () => [
+    n(`SELECT COUNT(*) c FROM ob_buys WHERE po = 'DL-1'`),
+    n(`SELECT COUNT(*) c FROM ob_buy_stores WHERE po = 'DL-1'`),
+    n(`SELECT COUNT(*) c FROM manifests WHERE load_id = 'DL-1'`),
+    n(`SELECT COUNT(*) c FROM sticker_prints WHERE po = 'DL-1'`),
+  ].join(',');
+  const before = snapshot();
+  eq(before, '1,2,2,2', 'the fixture: a buy with store units, two manifests and two prints');
+
+  const del = (user, body) => call('/?action=ob-buy-delete', { user, method: 'POST', body });
+  const m = await del(MGR, { po: 'DL-1', confirm: 'DL-1' });
+  eq(m.status, 403, '🛑 A MANAGER CANNOT DELETE A BUY');
+  eq(m.j?.code, 'NEED_INVENTORY', '…saying which right is missing');
+  ok(/Deleting a buy/.test(m.j?.error || ''), `…in words about deleting (${m.j?.error})`);
+  eq((await del(EXEC, { po: 'DL-1', confirm: 'DL-1' })).status, 403, 'nor an executive');
+  eq((await del(STAFF, { po: 'DL-1', confirm: 'DL-1' })).status, 403, 'nor staff');
+  // The snapshot secret admits open/close/edit — shown first, so the refusal below means something.
+  const viaSecret = (action, body) => call(`/?action=${action}`, { secret: env.SNAPSHOT_SECRET, method: 'POST', body });
+  eq((await viaSecret('ob-buy-edit', { po: 'DL-1', stores: { BL1: 20, BL4: 10 } })).status, 200,
+     'the snapshot secret can edit a buy');
+  eq((await viaSecret('ob-buy-delete', { po: 'DL-1', confirm: 'DL-1' })).status, 403,
+     '🛑 …but cannot delete one: a leaked secret must not reach the one action with no undo');
+  eq((await del(ADMIN, { po: 'DL-1' })).j?.code, 'CONFIRM_PO', '🛑 no confirm is refused');
+  eq((await del(ADMIN, { po: 'DL-1', confirm: 'DL-2' })).j?.code, 'CONFIRM_PO', '🛑 …and so is a confirm naming another buy');
+  eq((await del(ADMIN, { po: '', confirm: '' })).j?.code, 'BAD_PO', 'no PO is refused');
+  eq((await del(ADMIN, { po: 'NOPE-9', confirm: 'NOPE-9' })).status, 404, 'an unknown buy is a 404');
+  const g = await call('/?action=ob-buy-delete&po=DL-1&confirm=DL-1', { user: ADMIN });
+  ok(g.status !== 200, `🛑 a GET deletes nothing (got ${g.status})`);
+  eq(snapshot(), before, '🔑 …and none of the refusals touched anything');
+
+  const d = await del(ADMIN, { po: 'dl-1', confirm: 'dl-1' });
+  eq(d.status, 200, 'an admin deletes a buy (the PO normalises, like everywhere else)');
+  eq(d.j?.prints_unlinked, 2, '…reporting the labels it unlinked');
+  eq(d.j?.manifests_deleted, 2, '…and the manifests it removed, the replaced one included');
+
+  eq(n(`SELECT COUNT(*) c FROM ob_buys WHERE po = 'DL-1'`), 0, 'the buy is gone');
+  eq(n(`SELECT COUNT(*) c FROM ob_buy_stores WHERE po = 'DL-1'`), 0, '…its store units too');
+  eq(n(`SELECT COUNT(*) c FROM manifests WHERE load_id = 'DL-1'`), 0, '…and its manifests');
+  eq(n(`SELECT COUNT(*) c FROM manifest_lines WHERE manifest_id IN ('m-dl1-live', 'm-dl1-old')`), 0, '…with their lines');
+  eq(n(`SELECT COUNT(*) c FROM sticker_prints WHERE code LIKE '%-PDL-1'`), 2, '🔑 the printed labels are KEPT as print history');
+  eq(n(`SELECT COUNT(*) c FROM sticker_prints WHERE code LIKE '%-PDL-1' AND po IS NOT NULL`), 0, '🔑 …with the PO taken off them');
+
+  // 🛑 Nothing belonging to anything else moved.
+  eq(n(`SELECT COUNT(*) c FROM ob_buys WHERE po = 'DL-2'`), 1, 'the other buy is untouched');
+  eq(n(`SELECT COUNT(*) c FROM ob_buy_stores WHERE po = 'DL-2'`), 1, '…its store units');
+  eq(n(`SELECT COUNT(*) c FROM sticker_prints WHERE po = 'DL-2'`), 1, '…its labels');
+  eq(n(`SELECT COUNT(*) c FROM manifest_lines WHERE manifest_id IN ('m-dl2', 'm-scorer')`), 2,
+     '…its manifest, and a Manifest Scorer sheet');
+
+  eq((await call('/?action=ob-buy-detail&po=DL-1', { user: SU })).status, 404, 'the deleted buy no longer opens');
+  const list = (await call('/?action=ob-buy-list&status=all', { user: SU })).j || {};
+  ok(!(list.buys || []).some(b => b.po === 'DL-1'), '…and is not in the list');
+  eq((await del(ADMIN, { po: 'DL-1', confirm: 'DL-1' })).status, 404, 'deleting it twice is a 404');
+
+  eq((await openBuy('DL-1', SU)).status, 200, 'the PO can be opened again');
+  const again = (await call('/?action=ob-buy-detail&po=DL-1', { user: SU })).j || {};
+  ok(again.buy?.labels === 0 && again.manifest === null && JSON.stringify(again.alloc) === '{}',
+     '🔑 …and the new buy starts with no labels, no manifest and no store units');
+}
+
 // ── The registries, for the two new actions ─────────────────────────────────
 {
   const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
-  for (const a of ['ob-buy-edit', 'ob-report']) {
+  for (const a of ['ob-buy-edit', 'ob-report', 'ob-buy-delete']) {
     ok(new RegExp(`\\["${a}", "bl"\\]`).test(src), `🛑 ${a} is classified in ACTION_BUSINESS — an unclassified action 403s in production`);
   }
   ok(/\["ob-report",\s*\["opportunity-buys", "view"\]\]/.test(src), 'ob-report is the page\'s view grant');
   ok(!/\["ob-buy-edit",\s*\["opportunity-buys"/.test(src), '🔑 …and edit is NOT in ACTION_PAGE: a page level cannot say "not managers"');
+  ok(!/\["ob-buy-delete",\s*\["opportunity-buys"/.test(src), '🔑 …and neither is delete');
 }
 
 console.log(`\n${assertions - failures} passed, ${failures} failed`);
