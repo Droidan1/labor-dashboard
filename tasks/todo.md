@@ -12,7 +12,8 @@ Excel-decimal (`602652671104.00`) spellings, 21 more rows.
       separators / `.00` stripped when the result is a valid 12-14 digit GTIN; audit flag on the line
 - [x] Untouched on purpose: the scan path (still refuses 11 digits), `merchCanonicalUpc`, 10-digit codes
 - [x] `npm test`
-- [x] PR #316 (CI green); worker deploy is Brian's
+- [x] PR #316 (CI green), merged 15:54:41Z as `3b0c546`
+- [x] Worker deployed by Brian: version `03673149`, 2026-10-06 15:57:24Z (see Deploy below)
 - [x] Repair of existing prod rows (Brian confirmed twice, chose "move + clear 17 prices")
 
 **Review.** Reproduction failed 10 assertions before the fix and passes after; `npm test` 7721/7721.
@@ -33,6 +34,14 @@ The restore map came from the real `manifestRestoreUpc` source, not a re-impleme
 - Verified by a separate read: 84 moved rows with 82 titles / 84 L3s (same as the backup), 0 prices, 529 rows
   total (unchanged). Left as vendor SKUs on purpose: `30772224028`, `85415200880` (check digit fails),
   `16000-2229-8` (10 digits), `8-10023-` (truncated).
+
+**Deploy, 2026-10-06.** 🛑 The first deploy (`3df7762d`, 15:54:17Z) ran 24 s BEFORE the merge, from a
+`main` pulled while the PR was still open, so it re-shipped the old code. It was harmless, but the fix
+was not live. That was caught by content, not by version: the `worker.js` part of `content/v2` was
+byte-identical to `wrangler deploy --dry-run` of `aa78c8f`, the comparison calibrated against the commit
+believed live. This checkout was fast-forwarded to `3b0c546` and Brian redeployed: `03673149`,
+15:57:24Z, at 100%. The live bundle equalled the dry-run of merged main on 3 consecutive passes
+(15:57:47-15:58:30Z). Bindings were unchanged from `dacbc749`: 32, including 21 secrets.
 
 # Delete 21 merged `claude/*` branches from origin (2026-10-06)
 
