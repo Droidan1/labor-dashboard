@@ -36,6 +36,22 @@ The 5 "different SHA" commits are not reachable from `main`, so this clone keeps
 | `claude/product-mapping-other-l3-pcm3wl` | `3106bfde0386e9f5812787cefc4e88c78a07e1a3` | same change on main, different SHA |
 | `claude/scan-price-missing-data-4o5z2e` | `e811c6fa65f8f497f8cc1f765e1e0e93bf535cbd` | same change on main, different SHA |
 
+**Three more, same day, after a closer look.** `git cherry` called these unmerged, but each had merged
+`main` into itself, which puts the squash-merged twin of its own commit at or below the merge-base,
+outside the range cherry compares. Matched instead by subject and code diff (`sw.js`, the
+shell-cache fixture and `tasks/` excluded). Tips archived locally under `refs/archive/claude/*`.
+
+| Branch | Last commit | Its changes on main |
+|---|---|---|
+| `claude/agent-feature-review-4bl2zx` | `0a0f4da1fb66950dd92214bc99973689a0dce129` | #180–#185 (#185 = `cabcb9a` + `0a0f4da`) |
+| `claude/l3-rules-rescue-pcm3wl` | `96e24caf581b8a3546ccd794d321940880968940` | #186, #187 |
+| `claude/auction-sales-daily-report-92t6lu` | `c05256f85f3c02a43d467ad081bbb036c83e40f6` | #191 |
+
+`claude/kind-curie-psnox4`: its two still-true notes (migration-074 + worker deploy record, the five
+duplicate Clover items deleted) were cherry-picked to `main`. Its third, `ad6e722` ("^PQ verified on the
+real ZD410"), was NOT: it is superseded by the 2026-09-30 note (copies crept, `^MNY`), and it would have
+put a false "✅ VERIFIED" comment into `psZpl`. Delete that branch once this lands.
+
 ---
 
 # Retail Summary › Categories: y-axis labels said "$2k" twice (2026-10-06)
