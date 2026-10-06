@@ -1,3 +1,28 @@
+# Retail Summary › Categories: pick several categories at once (2026-10-06)
+
+**Request (Brian):** *"in the retail summary page in the categories tab, allow users to click on
+multiple categories at once"*
+
+Assumptions: this is the **Vs** view's rows (the default view; Grid already multi-picks for Trend,
+capped at 6 lines). Picking several charts their **combined** total against the comparison range —
+Vs is a two-line chart, so one line per category would be 2N lines. No cap: it is a sum.
+
+- [x] `ctState.focus` becomes a Set; a row click toggles its category in or out. Every existing
+      reset (range, grain, level, parent) still clears it.
+- [x] The card's legend total, ▲/▼ and chart = the sum of the picked categories (all when none).
+- [x] The caption names what is charted (one: as before; several: "N categories combined — A + B …")
+      and offers "Show all" when anything is picked.
+- [x] Verify: new `scripts/browser-categories-multi.mjs` drives the real tab with a mocked
+      `category-series`: pick A → A; add B → A+B, both pressed; drop A → B; Show all → all; L3
+      too; contrast of the new control in both themes. Must fail on main. CACHE_NAME bump.
+
+**Review (2026-10-06):** one app commit; CACHE_NAME v274 → v275 (shell-cache fixture refreshed).
+browser-categories-multi 27/27 on the branch, **18/27 FAIL on main's index.html** (a second pick
+replaced the first). npm test 7695/7695. Show all contrast 5.88:1 light / 5.74:1 dark (reuses
+`.ct-pill button`). Trend/Grid's own 6-line `picked` set is untouched. Found, not fixed: `ctAxis`
+rounds to whole thousands, so a $1.5k tick prints "$2k" next to the real $2k one.
+---
+
 # Opportunity Buys: Download CSV on the Buys tab (2026-10-02)
 
 **Request (Brian):** *"add a CSV download to the Buys tab"*
