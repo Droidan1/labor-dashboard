@@ -1,3 +1,43 @@
+# Delete 21 merged `claude/*` branches from origin (2026-10-06)
+
+**Request (Brian):** *"yes, record the SHAs and delete them"*. These are the remote branches with no commit
+missing from `main` (`git cherry origin/main <branch>` empty), re-checked against `git ls-remote` just
+before deleting. Deleted with a lease on each SHA, so a branch that had moved would have been refused.
+Kept: `staging`, and the 7 branches with commits not on main (`agent-feature-review-4bl2zx`,
+`kind-curie-psnox4`, `firecrawl-tinyfish-usage-7m9h0l` (open #158), `desktop-salvage-2026-09`
+(open #312), `auction-sales-daily-report-92t6lu`, `l3-rules-rescue-pcm3wl`, `content-studio-redesign`).
+Cloudflare Pages preview deployments are NOT removed by this.
+
+**Restore any one:** `git push origin <sha>:refs/heads/<branch>` (or "Restore branch" on its PR page).
+The 5 "different SHA" commits are not reachable from `main`, so this clone keeps them under local-only
+`refs/archive/claude/*` (never pushed) so `git gc` cannot drop them; the 16 others live in main's history.
+
+| Branch | Last commit | Its changes on main |
+|---|---|---|
+| `claude/admiring-bardeen-0u07u0` | `416e6eae03f59d19688de77876eac2fa7ea003bf` | in main’s history |
+| `claude/bin-dump-inventory-ri3n84` | `4027b0ff37c49fdda423c8c9e005eb8a0245c679` | in main’s history |
+| `claude/charming-gates-dwxqwk` | `59060a3955be3ddcb11ac2ea8b1e0919ba3ed2eb` | in main’s history |
+| `claude/confident-albattani-8nnuli` | `9d2ff7107149d898fb513276d04a812f298fa5c3` | in main’s history |
+| `claude/dazzling-dijkstra-nazi0k` | `5618e750e2f6f9c944321e14053309cb707c661f` | in main’s history |
+| `claude/determined-curie-xofh1c` | `2716b57286bc68f4a1a9c7a565d6c92fd25a1f73` | in main’s history |
+| `claude/ecstatic-cerf-ybugx3` | `f16684afa4554023f134e18ed164bb25d2044afb` | in main’s history |
+| `claude/elegant-cerf-9gxh1y` | `1309bbdd4f9566b90235f899a3e379a920b089cc` | in main’s history |
+| `claude/fervent-mendel-u6gdx0` | `12f2da43d3b60b1828649404075714de1ea09a7a` | in main’s history |
+| `claude/friendly-planck-poposq` | `70093cde4708024d2683da98e7ad1be2a9b0be83` | in main’s history |
+| `claude/hopeful-goldberg-x2yg5a` | `e063d2d52c47770eab80d13d65ee6ccad36cf879` | in main’s history |
+| `claude/inspiring-bardeen-mlq52u` | `8aeca84c0b0786a444463c467005b347aed13fa2` | in main’s history |
+| `claude/sign-maker-studio-447gwx` | `018f2bc16be124d931f9de4000b8d6c1ddd0bce4` | in main’s history |
+| `claude/vigilant-curie-phsfi0` | `071c7555184bf93ce1dbd892736fa83c52922398` | in main’s history |
+| `claude/youthful-ramanujan-qtb0c3` | `65efa8a7a30af1f350cb3bd8561921e7da9bbbdb` | in main’s history |
+| `claude/zen-dijkstra-tc5o0u` | `9cc5f70e62fd6334d4c7efb66ddfe07d1b983fd3` | in main’s history |
+| `claude/bin-photo-post-generation-k86hgy` | `1d77ef2a6fb58caeb0d85dca29700b069fe56c4c` | same change on main, different SHA |
+| `claude/date-mismatch-frc87q` | `4cb05bc0c09d211cc847c639ab2f4303454b6940` | same change on main, different SHA |
+| `claude/multistore-override-key-pcm3wl` | `97455238e6a684ff546afd120efc5f00d8448357` | same change on main, different SHA |
+| `claude/product-mapping-other-l3-pcm3wl` | `3106bfde0386e9f5812787cefc4e88c78a07e1a3` | same change on main, different SHA |
+| `claude/scan-price-missing-data-4o5z2e` | `e811c6fa65f8f497f8cc1f765e1e0e93bf535cbd` | same change on main, different SHA |
+
+---
+
 # Retail Summary › Categories: y-axis labels said "$2k" twice (2026-10-06)
 
 **Request (Brian):** *"fix the $2k axis label next"* (found while verifying #313)
