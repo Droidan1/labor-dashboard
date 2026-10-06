@@ -1,3 +1,27 @@
+# Manifest barcodes that lost their leading zero (2026-10-06)
+
+**Request (Brian):** *"fix the leading-zero UPC issue"*. A spreadsheet stores a UPC as a number and
+drops its leading zero, so `037000488538` (Gain) arrives as `37000488538`. `manifestIdentType` calls
+11 digits a `vendor_sku`, so the line is never looked up by barcode, never matched by a scan, and keys
+`item_cache` under a number no package carries. Prod 2026-10-06: 66 such `item_cache` rows, 64 of them
+pass the UPC check digit once the zero is back. Same door, same failure: dashed (`16000-10610-9`) and
+Excel-decimal (`602652671104.00`) spellings, 21 more rows.
+
+- [x] Reproduction test in `scripts/test-manifest-scorer.mjs`, driven through `manifest-upload`
+- [x] `manifestRestoreUpc` at the manifest door: 11 digits not starting with 0 + valid check -> 0 + digits;
+      separators / `.00` stripped when the result is a valid 12-14 digit GTIN; audit flag on the line
+- [x] Untouched on purpose: the scan path (still refuses 11 digits), `merchCanonicalUpc`, 10-digit codes
+- [x] `npm test`
+- [ ] PR; worker deploy + optional repair of existing rows go under Blocked on me
+
+**Review.** Reproduction failed 10 assertions before the fix and passes after; `npm test` 7721/7721.
+Every guard was mutation-checked: removing any one of the six (starts-with-0, `d !== t`, both check-digit
+tests, the `.00` strip, the audit flag) or unwiring the call fails at least one assertion. The first run
+showed the 12-14 digit check digit surviving, so a dashed 12-digit fixture that fails the check was added.
+Both writers of `manifest_lines` (upload, remap) go through `manifestWriteLines`, the one door fixed.
+Existing data is NOT touched: the 64 restorable `item_cache` rows stay under their 11-digit keys until
+repaired; a read-only join found no restored key already present, so a repair would not collide.
+
 # Delete 21 merged `claude/*` branches from origin (2026-10-06)
 
 **Request (Brian):** *"yes, record the SHAs and delete them"*. These are the remote branches with no commit

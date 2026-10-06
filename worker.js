@@ -11329,6 +11329,29 @@ function manifestIdentType(v) {
   return "vendor_sku";
 }
 
+// 🛑 A SPREADSHEET STORES A UPC AS A NUMBER, AND A NUMBER HAS NO LEADING ZERO. Gain is
+// 037000488538 on the pack and 37000488538 in the file, so manifestIdentType reads it as
+// an 11-digit vendor SKU: never looked up by barcode, never matched by a scan, cached under
+// a number no package carries. 66 such item_cache rows in prod on 2026-10-06 (P&G,
+// Reckitt, Energizer, BIC...), 64 of which validate once the zero is back. Dashes
+// ("16000-10610-9") and Excel's money format ("602652671104.00") fail the same way.
+//
+// 🔑 THE CHECK DIGIT IS THE EVIDENCE, not the length. An 11-digit number that happens to
+// validate with a zero in front is one in ten, so two more guards keep this from INVENTING
+// a barcode: a stripped number never starts with 0 (a spreadsheet strips them all), so an
+// 11-digit code that does is a UPC written without its check digit and is left alone; and
+// ten digits carry no check digit to test at all. Returns null when the sheet's value
+// should stand as written.
+function manifestRestoreUpc(raw) {
+  const t = String(raw ?? "").trim();
+  const body = t.replace(/\.0+$/, "");
+  if (!/^\d[\d -]*\d$/.test(body)) return null;
+  const d = body.replace(/\D/g, "");
+  if (d.length === 11 && d[0] !== "0" && gtinCheckOk("0" + d)) return "0" + d;
+  if (d !== t && [12, 13, 14].includes(d.length) && gtinCheckOk(d)) return d;
+  return null;
+}
+
 // ─── A manifest description, as a product NAME ───────────────────────────────────
 //
 // A buy sheet's description is what the identity lookup spends two searches trying to
@@ -12030,10 +12053,12 @@ async function manifestWriteLines(env, manifestId, headers, dataRows, map, costB
   const idents = new Set();
   const parsed = kept.map((r, i) => {
     const at = f => (col[f] === undefined || col[f] < 0) ? null : (r[col[f]] ?? null);
-    const identifier = String(at("identifier") ?? "").trim() || null;
+    const sheetId = String(at("identifier") ?? "").trim() || null;
+    const restored = manifestRestoreUpc(sheetId);
+    const identifier = restored || sheetId;
     if (identifier) idents.add(identifier);
     return {
-      row_no: i + 1, identifier,
+      row_no: i + 1, identifier, sheetId: restored ? sheetId : null,
       identifier_type: identifier ? manifestIdentType(identifier) : "none",
       description: String(at("description") ?? "").trim().slice(0, 400) || null,
       ...(() => { const q = manifestQty(at("qty")); return { qty: q.value, qtyApprox: q.approx }; })(),
@@ -12076,7 +12101,8 @@ async function manifestWriteLines(env, manifestId, headers, dataRows, map, costB
   //
   // 🛑 A MANIFEST BARCODE AND A SCANNED BARCODE ARE SPELLED DIFFERENTLY TODAY, and the
   // mismatch is silent. `identifier` is kept exactly as the sheet wrote it — which is
-  // right, it is the vendor's own claim — while every scan is canonicalised through
+  // right, it is the vendor's own claim (the one exception is a UPC the spreadsheet itself
+  // mangled; see manifestRestoreUpc) — while every scan is canonicalised through
   // merchCanonicalUpc at the door. So "0085239098745" on the sheet and "085239098745" off
   // the scanner are one can of beans that does not compare equal, and the scan reports
   // "not on this manifest": the wrong answer wearing the right words. `ob_upc` is the
@@ -12126,6 +12152,7 @@ async function manifestWriteLines(env, manifestId, headers, dataRows, map, costB
       // per-container subtotals whose money is already counted in the rows above them.
       if (l.noDetail) flags.push("no line detail");
       if (!l.identifier) flags.push("no identifier");
+      if (l.sheetId) flags.push(`barcode restored: sheet had ${l.sheetId}`);
       if (l.qty === null) flags.push("no qty");
       if (l.qtyApprox) flags.push("qty is a minimum");
       if (l.cost === null) flags.push("no cost");
