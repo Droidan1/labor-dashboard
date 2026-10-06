@@ -21485,7 +21485,8 @@
     view: 'vs', store: CT_ALL, gridScale: 'own',
     rule: 'aligned',   // how B is chosen while it is not pinned
     gran: 'auto',      // how the x-axis is bucketed; not what period is compared
-    focus: null, picked: new Set(),
+    // focus: the categories Vs charts, summed (none = all). picked: Trend's lines.
+    focus: new Set(), picked: new Set(),
   };
   // The two ranges ARE the model. A is what you are looking at, B is what it is
   // measured against, and B is derived from A until you set it yourself. There
@@ -22096,7 +22097,7 @@
   function ctSetRange(which, r) {
     if (which === 'a') { ctA = r; }
     else { ctB = r; ctBPinned = true; }
-    ctState.focus = null; ctDailyKey = '';
+    ctState.focus = new Set(); ctDailyKey = '';
     ctClosePop(); loadCatTrend();
   }
   function ctPickPreset(id) {
@@ -22132,7 +22133,7 @@
       <span class="ct-pill" id="ct-view"></span>`;
 
     ctPillGroup(el('ct-level'), [['l2', 'L2'], ['l3', 'L3']], () => ctState.level,
-      v => { ctState.level = v; ctState.focus = null; ctState.picked = new Set(); ctDailyKey = ''; });
+      v => { ctState.level = v; ctState.focus = new Set(); ctState.picked = new Set(); ctDailyKey = ''; });
     // Pin and match-length live beside the B chip, because they are about B.
     const bctl = el('ct-bctl');
     bctl.innerHTML = '';
@@ -22181,7 +22182,7 @@
       // re-cutting the payload already in memory — which is the property that
       // makes switching grains feel free. Clearing it here threw that away and
       // made every grain change a round trip; a test counting requests caught it.
-      v => { ctState.gran = v; ctState.focus = null; });
+      v => { ctState.gran = v; ctState.focus = new Set(); });
     ctPillGroup(el('ct-measure'), [['net', 'Net $'], ['units', 'Units']], () => ctState.measure,
       v => { ctState.measure = v; });
     ctPillGroup(el('ct-view'), [['vs', 'Vs'], ['trend', 'Trend'], ['grid', 'Grid'], ['table', 'Table']],
@@ -22197,7 +22198,7 @@
     if (ctState.level === 'l3') {
       sel.innerHTML = [[CT_ALL, 'All L2s']].concat(T13_L2_CATS.map(c => [c, c]))
         .map(([v, n]) => `<option value="${escapeHtml(v)}"${v === ctState.parent ? ' selected' : ''}>${escapeHtml(n)}</option>`).join('');
-      sel.onchange = () => { ctState.parent = sel.value; ctState.focus = null; loadCatTrend(); };
+      sel.onchange = () => { ctState.parent = sel.value; ctState.focus = new Set(); loadCatTrend(); };
     }
 
     const sc = el('ct-scope');
@@ -22280,15 +22281,27 @@
   }
 
   /* ── Vs — the dashboard's Sales Trend card, for categories ──────── */
-  function ctFocusRow(rows) { return ctState.focus == null ? null : (rows.find(r => r.key === ctState.focus) || null); }
+  // The picked categories still on screen, in the order they were clicked. A key
+  // this scope does not sell is skipped, so nothing is charted that is not listed.
+  function ctFocusRows(rows) {
+    return [...ctState.focus].map(k => rows.find(r => r.key === k)).filter(Boolean);
+  }
+  // One bucket for the picked categories, SUMMED — Vs is one line against one,
+  // so several picks are one combined line, not two per category. None picked
+  // is every category. A bucket with no comparison slots stays null: a gap.
+  function ctFocusValue(slots, picks) {
+    if (!picks.length) return ctSlotValue(slots, null);
+    if (!ctDaily || !slots || !slots.length) return null;
+    return picks.reduce((acc, r) => acc + (ctSlotValue(slots, r) || 0), 0);
+  }
 
   function ctDrawVs(rows) {
     const body = el('ct-body');
     const w = ctVsWindow();
-    const focus = ctFocusRow(rows);
+    const picks = ctFocusRows(rows);
     const cutoff = w.points.length;
-    const cur = w.points.map((p, i) => i < cutoff ? ctSlotValue(p.cur, focus) : null);
-    const prv = w.points.map(p => ctSlotValue(p.prv, focus));
+    const cur = w.points.map((p, i) => i < cutoff ? ctFocusValue(p.cur, picks) : null);
+    const prv = w.points.map(p => ctFocusValue(p.prv, picks));
     const sum = a => a.reduce((x, v) => x + (v || 0), 0);
     const curTotal = sum(cur), prvSame = sum(prv.slice(0, cutoff)), prvFull = sum(prv);
 
@@ -22305,12 +22318,24 @@
           ${up ? '+' : '−'}${escapeHtml(ctFmt(Math.abs(curTotal - prvSame)))}</span>
       </div>
       <div id="ct-chart"></div>
-      <div class="ct-cap">${escapeHtml(focus ? (focus.l3 ? focus.l2 + ' → ' + focus.l3 : focus.key) : 'All ' + ctState.level.toUpperCase() + ' categories')}<span class="ct-cap-h">${
-        ''
-      }${focus ? ' · click its row again for all categories' : ' · click a row to chart one category'}</span></div>
+      <div class="ct-cap">${escapeHtml(ctCaption(picks))}<span class="ct-cap-h">${picks.length
+        ? ' · click a row to add or drop it'
+        : ' · click rows to chart one category or several combined'}</span>${picks.length
+        ? '<span class="ct-pill" style="margin-left:10px"><button type="button" id="ct-showall">Show all</button></span>'
+        : ''}</div>
       <div id="ct-rows"></div>`;
     el('ct-chart').innerHTML = ctChartSVG(w.points, cur, prv, el('ct-chart').clientWidth || 760);
-    ctDrawRows(el('ct-rows'), rows, w, cutoff, focus);
+    const all = el('ct-showall');
+    if (all) all.onclick = () => { ctState.focus = new Set(); renderCatTrend(); };
+    ctDrawRows(el('ct-rows'), rows, w, cutoff);
+  }
+  // What the card is charting, in words. Several L3s across every L2 carry
+  // their parent, because the same short name can sit under two of them.
+  function ctCaption(picks) {
+    if (!picks.length) return 'All ' + ctState.level.toUpperCase() + ' categories';
+    if (picks.length === 1) return picks[0].l3 ? picks[0].l2 + ' → ' + picks[0].l3 : picks[0].key;
+    const name = r => (r.l3 && ctState.parent === CT_ALL) ? r.l2 + ' › ' + r.label : r.label;
+    return picks.length + ' categories combined — ' + picks.map(name).join(' + ');
   }
 
   // Chart.js's own splineCurve maths, so the curve bends at tension 0.3 the
@@ -22384,7 +22409,7 @@
 
   // Per-category rows. Values come from the SAME window the card charts, so
   // the rows and the card can never disagree — to-date included.
-  function ctDrawRows(host, rows, w, cutoff, focus) {
+  function ctDrawRows(host, rows, w, cutoff) {
     const cVal = new Map(), pVal = new Map();
     rows.forEach(r => {
       let c = 0, p = 0;
@@ -22404,11 +22429,11 @@
       g.rows.forEach(r => {
         const c = cVal.get(r), p = pVal.get(r);
         if (c <= 0 && p <= 0) return;
-        const on = !!(focus && focus.key === r.key);
+        const on = ctState.focus.has(r.key);
         const b = document.createElement('button');
         b.type = 'button'; b.className = 'ct-row'; b.setAttribute('aria-pressed', String(on));
-        b.title = (r.l3 ? r.l2 + ' → ' + r.l3 : r.key) + ' · click to chart it';
-        b.onclick = () => { ctState.focus = on ? null : r.key; renderCatTrend(); };
+        b.title = (r.l3 ? r.l2 + ' → ' + r.l3 : r.key) + (on ? ' · click to drop it from the chart' : ' · click to add it to the chart');
+        b.onclick = () => { if (on) ctState.focus.delete(r.key); else ctState.focus.add(r.key); renderCatTrend(); };
         b.innerHTML = `<div class="ct-nm">${escapeHtml(r.label)}</div>
           <div class="ct-bars">
             <div class="ct-trk"><div class="ct-bar cur" style="width:${c > 0 ? Math.max(0.6, (c / max) * 100) : 0}%"></div></div>
@@ -22601,7 +22626,7 @@
     const box = c => `<span class="ct-lgs" style="display:inline-block;width:11px;height:11px;border-radius:3px;background:${c};border:1px solid rgba(127,127,127,.35)"></span>`;
     const R = {
       vsLines: `<div class="ct-lgr">${line(CT_COLORS.cur)}<span><b>Green is ${AL}, amber is ${BL}</b> — the two ranges you picked, in the same two colours and the same card as the Sales Trend chart on the dashboard. The x-axis runs <i>inside</i> both, ${U} by ${U}, matched from each range's own first ${U}, so it shows <b>where</b> the difference came from rather than only that there was one. The bars underneath repeat that comparison for every category, on one shared scale.</span></div>`,
-      vsClick: `<div class="ct-lgr">${box('rgba(34,197,94,.14)')}<span><b>Click any category row to chart it</b> — the card above redraws for that category alone, click again for all of them. The ▲▼ figure is that category against <b>${BL}</b>; the two bar lengths say the same thing, so the reading never rests on colour alone, and the comparator is spelled out on every row (<b>vs $…</b>).</span></div>`,
+      vsClick: `<div class="ct-lgr">${box('rgba(34,197,94,.14)')}<span><b>Click category rows to chart them</b> — one row charts that category alone; click more and the card charts them <b>combined</b>, as one total. Click a row again to drop it, or <b>Show all</b> for every category. A row's ▲▼ figure is that category against <b>${BL}</b>; the two bar lengths say the same thing, so the reading never rests on colour alone, and the comparator is spelled out on every row (<b>vs $…</b>).</span></div>`,
       vsNone: `<div class="ct-lgr"><span class="ct-lgs" style="display:inline-block;width:14px;height:3px;background:repeating-linear-gradient(90deg,#cbd5e1 0,#cbd5e1 4px,transparent 4px,transparent 7px)"></span><span><b>No budget line, and no last-year line.</b> The dashboard card has both; neither exists per category. Budget is stored per store per day with no category dimension, and a last-year category line would need year-old snapshots. Drawing either would mean inventing it.</span></div>`,
       trend: `<div class="ct-lgr">${line(ctHue(0))}<span><b>A coloured line is one category</b>, and its colour is fixed to it for the whole window. Six is the ceiling — past it no colourblind reader can separate the hues — so <b>Grid</b> and <b>Table</b> are where every category shows at once. Click a Grid panel to choose which six.</span></div>`,
       grid: `<div class="ct-lgr">${line(ctInkDim())}<span><b>A Grid sparkline shows shape, not size.</b> On <b>Own</b> scale each panel runs between its own high and low — <b>the baseline is not zero</b> — because a category moving between $70k and $80k is a flat line drawn from zero. The number above it carries the magnitude. Switch <b>Scale</b> to <b>Shared</b> when you want heights to be comparable.</span></div>`,
