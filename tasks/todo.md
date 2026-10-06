@@ -1,3 +1,32 @@
+# Price Scan's cached street price never expires (2026-10-06)
+
+**Request (Brian):** *"fix the cached scan prices that never expire"*. `merch-scan` reuses
+`item_cache.retail_price` with no age check, so a price found once is shown, and offered for a "Compare
+at" sticker, forever. Brian chose **30 days** (asked; 90 would have changed nothing until mid-November:
+the oldest price in prod is 2026-08-20, and 123 of 146 are over 30 days). The Manifest Scorer keeps its 90.
+
+- [x] Tests in `scripts/test-price-scan.mjs`, driven through `merch-scan`: stale price refreshes and renews
+      `fetched_at`; a refresh that finds nothing still shows the old price, says how old, keeps `fetched_at`;
+      a failed refresh is not retried for a day; an override never expires; a fresh price costs nothing
+- [x] Existing "a cache read is not a new observation" block pins the old never-expire behaviour (2020
+      fixture answered from cache) — move its fixture inside the 30 days, same property
+- [x] Fix in the scan path only; retry marker in KV (`merch:retail-retry:<upc>`, 1-day TTL), NOT
+      `updated_at`, which every scan stamps (a daily-scanned item would never refresh)
+- [x] `npm test`, mutation check
+- [x] Found mid-way: the scan screen shows only flags it knows, so the age note reached nobody. Added
+      to the result's explanation line (`index.html`), `sw.js` v277, shell-cache fixture re-recorded;
+      new `scripts/browser-scan-stale-retail.mjs` (390px, light + dark)
+
+**Review.** `npm test` 7741/7741. The new worker block failed 9 assertions before the fix (the 29-day and
+override cases passed already, as they should). Each mutation was caught: TTL 90 (9 fails), TTL 14 (5), the
+override exemption dropped (2), the retry marker ignored (1), the restore dropped (6), the marker not written
+(2), the marker written without its TTL (1), the age flag dropped (2). The browser check passes 10/10, and run
+against `HEAD:index.html` (the page without the change) it fails 2/10, so it can fail. The existing "cache read is not a new observation" block
+had pinned the old behaviour (a 2020 price answered from cache); its fixture is now 20 days old, same
+property, and its scorer-window line was dropped: it only checked the fixture's own arithmetic.
+Deploy order: the worker change is backward-compatible (an old page ignores the new flag, a new page never
+sees it from an old worker), so either order is safe; worker first.
+
 # Manifest barcodes that lost their leading zero (2026-10-06)
 
 **Request (Brian):** *"fix the leading-zero UPC issue"*. A spreadsheet stores a UPC as a number and

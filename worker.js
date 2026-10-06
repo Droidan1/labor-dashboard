@@ -9782,6 +9782,9 @@ function randomHex(bytes) {
 const RETAIL_CPG_DOMAINS = ["walmart.com", "target.com", "walgreens.com", "cvs.com",
                             "kroger.com", "meijer.com", "heb.com"];
 const RETAIL_BIG_DOMAINS = ["bestbuy.com", "lowes.com", "homedepot.com"];
+// How long Price Scan trusts a street price it found, before looking again. Brian's
+// choice, 2026-10-06. The Manifest Scorer keeps its own 90 days for a batch of lines.
+const SCAN_RETAIL_TTL_DAYS = 30;
 // 🔑 Sources trusted to say what a barcode IS, and NEVER what it costs. A product
 // database or a regional grocer can name a discontinued item that no national retailer
 // lists any more — which is most of what a closeout buyer actually handles. Their prices
@@ -26519,6 +26522,22 @@ export default {
         let retailObserved = false;
         const missFlags = [];
 
+        // 🛑 A CACHED STREET PRICE EXPIRES. It was reused with no age check, so a price
+        // found once was shown — and offered to a "Compare at" sticker — forever. Past
+        // SCAN_RETAIL_TTL_DAYS it is set aside so STEP 2 looks again; an override never
+        // expires. If that lookup finds nothing, the old price comes back below, labelled
+        // with its age, and a one-day KV marker stops the same failed lookup being paid for
+        // on every scan. Not updated_at: every scan stamps it, so an item scanned daily
+        // would never refresh.
+        const retailCutoff = new Date(Date.now() - SCAN_RETAIL_TTL_DAYS * 86400e3).toISOString();
+        const staleRetail = !overridden && retail !== null && retail !== undefined
+            && !(cached?.fetched_at > retailCutoff)
+          ? { retail, retailSource, retailConf, retailBasis, retailInStock, retailUrl } : null;
+        const retryKey = staleRetail && identifier ? `merch:retail-retry:${identifier}` : null;
+        let retryHeld = false;
+        if (retryKey) { try { retryHeld = !!(await env.SALES_SNAPSHOTS.get(retryKey)); } catch {} }
+        if (staleRetail && !retryHeld) retail = null;
+
         // ── STEP 1: WHAT IS IT? ───────────────────────────────────────────────
         // A barcode alone is not searchable for a price — one uncorroborated result, often
         // a multipack. Resolve it to a brand, product and size first, and price THAT.
@@ -26601,6 +26620,16 @@ export default {
             }
           } else if (r?.skipped) {
             missFlags.push(r.skipped === "budget" ? "not looked up" : String(r.skipped));
+          }
+        }
+        // An expired price nothing replaced: shown again, with its age, rather than a blank.
+        // Its fetched_at is left alone by the write below, so it stays expired and is
+        // looked for again once the marker lapses.
+        if (staleRetail && !retailObserved) {
+          ({ retail, retailSource, retailConf, retailBasis, retailInStock, retailUrl } = staleRetail);
+          missFlags.push(`street price last seen ${String(cached?.fetched_at || "").slice(0, 10) || "on an unknown date"}`);
+          if (retryKey && !retryHeld) {
+            try { await env.SALES_SNAPSHOTS.put(retryKey, "1", { expirationTtl: 86400 }); } catch {}
           }
         }
         const hit = (got?.rows || [])[0];

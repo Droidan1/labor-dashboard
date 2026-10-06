@@ -1756,8 +1756,10 @@ console.log('Price Scan');
 // present — including when that price had just been read out of the cache, costing
 // nothing and proving nothing. A price scanned every couple of months therefore stayed
 // "fresh" forever while drifting arbitrarily far from the shelf.
+// The fixture sits INSIDE the scan's own 30-day expiry, so the cache really does answer;
+// an older one is refreshed, which the block after the next pins.
 {
-  const stale = '2020-01-01T00:00:00.000Z';
+  const stale = new Date(Date.now() - 20 * 86400e3).toISOString();
   db.prepare(`INSERT INTO item_cache (identifier, identifier_type, title, brand, size, l3,
                 retail_price, retail_source, retail_confidence, fetched_at, updated_at)
               VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
@@ -1775,11 +1777,6 @@ console.log('Price Scan');
      '🛑 the observation time is UNTOUCHED by a read — a free lookup cannot renew the 90-day clock');
   ok(row.updated_at !== stale,
      '🔑 …while updated_at still moves, so "when did we last see this" is still recorded');
-
-  // 🛑 And the scorer must agree: this row is OUTSIDE its 90-day window, so a manifest
-  // carrying the same UPC re-prices it rather than inheriting a six-year-old price.
-  const cutoff = new Date(Date.now() - 90 * 86400e3).toISOString();
-  ok(row.fetched_at < cutoff, '…which is what puts it back outside the scorer’s freshness window');
 }
 
 // …and the other half: a price that WAS just observed does stamp the clock.
@@ -1813,6 +1810,104 @@ console.log('Price Scan');
     ok(row === undefined || row.fetched_at === null,
        '🔑 …and a scan that found no price stamps no observation time either');
   }
+  globalThis.fetch = realFetch;
+}
+
+// ── 🛑 A CACHED STREET PRICE EXPIRES AFTER 30 DAYS ─────────────────────────
+// The scan reused item_cache.retail_price with no age check, so a price found once was
+// shown — and offered to a "Compare at" sticker — forever. Brian chose 30 days on
+// 2026-10-06. Past that the scan looks again; a lookup that finds nothing still shows the
+// old price but says how old it is, and is not retried for a day, so an item nobody can
+// price any more does not spend a lookup on every scan. A person's override never expires.
+{
+  const realFetch = globalThis.fetch;
+  const ago = (d) => new Date(Date.now() - d * 86400e3).toISOString();
+  const seed = (upc, days, override = null) => db.prepare(
+    `INSERT INTO item_cache (identifier, identifier_type, title, brand, size, l3, retail_price,
+       retail_source, retail_confidence, retail_price_override, fetched_at, updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(upc, 'upc', 'Aged Item', 'Aged', '12 oz', SNACKS, 9.99, 'walmart.com', 'medium',
+         override, ago(days), ago(days));
+  let shelf = null;   // what a lookup finds this pass; null = nothing
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      searchCalls++;
+      return new Response(JSON.stringify({ results: shelf === null ? [] : [
+        { url: 'https://www.walmart.com/ip/Aged-Item/2', title: 'Aged Item 12 oz', snippet: `$${shelf} · Aged Item` },
+      ] }), { status: 200 });
+    }
+    if (url.includes('api.anthropic.com')) {
+      modelCalls++;
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({
+        items: [], rows: [],
+        prices: shelf === null ? [] : [{ url: 'https://www.walmart.com/ip/Aged-Item/2', price: shelf, in_stock: true, title: 'Aged Item 12 oz' }],
+      }) }] }), { status: 200 });
+    }
+    return realFetch(u, init);
+  };
+  const kvPuts = [];
+  const realPut = env.SALES_SNAPSHOTS.put;
+  env.SALES_SNAPSHOTS.put = async (k, v, opts) => { kvPuts.push({ k, opts }); return realPut(k, v, opts); };
+  const lastSeen = (r) => (r.body.flags || []).find(f => /^street price last seen/.test(f));
+
+  // 31 days: past the limit, and the shelf has moved — the scan looks and takes the new price.
+  seed('070010000017', 31);
+  shelf = 4.0;
+  let before = searchCalls;
+  let r = await post('merch-scan', { identifier: '070010000017' }, 'u-mgr1');
+  eq(r.status, 200, 'an expired price scans');
+  ok(searchCalls > before, '🔑 a price older than 30 days is looked up again');
+  near(r.body.retail, 4.0, '…and the scan answers with what the shelf says now');
+  eq(lastSeen(r), undefined, '…with no age warning, because it is new');
+  let row = db.prepare(`SELECT * FROM item_cache WHERE identifier='070010000017'`).get();
+  near(row.retail_price, 4.0, '…and the cache holds the new price');
+  ok(row.fetched_at > ago(1), '🔑 …stamped as observed now, which restarts its 30 days');
+
+  // 31 days, and nobody lists it any more: the old price stands, labelled with its age.
+  seed('070010000024', 31);
+  shelf = null;
+  before = searchCalls;
+  r = await post('merch-scan', { identifier: '070010000024' }, 'u-mgr1');
+  ok(searchCalls > before, 'an expired price whose item has vanished is still looked for');
+  near(r.body.retail, 9.99, '🔑 …and when nothing is found, the last price seen is still shown');
+  eq(lastSeen(r), `street price last seen ${ago(31).slice(0, 10)}`, '🔑 …saying how old it is');
+  row = db.prepare(`SELECT * FROM item_cache WHERE identifier='070010000024'`).get();
+  eq(row.fetched_at.slice(0, 10), ago(31).slice(0, 10), '🛑 …and its age is NOT renewed by a lookup that saw nothing');
+  near(row.retail_price, 9.99, '…nor is the price lost');
+  const marker = kvPuts.find(p => p.k === 'merch:retail-retry:070010000024');
+  eq(marker?.opts?.expirationTtl, 86400, '🔑 the failed refresh is remembered for one day');
+
+  // Scanned again straight away: no second lookup inside that day.
+  before = searchCalls;
+  r = await post('merch-scan', { identifier: '070010000024' }, 'u-mgr1');
+  eq(searchCalls, before, '💰 a refresh that just failed is not retried on the next scan');
+  near(r.body.retail, 9.99, '…which still shows the old price');
+  ok(lastSeen(r), '…still labelled with its age');
+
+  // The day passes (the marker expires): it is looked for again.
+  await env.SALES_SNAPSHOTS.delete('merch:retail-retry:070010000024');
+  before = searchCalls;
+  await post('merch-scan', { identifier: '070010000024' }, 'u-mgr1');
+  ok(searchCalls > before, '…and once the day is up, it is tried again');
+
+  // 29 days: still inside the limit — answered from the cache, free.
+  seed('070010000031', 29);
+  shelf = 4.0;
+  before = searchCalls;
+  r = await post('merch-scan', { identifier: '070010000031' }, 'u-mgr1');
+  eq(searchCalls, before, '💰 a price under 30 days old costs nothing');
+  near(r.body.retail, 9.99, '…and is answered from the cache');
+  eq(lastSeen(r), undefined, '…with no age warning');
+
+  // A person's price never expires, however old.
+  seed('070010000048', 400, 5.55);
+  before = searchCalls;
+  r = await post('merch-scan', { identifier: '070010000048' }, 'u-mgr1');
+  eq(searchCalls, before, "🔑 a hand-set street price is never looked up again");
+  near(r.body.retail, 5.55, '…and is what the scan answers');
+
+  env.SALES_SNAPSHOTS.put = realPut;
   globalThis.fetch = realFetch;
 }
 

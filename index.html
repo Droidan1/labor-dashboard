@@ -26329,6 +26329,13 @@
       why += ' The exact item is discontinued and only resellers still list it, so this is'
            + ' what the same brand and size sells for on a shelf.';
     }
+    // 🔑 A street price past its 30 days that no fresh lookup could replace is still the
+    // one shown, so the screen says how old it is rather than passing it off as current.
+    const lastSeen = (j.flags || []).find(f => f.startsWith('street price last seen '));
+    if (lastSeen && why) {
+      why += ` The street price was last seen ${psEsc(lastSeen.replace('street price last seen ', ''))};`
+           + ' nothing newer was found.';
+    }
 
     el('ps-result').innerHTML = `
       <div style="display:flex;flex-direction:column;gap:14px;margin-top:2px">
