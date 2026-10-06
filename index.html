@@ -3834,6 +3834,18 @@
         .dark #page-opportunity-buys .ob-note{color:rgb(var(--op-inkDim))}
         #page-opportunity-buys .ob-note.warn{color:#8a4b00}
         .dark #page-opportunity-buys .ob-note.warn{color:#fbbf24}
+        /* A manifest that did not load. It was a grey status line nobody read (2026-10-06):
+           a box, at the upload control, with what went wrong in the worker's own words. */
+        #page-opportunity-buys .ob-alert{flex-basis:100%;padding:10px 12px;border-radius:9px;font-size:13px;
+          line-height:1.45;color:#8a4b00;background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.45);
+          border-left-width:4px}
+        .dark #page-opportunity-buys .ob-alert{color:#fbbf24;background:rgba(245,158,11,.10);
+          border-color:rgba(245,158,11,.50)}
+        #page-opportunity-buys .ob-alert b{display:block;font-weight:700}
+        #page-opportunity-buys .ob-btn.ob-btn-danger{color:#a93226;border-color:rgba(192,57,43,.40)}
+        .dark #page-opportunity-buys .ob-btn.ob-btn-danger{color:#f87171;border-color:rgba(239,68,68,.42)}
+        #page-opportunity-buys .ob-btn.ob-btn-danger:hover{background:rgba(192,57,43,.10)}
+        .dark #page-opportunity-buys .ob-btn.ob-btn-danger:hover{background:rgba(239,68,68,.12)}
 
         /* ── Phone ────────────────────────────────────────────────────────────
            🛑 THE TABLE RAN OFF THE RIGHT EDGE WITH NOTHING SAYING SO. #ob-scroll has
@@ -31693,7 +31705,7 @@
     const back = el('ob-back'); if (back) back.hidden = true;
     const lbl = el('ob-barlbl'); if (lbl) lbl.textContent = 'Buys';
     const filt = el('ob-filter'); if (filt) filt.hidden = false;
-    obLoad();
+    return obLoad();
   }
   window.obShowList = obShowList;
 
@@ -31830,6 +31842,7 @@
            <button class="ob-btn" onclick="obSetClosed('${escapeHtml(buy.po)}', ${buy.status === 'open'})">
              ${buy.status === 'open' ? 'Close this buy' : 'Reopen this buy'}
            </button>
+           <button id="ob-del" class="ob-btn ob-btn-danger" onclick="obDelete('${escapeHtml(buy.po)}')">Delete this buy</button>
            <span class="ob-dim" style="font-size:12px">
              ${buy.status === 'open'
                ? 'Closing stops new labels naming this PO. Nothing already printed is affected.'
@@ -31911,21 +31924,31 @@
       + `${j.note ? ' ' + j.note : ''}`;
   }
 
+  // A manifest that did not load, shown as a box at the upload control. Falls back to the
+  // status line only where there is no control (a closed buy, or a reader who cannot edit).
+  function obManifestWarn(msg) {
+    const box = el('ob-m-note');
+    if (!box) { obSay(msg); return; }
+    box.className = 'ob-alert';
+    box.innerHTML = `<b>Manifest not loaded</b>${escapeHtml(msg)}`;
+    box.hidden = false;
+  }
+
   async function obReplaceManifest(po) {
+    // 🛑 THIS RETURNED HERE ON EVERY CLICK UNTIL 2026-10-06. It asked for #ob-m-note, which
+    // the card never rendered, so the button did nothing at all and said nothing either.
     const input = el('ob-m-csv'), note = el('ob-m-note'), btn = el('ob-m-go');
-    if (!input || !note) return;
+    if (!input || !note) { obSay('The upload control is missing; reload the page.'); return; }
     const file = (input.files || [])[0];
-    if (!file) { note.textContent = 'Choose a CSV first.'; note.className = 'ob-note warn'; return; }
+    if (!file) { obManifestWarn('Choose a CSV first.'); return; }
     if (btn) btn.disabled = true;
-    note.className = 'ob-note'; note.textContent = 'Loading…';
+    note.hidden = false; note.className = 'ob-note'; note.textContent = 'Loading…';
     const r = await obUploadCsv(po, file);
     if (btn) btn.disabled = false;
     if (r.error) {
       // 🛑 THE SHEET IT ALREADY HAD IS STILL THERE. The worker writes nothing at all when a
-      // sheet cannot be used, and saying so is the difference between "try again" and
-      // "find out what we just lost".
-      note.className = 'ob-note warn';
-      note.textContent = r.error;
+      // sheet cannot be used, and its message says so.
+      obManifestWarn(r.error);
       return;
     }
     // The re-render writes its own status line, so the upload's result goes on AFTER it —
@@ -31956,7 +31979,8 @@
            <button id="ob-m-go" class="ob-btn" onclick="obReplaceManifest('${escapeHtml(buy.po)}')">
              ${m ? 'Replace manifest' : 'Upload manifest'}
            </button>
-         </div>`
+         </div>
+         <div id="ob-m-note" role="alert" hidden></div>`
       : '';
 
     if (!m) {
@@ -31965,7 +31989,7 @@
         ${hist ? `<span><span class="ob-man-k">Replaced</span><span class="ob-man-v">${hist}</span></span>` : ''}
         ${control}
         <span class="ob-note">${canReplace
-          ? 'With a manifest on this PO, a scan reads the price straight off it: UPC, description, quantity, our price, street price.'
+          ? 'A manifest needs UPC, description and quantity. With an Our Price column a scan rings that price up; without one it looks up the street price and prices it the usual way.'
           : buy.status === 'open'
             ? 'An admin uploads one, and scans on this PO price themselves off it.'
             : 'This buy is closed, so it will not take a manifest.'}</span>
@@ -31973,6 +31997,7 @@
     }
 
     const unreachable = (m.lines || 0) - (m.matchable || 0);
+    const unpriced = (m.lines || 0) - (m.priced || 0);
     return `<div class="ob-man">
       <span><span class="ob-man-k">Manifest</span><span class="ob-man-v">${m.lines}</span> line${m.lines === 1 ? '' : 's'}</span>
       <span><span class="ob-man-k">Scannable</span><span class="ob-man-v">${m.matchable}</span></span>
@@ -31982,7 +32007,10 @@
       ${hist ? `<span><span class="ob-man-k">Replaced</span><span class="ob-man-v">${hist}</span></span>` : ''}
       ${control}
       ${unreachable > 0
-        ? `<span class="ob-note warn">${unreachable} line${unreachable === 1 ? '' : 's'} cannot be found by a scan — no barcode, or no price. Fix those columns and upload the sheet again; the current one is kept either way.</span>`
+        ? `<span class="ob-note warn">${unreachable} line${unreachable === 1 ? '' : 's'} cannot be found by a scan — they have no barcode. Fix that column and upload the sheet again; the current one is kept either way.</span>`
+        : ''}
+      ${unpriced > 0
+        ? `<span class="ob-note">${unpriced === m.lines ? 'The sheet has no prices, so a scan' : `${unpriced} line${unpriced === 1 ? ' has' : 's have'} no price, so a scan`} looks up the street price and prices it the usual way.</span>`
         : ''}
       ${m.units && buy.units && m.units !== buy.units
         ? `<span class="ob-note">The sheet accounts for ${m.units} units; this buy was opened saying ${buy.units}. Neither figure is corrected into the other.</span>`
@@ -32033,11 +32061,11 @@
     // against the buy's own page rather than rolled back into "could not open the buy",
     // which would send someone looking for a buy that is sitting right there.
     const file = ((el('ob-f-csv') || {}).files || [])[0];
-    let manifestErr = null;
+    let manifestErr = null, manifestOk = null;
     if (file) {
       note.textContent = 'Opened. Loading the manifest…';
       const up = await obUploadCsv(j.po, file);
-      if (up.error) manifestErr = up.error;
+      if (up.error) manifestErr = up.error; else manifestOk = up.ok;
     }
     go.disabled = false;
     ['ob-f-po', 'ob-f-label', 'ob-f-vendor', 'ob-f-date', 'ob-f-units', 'ob-f-csv']
@@ -32045,7 +32073,8 @@
     obToggleNew(false);
     // Show it immediately rather than making someone hunt for it in the list.
     await obOpenDetail(j.po);
-    if (manifestErr) obSay(`PO ${j.po} is open. The manifest did not load: ${manifestErr}`);
+    if (manifestErr) obManifestWarn(`PO ${j.po} is open, but its manifest did not load. ${manifestErr}`);
+    else if (manifestOk) obSay(obManifestSay(manifestOk));
   }
   window.obCreate = obCreate;
 
@@ -32058,6 +32087,37 @@
     obOpenDetail(po);
   }
   window.obSetClosed = obSetClosed;
+
+  // Brian, 2026-10-06: the buy, its store units and its manifests go; its printed labels stay
+  // printed but stop counting toward any buy. The question names each of those, from the
+  // detail already on screen, because there is no undo.
+  async function obDelete(po) {
+    const d = (obDetail && obDetail.buy && obDetail.buy.po === po) ? obDetail : null;
+    const labels = d ? (d.buy.labels || 0) : null;
+    const sheets = d ? (d.manifest ? 1 : 0) + (d.manifest_history || 0) : null;
+    const stores = d ? Object.keys(d.alloc || {}).length : null;
+    const goes = ['the buy'];
+    if (stores) goes.push(`its units for ${stores} store${stores === 1 ? '' : 's'}`);
+    if (sheets) goes.push(sheets === 1 ? 'its manifest' : `its ${sheets} manifests`);
+    const msg = `This removes ${goes.length > 1 ? goes.slice(0, -1).join(', ') + ' and ' + goes[goes.length - 1] : goes[0]}.`
+      + (labels ? ` Its ${labels} printed label${labels === 1 ? '' : 's'} stay on the shelf but stop counting toward any buy.` : '')
+      + ' There is no undo.';
+    const yes = await uiConfirm(msg, { title: `Delete PO ${po}?`, okText: 'Delete buy', danger: true, defaultCancel: true });
+    if (!yes) return;
+    const btn = el('ob-del'); if (btn) btn.disabled = true;
+    const { status, j } = await obApi('?action=ob-buy-delete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ po, confirm: po }),
+    });
+    if (status !== 200 || !j || !j.ok) {
+      if (btn) btn.disabled = false;
+      await uiAlert((j && j.error) || `PO ${po} was not deleted (${status}).`, { title: 'Not deleted' });
+      return;
+    }
+    await obShowList();
+    obSay(`Deleted PO ${j.po}.${j.prints_unlinked ? ` ${j.prints_unlinked} label record${j.prints_unlinked === 1 ? ' no longer counts' : 's no longer count'} toward a buy.` : ''}`);
+  }
+  window.obDelete = obDelete;
 
   // ── Buys | Reports (Brian, 2026-10-02) ──────────────────────────────────────
   //

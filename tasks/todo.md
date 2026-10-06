@@ -1,3 +1,48 @@
+# Opportunity buys: a visible manifest failure, delete a buy, and a sheet with no prices (2026-10-06)
+
+**Request (Brian):** *"make the failure a visible warning and also add option for admins to delete a buy
+and if no price then have app look up retail price when user scans the upc"*. Diagnosed first: his
+`test.csv` (UPC, Description, QTY.) was refused for having no "our price" column, and on the Open-a-buy
+path the refusal only showed in the grey status line, saying the new buy "still has the manifest it had".
+
+Decision (asked): deleting a buy **removes the buy, its store units and its manifests, and unlinks its
+printed labels** (`sticker_prints.po` set NULL, rows kept). Not undoable.
+
+- [x] Worker: an OB sheet no longer needs a price column; a line with no price is still reachable by a scan
+      (`ob_matchable` / detail `matchable` count barcodes, not barcodes-with-price); the upload says whether
+      it found a price column (`ob_price_column`, `obUploadNote`); a refusal on a buy with no manifest says
+      "still has no manifest", not "still has the manifest it had"
+- [x] Worker: the scan's no-price flag says the price came from the lookup (the fallback itself already existed)
+- [x] Worker: `POST ?action=ob-buy-delete { po, confirm }`, edit-gated, `confirm` must equal the PO, one batch;
+      classified `bl` in ACTION_BUSINESS, deliberately absent from ACTION_PAGE
+- [x] Page: a refused manifest shows as a warning box (`#ob-m-note.ob-alert`, role=alert) on both upload paths
+- [x] **Found mid-way, the bigger bug:** the buy page's Upload/Replace manifest button did NOTHING. It asked for
+      `#ob-m-note`, which no markup rendered, and returned before sending. Since 99a116a (2026-09-21)
+- [x] Page: Delete this buy for editors, uiConfirm naming what goes, back to the list after
+- [x] Page: upload result and manifest card say when prices come from the lookup
+- [x] Tests through `worker.fetch` + `scripts/browser-ob-manifest-delete.mjs`; each fails without its change
+- [x] `scripts/test-element-ids.mjs`: every literal `el('x')` must have something rendering `id="x"`
+- [x] `npm test`, sw.js v278 + shell-cache fixture, both themes
+- [x] Fresh-eyes review (subagent): no significant defects. Acted on one: delete refuses the snapshot secret
+      (it admits open/close/edit; it was public and is unrotated), test + mutation (5 fails). Left, in Found:
+      a deleted PO reopened and reprinted at the same category/price re-attributes the old sales (the PO is in
+      the code, sales match by code with no date bound); `mos_entries.po` is not cleared (nothing reads it); an
+      upload racing a delete can leave a live orphan manifest (two admins, same moment)
+- [ ] PR; worker deploy asked for as soon as pushed (additive, inert until the page calls it)
+
+**Review.** `npm test` 8702 assertions across 96 suites, all passing. Brian's two real files through the real worker: `test.csv`
+(no price) was 400 and now loads, 38 lines, 34 reachable, 0 priced; `Sales_Order_028469.csv` unchanged (38/34/38).
+Mutation-checked, every one caught: delete (gate entry dropped 20 fails, edit gate 8, confirm 6, labels not
+unlinked 2, labels deleted instead 1, lines kept 1, store units kept 2, only live manifest deleted 1); no-price
+(price required again 10, upload matchable 3, detail matchable 2, refusal wording 2, `ob_price_column` 1, both
+notes 1 each, scan flag 2). Browser check 48/48 at 390px in light and dark; against `HEAD:index.html` it fails
+34/48, including "Upload manifest SENDS the sheet (0 request)". Contrast on the composited background: warning
+8.22 dark / 6.05 light, delete button 6.43 / 6.62. Existing `browser-opportunity-buys` 364/364. The id test fails
+2 on HEAD (`ob-m-note`) and its 4 non-literal ids are helper-built (checked by hand).
+Deploy order: worker first. Every worker change is backward-compatible with the live page: it just stops
+refusing price-less sheets and adds an action the old page never calls. A new page on the old worker would
+get an error dialog from Delete and refusals for price-less sheets, nothing worse.
+
 # Price Scan's cached street price never expires (2026-10-06)
 
 **Request (Brian):** *"fix the cached scan prices that never expire"*. `merch-scan` reuses
