@@ -1,3 +1,22 @@
+# Retail Summary › Categories: y-axis labels said "$2k" twice (2026-10-06)
+
+**Request (Brian):** *"fix the $2k axis label next"* (found while verifying #313)
+
+- [x] Repro first: `scripts/test-ct-axis.mjs` (in npm test) runs the real `ctAxis` + `ctNiceTicks`
+      over 2,324 axes (both measures, Vs's 5 ticks and Trend's 4, max $1 → $50M) and asserts every
+      label reads back as exactly its tick. Failed on main: `$0, $500, $1k, $2k, $2k, $3k` for a
+      $2.3k chart; units ticks of 0.25 / 0.75 printed "0" / "1".
+- [x] Fix: `ctAxis` keeps the decimals a tick has (`$1.5k`, `$2.25k`, `0.75`); `toFixed(3)` only
+      strips float noise. Ticks themselves unchanged.
+- [x] browser-categories-multi: the drawn y-axis labels are distinct and step evenly, and at 375px
+      every label still starts inside the chart (wider labels, 46px gutter). CACHE_NAME bump.
+
+**Review (2026-10-06):** one app commit; CACHE_NAME v275 → v276. test-ct-axis 4/4 (2/4 on main);
+browser-categories-multi 29/29 (the axis check fails on main: `$0, $750, $2k, $2k, $3k, $4k`);
+leftmost label at 375px x = 13.6. npm test 7699/7699. Checked every other chart's axis formatter:
+the Chart.js ones print full dollars, so `ctAxis` was the only rounding one.
+---
+
 # Retail Summary › Categories: pick several categories at once (2026-10-06)
 
 **Request (Brian):** *"in the retail summary page in the categories tab, allow users to click on

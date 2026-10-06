@@ -154,6 +154,15 @@ const showAll = () => page.locator('#ct-showall');
 // ── L2 ────────────────────────────────────────────────────────────────────
 const ALL_L2 = ['Hardlines', 'Home', 'Seasonal'];
 eq(await card(), await expected(ALL_L2), 'L2, nothing picked: the card charts every category');
+
+// The y-axis as drawn. Gridlines are evenly stepped, so honest labels are too; rounding
+// to whole thousands printed $1.5k as "$2k" beside the real $2k (and $2.5k as "$3k").
+const yLabels = await page.evaluate(() => [...document.querySelectorAll('#ct-chart svg text')]
+  .map(t => t.textContent).filter(t => t.startsWith('$')));
+const yVals = yLabels.map(t => Number(t.replace(/[$k]/g, '')) * (t.endsWith('k') ? 1000 : 1));
+const steps = yVals.slice(1).map((v, i) => v - yVals[i]);
+check(yLabels.length >= 3 && new Set(yLabels).size === yLabels.length && steps.every(d => d > 0 && Math.abs(d - steps[0]) < 1e-9),
+  `the y-axis labels are distinct and step evenly (${yLabels.join(', ')})`);
 eq(await pressed(), [], 'and no row is pressed');
 eq(await showAll().count(), 0, 'and there is no Show all to offer');
 
@@ -235,6 +244,16 @@ await l3Row(HK).click();
 await l3Row('Hardlines :: FG BL HARDLINES - TOOLS').click();
 check((await caption()).startsWith('2 categories combined — Kitchen + Tools'), `within one L2, short names (${await caption()})`);
 eq(await card(), await expected([HK, 'Hardlines :: FG BL HARDLINES - TOOLS']), 'within one L2: both L3s combined');
+
+// On a phone the y-axis gutter is 46px. A label now keeps its decimals ("$2.25k"), so it is
+// wider than the rounded one was: every label must still start inside the chart.
+// (Re-rendered by script: at this width the sidebar overlay and a coach tip sit over the pills.)
+await page.setViewportSize({ width: 375, height: 812 });
+await page.evaluate(() => { window.switchWrsTab('summary'); window.switchWrsTab('categories'); });
+await page.waitForTimeout(300);
+const leftmost = await page.evaluate(() => Math.min(...[...document.querySelectorAll('#ct-chart svg text')]
+  .filter(t => t.textContent.startsWith('$')).map(t => t.getBBox().x)));
+check(leftmost >= 0, `at 375px every y-axis label starts inside the chart (leftmost x = ${leftmost.toFixed(1)})`);
 
 eq(errs, [], 'no uncaught page errors');
 

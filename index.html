@@ -21527,9 +21527,14 @@
   const ctFmt = v => ctState.measure === 'net'
     ? '$' + Math.round(v).toLocaleString('en-US')
     : Math.round(v).toLocaleString('en-US');
+  // A tick label says where its gridline IS. ctNiceTicks steps by 1.5, 2.5 and
+  // 7.5 too, so rounding to whole thousands printed $1.5k as "$2k" right beside
+  // the real $2k. Keep the decimals a tick has; toFixed(3) only drops float noise
+  // (0.30000000000000004), never a digit a tick can carry.
   function ctAxis(v) {
-    if (ctState.measure !== 'net') return v >= 1000 ? Math.round(v / 1000) + 'k' : String(Math.round(v));
-    return v >= 1000 ? '$' + Math.round(v / 1000) + 'k' : '$' + Math.round(v);
+    const n = x => String(+x.toFixed(3));
+    const s = v >= 1000 ? n(v / 1000) + 'k' : n(v);
+    return ctState.measure === 'net' ? '$' + s : s;
   }
   function ctPct(cur, prv) {
     if (!(prv > 0)) return cur > 0 ? 'new' : '—';
