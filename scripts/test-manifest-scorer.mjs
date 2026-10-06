@@ -178,6 +178,63 @@ let mid;
   ok(!JSON.parse(plain.flags).includes('qty is a minimum'), '...and carries no approximation flag');
 }
 
+// ── 🔑 A UPC the spreadsheet mangled is still a UPC ─────────────────────────
+// A sheet that stores a barcode as a NUMBER drops its leading zero: Gain is 037000488538
+// on the pack and 37000488538 in the file. Read as an 11-digit vendor SKU it was never
+// looked up by barcode, never matched by a scan, and keyed the cache under a number no
+// package carries — 64 such rows in prod on 2026-10-06. The check digit is the evidence:
+// put the zero back and a real UPC validates.
+{
+  const ZCSV = [
+    'UPC,Item Description,Qty,Unit Cost,MSRP',
+    '37000488538,Gain Flings 16ct,10,4.00,9.99',          // the zero a number cell ate
+    '16000-10610-9,Gold Medal Flour 5lb,10,1.00,3.49',    // dashed, AND the zero gone
+    '0-10668-39506-6,Cameron\'s Cold Brew Mocha,10,1.00,4.99', // dashed, all 12 there
+    '602652671104.00,Something formatted as money,10,1.00,2.99', // Excel's ".00"
+    '30772224028,Downy 11 digits failing the check,10,1.00,2.99',
+    // Starts with 0, so no spreadsheet stripped it (a stripped number never does). It is
+    // the shape of a UPC written WITHOUT its check digit, and padding it would invent a
+    // different barcode one time in ten — this one is that one time.
+    '04460001249,Clorox no check digit,10,1.00,2.99',
+    '4460001246,Clorox ten digits,10,1.00,2.99',
+    '12345-678,A real dashed vendor SKU,10,1.00,2.99',
+    '0-12345-67890-0,Dashed twelve failing the check,10,1.00,2.99',
+    '',
+  ].join('\n');
+  // The restored form is the one the cache is read under: a category already known for
+  // the real barcode must reach the line, or the restoration is cosmetic.
+  db.prepare(`INSERT INTO item_cache (identifier, identifier_type, l2, l3, l3_source, updated_at)
+              VALUES ('037000488538', 'upc', 'Consumables', ?, 'manual', '2026-10-01')`).run(ORAL);
+  const r = await post('manifest-upload', { vendor: 'ZeroDrop', filename: 'zero.csv', csv: ZCSV });
+  eq(r.status, 200, 'the mangled-barcode sheet uploads');
+  const L = db.prepare(`SELECT identifier, identifier_type, l3, l3_source, flags FROM manifest_lines
+                        WHERE manifest_id=? ORDER BY row_no`).all(r.body.id);
+  const flagged = (l) => JSON.parse(l.flags).find(f => /^barcode restored/.test(f));
+  eq(L[0].identifier, '037000488538', '🔑 the leading zero a number cell ate is put back');
+  eq(L[0].identifier_type, 'upc', '...and the line is a UPC, not a vendor SKU');
+  eq(L[0].l3, ORAL, '🔑 ...and reads the cache under the real barcode');
+  eq(flagged(L[0]), 'barcode restored: sheet had 37000488538', "...and says what the sheet actually wrote");
+  eq(L[1].identifier, '016000106109', 'a dashed UPC missing its zero is restored');
+  eq(L[1].identifier_type, 'upc', '...as a UPC');
+  eq(L[2].identifier, '010668395066', 'a dashed 12-digit UPC loses only its dashes');
+  eq(L[2].identifier_type, 'upc', '...as a UPC');
+  eq(L[3].identifier, '602652671104', "Excel's .00 is not part of the barcode");
+  eq(L[3].identifier_type, 'upc', '...as a UPC');
+  eq(L[4].identifier, '30772224028', '11 digits that fail the check digit are left as written');
+  eq(L[4].identifier_type, 'vendor_sku', '...and stay a vendor SKU');
+  eq(flagged(L[4]), undefined, '...with no restoration claimed');
+  eq(L[5].identifier, '04460001249', '🛑 11 digits that START with 0 are never padded, even when the check passes');
+  eq(L[5].identifier_type, 'vendor_sku', '...and stay a vendor SKU');
+  eq(L[6].identifier, '4460001246', 'ten digits are left alone: there is no check digit to prove anything');
+  eq(L[7].identifier, '12345-678', 'a dashed vendor SKU is not a barcode');
+  eq(L[7].identifier_type, 'vendor_sku', '...and stays a vendor SKU');
+  eq(L[8].identifier, '0-12345-67890-0', 'twelve dashed digits that fail the check are left as written');
+  eq(L[8].identifier_type, 'vendor_sku', '...and stay a vendor SKU');
+  const plain = db.prepare(`SELECT flags FROM manifest_lines WHERE manifest_id=? AND row_no=1`).get(mid);
+  ok(!JSON.parse(plain.flags).some(f => /^barcode restored/.test(f)),
+     'a UPC the sheet already spelled right claims no restoration');
+}
+
 // ── The template is remembered, so the NEXT file maps itself ─────────────────
 {
   const r = await post('manifest-remap', { id: mid, csv: CSV,
