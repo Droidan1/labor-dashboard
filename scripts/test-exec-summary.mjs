@@ -9,6 +9,11 @@
 //   Sep 27-Oct 3 sales 100/store/day (last week, for pace); Oct 4-7 sales 90;
 //   Coliseum has 20 of live sales on Oct 6 and Oct 7; Indy East's Oct 7 plan
 //   is 0. Report covers Wed Oct 7 (sent Thu Oct 8).
+// Rows have PROD's shape (measured 2026-10-12): a reported day carries a
+// snapshot_time; a day not yet reported exists already, with total 0 (NULL for
+// Indy East only) and no snapshot_time. A fixture with NULL totals hid that the
+// missing-data warning could never fire. Dupont, South Bend and Battle Creek
+// carry cents on Oct 7 so rounding each row shows up in the totals.
 process.env.TZ = 'UTC';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -31,14 +36,16 @@ function setup({ whatnotThrough = null } = {}) {
   h.db.exec(fs.readFileSync(path.join(repo, 'migration-015.sql'), 'utf8'));
   applyMigrationAlters(h.db, repo);
   h.db.exec('DELETE FROM daily_sales');          // the harness seeds "today"; this test owns every row
-  const ins = h.db.prepare('INSERT INTO daily_sales (store, date, total, auction, budget) VALUES (?, ?, ?, ?, ?)');
+  const ins = h.db.prepare('INSERT INTO daily_sales (store, date, total, auction, budget, snapshot_time) VALUES (?, ?, ?, ?, ?, ?)');
   for (let d = 0; d < 35; d++) {                 // Sep 27 .. Oct 31
     const date = day(d);
     for (const s of [...OPEN, 'BL8']) {
-      const total = s === 'BL8' ? 0 : date <= '2026-10-03' ? 100 : date <= '2026-10-07' ? 90 : null;
+      const reported = date <= '2026-10-07';
+      const cents = date === '2026-10-07' && ['BL4', 'BL2', 'BL14'].includes(s) ? 0.4 : 0;
+      const total = !reported ? (s === 'BL16' ? null : 0) : s === 'BL8' ? 0 : date <= '2026-10-03' ? 100 : 90 + cents;
       const auction = s === 'BL1' && (date === '2026-10-06' || date === '2026-10-07') ? 20 : null;
       const budget = s === 'BL16' && date === '2026-10-07' ? 0 : 100;
-      ins.run(s, date, total, auction, budget);
+      ins.run(s, date, total, auction, budget, reported ? date + 'T23:55:00Z' : null);
     }
   }
   if (whatnotThrough) {
@@ -71,7 +78,8 @@ const preview = async (h, qs) => {
   has(html, '−3.2%', 'WTD variance = 1,840 / 1,900 - 1');
   ok(/Coliseum<sup[^>]*>\*<\/sup><\/td>\s*<td[^>]*>\$400<\/td>\s*<td[^>]*>\$400<\/td>/.test(html), 'Coliseum WTD row: $400 sales (incl. 40 live, starred) vs $400 plan');
   // Yesterday: 4 x 90 + 110 = 470 vs plan 400 (Indy's 0 excluded by its own zero).
-  has(html, '>$470</td>', 'Yesterday All Stores sales');
+  // Three rows are 90.40 and DISPLAY $90; the total is the sum of what is shown.
+  has(html, '>$470</td>', 'Yesterday All Stores sales equals the rows as displayed (not $471)');
   has(html, '+17.5%', 'Yesterday variance = 470 / 400 - 1');
   has(html, '>N/A</td>', 'a store with a zero plan reads N/A, not a percent');
   // Month: Oct 1-3 at 100 + Oct 4-7 at 90 = 660/store + 40 live = 3,340; plan = 31 x 100 x 5 - 100 = 15,400.
@@ -103,12 +111,41 @@ const preview = async (h, qs) => {
 // ── A Whatnot recap that has not arrived, and a store with no data ──────────
 {
   const h = setup({ whatnotThrough: '2026-10-06' });
-  h.db.prepare("UPDATE daily_sales SET total = NULL WHERE store = 'BL4' AND date = '2026-10-07'").run();
+  // What a failed nightly snapshot leaves in prod: the pre-made row, untouched.
+  h.db.prepare("UPDATE daily_sales SET total = 0, snapshot_time = NULL WHERE store = 'BL4' AND date = '2026-10-07'").run();
   const { html } = await preview(h, 'date=2026-10-07');
   has(html, 'The Whatnot recap for Wed, Oct 7 has not arrived', 'a missing recap is said, not silently $0');
   has(html, 'No sales data yet for Dupont on Wed, Oct 7', 'a store with no figure is named');
   const { html: dupont } = await preview(h, 'date=2026-10-07&stores=BL4');
   lacks(dupont, 'Whatnot recap', 'a store Whatnot never covers gets no Whatnot warning');
+}
+
+// ── No plan at all (a week past the last budget row) is not "on track" ──────
+{
+  const h = setup();
+  const { html } = await preview(h, 'date=2026-11-04');
+  lacks(html, 'ON TRACK', 'a zero full-week plan never reads ON TRACK');
+  lacks(html, 'OFF TRACK', '...nor OFF TRACK');
+  has(html, '>NO PLAN</span>', 'it says there is no plan');
+}
+
+// ── A refund-only day: live share never prints Infinity or NaN ──────────────
+{
+  const h = setup({ whatnotThrough: '2026-10-07' });
+  h.db.prepare("UPDATE daily_sales SET total = -50 WHERE store = 'BL1' AND date = '2026-10-07'").run();
+  const { html } = await preview(h, 'date=2026-10-07&stores=BL1');
+  lacks(html, 'Infinity', 'no Infinity%');
+  lacks(html, 'NaN', 'no NaN');
+  has(html, 'Coliseum $20.', 'the live amount is still stated, without a share of negative sales');
+}
+
+// ── A manager whose stores include closed Holland ───────────────────────────
+{
+  const h = setup({ whatnotThrough: '2026-10-07' });
+  const { html } = await preview(h, 'date=2026-10-07&stores=BL1,BL8');
+  has(html, '>Total</td>', 'one reported store reads as a single-store body (footer "Total")');
+  lacks(html, 'My Stores', 'not "My Stores" for one visible store');
+  lacks(html, 'Holland', 'Holland is not named anywhere');
 }
 
 // ── A scope with no open store ──────────────────────────────────────────────

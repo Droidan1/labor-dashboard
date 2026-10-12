@@ -85,13 +85,14 @@ async function run(people, opts = {}) {
     CREATE TABLE push_subscriptions (id TEXT PRIMARY KEY, user_id TEXT, endpoint TEXT, p256dh TEXT, auth TEXT);
     CREATE TABLE notification_log (id TEXT PRIMARY KEY, user_id TEXT, type TEXT, event_type TEXT, status TEXT, error TEXT, provider_message_id TEXT, created_at TEXT);
     CREATE TABLE daily_sales (id INTEGER PRIMARY KEY AUTOINCREMENT, store TEXT, date TEXT, week TEXT,
-                              total REAL, retail REAL, bin REAL, auction REAL, budget REAL);
+                              total REAL, retail REAL, bin REAL, auction REAL, budget REAL, snapshot_time TEXT);
   `);
   // The whole week, so all three tables render and every scope label is exercised.
   for (const s of Object.keys(SALES)) {
     for (const d of WEEK_DATES) {
-      db.prepare('INSERT INTO daily_sales (store,date,week,total,retail,bin,auction,budget) VALUES (?,?,?,?,?,?,?,?)')
-        .run(s, d, WEEK_NO, SALES[s], SALES[s] * 0.8, SALES[s] * 0.2, 0, SALES[s]);
+      // snapshot_time marks a reported day, as the nightly snapshot does in prod.
+      db.prepare('INSERT INTO daily_sales (store,date,week,total,retail,bin,auction,budget,snapshot_time) VALUES (?,?,?,?,?,?,?,?,?)')
+        .run(s, d, WEEK_NO, SALES[s], SALES[s] * 0.8, SALES[s] * 0.2, 0, SALES[s], d <= COVERS ? d + 'T23:55:00Z' : null);
     }
   }
   for (const [id, role, stores, units, daily] of people) {
@@ -184,6 +185,16 @@ ok('multi-store body never says "All Stores" anywhere', !m2s.includes('All Store
 ok('every table in a scoped body is footed by its scope (3 tables)',
    (m1.match(/>Total<\/td>/g) || []).length === 3 && (m2s.match(/>My Stores<\/td>/g) || []).length === 3);
 ok('the subject is the Executive Summary', ((r.byTo['u-su@x.com'] || {}).subject || '').startsWith('Executive Summary'));
+
+console.log('\na manager who also holds closed Holland is labelled by what is SHOWN:');
+{
+  const M1H = ['u-m1h', 'manager', '["BL1","BL8"]', '["BL1","BL8"]', 1];
+  const rh = await run([SU, M1H]);
+  const mh = bodyOf(rh, 'u-m1h'), subj = (rh.byTo['u-m1h@x.com'] || {}).subject || '';
+  ok('Coliseum+Holland manager receives one', !!mh);
+  ok('...footed "Total": one store is reported', mh.includes('>Total</td>') && !mh.includes('My Stores'));
+  ok('...subject names Coliseum only', subj.includes('(Coliseum)') && !subj.includes('Holland'), subj);
+}
 
 console.log('\nthe totals actually differ — proof the body was rebuilt, not reused:');
 const dollars = h => (h.match(/\$[\d,]+/g) || []);

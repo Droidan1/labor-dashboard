@@ -6514,7 +6514,7 @@ async function buildExecSummaryData(env, through, scopeStores = null) {
 
   const ph = stores.map(() => "?").join(",");
   const { results } = await env.DB.prepare(
-    `SELECT store, date, total, auction, budget FROM daily_sales
+    `SELECT store, date, total, auction, budget, snapshot_time FROM daily_sales
       WHERE date >= ? AND date <= ? AND store IN (${ph})`
   ).bind(from, to, ...stores).all();
   const row = {};
@@ -6531,7 +6531,9 @@ async function buildExecSummaryData(env, through, scopeStores = null) {
         live += a;
       }
       for (const d of planDates) plan += Number((row[store + "|" + d] || {}).budget) || 0;
-      return { store, label: STORE_LABELS[store] || store, sales, live, plan };
+      // Whole dollars per row, and totals summed from them, so an All Stores
+      // figure always equals the rows printed above it.
+      return { store, label: STORE_LABELS[store] || store, sales: Math.round(sales), live: Math.round(live), plan: Math.round(plan) };
     });
     const tot = rows.reduce((t, r) => ({ sales: t.sales + r.sales, live: t.live + r.live, plan: t.plan + r.plan }), { sales: 0, live: 0, plan: 0 });
     return { rows, tot };
@@ -6546,8 +6548,10 @@ async function buildExecSummaryData(env, through, scopeStores = null) {
   const projected = wtd.tot.sales + table(remaining.map(d => addDaysYmd(d, -7))).tot.sales;
   const fullWeekPlan = table(range(weekStart, weekEnd)).tot.plan;
 
-  // A store with no POS figure for the day would read as a −100% day.
-  const missing = stores.filter(s => { const r = row[s + "|" + through]; return !r || r.total == null; })
+  // A store with no POS figure for the day would read as a −100% day. In prod a
+  // day's row exists BEFORE it is reported (total 0, or NULL for Indy East);
+  // only the nightly snapshot sets snapshot_time, so that is the test.
+  const missing = stores.filter(s => { const r = row[s + "|" + through]; return !r || r.total == null || !r.snapshot_time; })
     .map(s => STORE_LABELS[s] || s);
 
   // Whatnot posts a row for every recap, $0 days included, for the stores it
@@ -6564,7 +6568,8 @@ async function buildExecSummaryData(env, through, scopeStores = null) {
 
   return {
     reportDate: addDaysYmd(through, 1), through, weekStart, weekEnd, wtd, yday, mtd, missing, whatnotPending,
-    pace: { projected, fullWeekPlan, onTrack: projected >= fullWeekPlan },
+    // No plan (no budget rows yet, e.g. a new year) is not "on track".
+    pace: { projected, fullWeekPlan, onTrack: fullWeekPlan > 0 ? projected >= fullWeekPlan : null },
   };
 }
 
@@ -6601,7 +6606,8 @@ function buildExecSummaryEmailHtml(d, totalsLabel = "All Stores", scopeLabel = t
     const live = t.rows.filter(r => r.live > 0);
     const periodWord = period === "Yesterday" ? "yesterday" : period;
     const note = live.length
-      ? `* ${period} live sales included above: ` + live.map(r => `${_esc(r.label)} ${usd(r.live)} (${pct1(r.live / r.sales)} of ${_esc(r.label)} ${periodWord} sales)`).join("; ") + "."
+      ? `* ${period} live sales included above: ` + live.map(r => `${_esc(r.label)} ${usd(r.live)}` +
+          (r.sales > 0 ? ` (${pct1(r.live / r.sales)} of ${_esc(r.label)} ${periodWord} sales)` : "")).join("; ") + "."
       : "* No live sales in this period.";
     return `
       <h3 style="margin:28px 0 2px;font-size:15px;font-weight:800;color:${NAVY}">${title}</h3>
@@ -6622,9 +6628,9 @@ function buildExecSummaryEmailHtml(d, totalsLabel = "All Stores", scopeLabel = t
 
   const { wtd, pace } = d;
   const attain = wtd.tot.plan > 0 ? wtd.tot.sales / wtd.tot.plan : null;
-  const pill = pace.onTrack
-    ? `<span style="display:inline-block;padding:3px 9px;border-radius:999px;background:#e3f4e8;color:${POS};font-size:12px;font-weight:800;letter-spacing:.04em">ON TRACK</span>`
-    : `<span style="display:inline-block;padding:3px 9px;border-radius:999px;background:#fde8e6;color:${NEG};font-size:12px;font-weight:800;letter-spacing:.04em">OFF TRACK</span>`;
+  const pillOf = (bg, fg, txt) => `<span style="display:inline-block;padding:3px 9px;border-radius:999px;background:${bg};color:${fg};font-size:12px;font-weight:800;letter-spacing:.04em">${txt}</span>`;
+  const pill = pace.onTrack == null ? pillOf("#eef0f2", MUTED, "NO PLAN")
+    : pace.onTrack ? pillOf("#e3f4e8", POS, "ON TRACK") : pillOf("#fde8e6", NEG, "OFF TRACK");
   const warn = txt => `<p style="margin:10px 0 0;padding:8px 10px;border-radius:6px;background:#fff5e6;font-size:12px;line-height:1.5;color:#7a4a00">${txt}</p>`;
   const month = new Date(d.through + "T12:00:00Z").toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
 
@@ -6663,7 +6669,7 @@ function buildExecSummaryEmailHtml(d, totalsLabel = "All Stores", scopeLabel = t
 
       <p style="margin:24px 0 0;padding-top:12px;border-top:1px solid ${RULE};font-size:11px;line-height:1.6;color:${MUTED}">
         Sales = net sales (retail + BIN) plus live sales, counted once. Live sales = online auction plus Whatnot
-        (Whatnot is gross, before fees and refunds). Plan = the daily budget from the 2026 budget sheet.
+        (Whatnot is gross, before fees and refunds). Plan = the daily budget from the budget sheet.
         Variance % = sales ÷ plan − 1. Week = Sunday–Saturday. Pace = week-to-date sales plus last week's sales
         for the days still to come.
         <br><a href="https://www.retjghub.com" style="color:${NAVY}">Open Dashboard</a>
@@ -6864,13 +6870,16 @@ async function dispatchScopedDailySummaries(env, date, prefMapAll) {
       continue;
     }
 
-    const labels = stores.map(s => STORE_LABELS[s] || s);
+    // Labels follow the stores the summary SHOWS: a Coliseum + Holland manager
+    // sees one row, so it is a single-store body named "Coliseum".
+    const shown = EXEC_SUMMARY_STORES.filter(s => stores.includes(s));
+    const labels = shown.map(s => STORE_LABELS[s] || s);
     // One store: the only body row already names it, so the footer says "Total"
-    // and the section headers carry the name. Several: both say "My Stores".
-    const single = stores.length === 1;
+    // and the header carries the name. Several: both say "My Stores".
+    const single = shown.length === 1;
     const scopeLabel = single ? labels[0] : 'My Stores';
     const totalsLabel = single ? 'Total' : 'My Stores';
-    const scopeSuffix = stores.length <= 2 ? ` (${labels.join(' + ')})` : '';
+    const scopeSuffix = shown.length <= 2 ? ` (${labels.join(' + ')})` : '';
     const emailHtml = buildExecSummaryEmailHtml(exec, totalsLabel, scopeLabel);
     const reportDay = new Date(exec.reportDate + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
 
@@ -6878,7 +6887,7 @@ async function dispatchScopedDailySummaries(env, date, prefMapAll) {
     const budgetLine = tb > 0 ? ` • Budget: ${_fmtVsBudget(ts, tb)}` : '';
     const pushPayload = JSON.stringify({
       title: `Sales Summary — ${displayDate}`,
-      body: `${_fmtDollars(ts)}${stores.length === 1 ? ` at ${labels[0]}` : ' across your stores'}${budgetLine}`,
+      body: `${_fmtDollars(ts)}${single ? ` at ${labels[0]}` : ' across your stores'}${budgetLine}`,
       tag: 'daily-summary',
       url: '/',
     });
@@ -21883,9 +21892,10 @@ export default {
         return new Response(JSON.stringify({ error: "No known store codes in `stores`" }), { status: 400, headers: corsJson });
       }
       // Mirrors dispatchScopedDailySummaries so the preview cannot drift from
-      // what is actually sent.
-      const single = scope && scope.length === 1;
-      const scopeLabel  = scope ? (single ? (STORE_LABELS[scope[0]] || scope[0]) : 'My Stores') : 'All Stores';
+      // what is actually sent: labels follow the stores the summary shows.
+      const shown = scope && EXEC_SUMMARY_STORES.filter(s => scope.includes(s));
+      const single = shown && shown.length === 1;
+      const scopeLabel  = scope ? (single ? (STORE_LABELS[shown[0]] || shown[0]) : 'My Stores') : 'All Stores';
       const totalsLabel = scope ? (single ? 'Total' : 'My Stores') : 'All Stores';
       try {
         const exec = await buildExecSummaryData(env, dateParam, scope);
