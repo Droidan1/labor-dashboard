@@ -5551,115 +5551,6 @@ async function buildDailySummaryData(env, date, scopeStores = null) {
   return { date, stores, totals: { retail: totRetail, bin: totBin, auction: totAuction, sales: totSales, budget: totBudget } };
 }
 
-// Consolidated L2 category sales for ONE day across all stores, read from the
-// nightly `items:<store>:<date>` KV snapshots (no live Clover calls). Returns
-// merged { categories[] (sorted by net desc), totals } plus the day's auction
-// dollars (rendered as a sales-only row so the table Total ties to the By-Store
-// Total). Returns null when no snapshots exist for the day.
-async function buildDailyCategoryData(env, date, scopeStores = null) {
-  if (!env.SALES_SNAPSHOTS) return null;
-  const inScope = scopeStores || ALL_STORES;
-  const snaps = await Promise.all(
-    inScope.map(s => env.SALES_SNAPSHOTS.get(`items:${s.toLowerCase()}:${date}`, "json").catch(() => null))
-  );
-  const present = snaps.filter(Boolean);
-  if (!present.length) return null;
-  const merged = mergeItemSnapshots(present); // { categories, totals, orderCount }
-  if (!merged || !merged.categories || !merged.categories.length) return null;
-  let auction = 0;
-  if (env.DB) {
-    // Scope to ALL_STORES: daily_sales still holds rows for retired BL12
-    // (Wyoming), whose budget/auction duplicate BL16 (Indy East) — see the
-    // store filter in buildWeeklyByDayData.
-    const row = await env.DB.prepare(
-      `SELECT SUM(auction) AS a FROM daily_sales WHERE date = ? AND store IN (${inScope.map(() => "?").join(",")})`
-    ).bind(date, ...inScope).first().catch(() => null);
-    auction = Number(row && row.a) || 0;
-  }
-  return { categories: merged.categories, totals: merged.totals, auction };
-}
-
-// Consolidated week-by-day actual vs budget for the retail week containing
-// `date`, for the app-style "Daily Breakdown" table. Actual = POS total +
-// auction (matches the By-Store Total). Month- and week-to-date totals prorate
-// budget to the ELAPSED days (through `date`), so the % is a true like-for-like
-// rather than partial sales vs a full-period budget. Returns null on failure.
-async function buildWeeklyByDayData(env, date, scopeStores = null) {
-  if (!env.DB) return null;
-  const inScope = scopeStores || ALL_STORES;
-  try {
-    const year = date.slice(0, 4);
-    const wkRow = await env.DB.prepare("SELECT week FROM daily_sales WHERE date = ? LIMIT 1").bind(date).first().catch(() => null);
-    const weekLabel = wkRow && wkRow.week != null ? String(wkRow.week) : null;
-    let dates = weekLabel ? await resolveWeekDates(env, weekLabel, year) : null;
-    if (!dates || !dates.length) return null;
-    dates = dates.slice().sort();
-
-    // Scope every aggregate to ALL_STORES. daily_sales still holds rows for the
-    // retired BL12 (Wyoming) carrying a duplicate of BL16 (Indy East)'s budget
-    // with no sales, so an unfiltered SUM(budget) double-counts Indy's budget
-    // (~$65k/month) while sales look fine. Table 1 avoids this by iterating
-    // ALL_STORES; these cross-store aggregates must filter explicitly.
-    const storePh = inScope.map(() => "?").join(",");
-    const ph = dates.map(() => "?").join(",");
-    const { results } = await env.DB.prepare(
-      `SELECT date, SUM(total) AS pos, SUM(auction) AS auction, SUM(budget) AS budget, COUNT(total) AS reported
-       FROM daily_sales WHERE date IN (${ph}) AND store IN (${storePh}) GROUP BY date`
-    ).bind(...dates, ...inScope).all();
-    const byDate = {};
-    for (const r of (results || [])) byDate[r.date] = r;
-
-    // The email goes out the morning after the covered date; that calendar day
-    // (if it falls inside this week) is "today" — in progress, not yet reported.
-    const sendDay = new Date(new Date(date + "T12:00:00Z").getTime() + 86400000).toISOString().slice(0, 10);
-
-    let wtdSales = 0, wtdBudget = 0, reportedDays = 0;
-    const days = dates.map(dd => {
-      const r = byDate[dd];
-      const hasActual = !!(r && r.pos != null);
-      const actual = hasActual ? (Number(r.pos) || 0) + (Number(r.auction) || 0) : null;
-      const budget = r ? (Number(r.budget) || 0) : 0;
-      let state;
-      if (dd <= date) {
-        wtdBudget += budget;                 // elapsed day → its budget counts
-        if (hasActual) { state = "reported"; reportedDays++; wtdSales += actual; }
-        else state = "pending";              // elapsed but no data (rare)
-      } else if (dd === sendDay) {
-        state = "today";
-      } else {
-        state = "pending";
-      }
-      const d12 = new Date(dd + "T12:00:00Z");
-      return {
-        date: dd,
-        dow: d12.toLocaleDateString("en-US", { weekday: "short" }).toUpperCase(),
-        dayNum: d12.getUTCDate(),
-        actual, budget, state,
-        variance: state === "reported" ? actual - budget : null,
-      };
-    });
-
-    // Month-to-date: reported sales vs budget over month-start..covered-date.
-    const monthStart = date.slice(0, 7) + "-01";
-    const mRow = await env.DB.prepare(
-      `SELECT SUM(total) AS pos, SUM(auction) AS auction, SUM(budget) AS budget
-       FROM daily_sales WHERE date >= ? AND date <= ? AND store IN (${storePh})`
-    ).bind(monthStart, date, ...inScope).first().catch(() => null);
-    const mtdSales = mRow ? (Number(mRow.pos) || 0) + (Number(mRow.auction) || 0) : 0;
-    const mtdBudget = mRow ? (Number(mRow.budget) || 0) : 0;
-
-    return {
-      weekLabel,
-      days,
-      wtd: { sales: wtdSales, budget: wtdBudget, reportedDays, totalDays: dates.length },
-      mtd: { sales: mtdSales, budget: mtdBudget, monthLabel: new Date(date + "T12:00:00Z").toLocaleDateString("en-US", { month: "long" }) },
-    };
-  } catch (e) {
-    console.error("buildWeeklyByDayData error:", e.message);
-    return null;
-  }
-}
-
 // ─── AI Morning Brief ──────────────────────────────────────────────────────
 // A 2–4 sentence narrative summary of yesterday's cross-store performance,
 // written by Claude (Sonnet 4.6). One non-streaming Messages API call per
@@ -6591,224 +6482,198 @@ function _vsColor(sales, ref) {
 }
 function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 function _fmtInt(v) { return (Math.round(Number(v) || 0)).toLocaleString('en-US'); }
-function _fmtVarDollars(v) {
-  if (v == null) return '—';
-  const sign = v >= 0 ? '+' : '−';
-  return `${sign}$${Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// ─── Executive Summary (the daily email since 2026-10) ──────────────────────
+// Replaced the Daily Sales Summary at the owner's request: WTD / Yesterday /
+// MTD against plan for the open stores, each with the live sales it includes.
+//
+// One basis everywhere: sales = daily_sales.total (Clover net, retail + BIN)
+// + daily_sales.auction (live sales: online auction + Whatnot gross, the sum
+// of LIVE_CHANNELS). Plan = daily_sales.budget, the Sheet's daily budget, for
+// every figure — WTD plan, yesterday's plan and the month's plan are sums of
+// the same rows, so they cannot disagree with each other.
+
+// The stores the summary reports, in the order the owner's mockup lists them.
+// Holland (BL8) closed 2026-07-24; its budget rows remain in daily_sales, so it
+// is left out by name rather than by "has sales", which would also drop an open
+// store on a day its snapshot failed.
+const EXEC_SUMMARY_STORES = ["BL1", "BL4", "BL2", "BL14", "BL16"];
+
+// `through` is the last completed day (ET yesterday at send time). Returns null
+// when the scope holds none of the summary's stores.
+async function buildExecSummaryData(env, through, scopeStores = null) {
+  const stores = EXEC_SUMMARY_STORES.filter(s => !scopeStores || scopeStores.includes(s));
+  if (!stores.length) return null;
+
+  const weekStart = addDaysYmd(through, -new Date(through + "T12:00:00Z").getUTCDay());   // Sunday
+  const weekEnd = addDaysYmd(weekStart, 6);
+  const monthStart = through.slice(0, 8) + "01";
+  const monthEnd = addDaysYmd(addDaysYmd(monthStart, 32).slice(0, 8) + "01", -1);
+  const from = [monthStart, addDaysYmd(weekStart, -7)].sort()[0];
+  const to = [monthEnd, weekEnd].sort()[1];
+  const range = (a, b) => { const out = []; for (let d = a; d <= b; d = addDaysYmd(d, 1)) out.push(d); return out; };
+
+  const ph = stores.map(() => "?").join(",");
+  const { results } = await env.DB.prepare(
+    `SELECT store, date, total, auction, budget, snapshot_time FROM daily_sales
+      WHERE date >= ? AND date <= ? AND store IN (${ph})`
+  ).bind(from, to, ...stores).all();
+  const row = {};
+  for (const r of (results || [])) row[r.store + "|" + r.date] = r;
+
+  const table = (salesDates, planDates = salesDates) => {
+    const rows = stores.map(store => {
+      let sales = 0, live = 0, plan = 0;
+      for (const d of salesDates) {
+        const r = row[store + "|" + d];
+        if (!r) continue;
+        const a = Number(r.auction) || 0;
+        sales += (Number(r.total) || 0) + a;
+        live += a;
+      }
+      for (const d of planDates) plan += Number((row[store + "|" + d] || {}).budget) || 0;
+      // Whole dollars per row, and totals summed from them, so an All Stores
+      // figure always equals the rows printed above it.
+      return { store, label: STORE_LABELS[store] || store, sales: Math.round(sales), live: Math.round(live), plan: Math.round(plan) };
+    });
+    const tot = rows.reduce((t, r) => ({ sales: t.sales + r.sales, live: t.live + r.live, plan: t.plan + r.plan }), { sales: 0, live: 0, plan: 0 });
+    return { rows, tot };
+  };
+
+  const wtd = table(range(weekStart, through));
+  const yday = table([through]);
+  const mtd = table(range(monthStart, through), range(monthStart, monthEnd));
+  // Pace: WTD actual + LAST week's actual for the days still to come this week,
+  // against the full week's plan.
+  const remaining = through < weekEnd ? range(addDaysYmd(through, 1), weekEnd) : [];
+  const projected = wtd.tot.sales + table(remaining.map(d => addDaysYmd(d, -7))).tot.sales;
+  const fullWeekPlan = table(range(weekStart, weekEnd)).tot.plan;
+
+  // A store with no POS figure for the day would read as a −100% day. In prod a
+  // day's row exists BEFORE it is reported (total 0, or NULL for Indy East);
+  // only the nightly snapshot sets snapshot_time, so that is the test.
+  const missing = stores.filter(s => { const r = row[s + "|" + through]; return !r || r.total == null || !r.snapshot_time; })
+    .map(s => STORE_LABELS[s] || s);
+
+  // Whatnot posts a row for every recap, $0 days included, for the stores it
+  // covers. Those stores in scope with no row for `through` = recap not in yet.
+  // Best-effort: no channel_sales table means no note, never a failed email.
+  let whatnotPending = false;
+  try {
+    const { results: wn } = await env.DB.prepare(
+      `SELECT store, MAX(date) AS last FROM channel_sales
+        WHERE channel = 'whatnot' AND date >= ? AND date <= ? AND store IN (${ph}) GROUP BY store`
+    ).bind(addDaysYmd(through, -30), through, ...stores).all();
+    whatnotPending = (wn || []).some(r => r.last < through);
+  } catch (_) { /* table absent: nothing to say */ }
+
+  return {
+    reportDate: addDaysYmd(through, 1), through, weekStart, weekEnd, wtd, yday, mtd, missing, whatnotPending,
+    // No plan (no budget rows yet, e.g. a new year) is not "on track".
+    pace: { projected, fullWeekPlan, onTrack: fullWeekPlan > 0 ? projected >= fullWeekPlan : null },
+  };
 }
 
-// Consolidated L2 category table (Category | Units | Net Sales | ASP) with an
-// Auction sales-only row so the Total ties to the By-Store Total. Returns '' if
-// no data so the email simply omits the section.
-function renderCategoryTableHtml(cat, scopeLabel = 'All Stores') {
-  if (!cat || !cat.categories || !cat.categories.length) return '';
-  const catRow = (name, qty, net, asp, bg = '') => `
-    <tr style="border-bottom:1px solid #eee${bg}">
-      <td style="padding:8px 8px 8px 22px;color:#333">${_esc(name)}</td>
-      <td style="padding:8px 8px;text-align:right;color:${qty == null ? '#bbb' : '#666'}">${qty == null ? '—' : _fmtInt(qty)}</td>
-      <td style="padding:8px 8px;text-align:right;font-weight:600;color:#111">${_fmtDollars(net)}</td>
-      <td style="padding:8px 14px 8px 8px;text-align:right;color:${asp == null ? '#bbb' : '#666'}">${asp == null ? '—' : _fmtDollars(asp)}</td>
-    </tr>`;
-  // Fold low-value / utility L2s (Gift Cards, Custom Sales, refunds, Non-Item…)
-  // into a single "Other" row so the table stays readable and still ties to the
-  // Total. Threshold is on |net| so a large refund category stays visible.
-  const CATEGORY_MIN_NET = 250;
-  const big = [], small = [];
-  for (const c of cat.categories) {
-    (Math.abs(Number(c.netSales) || 0) < CATEGORY_MIN_NET ? small : big).push(c);
-  }
-  let rows = big.map(c => catRow(c.category, c.qty, c.netSales, c.asp)).join('');
-  if (small.length) {
-    const oNet = small.reduce((s, c) => s + (Number(c.netSales) || 0), 0);
-    const oQty = small.reduce((s, c) => s + (Number(c.qty) || 0), 0);
-    rows += catRow('Other', oQty, oNet, null);   // ASP omitted — meaningless for a mixed bucket
-  }
-  const auctionRow = (cat.auction > 0) ? catRow('Auction', null, cat.auction, null, ';background:#fbfaf5') : '';
-  const totNet = (Number(cat.totals.netSales) || 0) + (Number(cat.auction) || 0);
-  return `
-      <h3 style="margin:34px 0 8px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:#194975">Category Sales · ${_esc(scopeLabel)}</h3>
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
-        <thead>
-          <tr style="background:#3BB54A;color:#fff">
-            <th style="padding:9px 8px 9px 22px;text-align:left;font-weight:600">Category</th>
-            <th style="padding:9px 8px;text-align:right;font-weight:600">Units</th>
-            <th style="padding:9px 8px;text-align:right;font-weight:600">Net Sales</th>
-            <th style="padding:9px 14px 9px 8px;text-align:right;font-weight:600">ASP</th>
-          </tr>
-        </thead>
-        <tbody>${rows}${auctionRow}</tbody>
-        <tfoot>
-          <tr style="background:#f7f7f7;font-weight:700;border-top:2px solid #3BB54A">
-            <td style="padding:10px 8px 10px 22px;color:#111">Total</td>
-            <td style="padding:10px 8px;text-align:right;color:#111">${_fmtInt(cat.totals.qty)}</td>
-            <td style="padding:10px 8px;text-align:right;color:#111">${_fmtDollars(totNet)}</td>
-            <td style="padding:10px 14px 10px 8px;text-align:right;color:#111">${_fmtDollars(cat.totals.asp)}</td>
-          </tr>
-        </tfoot>
-      </table>`;
-}
+// Email-safe (tables + inline styles only). Text colours are ≥ 4.5:1 on every
+// background they sit on: #1e7a34 ≥ 4.63, #b42318 ≥ 5.59, #5b6470 ≥ 5.14.
+function buildExecSummaryEmailHtml(d, totalsLabel = "All Stores", scopeLabel = totalsLabel) {
+  const NAVY = "#194975", INK = "#1a1f24", MUTED = "#5b6470", RULE = "#e3e7eb", ZEBRA = "#f6f8fa", POS = "#1e7a34", NEG = "#b42318";
+  const usd = v => (v < 0 ? "-$" : "$") + Math.round(Math.abs(v)).toLocaleString("en-US");
+  const pct1 = v => `${(v * 100).toFixed(1)}%`;
+  const variance = (s, p) => (p > 0 ? s / p - 1 : null);
+  const fmtVar = v => (v == null ? "N/A" : `${v >= 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(1)}%`);
+  const color = v => (v == null ? MUTED : v >= 0 ? POS : NEG);
+  const long = ymd => new Date(ymd + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
+  const short = ymd => new Date(ymd + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
 
-// Email-safe progress bar (percent-width nested table; no flexbox — Outlook OK).
-function _barHtml(pct, color) {
-  const w = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
-  const rest = 100 - w;
-  const fill = w > 0 ? `<td width="${w}%" style="background:${color};font-size:0;line-height:0;height:5px;border-radius:4px">&nbsp;</td>` : '';
-  const empty = rest > 0 ? `<td width="${rest}%" style="font-size:0;line-height:0;height:5px">&nbsp;</td>` : '';
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;background:#edeff2;border-radius:4px;table-layout:fixed;margin-top:7px"><tr>${fill}${empty}</tr></table>`;
-}
-
-// App-style "Daily Breakdown" — one card per day (date badge, actual, budget,
-// progress bar, variance) plus a Month-to-Date header and Week-to-Date footer,
-// both with budget prorated to elapsed days. Returns '' if no data.
-function renderWeeklyBreakdownHtml(wk, scopeLabel = 'All Stores') {
-  if (!wk || !wk.days || !wk.days.length) return '';
-  const dayRows = wk.days.map(d => {
-    const isToday = d.state === 'today';
-    const badgeBg = isToday ? '#22c55e' : '#f1f3f5';
-    const badgeDow = isToday ? '#eafff0' : '#9aa1a9';
-    const badgeNum = isToday ? '#ffffff' : '#333333';
-    // Only fully-reported days show a dollar figure. Today (partial/in-progress)
-    // and pending/future days render "—" even if D1 holds a 0 or partial value.
-    const showActual = d.state === 'reported' && d.actual != null;
-    const actualStr = showActual ? _fmtDollars(d.actual) : '—';
-    const actualColor = showActual ? '#111' : '#9aa1a9';
-    let attain = 0, barColor = '#22c55e';
-    if (d.state === 'reported' && d.budget > 0) { attain = (d.actual / d.budget) * 100; barColor = attain >= 100 ? '#22c55e' : '#F5A623'; }
-    const bar = d.state === 'reported' ? _barHtml(attain, barColor) : _barHtml(0, barColor);
-    let varStr = '—', varColor = '#9aa1a9';
-    if (d.state === 'reported') { varStr = _fmtVarDollars(d.variance); varColor = d.variance >= 0 ? '#2d8a2d' : '#c0392b'; }
-    else if (d.state === 'pending') { varStr = 'pending'; }
+  const section = (title, sub, cols, t, mode, period) => {
+    const th = (txt, align) => `<th style="padding:8px 6px;text-align:${align};font-size:12px;font-weight:700;line-height:1.25;color:#fff;background:${NAVY}">${txt}</th>`;
+    const last = r => {
+      if (mode === "attain") return { txt: r.plan > 0 ? pct1(r.sales / r.plan) : "N/A", color: INK };
+      const v = variance(r.sales, r.plan); return { txt: fmtVar(v), color: color(v) };
+    };
+    const cell = "padding:9px 6px;font-size:14px;border-bottom:1px solid " + RULE;
+    const body = t.rows.map((r, i) => {
+      const l = last(r);
+      return `<tr style="background:${i % 2 ? ZEBRA : "#fff"}">
+          <td style="${cell};color:${INK}">${_esc(r.label)}${r.live > 0 ? `<sup style="color:${MUTED}">*</sup>` : ""}</td>
+          <td style="${cell};white-space:nowrap;text-align:right;color:${INK}">${usd(r.sales)}</td>
+          <td style="${cell};white-space:nowrap;text-align:right;color:${MUTED}">${usd(r.plan)}</td>
+          <td style="${cell};white-space:nowrap;text-align:right;font-weight:700;color:${l.color}">${l.txt}</td>
+        </tr>`;
+    }).join("");
+    const tl = last(t.tot);
+    const foot = `padding:10px 6px;font-size:14px;font-weight:800;border-top:2px solid ${NAVY}`;
+    const live = t.rows.filter(r => r.live > 0);
+    const periodWord = period === "Yesterday" ? "yesterday" : period;
+    const note = live.length
+      ? `* ${period} live sales included above: ` + live.map(r => `${_esc(r.label)} ${usd(r.live)}` +
+          (r.sales > 0 ? ` (${pct1(r.live / r.sales)} of ${_esc(r.label)} ${periodWord} sales)` : "")).join("; ") + "."
+      : "* No live sales in this period.";
     return `
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border-bottom:1px solid #eef0f2">
-        <tr>
-          <td width="52" valign="middle" style="padding:11px 0">
-            <table role="presentation" width="46" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
-              <tr><td align="center" style="background:${badgeBg};border-radius:11px;padding:6px 0">
-                <div style="font-size:9px;font-weight:800;letter-spacing:.05em;color:${badgeDow}">${d.dow}</div>
-                <div style="font-size:18px;font-weight:800;line-height:1.05;color:${badgeNum}">${d.dayNum}</div>
-              </td></tr>
-            </table>
-          </td>
-          <td valign="middle" style="padding:11px 0 11px 14px">
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
-              <tr>
-                <td style="font-size:18px;font-weight:800;color:${actualColor}">${actualStr}</td>
-                <td align="right" style="font-size:12px;color:#9aa1a9">vs ${_fmtDollars(d.budget)}</td>
-              </tr>
-            </table>
-            ${bar}
-          </td>
-          <td width="104" valign="middle" align="right" style="padding:11px 0;font-size:14px;font-weight:800;color:${varColor}">${varStr}</td>
-        </tr>
-      </table>`;
-  }).join('');
+      <h3 style="margin:28px 0 2px;font-size:15px;font-weight:800;color:${NAVY}">${title}</h3>
+      <div style="margin:0 0 8px;font-size:12px;color:${MUTED}">${sub}</div>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border:1px solid ${RULE}">
+        <thead><tr>${th("Store", "left")}${th(cols[0], "right")}${th(cols[1], "right")}${th(cols[2], "right")}</tr></thead>
+        <tbody>${body}
+          <tr style="background:#e9eef4">
+            <td style="${foot};color:${INK}">${_esc(totalsLabel)}</td>
+            <td style="${foot};white-space:nowrap;text-align:right;color:${INK}">${usd(t.tot.sales)}</td>
+            <td style="${foot};white-space:nowrap;text-align:right;color:${INK}">${usd(t.tot.plan)}</td>
+            <td style="${foot};white-space:nowrap;text-align:right;color:${tl.color}">${tl.txt}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="margin:6px 0 0;font-size:12px;line-height:1.5;font-style:italic;color:${MUTED}">${note}</p>`;
+  };
 
-  const m = wk.mtd, w = wk.wtd;
-  const mVar = m.sales - m.budget, mColor = mVar >= 0 ? '#2d8a2d' : '#c0392b';
-  const wVar = w.sales - w.budget, wColor = wVar >= 0 ? '#2d8a2d' : '#c0392b';
-  const mtdHeader = `
-      <div style="background:#f0fbf3;border:1px solid #d7efdd;border-radius:8px;padding:11px 14px;margin-bottom:12px">
+  const { wtd, pace } = d;
+  const attain = wtd.tot.plan > 0 ? wtd.tot.sales / wtd.tot.plan : null;
+  const pillOf = (bg, fg, txt) => `<span style="display:inline-block;padding:3px 9px;border-radius:999px;background:${bg};color:${fg};font-size:12px;font-weight:800;letter-spacing:.04em">${txt}</span>`;
+  const pill = pace.onTrack == null ? pillOf("#eef0f2", MUTED, "NO PLAN")
+    : pace.onTrack ? pillOf("#e3f4e8", POS, "ON TRACK") : pillOf("#fde8e6", NEG, "OFF TRACK");
+  const warn = txt => `<p style="margin:10px 0 0;padding:8px 10px;border-radius:6px;background:#fff5e6;font-size:12px;line-height:1.5;color:#7a4a00">${txt}</p>`;
+  const month = new Date(d.through + "T12:00:00Z").toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
+
+  return `
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;padding:24px 16px;background:#fff;color:${INK}">
+      <img src="https://www.retjghub.com/retjg-logo-email.png" alt="RETJG HUB" width="40" height="40" style="display:block;margin-bottom:16px">
+      <h2 style="margin:0 0 4px;font-size:21px;color:${NAVY}">Executive Summary</h2>
+      <p style="margin:0 0 18px;font-size:13px;color:${MUTED}">${_esc(scopeLabel)} &nbsp;·&nbsp; ${long(d.reportDate)} &nbsp;·&nbsp; Data through ${short(d.through)}</p>
+
+      <div style="border:1px solid ${RULE};border-radius:10px;padding:16px">
+        <div style="font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${MUTED}">Total WTD Sales</div>
+        <div style="font-size:32px;font-weight:800;line-height:1.15;color:${INK};margin:2px 0 10px">${usd(wtd.tot.sales)}</div>
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
           <tr>
-            <td style="font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#2d8a2d">${_esc(m.monthLabel)} · Month to Date</td>
-            <td align="right" style="font-size:14px;font-weight:800;color:${mColor}">${_fmtVarDollars(mVar)}</td>
+            <td width="50%" style="padding:8px 0;border-top:1px solid ${RULE}">
+              <div style="font-size:11px;color:${MUTED}">WTD plan to date</div>
+              <div style="font-size:17px;font-weight:700;color:${INK}">${usd(wtd.tot.plan)}</div>
+            </td>
+            <td width="50%" style="padding:8px 0;border-top:1px solid ${RULE}">
+              <div style="font-size:11px;color:${MUTED}">% to plan</div>
+              <div style="font-size:17px;font-weight:700;color:${attain == null ? MUTED : attain >= 1 ? POS : NEG}">${attain == null ? "N/A" : pct1(attain)}</div>
+            </td>
           </tr>
-          <tr><td colspan="2" style="padding-top:3px">
-            <span style="font-size:17px;font-weight:800;color:#111">${_fmtDollars(m.sales)}</span>
-            <span style="color:#c4c9cf">/</span>
-            <span style="font-size:14px;color:#8a929c;font-weight:600">${_fmtDollars(m.budget)}</span>
-          </td></tr>
         </table>
-      </div>`;
-  const weekFooter = `
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border-top:2px solid #3BB54A;margin-top:2px">
-        <tr>
-          <td style="padding-top:13px">
-            <span style="font-size:12px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#194975">Week ${_esc(wk.weekLabel || '')} · to date</span><br>
-            <span style="font-size:17px;font-weight:800;color:#111">${_fmtDollars(w.sales)}</span>
-            <span style="font-size:13px;color:#8a929c;font-weight:600">vs ${_fmtDollars(w.budget)}</span>
-            <span style="font-size:12px;color:#9aa1a9">· ${w.reportedDays} of ${w.totalDays} days reported</span>
-          </td>
-          <td align="right" valign="bottom" style="padding-top:13px;font-size:15px;font-weight:800;color:${wColor}">${_fmtVarDollars(wVar)}</td>
-        </tr>
-      </table>`;
-  return `
-      <h3 style="margin:34px 0 8px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:#194975">Daily Breakdown · ${_esc(scopeLabel)}</h3>
-      ${mtdHeader}
-      ${dayRows}
-      ${weekFooter}`;
-}
+        <div style="padding-top:10px;border-top:1px solid ${RULE};font-size:13px;line-height:1.5;color:${INK}">
+          <strong>Full-week pace</strong> &nbsp;${pill}<br>
+          Projected <strong>${usd(pace.projected)}</strong> vs full-week plan <strong>${usd(pace.fullWeekPlan)}</strong>
+        </div>
+        ${d.missing.length ? warn(`No sales data yet for ${d.missing.map(_esc).join(", ")} on ${short(d.through)}; counted as $0 above.`) : ""}
+        ${d.whatnotPending ? warn(`The Whatnot recap for ${short(d.through)} has not arrived, so that day's Whatnot sales are not included yet.`) : ""}
+      </div>
 
-// `totalsLabel` names the by-store footer row; `scopeLabel` names what the two
-// sub-tables below it cover. Neither may keep saying "All Stores" on a
-// store-scoped send — those figures are the recipient's stores only, and
-// mislabelling them as the chain misreports revenue by an order of magnitude.
-//
-// They differ because a single-store email would otherwise print the store name
-// twice in the same table ("Coliseum … / Coliseum"); its footer says "Total"
-// while its section headers still name the store.
-function buildSummaryEmailHtml(data, brief, categoryData, weeklyData, totalsLabel = 'All Stores', scopeLabel = totalsLabel) {
-  const { date, stores, totals } = data;
-  const displayDate = new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+      ${section("Week to date", `${short(d.weekStart)} – ${short(d.through)}`, ["WTD Sales", "WTD Plan", "Variance %"], d.wtd, "var", "WTD")}
+      ${section("Yesterday", short(d.through), ["Sales", "Plan", "Variance %"], d.yday, "var", "Yesterday")}
+      ${section("Month to date", `${month} 1 – ${new Date(d.through + "T12:00:00Z").getUTCDate()}`, ["MTD Sales", "Monthly Plan", "% of Plan"], d.mtd, "attain", "MTD")}
 
-  const briefBox = brief ? `
-      <div style="background:#f1f9f3;border:1px solid #cfe9d6;border-radius:8px;padding:14px 16px;margin:0 0 22px">
-        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#1f6e33;margin-bottom:7px">Morning Brief</div>
-        <div style="font-size:14px;line-height:1.6;color:#23332a">${brief.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
-      </div>` : '';
-
-  const dot = c => `<span style="display:inline-block;width:7px;height:7px;border-radius:2px;background:${c};margin-right:4px;vertical-align:middle"></span>`;
-
-  const storeRows = stores.map(({ label, retail, bin, auction, sales, budget }) => `
-    <tr style="border-bottom:1px solid #eee">
-      <td style="padding:9px 8px 9px 22px;color:#333">${label}</td>
-      <td style="padding:9px 8px;text-align:right;color:#666">${_fmtDollars(retail)}</td>
-      <td style="padding:9px 8px;text-align:right;color:#666">${_fmtDollars(bin)}</td>
-      <td style="padding:9px 8px;text-align:right;color:${auction ? '#666' : '#bbb'}">${_fmtDollars(auction)}</td>
-      <td style="padding:9px 8px;text-align:right;font-weight:700;color:#111;background:#f4faf5">${_fmtDollars(sales)}</td>
-      <td style="padding:9px 8px;text-align:right;color:#333">${_fmtDollars(budget)}</td>
-      <td style="padding:9px 14px 9px 8px;text-align:right;color:${_vsColor(sales,budget)}">${_fmtVsBudget(sales,budget)}</td>
-    </tr>`).join('');
-
-  const { retail: tr, bin: tbn, auction: tau, sales: ts, budget: tb } = totals;
-
-  return `
-    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:32px 24px;background:#fff">
-      <img src="https://www.retjghub.com/retjg-logo-email.png" alt="RETJG HUB" width="44" height="44" style="display:block;margin-bottom:20px">
-      <h2 style="margin:0 0 4px;font-size:20px;color:#194975">Daily Sales Summary</h2>
-      <p style="margin:0 0 24px;font-size:14px;color:#666">${displayDate}</p>
-      ${briefBox}
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
-        <thead>
-          <tr style="background:#3BB54A;color:#fff">
-            <th style="padding:9px 8px 9px 22px;text-align:left;font-weight:600">Store</th>
-            <th style="padding:9px 8px;text-align:right;font-weight:600">${dot('#bff0c8')}Retail</th>
-            <th style="padding:9px 8px;text-align:right;font-weight:600">${dot('#bcd9ff')}BIN</th>
-            <th style="padding:9px 8px;text-align:right;font-weight:600">${dot('#d6caff')}Auction</th>
-            <th style="padding:9px 8px;text-align:right;font-weight:700;background:#33a544">Total</th>
-            <th style="padding:9px 8px;text-align:right;font-weight:600">Budget</th>
-            <th style="padding:9px 14px 9px 8px;text-align:right;font-weight:600">vs Budget</th>
-          </tr>
-        </thead>
-        <tbody>${storeRows}</tbody>
-        <tfoot>
-          <tr style="background:#f7f7f7;font-weight:700;border-top:2px solid #3BB54A">
-            <td style="padding:11px 8px 11px 22px;color:#111">${totalsLabel}</td>
-            <td style="padding:11px 8px;text-align:right;color:#333">${_fmtDollars(tr)}</td>
-            <td style="padding:11px 8px;text-align:right;color:#333">${_fmtDollars(tbn)}</td>
-            <td style="padding:11px 8px;text-align:right;color:#333">${_fmtDollars(tau)}</td>
-            <td style="padding:11px 8px;text-align:right;color:#111;background:#eef7f0">${_fmtDollars(ts)}</td>
-            <td style="padding:11px 8px;text-align:right;color:#111">${_fmtDollars(tb)}</td>
-            <td style="padding:11px 14px 11px 8px;text-align:right;color:${_vsColor(ts,tb)}">${_fmtVsBudget(ts,tb)}</td>
-          </tr>
-        </tfoot>
-      </table>
-      ${renderCategoryTableHtml(categoryData, scopeLabel)}
-      ${renderWeeklyBreakdownHtml(weeklyData, scopeLabel)}
-      <p style="margin-top:28px;font-size:12px;color:#aaa">
-        <a href="https://www.retjghub.com" style="color:#3BB54A;text-decoration:none">Open Dashboard</a>
-        &nbsp;·&nbsp; RETJG HUB Notification System
-        &nbsp;·&nbsp; To stop receiving these, open Settings → Notifications.
+      <p style="margin:24px 0 0;padding-top:12px;border-top:1px solid ${RULE};font-size:11px;line-height:1.6;color:${MUTED}">
+        Sales = net sales (retail + BIN) plus live sales, counted once. Live sales = online auction plus Whatnot
+        (Whatnot is gross, before fees and refunds). Plan = the daily budget from the budget sheet.
+        Variance % = sales ÷ plan − 1. Week = Sunday–Saturday. Pace = week-to-date sales plus last week's sales
+        for the days still to come.
+        <br><a href="https://www.retjghub.com" style="color:${NAVY}">Open Dashboard</a>
+        &nbsp;·&nbsp; RETJG HUB &nbsp;·&nbsp; To stop receiving these, open Settings → Notifications.
       </p>
     </div>`;
 }
@@ -6985,12 +6850,11 @@ async function dispatchScopedDailySummaries(env, date, prefMapAll) {
     });
     if (!wanted.length) { summary.email.skipped += users.length; continue; }
 
-    let data, categoryData, weeklyData;
+    let data, exec;
     try {
-      data = await buildDailySummaryData(env, date, stores);
-      [categoryData, weeklyData] = await Promise.all([
-        buildDailyCategoryData(env, date, stores).catch(() => null),
-        buildWeeklyByDayData(env, date, stores).catch(() => null),
+      [data, exec] = await Promise.all([
+        buildDailySummaryData(env, date, stores),
+        buildExecSummaryData(env, date, stores),
       ]);
     } catch (e) {
       console.error(`Scoped summary build failed for [${stores.join(',')}]: ${e.message}`);
@@ -6998,28 +6862,32 @@ async function dispatchScopedDailySummaries(env, date, prefMapAll) {
       continue;
     }
 
-    // Every one of this group's stores was closed or non-reporting yesterday.
-    // An email whose only table is empty is worse than no email.
-    if (!data.stores.length) {
-      console.log(JSON.stringify({ scoped_summary_skipped: stores, reason: 'no reporting stores', date }));
+    // None of this group's stores is one the Executive Summary reports (a
+    // closed store's manager). An email with no rows is worse than no email.
+    if (!exec) {
+      console.log(JSON.stringify({ scoped_summary_skipped: stores, reason: 'no executive-summary stores', date }));
       summary.email.skipped += wanted.length;
       continue;
     }
 
-    const labels = stores.map(s => STORE_LABELS[s] || s);
+    // Labels follow the stores the summary SHOWS: a Coliseum + Holland manager
+    // sees one row, so it is a single-store body named "Coliseum".
+    const shown = EXEC_SUMMARY_STORES.filter(s => stores.includes(s));
+    const labels = shown.map(s => STORE_LABELS[s] || s);
     // One store: the only body row already names it, so the footer says "Total"
-    // and the section headers carry the name. Several: both say "My Stores".
-    const single = stores.length === 1;
+    // and the header carries the name. Several: both say "My Stores".
+    const single = shown.length === 1;
     const scopeLabel = single ? labels[0] : 'My Stores';
     const totalsLabel = single ? 'Total' : 'My Stores';
-    const scopeSuffix = stores.length <= 2 ? ` (${labels.join(' + ')})` : '';
-    const emailHtml = buildSummaryEmailHtml(data, null, categoryData, weeklyData, totalsLabel, scopeLabel);
+    const scopeSuffix = shown.length <= 2 ? ` (${labels.join(' + ')})` : '';
+    const emailHtml = buildExecSummaryEmailHtml(exec, totalsLabel, scopeLabel);
+    const reportDay = new Date(exec.reportDate + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
 
     const tb = data.totals.budget, ts = data.totals.sales;
     const budgetLine = tb > 0 ? ` • Budget: ${_fmtVsBudget(ts, tb)}` : '';
     const pushPayload = JSON.stringify({
       title: `Sales Summary — ${displayDate}`,
-      body: `${_fmtDollars(ts)}${stores.length === 1 ? ` at ${labels[0]}` : ' across your stores'}${budgetLine}`,
+      body: `${_fmtDollars(ts)}${single ? ` at ${labels[0]}` : ' across your stores'}${budgetLine}`,
       tag: 'daily-summary',
       url: '/',
     });
@@ -7036,7 +6904,7 @@ async function dispatchScopedDailySummaries(env, date, prefMapAll) {
       const r = await resendSend(env, {
         from: 'RETJG HUB <noreply@retjghub.com>',
         to: user.email,
-        subject: `Sales Summary${scopeSuffix} — ${displayDate}`,
+        subject: `Executive Summary${scopeSuffix} — ${reportDay}`,
         html: emailHtml,
       }, `daily-scoped-${date}-${user.id}`);
       if (!r.skipped) {
@@ -7047,7 +6915,8 @@ async function dispatchScopedDailySummaries(env, date, prefMapAll) {
         }
       }
 
-      if (pref.push_enabled && env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY) {
+      // The push still reports yesterday's total, and only when a store reported.
+      if (data.stores.length && pref.push_enabled && env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY) {
         const { results: subs } = await env.DB.prepare(
           'SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?'
         ).bind(user.id).all();
@@ -7079,23 +6948,16 @@ async function dispatchScopedDailySummaries(env, date, prefMapAll) {
 async function dispatchDailySummary(env, date) {
   if (!env.DB) return { error: 'DB not configured' };
 
-  // AI Morning Brief is temporarily removed from the daily email (2026-07 — in
-  // the way and not used enough). We build the summary data directly and skip
-  // brief generation, so no Sonnet call runs on the daily path. The machinery
+  // AI Morning Brief is not in the daily email (removed 2026-07 — in the way and
+  // not used enough), so no Sonnet call runs on the daily path. The machinery
   // (buildAndStoreBrief / generateMorningBrief) and the daily-brief /
-  // generate-brief endpoints stay intact for a future re-enable: restore the
-  // buildAndStoreBrief call and pass `brief` to buildSummaryEmailHtml below.
-  const data = await buildDailySummaryData(env, date);
+  // generate-brief endpoints stay intact; the Executive Summary has no slot for
+  // it, so a re-enable means adding one to buildExecSummaryEmailHtml.
+  // The email is the Executive Summary; the push keeps yesterday's one-line
+  // total from buildDailySummaryData.
+  const [data, exec] = await Promise.all([buildDailySummaryData(env, date), buildExecSummaryData(env, date)]);
   const { sales: ts, budget: tb } = data.totals;
-
-  // New tables: consolidated L2 categories (from KV item snapshots) and the
-  // app-style week-by-day breakdown (one D1 query). Both are best-effort — a
-  // null result just omits that section from the email.
-  const [categoryData, weeklyData] = await Promise.all([
-    buildDailyCategoryData(env, date).catch(() => null),
-    buildWeeklyByDayData(env, date).catch(() => null),
-  ]);
-  const emailHtml = buildSummaryEmailHtml(data, null, categoryData, weeklyData);
+  const emailHtml = buildExecSummaryEmailHtml(exec);
 
   // Short push body
   const budgetLine = tb > 0 ? ` • Budget: ${_fmtVsBudget(ts, tb)}` : '';
@@ -7159,11 +7021,11 @@ async function dispatchDailySummary(env, date) {
     // ── Email ─────────────────────────────────────────────────────────────
     let emailResult = null;                    // null = opted out, nothing attempted
     if (pref.daily_summary) {
-      const displayDate = new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      const reportDay = new Date(exec.reportDate + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
       emailResult = await resendSend(env, {
         from: 'RETJG HUB <noreply@retjghub.com>',
         to: user.email,
-        subject: `Sales Summary — ${displayDate}`,
+        subject: `Executive Summary — ${reportDay}`,
         html: emailHtml,
       }, `daily-chain-${date}-${user.id}`);
       if (!emailResult.skipped) {
@@ -22003,7 +21865,8 @@ export default {
     }
 
     // GET ?action=preview-daily-summary[&date=YYYY-MM-DD][&stores=BL1,BL4]
-    // Renders the daily-summary email HTML WITHOUT sending anything. Read-only,
+    // Renders the daily email (the Executive Summary; `date` = the data-through
+    // day) WITHOUT sending anything. Read-only,
     // superuser/admin-secret only. Used to eyeball the layout in a browser.
     //
     // `stores` renders the STORE-SCOPED body a manager would receive, using the
@@ -22029,17 +21892,15 @@ export default {
         return new Response(JSON.stringify({ error: "No known store codes in `stores`" }), { status: 400, headers: corsJson });
       }
       // Mirrors dispatchScopedDailySummaries so the preview cannot drift from
-      // what is actually sent.
-      const single = scope && scope.length === 1;
-      const scopeLabel  = scope ? (single ? (STORE_LABELS[scope[0]] || scope[0]) : 'My Stores') : 'All Stores';
+      // what is actually sent: labels follow the stores the summary shows.
+      const shown = scope && EXEC_SUMMARY_STORES.filter(s => scope.includes(s));
+      const single = shown && shown.length === 1;
+      const scopeLabel  = scope ? (single ? (STORE_LABELS[shown[0]] || shown[0]) : 'My Stores') : 'All Stores';
       const totalsLabel = scope ? (single ? 'Total' : 'My Stores') : 'All Stores';
       try {
-        const data = await buildDailySummaryData(env, dateParam, scope);
-        const [categoryData, weeklyData] = await Promise.all([
-          buildDailyCategoryData(env, dateParam, scope).catch(() => null),
-          buildWeeklyByDayData(env, dateParam, scope).catch(() => null),
-        ]);
-        const html = buildSummaryEmailHtml(data, null, categoryData, weeklyData, totalsLabel, scopeLabel);
+        const exec = await buildExecSummaryData(env, dateParam, scope);
+        if (!exec) return new Response(JSON.stringify({ error: "None of those stores is in the Executive Summary" }), { status: 400, headers: corsJson });
+        const html = buildExecSummaryEmailHtml(exec, totalsLabel, scopeLabel);
         return new Response(html, { headers: { ...corsHeaders, "Content-Type": "text/html; charset=utf-8" } });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });

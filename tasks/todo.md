@@ -27,7 +27,12 @@ Plan (one channel per source, the column becomes their SUM, so no consumer chang
       Fort Wayne→BL1 / Battle Creek→BL14 (as the recap assigns), tips excluded, POST per store/date incl. $0
 - [x] Phase 1 check: each recap's "month to date" table vs stored Whatnot; push an alert on drift
 - [x] Backup taken: `_preview/backup-live-sales-2026-10-12.json` (daily_sales Aug-Oct, 5 stores; channel_sales)
-- [ ] Phase 1 data (prod, rule 7): Brian runs `backfill()` after the worker deploy. Expected: Battle Creek
+- [x] Worker deployed by Brian from a fresh clone of main f9c5fb1: version c94405dc, 100% at 20:26:18Z
+      (bindings MEDIA + BL16 + 6 crons checked in the output)
+- [x] preview() log checked against prod before backfill: 24 store-days, 7 up, none down, no overrides;
+      recap daily lines sum to the recap's own month-to-date (BL1 $11,871, BL14 $15,980 through 10/9)
+- [x] Phase 1 data (prod, rule 7): Brian ran `backfill()` 20:39Z + `installTrigger`. Read back from D1:
+      24 whatnot rows Sep 30-Oct 11, all 24 store-days equal feed + recap, 0 mismatches Expected: Battle Creek
       Oct 1-11 live $10,201 -> ~$22.4k; Coliseum ~unchanged (Sheet already matched Whatnot)
 - [x] Tests: test-live-sales-channels.mjs (12 of 21 fail on main), test-whatnot-recap-parse.mjs; the real
       .eml parses to BL1 $3,368 / BL14 $3,050 / MTD $11,871 + $15,980; `npm test` 8786 assertions, 98 suites
@@ -36,8 +41,15 @@ Plan (one channel per source, the column becomes their SUM, so no consumer chang
       replies/subject changes mishandled; a multi-day email could post onto one day; a rejected or total-less
       row wiped its store-day. Rollout adds `preview()` → Claude compares each day to prod → `backfill()`
 - [ ] Brian: get bhoward@bargainlane.com added to the recap recipients (today: Ryan + James only)
-- [ ] Phase 2 worker: Executive Summary builder + email, replaces daily summary (chain-wide + scoped),
-      preview endpoint renders it; footnote says Whatnot is gross; "recap not received" when missing
+- [x] Phase 2 worker: Executive Summary builder + email, replaces daily summary (chain-wide + scoped),
+      preview endpoint renders it; footnote says Whatnot is gross; "recap not received" when missing.
+      `buildExecSummaryData` / `buildExecSummaryEmailHtml`; EXEC_SUMMARY_STORES (Holland out by name);
+      push unchanged (yesterday's one-line total); subject "Executive Summary — <report day>"
+- [x] Phase 2 tests: test-exec-summary.mjs, 32 hand-worked figures through worker.fetch (25 fail on main;
+      mutants "month plan = MTD plan" and "pace > instead of >=" each caught); test-scoped-daily-summary
+      updated for the new layout, negative scoping assertions unchanged; `npm test` 8876 / 100 suites
+- [x] Real prod rows rendered through the new worker: Mon 10/12 WTD $40,503 (= first preview $38,081 +
+      BL14 10/11 Whatnot $2,422), no overflow at 375px
 - [ ] Phase 3 page: "Auction" → "Live" on the dashboard
 - [ ] Tests through `worker.fetch` / `worker.scheduled`; `npm test`; both themes for Phase 3
 
