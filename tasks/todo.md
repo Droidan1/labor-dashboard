@@ -1,3 +1,49 @@
+# Executive Summary email + Whatnot live sales (2026-10-12)
+
+**Request (Brian, from his boss):** replace the Daily Sales Summary with an "Executive Summary": headline
+WTD sales / plan / % to plan + on/off-track pace, then WTD, Yesterday and MTD tables for Coliseum, Dupont,
+South Bend, Battle Creek, Indy East + All Stores, each with a live-sales footnote. Preview with real prod
+figures: `_preview/executive-summary.html` (gitignored; repo is public).
+
+**Decisions (asked 2026-10-12):** replaces the Daily Sales Summary, store managers get a scoped copy ·
+live sales = online auction (Drive feed) + Whatnot GROSS from the "Bargain Lane Live recap" email (a tool
+Brian does not control; arrives ~6 AM ET next day in his Workspace inbox; sent even on 0-show days) ·
+the Sheet stops supplying auction/live sales, budget stays Sheet-sourced · headline keeps attainment %,
+tables keep variance % · dashboard counts Whatnot and "Auction" is renamed "Live" · October backfill
+comes from month-to-date recaps the tool owner will send.
+
+**Why the data model changes:** `daily_sales.auction` has two writers (feed overwrites, Sheet only fills a
+NULL), so on 11 days since Sep 1 Battle Creek's Whatnot (~$23.9k) and 2 of Coliseum's ($2.1k) were dropped.
+The recap reconciles: Sheet BL14 "Auction NS" = feed + Whatnot (Oct 2: $330 + ~$3,658 = $3,988).
+
+Plan (one channel per source, the column becomes their SUM, so no consumer changes and no last-writer-wins):
+- [x] Raw recap .eml from Brian: every number is in the plain-text body (PDF not needed). Sent by
+      bgeorges@retjg.com ~5 AM ET to Ryan + James; Brian's copy was a FORWARD — he must be added as a recipient
+- [x] Phase 1 worker: `?action=ingest` accepts channel `whatnot`; projection recomputes
+      `daily_sales.auction = SUM(channel_sales auction + whatnot)` for the store/date (manual override kept)
+- [x] Phase 1 worker: Sheet import stops writing `auction`; total fallback is retail + bins (Total NS
+      includes auction: 23 rows in Dec 2025-Jan 2026 count it twice, ~$8.0k, left as history)
+- [x] Phase 1 feeder: `scripts/whatnot-recap-ingest.gs` — Gmail search for the recap, parse Shows table,
+      Fort Wayne→BL1 / Battle Creek→BL14 (as the recap assigns), tips excluded, POST per store/date incl. $0
+- [x] Phase 1 check: each recap's "month to date" table vs stored Whatnot; push an alert on drift
+- [x] Backup taken: `_preview/backup-live-sales-2026-10-12.json` (daily_sales Aug-Oct, 5 stores; channel_sales)
+- [ ] Phase 1 data (prod, rule 7): Brian runs `backfill()` after the worker deploy. Expected: Battle Creek
+      Oct 1-11 live $10,201 -> ~$22.4k; Coliseum ~unchanged (Sheet already matched Whatnot)
+- [x] Tests: test-live-sales-channels.mjs (12 of 21 fail on main), test-whatnot-recap-parse.mjs; the real
+      .eml parses to BL1 $3,368 / BL14 $3,050 / MTD $11,871 + $15,980; `npm test` 8786 assertions, 98 suites
+- [x] PR #319 (723185f + review fixes bced5d7). Fresh-eyes review found 5 defects, all fixed with tests that
+      fail on 723185f: stale recap copy overwrote its correction; seen map grew past the 9 KB property cap;
+      replies/subject changes mishandled; a multi-day email could post onto one day; a rejected or total-less
+      row wiped its store-day. Rollout adds `preview()` → Claude compares each day to prod → `backfill()`
+- [ ] Brian: get bhoward@bargainlane.com added to the recap recipients (today: Ryan + James only)
+- [ ] Phase 2 worker: Executive Summary builder + email, replaces daily summary (chain-wide + scoped),
+      preview endpoint renders it; footnote says Whatnot is gross; "recap not received" when missing
+- [ ] Phase 3 page: "Auction" → "Live" on the dashboard
+- [ ] Tests through `worker.fetch` / `worker.scheduled`; `npm test`; both themes for Phase 3
+
+**Found, not in scope:** Sheet BL1 Oct 25 Retail NS budget cell is blank (Sheet $4,875 vs app $12,862); the
+nightly import will overwrite the app on Oct 25 and Coliseum's October plan drops $7,987. Sheet fix, Brian.
+
 # Opportunity buys: a visible manifest failure, delete a buy, and a sheet with no prices (2026-10-06)
 
 **Request (Brian):** *"make the failure a visible warning and also add option for admins to delete a buy
@@ -28,7 +74,13 @@ printed labels** (`sticker_prints.po` set NULL, rows kept). Not undoable.
       a deleted PO reopened and reprinted at the same category/price re-attributes the old sales (the PO is in
       the code, sales match by code with no date bound); `mos_entries.po` is not cleared (nothing reads it); an
       upload racing a delete can leave a live orphan manifest (two admins, same moment)
-- [ ] PR; worker deploy asked for as soon as pushed (additive, inert until the page calls it)
+- [x] PR #318, merged 17:29:34Z as `b7d5308`; Brian deployed the worker, `d7bd6683`, 17:29:54Z, 100%
+- [x] Page verified live: www.retjghub.com `index.html` byte-identical (sha256) to `b7d5308` on 3 consecutive
+      passes, `sw.js` v278; GitHub Pages run 37503958035 succeeded
+- [ ] Worker CONTENT not verified by me: writing the CF token to a file for the `content/v2` byte-compare was
+      refused (credential materialisation), the in-app browser has no session, and a version's `etag` is not
+      a bundle hash (611e0d1c's does not match a dry-run of the main it was built from either). Distinguishing
+      read-only check: buy 111111's card reads Scannable 34 on the new worker, 0 on the old
 
 **Review.** `npm test` 8702 assertions across 96 suites, all passing. Brian's two real files through the real worker: `test.csv`
 (no price) was 400 and now loads, 38 lines, 34 reachable, 0 priced; `Sales_Order_028469.csv` unchanged (38/34/38).
@@ -39,6 +91,8 @@ notes 1 each, scan flag 2). Browser check 48/48 at 390px in light and dark; agai
 34/48, including "Upload manifest SENDS the sheet (0 request)". Contrast on the composited background: warning
 8.22 dark / 6.05 light, delete button 6.43 / 6.62. Existing `browser-opportunity-buys` 364/364. The id test fails
 2 on HEAD (`ob-m-note`) and its 4 non-literal ids are helper-built (checked by hand).
+Note: buy 111111's `test.csv` manifest (16:46:59Z, 38 lines, 0 priced) went through the OLD worker. Brian had
+added an empty `Our Price` column, which the old rule accepted; it is not evidence of the new one.
 Deploy order: worker first. Every worker change is backward-compatible with the live page: it just stops
 refusing price-less sheets and adds an action the old page never calls. A new page on the old worker would
 get an error dialog from Delete and refusals for price-less sheets, nothing worse.
