@@ -5288,6 +5288,12 @@ const STORE_LABELS = {
   BL8: 'Holland', BL14: 'Battle Creek', BL16: 'Indy East',
 };
 
+// Live sales: the channel_sales channels whose SUM is a store-day's
+// daily_sales.auction. "auction" = the online auction Drive feed,
+// "whatnot" = Whatnot shows from the Bargain Lane Live recap email. The column
+// keeps its old name because every reader already folds it into store totals.
+const LIVE_CHANNELS = ["auction", "whatnot"];
+
 // Attribute a Meta campaign to a store/location by keyword-matching its name.
 // Most specific first (Coliseum/Dupont before the generic "Fort Wayne").
 // Brand-wide campaigns with no location keyword → "Unattributed".
@@ -16044,8 +16050,6 @@ async function importSheetToD1(env, { filterStore = null, fromDate = null, toDat
         const bTotal = sheetParseNum(c[COL.B_TOTAL]);
         const aRetail = sheetParseNum(c[COL.A_RETAIL]);
         const aBins = sheetParseNum(c[COL.A_BINS]);
-        const aAuction = sheetParseNum(c[COL.A_AUCTION]);
-        const aTotal = sheetParseNum(c[COL.A_TOTAL]);
         // 🛑 ACTUAL labour is no longer imported from the sheet, for ANY store.
         // Hours are entered in the dashboard (Labor page → Hours) as of
         // 2026-08-14; if this kept reading col 22 the nightly run would
@@ -16077,20 +16081,24 @@ async function importSheetToD1(env, { filterStore = null, fromDate = null, toDat
         }
 
         try {
+          // 🛑 The Sheet no longer supplies live sales (auction). They come only
+          // from channel_sales (?action=ingest), which recomputes the column as
+          // a sum. The Sheet's "Auction NS" was a third writer of the same
+          // dollars, and its Total NS INCLUDES them — so the total fallback below
+          // is retail + bins, never col 20, or a day with no Clover snapshot
+          // would count auction once in total and again in auction (23 rows in
+          // Dec 2025-Jan 2026 did exactly that).
           await env.DB.prepare(
-            `INSERT INTO daily_sales (store, date, week, budget, total, retail, bin, auction, labor_pct,
+            `INSERT INTO daily_sales (store, date, week, budget, total, retail, bin, labor_pct,
               labor_hours, budget_labor_pct, budget_labor_hours,
               order_count, avg_cart, avg_items, avg_txn_sec, avg_asp, snapshot_time)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(store, date) DO UPDATE SET
                -- Manual-override rows are immutable: keep all existing values.
                -- The CASE wrappers below short-circuit when is_manual_override=1.
                -- Sheet-authoritative columns: Sheet always wins (humans enter these)
                week=CASE WHEN is_manual_override=1 THEN week ELSE excluded.week END,
                budget=CASE WHEN is_manual_override=1 THEN budget ELSE excluded.budget END,
-               -- auction is now owned by the Drive auction feed (?action=ingest):
-               -- existing wins, so the Sheet only seeds it when the feed hasn't yet.
-               auction=CASE WHEN is_manual_override=1 THEN auction ELSE COALESCE(auction, excluded.auction) END,
                labor_pct=CASE WHEN is_manual_override=1 THEN labor_pct ELSE COALESCE(excluded.labor_pct, labor_pct) END,
                -- Labour is Sheet-authoritative like labor_pct above: the
                -- Sheet is the ONLY source, so a fresh value always wins and
@@ -16114,8 +16122,8 @@ async function importSheetToD1(env, { filterStore = null, fromDate = null, toDat
                snapshot_time=CASE WHEN is_manual_override=1 THEN snapshot_time ELSE COALESCE(snapshot_time, excluded.snapshot_time) END`
           ).bind(
             storeCode, dateStr, week, bTotal,
-            kvData?.total || aTotal || null, kvData?.retail || aRetail || null, kvData?.bin || aBins || null,
-            aAuction || null, aLabor || null,
+            kvData?.total || ((aRetail || 0) + (aBins || 0)) || null, kvData?.retail || aRetail || null, kvData?.bin || aBins || null,
+            aLabor || null,
             aHours || null, bLabor || null, bHours || null,
             kvData?.orderCount ?? null, kvData?.avgCart ?? null, kvData?.avgItems ?? null,
             kvData?.avgTxnSec != null ? Math.round(kvData.avgTxnSec) : null,
@@ -19057,33 +19065,65 @@ export default {
 
       if (batch.length) await env.DB.batch(batch);
 
-      // Projection: the dashboard reads daily_sales.auction (already folded into
-      // each store's total + the violet "Auction" breakdown). Project the auction
-      // channel's daily $ into that column so the UI lights up with no frontend
-      // change. Feed-authoritative (overwrites), but never touches manual-override
-      // rows. Other channels (eon/labor) get their own projection when added.
+      // Projection: the dashboard and the daily email read daily_sales.auction
+      // as the store-day's LIVE sales (online auction + Whatnot), folded into
+      // each store's total. The column is RECOMPUTED as the sum of every live
+      // channel's channel_sales row, never written from the request — when it
+      // was last-writer-wins, the auction feed overwrote Battle Creek's Whatnot
+      // on 11 days in Sep-Oct 2026 (~$23.9k gone). Manual-override rows are
+      // never touched.
       let projected = 0;
-      if (channel === "auction" && batch.length) {
+      if (LIVE_CHANNELS.includes(channel) && batch.length) {
         const proj = env.DB.prepare(
-          `INSERT INTO daily_sales (store, date, auction) VALUES (?, ?, ?)
+          `INSERT INTO daily_sales (store, date, auction)
+           VALUES (?, ?, (SELECT ROUND(SUM(total), 2) FROM channel_sales
+                           WHERE store = ? AND date = ? AND channel IN (${LIVE_CHANNELS.map(() => "?").join(",")})))
            ON CONFLICT(store, date) DO UPDATE SET
              auction = CASE WHEN is_manual_override = 1 THEN auction ELSE excluded.auction END`
         );
         const projBatch = [];
+        const seen = new Set();
         for (let i = 0; i < rows.length; i++) {
           const r = rows[i] || {};
           const store = (r.store || "").toString().trim().toUpperCase();
           const date = (r.date || "").toString().trim();
-          if (!store || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
-          if (r.total == null || r.total === "") continue;
-          const total = roundCents(Number(r.total));
-          if (!Number.isFinite(total)) continue;
-          projBatch.push(proj.bind(store, date, total));
+          if (!store || !/^\d{4}-\d{2}-\d{2}$/.test(date) || seen.has(store + "|" + date)) continue;
+          seen.add(store + "|" + date);
+          projBatch.push(proj.bind(store, date, store, date, ...LIVE_CHANNELS));
         }
         if (projBatch.length) { await env.DB.batch(projBatch); projected = projBatch.length; }
       }
 
-      return new Response(JSON.stringify({ ok: true, channel, written: batch.length, projected, skipped: errors.length, errors }), { headers: corsJson });
+      // Reconcile: a feeder that also reports its own month-to-date total per
+      // store (the Whatnot recap does) gets it checked against what is stored,
+      // so a recap that never arrived shows up the next morning, not at month
+      // end. { reconcile: { through: "YYYY-MM-DD", totals: { BL1: 11871 } } }
+      let reconcile = null;
+      const rec = body.reconcile;
+      if (rec && /^\d{4}-\d{2}-\d{2}$/.test(String(rec.through || "")) && rec.totals && typeof rec.totals === "object") {
+        const through = String(rec.through), monthStart = through.slice(0, 8) + "01";
+        reconcile = [];
+        for (const [rawStore, reported] of Object.entries(rec.totals)) {
+          const store = rawStore.toString().trim().toUpperCase();
+          if (!Number.isFinite(Number(reported))) continue;
+          const row = await env.DB.prepare(
+            "SELECT SUM(total) AS t FROM channel_sales WHERE channel = ? AND store = ? AND date >= ? AND date <= ?"
+          ).bind(channel, store, monthStart, through).first();
+          const stored = roundCents(Number(row && row.t) || 0);
+          reconcile.push({ store, reported: Number(reported), stored, diff: roundCents(stored - Number(reported)) });
+        }
+        const off = reconcile.filter(r => Math.abs(r.diff) >= 1);
+        if (off.length) {
+          const span = `${monthStart.slice(5).replace("-", "/")}–${through.slice(5).replace("-", "/")}`;
+          await pushSuperusers(env, {
+            title: `${channel} totals disagree`,
+            body: off.map(r => `${STORE_LABELS[r.store] || r.store}: recap $${r.reported.toLocaleString("en-US")} vs app $${r.stored.toLocaleString("en-US")} (${span})`).join(" · "),
+            tag: `reconcile-${channel}`,
+          }).catch(e => console.error("reconcile push failed:", e.message));
+        }
+      }
+
+      return new Response(JSON.stringify({ ok: true, channel, written: batch.length, projected, reconcile, skipped: errors.length, errors }), { headers: corsJson });
     }
 
     // ── Manual snapshot endpoint: ?action=snapshot&store=BL1[&date=2026-04-26]
