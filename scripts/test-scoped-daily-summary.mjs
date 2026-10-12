@@ -54,22 +54,14 @@ fs.writeFileSync(tmp, src);
 const worker = (await import(pathToFileURL(tmp).href + `?v=${src.length}`)).default;
 
 const LABEL = { BL1: 'Coliseum', BL2: 'South Bend', BL4: 'Dupont', BL8: 'Holland', BL14: 'Battle Creek', BL16: 'Indy East' };
-// Distinct magnitudes so a total can be traced back to its stores. All above
-// renderCategoryTableHtml's CATEGORY_MIN_NET (250), or the per-store category
-// rows below would fold into "Other" and the category assertions would pass
-// vacuously against a row that never rendered.
+// Distinct magnitudes so a total can be traced back to its stores.
 const SALES = { BL1: 10000, BL2: 5000, BL4: 2500, BL8: 1250, BL14: 600, BL16: 300 };
-// The retail week containing COVERS. Seeding the whole week (and a week label)
-// is what makes the Daily Breakdown table render at all — with week NULL,
-// buildWeeklyByDayData returns null and its header goes unasserted. That is
-// exactly how the "Daily Breakdown · All Stores" mislabel reached a rendered
-// scoped email unnoticed.
+// The Sunday-Saturday week containing COVERS, seeded whole so the WTD, pace
+// and month tables all have rows to render. A table that does not render
+// cannot be asserted on: that is how the old email's "· All Stores" mislabel
+// reached a scoped send unnoticed.
 const WEEK_NO = '33';
 const WEEK_DATES = ['2026-08-09', '2026-08-10', '2026-08-11', '2026-08-12', '2026-08-13', '2026-08-14', '2026-08-15'];
-// One uniquely-named L2 per store, so the category table can be checked for
-// cross-store bleed independently of the by-store table. Deliberately contains
-// no store LABEL substring, so it cannot disturb the store assertions.
-const CATNAME = s => `Cat-${s}-Only`;
 
 //        id         role        users.stores    bl grant units   daily_summary
 const SU     = ['u-su',    'superuser', null,            undefined,        1];
@@ -95,8 +87,7 @@ async function run(people, opts = {}) {
     CREATE TABLE daily_sales (id INTEGER PRIMARY KEY AUTOINCREMENT, store TEXT, date TEXT, week TEXT,
                               total REAL, retail REAL, bin REAL, auction REAL, budget REAL);
   `);
-  // The whole week, labelled, so all three tables render and every scope label
-  // is exercised — not just the by-store one.
+  // The whole week, so all three tables render and every scope label is exercised.
   for (const s of Object.keys(SALES)) {
     for (const d of WEEK_DATES) {
       db.prepare('INSERT INTO daily_sales (store,date,week,total,retail,bin,auction,budget) VALUES (?,?,?,?,?,?,?,?)')
@@ -113,18 +104,6 @@ async function run(people, opts = {}) {
   const env = {
     DB: { prepare(sql) { const mk = p => ({ bind: (...a) => mk(a), all: async () => ({ results: db.prepare(sql).all(...p) }), run: async () => db.prepare(sql).run(...p), first: async () => db.prepare(sql).all(...p)[0] || null }); return mk([]); } },
     ...(opts.noKey ? {} : { RESEND_API_KEY: 'test-key' }),
-    // KV item snapshots drive the category table. Each store gets its own
-    // uniquely-named L2 so a scoped email can be checked for cross-store bleed
-    // through the KV path, which is separate code from the D1 by-store query.
-    SALES_SNAPSHOTS: {
-      get: async (key) => {
-        const m = /^items:(\w+):(.+)$/.exec(key);
-        if (!m || m[2] !== COVERS) return null;
-        const store = m[1].toUpperCase();
-        if (!SALES[store]) return null;
-        return { orderCount: 10, categories: [{ category: CATNAME(store), qty: 5, gross: SALES[store], discounts: 0, refunds: 0, netSales: SALES[store], cost: 0 }] };
-      },
-    },
     // No VAPID: push is out of scope here and would only add failure modes
     // unrelated to the fix.
   };
@@ -177,8 +156,11 @@ ok('BL1+BL4 manager sees no third store',
 console.log('\nchain-wide recipients are unchanged:');
 const su = bodyOf(r, 'u-su');
 ok('superuser still receives one', !!r.byTo['u-su@x.com']);
-ok('superuser body spans every reporting store',
-   ['BL1', 'BL2', 'BL4', 'BL8', 'BL14', 'BL16'].every(s => has(su, s)));
+ok('superuser body spans the five open stores',
+   ['BL1', 'BL2', 'BL4', 'BL14', 'BL16'].every(s => has(su, s)));
+// Holland closed 2026-07-24. It has sales in this fixture on purpose: the
+// Executive Summary leaves it out by name, not because it went quiet.
+ok('closed Holland is not in the Executive Summary, even with sales', !has(su, 'BL8'));
 ok('granted admin still receives one', !!r.byTo['u-adm@x.com']);
 ok('chain-wide body is footed "All Stores"', su.includes('>All Stores</td>'));
 
@@ -188,28 +170,20 @@ ok('single-store footer says "Total", not the store name twice',
 ok('multi-store footer says "My Stores"', m2s.includes('>My Stores</td>') && !m2s.includes('>All Stores</td>'));
 ok('scoped subject carries the scope', ((r.byTo['u-m1@x.com'] || {}).subject || '').includes('(Coliseum)'));
 
-// The by-store table was scoped from the first commit; these two headers were
-// NOT, and shipped reading "· All Stores" above one store's figures. Rendering
-// the email is what surfaced it, so the headers are pinned here explicitly.
-console.log('\n...nor their section headers — all three tables must agree on scope:');
-ok('chain Daily Breakdown reads "All Stores"', su.includes('Daily Breakdown · All Stores'));
-ok('chain Category Sales reads "All Stores"', su.includes('Category Sales · All Stores'));
-ok('all three tables actually rendered for the chain',
-   su.includes('Daily Breakdown') && su.includes('Category Sales') && su.includes('vs Budget'));
-ok('single-store Daily Breakdown names the store', m1.includes('Daily Breakdown · Coliseum'));
-ok('single-store Category Sales names the store', m1.includes('Category Sales · Coliseum'));
+// The old email shipped section headers reading "· All Stores" above one
+// store's figures; rendering the email is what surfaced it. The Executive
+// Summary names its scope once, under the title, and every table's footer.
+console.log('\n...nor their header — the scope line must agree with the rows:');
+ok('chain header reads "All Stores"', su.includes('>All Stores &nbsp;·&nbsp;'));
+ok('all three tables and the headline actually rendered for the chain',
+   ['Total WTD Sales', 'Week to date', 'Yesterday', 'Month to date', 'Full-week pace'].every(t => su.includes(t)));
+ok('single-store header names the store', m1.includes('>Coliseum &nbsp;·&nbsp;'));
 ok('single-store body never says "All Stores" anywhere', !m1.includes('All Stores'));
-ok('multi-store headers say "My Stores"',
-   m2s.includes('Daily Breakdown · My Stores') && m2s.includes('Category Sales · My Stores'));
+ok('multi-store header says "My Stores"', m2s.includes('>My Stores &nbsp;·&nbsp;'));
 ok('multi-store body never says "All Stores" anywhere', !m2s.includes('All Stores'));
-
-console.log('\nthe category table is scoped too (a separate KV read path):');
-ok('BL1 body carries only its own category', m1.includes(CATNAME('BL1')));
-for (const s of ['BL2', 'BL4', 'BL8', 'BL14', 'BL16']) {
-  ok(`BL1 body has no ${CATNAME(s)}`, !m1.includes(CATNAME(s)));
-}
-ok('BL14 body carries its own category, not BL1\'s',
-   m14.includes(CATNAME('BL14')) && !m14.includes(CATNAME('BL1')));
+ok('every table in a scoped body is footed by its scope (3 tables)',
+   (m1.match(/>Total<\/td>/g) || []).length === 3 && (m2s.match(/>My Stores<\/td>/g) || []).length === 3);
+ok('the subject is the Executive Summary', ((r.byTo['u-su@x.com'] || {}).subject || '').startsWith('Executive Summary'));
 
 console.log('\nthe totals actually differ — proof the body was rebuilt, not reused:');
 const dollars = h => (h.match(/\$[\d,]+/g) || []);

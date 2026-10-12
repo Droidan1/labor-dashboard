@@ -6813,6 +6813,196 @@ function buildSummaryEmailHtml(data, brief, categoryData, weeklyData, totalsLabe
     </div>`;
 }
 
+// ─── Executive Summary (the daily email since 2026-10) ──────────────────────
+// Replaced the Daily Sales Summary at the owner's request: WTD / Yesterday /
+// MTD against plan for the open stores, each with the live sales it includes.
+//
+// One basis everywhere: sales = daily_sales.total (Clover net, retail + BIN)
+// + daily_sales.auction (live sales: online auction + Whatnot gross, the sum
+// of LIVE_CHANNELS). Plan = daily_sales.budget, the Sheet's daily budget, for
+// every figure — WTD plan, yesterday's plan and the month's plan are sums of
+// the same rows, so they cannot disagree with each other.
+
+// The stores the summary reports, in the order the owner's mockup lists them.
+// Holland (BL8) closed 2026-07-24; its budget rows remain in daily_sales, so it
+// is left out by name rather than by "has sales", which would also drop an open
+// store on a day its snapshot failed.
+const EXEC_SUMMARY_STORES = ["BL1", "BL4", "BL2", "BL14", "BL16"];
+
+// `through` is the last completed day (ET yesterday at send time). Returns null
+// when the scope holds none of the summary's stores.
+async function buildExecSummaryData(env, through, scopeStores = null) {
+  const stores = EXEC_SUMMARY_STORES.filter(s => !scopeStores || scopeStores.includes(s));
+  if (!stores.length) return null;
+
+  const weekStart = addDaysYmd(through, -new Date(through + "T12:00:00Z").getUTCDay());   // Sunday
+  const weekEnd = addDaysYmd(weekStart, 6);
+  const monthStart = through.slice(0, 8) + "01";
+  const monthEnd = addDaysYmd(addDaysYmd(monthStart, 32).slice(0, 8) + "01", -1);
+  const from = [monthStart, addDaysYmd(weekStart, -7)].sort()[0];
+  const to = [monthEnd, weekEnd].sort()[1];
+  const range = (a, b) => { const out = []; for (let d = a; d <= b; d = addDaysYmd(d, 1)) out.push(d); return out; };
+
+  const ph = stores.map(() => "?").join(",");
+  const { results } = await env.DB.prepare(
+    `SELECT store, date, total, auction, budget FROM daily_sales
+      WHERE date >= ? AND date <= ? AND store IN (${ph})`
+  ).bind(from, to, ...stores).all();
+  const row = {};
+  for (const r of (results || [])) row[r.store + "|" + r.date] = r;
+
+  const table = (salesDates, planDates = salesDates) => {
+    const rows = stores.map(store => {
+      let sales = 0, live = 0, plan = 0;
+      for (const d of salesDates) {
+        const r = row[store + "|" + d];
+        if (!r) continue;
+        const a = Number(r.auction) || 0;
+        sales += (Number(r.total) || 0) + a;
+        live += a;
+      }
+      for (const d of planDates) plan += Number((row[store + "|" + d] || {}).budget) || 0;
+      return { store, label: STORE_LABELS[store] || store, sales, live, plan };
+    });
+    const tot = rows.reduce((t, r) => ({ sales: t.sales + r.sales, live: t.live + r.live, plan: t.plan + r.plan }), { sales: 0, live: 0, plan: 0 });
+    return { rows, tot };
+  };
+
+  const wtd = table(range(weekStart, through));
+  const yday = table([through]);
+  const mtd = table(range(monthStart, through), range(monthStart, monthEnd));
+  // Pace: WTD actual + LAST week's actual for the days still to come this week,
+  // against the full week's plan.
+  const remaining = through < weekEnd ? range(addDaysYmd(through, 1), weekEnd) : [];
+  const projected = wtd.tot.sales + table(remaining.map(d => addDaysYmd(d, -7))).tot.sales;
+  const fullWeekPlan = table(range(weekStart, weekEnd)).tot.plan;
+
+  // A store with no POS figure for the day would read as a −100% day.
+  const missing = stores.filter(s => { const r = row[s + "|" + through]; return !r || r.total == null; })
+    .map(s => STORE_LABELS[s] || s);
+
+  // Whatnot posts a row for every recap, $0 days included, for the stores it
+  // covers. Those stores in scope with no row for `through` = recap not in yet.
+  // Best-effort: no channel_sales table means no note, never a failed email.
+  let whatnotPending = false;
+  try {
+    const { results: wn } = await env.DB.prepare(
+      `SELECT store, MAX(date) AS last FROM channel_sales
+        WHERE channel = 'whatnot' AND date >= ? AND date <= ? AND store IN (${ph}) GROUP BY store`
+    ).bind(addDaysYmd(through, -30), through, ...stores).all();
+    whatnotPending = (wn || []).some(r => r.last < through);
+  } catch (_) { /* table absent: nothing to say */ }
+
+  return {
+    reportDate: addDaysYmd(through, 1), through, weekStart, weekEnd, wtd, yday, mtd, missing, whatnotPending,
+    pace: { projected, fullWeekPlan, onTrack: projected >= fullWeekPlan },
+  };
+}
+
+// Email-safe (tables + inline styles only). Text colours are ≥ 4.5:1 on every
+// background they sit on: #1e7a34 ≥ 4.63, #b42318 ≥ 5.59, #5b6470 ≥ 5.14.
+function buildExecSummaryEmailHtml(d, totalsLabel = "All Stores", scopeLabel = totalsLabel) {
+  const NAVY = "#194975", INK = "#1a1f24", MUTED = "#5b6470", RULE = "#e3e7eb", ZEBRA = "#f6f8fa", POS = "#1e7a34", NEG = "#b42318";
+  const usd = v => (v < 0 ? "-$" : "$") + Math.round(Math.abs(v)).toLocaleString("en-US");
+  const pct1 = v => `${(v * 100).toFixed(1)}%`;
+  const variance = (s, p) => (p > 0 ? s / p - 1 : null);
+  const fmtVar = v => (v == null ? "N/A" : `${v >= 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(1)}%`);
+  const color = v => (v == null ? MUTED : v >= 0 ? POS : NEG);
+  const long = ymd => new Date(ymd + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
+  const short = ymd => new Date(ymd + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+
+  const section = (title, sub, cols, t, mode, period) => {
+    const th = (txt, align) => `<th style="padding:8px 6px;text-align:${align};font-size:12px;font-weight:700;line-height:1.25;color:#fff;background:${NAVY}">${txt}</th>`;
+    const last = r => {
+      if (mode === "attain") return { txt: r.plan > 0 ? pct1(r.sales / r.plan) : "N/A", color: INK };
+      const v = variance(r.sales, r.plan); return { txt: fmtVar(v), color: color(v) };
+    };
+    const cell = "padding:9px 6px;font-size:14px;border-bottom:1px solid " + RULE;
+    const body = t.rows.map((r, i) => {
+      const l = last(r);
+      return `<tr style="background:${i % 2 ? ZEBRA : "#fff"}">
+          <td style="${cell};color:${INK}">${_esc(r.label)}${r.live > 0 ? `<sup style="color:${MUTED}">*</sup>` : ""}</td>
+          <td style="${cell};white-space:nowrap;text-align:right;color:${INK}">${usd(r.sales)}</td>
+          <td style="${cell};white-space:nowrap;text-align:right;color:${MUTED}">${usd(r.plan)}</td>
+          <td style="${cell};white-space:nowrap;text-align:right;font-weight:700;color:${l.color}">${l.txt}</td>
+        </tr>`;
+    }).join("");
+    const tl = last(t.tot);
+    const foot = `padding:10px 6px;font-size:14px;font-weight:800;border-top:2px solid ${NAVY}`;
+    const live = t.rows.filter(r => r.live > 0);
+    const periodWord = period === "Yesterday" ? "yesterday" : period;
+    const note = live.length
+      ? `* ${period} live sales included above: ` + live.map(r => `${_esc(r.label)} ${usd(r.live)} (${pct1(r.live / r.sales)} of ${_esc(r.label)} ${periodWord} sales)`).join("; ") + "."
+      : "* No live sales in this period.";
+    return `
+      <h3 style="margin:28px 0 2px;font-size:15px;font-weight:800;color:${NAVY}">${title}</h3>
+      <div style="margin:0 0 8px;font-size:12px;color:${MUTED}">${sub}</div>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border:1px solid ${RULE}">
+        <thead><tr>${th("Store", "left")}${th(cols[0], "right")}${th(cols[1], "right")}${th(cols[2], "right")}</tr></thead>
+        <tbody>${body}
+          <tr style="background:#e9eef4">
+            <td style="${foot};color:${INK}">${_esc(totalsLabel)}</td>
+            <td style="${foot};white-space:nowrap;text-align:right;color:${INK}">${usd(t.tot.sales)}</td>
+            <td style="${foot};white-space:nowrap;text-align:right;color:${INK}">${usd(t.tot.plan)}</td>
+            <td style="${foot};white-space:nowrap;text-align:right;color:${tl.color}">${tl.txt}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="margin:6px 0 0;font-size:12px;line-height:1.5;font-style:italic;color:${MUTED}">${note}</p>`;
+  };
+
+  const { wtd, pace } = d;
+  const attain = wtd.tot.plan > 0 ? wtd.tot.sales / wtd.tot.plan : null;
+  const pill = pace.onTrack
+    ? `<span style="display:inline-block;padding:3px 9px;border-radius:999px;background:#e3f4e8;color:${POS};font-size:12px;font-weight:800;letter-spacing:.04em">ON TRACK</span>`
+    : `<span style="display:inline-block;padding:3px 9px;border-radius:999px;background:#fde8e6;color:${NEG};font-size:12px;font-weight:800;letter-spacing:.04em">OFF TRACK</span>`;
+  const warn = txt => `<p style="margin:10px 0 0;padding:8px 10px;border-radius:6px;background:#fff5e6;font-size:12px;line-height:1.5;color:#7a4a00">${txt}</p>`;
+  const month = new Date(d.through + "T12:00:00Z").toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
+
+  return `
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;padding:24px 16px;background:#fff;color:${INK}">
+      <img src="https://www.retjghub.com/retjg-logo-email.png" alt="RETJG HUB" width="40" height="40" style="display:block;margin-bottom:16px">
+      <h2 style="margin:0 0 4px;font-size:21px;color:${NAVY}">Executive Summary</h2>
+      <p style="margin:0 0 18px;font-size:13px;color:${MUTED}">${_esc(scopeLabel)} &nbsp;·&nbsp; ${long(d.reportDate)} &nbsp;·&nbsp; Data through ${short(d.through)}</p>
+
+      <div style="border:1px solid ${RULE};border-radius:10px;padding:16px">
+        <div style="font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${MUTED}">Total WTD Sales</div>
+        <div style="font-size:32px;font-weight:800;line-height:1.15;color:${INK};margin:2px 0 10px">${usd(wtd.tot.sales)}</div>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
+          <tr>
+            <td width="50%" style="padding:8px 0;border-top:1px solid ${RULE}">
+              <div style="font-size:11px;color:${MUTED}">WTD plan to date</div>
+              <div style="font-size:17px;font-weight:700;color:${INK}">${usd(wtd.tot.plan)}</div>
+            </td>
+            <td width="50%" style="padding:8px 0;border-top:1px solid ${RULE}">
+              <div style="font-size:11px;color:${MUTED}">% to plan</div>
+              <div style="font-size:17px;font-weight:700;color:${attain == null ? MUTED : attain >= 1 ? POS : NEG}">${attain == null ? "N/A" : pct1(attain)}</div>
+            </td>
+          </tr>
+        </table>
+        <div style="padding-top:10px;border-top:1px solid ${RULE};font-size:13px;line-height:1.5;color:${INK}">
+          <strong>Full-week pace</strong> &nbsp;${pill}<br>
+          Projected <strong>${usd(pace.projected)}</strong> vs full-week plan <strong>${usd(pace.fullWeekPlan)}</strong>
+        </div>
+        ${d.missing.length ? warn(`No sales data yet for ${d.missing.map(_esc).join(", ")} on ${short(d.through)}; counted as $0 above.`) : ""}
+        ${d.whatnotPending ? warn(`The Whatnot recap for ${short(d.through)} has not arrived, so that day's Whatnot sales are not included yet.`) : ""}
+      </div>
+
+      ${section("Week to date", `${short(d.weekStart)} – ${short(d.through)}`, ["WTD Sales", "WTD Plan", "Variance %"], d.wtd, "var", "WTD")}
+      ${section("Yesterday", short(d.through), ["Sales", "Plan", "Variance %"], d.yday, "var", "Yesterday")}
+      ${section("Month to date", `${month} 1 – ${new Date(d.through + "T12:00:00Z").getUTCDate()}`, ["MTD Sales", "Monthly Plan", "% of Plan"], d.mtd, "attain", "MTD")}
+
+      <p style="margin:24px 0 0;padding-top:12px;border-top:1px solid ${RULE};font-size:11px;line-height:1.6;color:${MUTED}">
+        Sales = net sales (retail + BIN) plus live sales, counted once. Live sales = online auction plus Whatnot
+        (Whatnot is gross, before fees and refunds). Plan = the daily budget from the 2026 budget sheet.
+        Variance % = sales ÷ plan − 1. Week = Sunday–Saturday. Pace = week-to-date sales plus last week's sales
+        for the days still to come.
+        <br><a href="https://www.retjghub.com" style="color:${NAVY}">Open Dashboard</a>
+        &nbsp;·&nbsp; RETJG HUB &nbsp;·&nbsp; To stop receiving these, open Settings → Notifications.
+      </p>
+    </div>`;
+}
+
 // Fan out push + email daily summary to all opted-in superusers.
 // Recipients for a CHAIN-WIDE broadcast (daily summary, weekly digest).
 //
@@ -6985,12 +7175,11 @@ async function dispatchScopedDailySummaries(env, date, prefMapAll) {
     });
     if (!wanted.length) { summary.email.skipped += users.length; continue; }
 
-    let data, categoryData, weeklyData;
+    let data, exec;
     try {
-      data = await buildDailySummaryData(env, date, stores);
-      [categoryData, weeklyData] = await Promise.all([
-        buildDailyCategoryData(env, date, stores).catch(() => null),
-        buildWeeklyByDayData(env, date, stores).catch(() => null),
+      [data, exec] = await Promise.all([
+        buildDailySummaryData(env, date, stores),
+        buildExecSummaryData(env, date, stores),
       ]);
     } catch (e) {
       console.error(`Scoped summary build failed for [${stores.join(',')}]: ${e.message}`);
@@ -6998,10 +7187,10 @@ async function dispatchScopedDailySummaries(env, date, prefMapAll) {
       continue;
     }
 
-    // Every one of this group's stores was closed or non-reporting yesterday.
-    // An email whose only table is empty is worse than no email.
-    if (!data.stores.length) {
-      console.log(JSON.stringify({ scoped_summary_skipped: stores, reason: 'no reporting stores', date }));
+    // None of this group's stores is one the Executive Summary reports (a
+    // closed store's manager). An email with no rows is worse than no email.
+    if (!exec) {
+      console.log(JSON.stringify({ scoped_summary_skipped: stores, reason: 'no executive-summary stores', date }));
       summary.email.skipped += wanted.length;
       continue;
     }
@@ -7013,7 +7202,8 @@ async function dispatchScopedDailySummaries(env, date, prefMapAll) {
     const scopeLabel = single ? labels[0] : 'My Stores';
     const totalsLabel = single ? 'Total' : 'My Stores';
     const scopeSuffix = stores.length <= 2 ? ` (${labels.join(' + ')})` : '';
-    const emailHtml = buildSummaryEmailHtml(data, null, categoryData, weeklyData, totalsLabel, scopeLabel);
+    const emailHtml = buildExecSummaryEmailHtml(exec, totalsLabel, scopeLabel);
+    const reportDay = new Date(exec.reportDate + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
 
     const tb = data.totals.budget, ts = data.totals.sales;
     const budgetLine = tb > 0 ? ` • Budget: ${_fmtVsBudget(ts, tb)}` : '';
@@ -7036,7 +7226,7 @@ async function dispatchScopedDailySummaries(env, date, prefMapAll) {
       const r = await resendSend(env, {
         from: 'RETJG HUB <noreply@retjghub.com>',
         to: user.email,
-        subject: `Sales Summary${scopeSuffix} — ${displayDate}`,
+        subject: `Executive Summary${scopeSuffix} — ${reportDay}`,
         html: emailHtml,
       }, `daily-scoped-${date}-${user.id}`);
       if (!r.skipped) {
@@ -7047,7 +7237,8 @@ async function dispatchScopedDailySummaries(env, date, prefMapAll) {
         }
       }
 
-      if (pref.push_enabled && env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY) {
+      // The push still reports yesterday's total, and only when a store reported.
+      if (data.stores.length && pref.push_enabled && env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY) {
         const { results: subs } = await env.DB.prepare(
           'SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?'
         ).bind(user.id).all();
@@ -7085,17 +7276,11 @@ async function dispatchDailySummary(env, date) {
   // (buildAndStoreBrief / generateMorningBrief) and the daily-brief /
   // generate-brief endpoints stay intact for a future re-enable: restore the
   // buildAndStoreBrief call and pass `brief` to buildSummaryEmailHtml below.
-  const data = await buildDailySummaryData(env, date);
+  // The email is the Executive Summary; the push keeps yesterday's one-line
+  // total from buildDailySummaryData.
+  const [data, exec] = await Promise.all([buildDailySummaryData(env, date), buildExecSummaryData(env, date)]);
   const { sales: ts, budget: tb } = data.totals;
-
-  // New tables: consolidated L2 categories (from KV item snapshots) and the
-  // app-style week-by-day breakdown (one D1 query). Both are best-effort — a
-  // null result just omits that section from the email.
-  const [categoryData, weeklyData] = await Promise.all([
-    buildDailyCategoryData(env, date).catch(() => null),
-    buildWeeklyByDayData(env, date).catch(() => null),
-  ]);
-  const emailHtml = buildSummaryEmailHtml(data, null, categoryData, weeklyData);
+  const emailHtml = buildExecSummaryEmailHtml(exec);
 
   // Short push body
   const budgetLine = tb > 0 ? ` • Budget: ${_fmtVsBudget(ts, tb)}` : '';
@@ -7159,11 +7344,11 @@ async function dispatchDailySummary(env, date) {
     // ── Email ─────────────────────────────────────────────────────────────
     let emailResult = null;                    // null = opted out, nothing attempted
     if (pref.daily_summary) {
-      const displayDate = new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      const reportDay = new Date(exec.reportDate + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
       emailResult = await resendSend(env, {
         from: 'RETJG HUB <noreply@retjghub.com>',
         to: user.email,
-        subject: `Sales Summary — ${displayDate}`,
+        subject: `Executive Summary — ${reportDay}`,
         html: emailHtml,
       }, `daily-chain-${date}-${user.id}`);
       if (!emailResult.skipped) {
@@ -22003,7 +22188,8 @@ export default {
     }
 
     // GET ?action=preview-daily-summary[&date=YYYY-MM-DD][&stores=BL1,BL4]
-    // Renders the daily-summary email HTML WITHOUT sending anything. Read-only,
+    // Renders the daily email (the Executive Summary; `date` = the data-through
+    // day) WITHOUT sending anything. Read-only,
     // superuser/admin-secret only. Used to eyeball the layout in a browser.
     //
     // `stores` renders the STORE-SCOPED body a manager would receive, using the
@@ -22034,12 +22220,9 @@ export default {
       const scopeLabel  = scope ? (single ? (STORE_LABELS[scope[0]] || scope[0]) : 'My Stores') : 'All Stores';
       const totalsLabel = scope ? (single ? 'Total' : 'My Stores') : 'All Stores';
       try {
-        const data = await buildDailySummaryData(env, dateParam, scope);
-        const [categoryData, weeklyData] = await Promise.all([
-          buildDailyCategoryData(env, dateParam, scope).catch(() => null),
-          buildWeeklyByDayData(env, dateParam, scope).catch(() => null),
-        ]);
-        const html = buildSummaryEmailHtml(data, null, categoryData, weeklyData, totalsLabel, scopeLabel);
+        const exec = await buildExecSummaryData(env, dateParam, scope);
+        if (!exec) return new Response(JSON.stringify({ error: "None of those stores is in the Executive Summary" }), { status: 400, headers: corsJson });
+        const html = buildExecSummaryEmailHtml(exec, totalsLabel, scopeLabel);
         return new Response(html, { headers: { ...corsHeaders, "Content-Type": "text/html; charset=utf-8" } });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
