@@ -31,6 +31,11 @@ Plan (one channel per source, the column becomes their SUM, so no consumer chang
       Oct 1-11 live $10,201 -> ~$22.4k; Coliseum ~unchanged (Sheet already matched Whatnot)
 - [x] Tests: test-live-sales-channels.mjs (12 of 21 fail on main), test-whatnot-recap-parse.mjs; the real
       .eml parses to BL1 $3,368 / BL14 $3,050 / MTD $11,871 + $15,980; `npm test` 8786 assertions, 98 suites
+- [x] PR #319 (723185f + review fixes bced5d7). Fresh-eyes review found 5 defects, all fixed with tests that
+      fail on 723185f: stale recap copy overwrote its correction; seen map grew past the 9 KB property cap;
+      replies/subject changes mishandled; a multi-day email could post onto one day; a rejected or total-less
+      row wiped its store-day. Rollout adds `preview()` → Claude compares each day to prod → `backfill()`
+- [ ] Brian: get bhoward@bargainlane.com added to the recap recipients (today: Ryan + James only)
 - [ ] Phase 2 worker: Executive Summary builder + email, replaces daily summary (chain-wide + scoped),
       preview endpoint renders it; footnote says Whatnot is gross; "recap not received" when missing
 - [ ] Phase 3 page: "Auction" → "Live" on the dashboard
