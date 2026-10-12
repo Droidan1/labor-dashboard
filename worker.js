@@ -19048,6 +19048,7 @@ export default {
 
       const batch = [];
       const errors = [];
+      const priced = new Map();   // store|date -> [store, date] for rows stored WITH a total
       for (let i = 0; i < rows.length; i++) {
         const r = rows[i] || {};
         const store = (r.store || "").toString().trim().toUpperCase();
@@ -19061,6 +19062,7 @@ export default {
         const meta  = (r.meta == null) ? null : JSON.stringify(r.meta);
         if (total != null && !Number.isFinite(total)) { errors.push({ i, store, date, reason: "non-numeric total" }); continue; }
         batch.push(stmt.bind(channel, store, date, total, count, meta, sourceFile, ingestedAt));
+        if (total != null) priced.set(store + "|" + date, [store, date]);
       }
 
       if (batch.length) await env.DB.batch(batch);
@@ -19071,9 +19073,11 @@ export default {
       // channel's channel_sales row, never written from the request — when it
       // was last-writer-wins, the auction feed overwrote Battle Creek's Whatnot
       // on 11 days in Sep-Oct 2026 (~$23.9k gone). Manual-override rows are
-      // never touched.
+      // never touched. Only store-days this request STORED with a total are
+      // recomputed: a rejected or total-less row must not re-sum (and so wipe)
+      // a day it never wrote.
       let projected = 0;
-      if (LIVE_CHANNELS.includes(channel) && batch.length) {
+      if (LIVE_CHANNELS.includes(channel) && priced.size) {
         const proj = env.DB.prepare(
           `INSERT INTO daily_sales (store, date, auction)
            VALUES (?, ?, (SELECT ROUND(SUM(total), 2) FROM channel_sales
@@ -19081,17 +19085,9 @@ export default {
            ON CONFLICT(store, date) DO UPDATE SET
              auction = CASE WHEN is_manual_override = 1 THEN auction ELSE excluded.auction END`
         );
-        const projBatch = [];
-        const seen = new Set();
-        for (let i = 0; i < rows.length; i++) {
-          const r = rows[i] || {};
-          const store = (r.store || "").toString().trim().toUpperCase();
-          const date = (r.date || "").toString().trim();
-          if (!store || !/^\d{4}-\d{2}-\d{2}$/.test(date) || seen.has(store + "|" + date)) continue;
-          seen.add(store + "|" + date);
-          projBatch.push(proj.bind(store, date, store, date, ...LIVE_CHANNELS));
-        }
-        if (projBatch.length) { await env.DB.batch(projBatch); projected = projBatch.length; }
+        const projBatch = [...priced.values()].map(([store, date]) => proj.bind(store, date, store, date, ...LIVE_CHANNELS));
+        await env.DB.batch(projBatch);
+        projected = projBatch.length;
       }
 
       // Reconcile: a feeder that also reports its own month-to-date total per
@@ -19105,7 +19101,7 @@ export default {
         reconcile = [];
         for (const [rawStore, reported] of Object.entries(rec.totals)) {
           const store = rawStore.toString().trim().toUpperCase();
-          if (!Number.isFinite(Number(reported))) continue;
+          if (reported == null || reported === "" || !Number.isFinite(Number(reported))) continue;
           const row = await env.DB.prepare(
             "SELECT SUM(total) AS t FROM channel_sales WHERE channel = ? AND store = ? AND date >= ? AND date <= ?"
           ).bind(channel, store, monthStart, through).first();

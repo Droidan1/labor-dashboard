@@ -9,6 +9,8 @@
 // "Total NS" includes auction, so its total fallback double-counted.
 //
 // Everything goes through the real worker.fetch; only the platform is stubbed.
+// Workers run in UTC; the Sheet's Date(y,m,d) cells are parsed as local time.
+process.env.TZ = 'UTC';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -122,6 +124,19 @@ const auctionOf = (h, store, date) => (h.db.prepare('SELECT auction FROM daily_s
   eq(d.auction, null, "the Sheet's Auction NS is no longer imported");
   eq(d.total, 7119, 'the total fallback is retail + bins, not Total NS (which includes auction)');
   blockNetwork();
+}
+
+// ── 7. A row that was not stored, or has no total, never touches the column ─
+{
+  const h = setup();
+  h.db.prepare("INSERT INTO daily_sales (store, date, total, auction) VALUES ('BL1', '2026-10-05', 9281.42, 1776)").run();
+  await ingest(h, { channel: 'whatnot', rows: [{ store: 'BL1', date: '2026-10-05', total: 'abc' }, { store: 'BL14', date: '2026-10-05', total: 10 }] });
+  eq(auctionOf(h, 'BL1', '2026-10-05'), 1776, 'a rejected row does not recompute (and wipe) the store-day');
+  await ingest(h, { channel: 'whatnot', rows: [{ store: 'BL1', date: '2026-10-05', total: null }] });
+  eq(auctionOf(h, 'BL1', '2026-10-05'), 1776, 'a row with no total does not wipe the store-day');
+  const r = await ingest(h, { channel: 'whatnot', rows: [{ store: 'BL1', date: '2026-10-06', total: 5 }],
+    reconcile: { through: '2026-10-06', totals: { BL1: 5, BL14: null, BL2: '' } } });
+  eq((await r.json()).reconcile.map(x => x.store).join(','), 'BL1', 'a missing month-to-date figure is skipped, not checked as $0');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

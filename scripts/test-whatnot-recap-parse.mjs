@@ -100,6 +100,15 @@ throwsLike(() => parseRecap_(SUBJECT.replace('on 3 shows', 'on 4 shows'), BODY, 
 throwsLike(() => parseRecap_(SUBJECT, BODY.replace('Battle Creek, 3:59', 'Dupont, 3:59'), PDF, SENT), /unknown location "Dupont"/, 'a location with no store mapping');
 throwsLike(() => parseRecap_(SUBJECT, BODY, ['BL-Live-Recap-2026-10-08.pdf'], SENT), /PDF is for 2026-10-08/, 'subject date and PDF date disagree');
 throwsLike(() => parseRecap_(SUBJECT, BODY.replace('Battle Creek\n$12,000', 'Holland $12,000'), PDF, SENT), /unknown location "Holland" in the month-to-date/, 'an unknown location in the month-to-date line');
+// A month-to-date email laid out like a daily recap would sum to its own subject
+// and book every show onto ONE day. Show lines carry no date, but a day's shows
+// run in time order; times that go backwards mean more than one day.
+throwsLike(() => parseRecap_('Bargain Lane Live recap \u2013 Fri 10/9: $3,000 on 3 shows',
+  '- Fort Wayne, 9:31 AM, "A": $1000 in sales\n- Battle Creek, 4:00 PM, "B": $1000 in sales\n- Fort Wayne, 9:30 AM, "C": $1000 in sales', [], SENT),
+  /not in time order/, 'show times that go backwards (more than one day) are refused');
+eq(parseRecap_('Bargain Lane Live recap \u2013 Fri 10/9: $2,000 on 2 shows',
+  '- Fort Wayne, 12:00 PM, "A": $1000 in sales\n- Battle Creek, 12:00 PM, "B": $1000 in sales', [], SENT).shows.length, 2,
+  'two shows at the same time are fine');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

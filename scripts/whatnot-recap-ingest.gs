@@ -20,7 +20,8 @@
  *   2. Project Settings → Script Properties → add SNAPSHOT_SECRET (the worker's
  *      secret). It is NOT written in this file: this repo is public.
  *   3. Run `installTrigger` once and authorize Gmail when prompted.
- *   4. Run `backfill` once to load every recap already in the inbox.
+ *   4. Run `preview` and check its log (View → Logs): one line per day per store.
+   5. Run `backfill` once to load every recap already in the inbox.
  */
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
@@ -57,72 +58,106 @@ function installTrigger() {
   Logger.log('Installed daily triggers: runDaily @ 6 AM, 7 AM, 1 PM');
 }
 
-/** Recaps from the last few days that have not been posted yet. */
+/** Recaps from the last few days, unless the same or a newer copy of that
+ *  day's recap was already posted. */
 function runDaily() {
-  _process(_query() + ' newer_than:4d', false);
+  _process(_query() + ' newer_than:4d', 'daily');
 }
 
-/** Every recap in the inbox, oldest first, ignoring what was already posted.
- *  Safe to re-run: the endpoint upserts on (channel, store, date). */
+/** Every recap in the inbox, oldest first, re-posting days already posted.
+ *  Safe to re-run: the endpoint upserts on (channel, store, date).
+ *  Run preview() first: this WRITES live sales for every day it finds. */
 function backfill() {
-  _process(_query(), true);
+  _process(_query(), 'backfill');
+}
+
+/** Read every recap in the inbox and LOG what backfill() would post, per day
+ *  and store. Posts and records nothing. */
+function preview() {
+  _process(_query(), 'preview');
 }
 
 function _query() { return 'from:' + CONFIG.SENDER + ' subject:"' + CONFIG.SUBJECT + '"'; }
 
 // ─── WORK ────────────────────────────────────────────────────────────────────
 
-function _process(query, ignoreSeen) {
+// Bookkeeping lives in two small script properties (Apps Script caps one at
+// 9 KB). postedRecaps: recap date -> sent time of the copy posted for it, so a
+// corrected re-send (newer) is posted and a late copy of the original (older)
+// is not. alertedMessages: message id -> when we emailed about it. Both keep
+// only the last RETAIN_DAYS.
+const RETAIN_DAYS = 60;
+
+function _process(query, mode) {
   const props = PropertiesService.getScriptProperties();
   const secret = props.getProperty('SNAPSHOT_SECRET');
-  if (!secret) throw new Error('Set the SNAPSHOT_SECRET script property first (Project Settings → Script Properties).');
-  const seen = JSON.parse(props.getProperty('seenMessageIds') || '{}');
+  if (mode !== 'preview' && !secret) throw new Error('Set the SNAPSHOT_SECRET script property first (Project Settings → Script Properties).');
+  const posted = JSON.parse(props.getProperty('postedRecaps') || '{}');
+  const alerted = JSON.parse(props.getProperty('alertedMessages') || '{}');
 
-  // Newest message per recap date (an original and its forward say the same thing).
+  // Newest copy per recap date (an original and its forward say the same thing).
   const byDate = {};
   for (let start = 0; ; start += 100) {
     const threads = GmailApp.search(query, start, 100);
     threads.forEach(th => th.getMessages().forEach(m => {
-      if (!ignoreSeen && seen[m.getId()]) return;
-      if (m.getFrom().toLowerCase().indexOf(CONFIG.SENDER) < 0) return;
+      if (m.getFrom().toLowerCase().indexOf(CONFIG.SENDER) < 0) return;   // a reply from someone else
+      const subject = m.getSubject();
+      if (/^\s*re:/i.test(subject)) return;                              // a reply, not a recap
       let recap;
       try {
-        recap = parseRecap_(m.getSubject(), m.getPlainBody(),
-          m.getAttachments().map(a => a.getName()), m.getDate());
+        recap = parseRecap_(subject, m.getPlainBody(), m.getAttachments().map(a => a.getName()), m.getDate());
+        if (!recap) throw new Error('the subject line is not in the expected format');
       } catch (e) {
-        if (!seen[m.getId()]) _alertOnce(m, e, props, seen);
+        if (mode === 'preview') Logger.log('NOT LOADABLE  ' + subject + '  (' + e.message + ')');
+        else if (!alerted[m.getId()]) { _alert(subject, e); alerted[m.getId()] = Date.now(); }
         return;
       }
-      if (!recap) return;                                   // not a recap (a reply about one, etc.)
-      const prev = byDate[recap.date];
-      if (!prev || m.getDate() > prev.msg.getDate()) byDate[recap.date] = { recap, msg: m };
+      const sent = m.getDate().getTime();
+      if (!byDate[recap.date] || sent > byDate[recap.date].sent) byDate[recap.date] = { recap, sent };
     }));
     if (threads.length < 100) break;
   }
 
   // Oldest first, so each recap's month-to-date check sees every earlier day.
   Object.keys(byDate).sort().forEach(date => {
-    const { recap, msg } = byDate[date];
+    const { recap, sent } = byDate[date];
+    const payload = buildPayload_(recap);
+    if (mode === 'preview') {
+      Logger.log(date + '  ' + payload.rows.map(r => r.store + ' $' + r.total + ' (' + r.count + ' shows)').join('  '));
+      return;
+    }
+    if (mode === 'daily' && posted[date] >= sent) return;
     const res = UrlFetchApp.fetch(CONFIG.INGEST_URL, {
       method: 'post',
       contentType: 'application/json',
       headers: { 'X-Snapshot-Secret': secret },
-      payload: JSON.stringify(buildPayload_(recap)),
+      payload: JSON.stringify(payload),
       muteHttpExceptions: true,
     });
     const code = res.getResponseCode();
     Logger.log(date + ': HTTP ' + code + ' ' + res.getContentText().slice(0, 300));
     if (code !== 200) throw new Error('Ingest failed for ' + date + ': HTTP ' + code);
-    seen[msg.getId()] = date;
-    props.setProperty('seenMessageIds', JSON.stringify(seen));
+    posted[date] = sent;
+    props.setProperty('postedRecaps', JSON.stringify(_recent(posted, k => k)));
   });
+  if (mode !== 'preview') props.setProperty('alertedMessages', JSON.stringify(_recent(alerted, (k, v) => new Date(v).toISOString())));
 }
 
-function _alertOnce(msg, err, props, seen) {
-  seen[msg.getId()] = 'error';
-  props.setProperty('seenMessageIds', JSON.stringify(seen));
+// Keep the entries within RETAIN_DAYS of the newest one (deterministic: never
+// relative to today, so a long-idle script does not wipe its own memory).
+function _recent(map, dayOf) {
+  const keys = Object.keys(map);
+  const days = keys.map(k => String(dayOf(k, map[k])).slice(0, 10)).sort();
+  if (!days.length) return map;
+  const cutoff = new Date(new Date(days[days.length - 1] + 'T12:00:00Z').getTime() - RETAIN_DAYS * 864e5).toISOString().slice(0, 10);
+  const out = {};
+  keys.forEach(k => { if (String(dayOf(k, map[k])).slice(0, 10) >= cutoff) out[k] = map[k]; });
+  return out;
+}
+
+function _alert(subject, err) {
   MailApp.sendEmail(Session.getEffectiveUser().getEmail(),
-    'Whatnot recap NOT loaded: ' + msg.getSubject(),
+    'Whatnot recap NOT loaded: ' + subject,
     'The recap feeder could not read this email, so nothing was posted for it.\n\n' +
     'Reason: ' + err.message + '\n\nFix the cause, then run backfill() from the script editor.');
 }
@@ -169,6 +204,15 @@ function parseRecap_(subject, body, attachmentNames, sentDate) {
       sales: _num(m[4]),
       items: m[5] ? _num(m[5]) : null, shipments: m[6] ? _num(m[6]) : null, newBuyers: m[7] ? _num(m[7]) : null,
     });
+  }
+
+  // Show lines carry a time but no date. One day's shows run in time order, so
+  // a time that goes backwards means this email spans more than one day (a
+  // month-to-date email in the daily layout), and posting it would book every
+  // show onto the subject's date.
+  const minutes = shows.map(s => { const t = /(\d{1,2}):(\d{2})\s*([AP])M/.exec(s.time); return (+t[1] % 12 + (t[3] === 'P' ? 12 : 0)) * 60 + +t[2]; });
+  for (let i = 1; i < minutes.length; i++) {
+    if (minutes[i] < minutes[i - 1]) throw new Error('show times are not in time order (' + shows[i - 1].time + ' then ' + shows[i].time + '): this looks like more than one day');
   }
 
   const sum = shows.reduce((t, s) => t + s.sales, 0);
