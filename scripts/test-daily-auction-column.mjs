@@ -107,11 +107,13 @@ console.log('\n── Daily tab · Auction column ──');
   ok(withAuction.includes('sm:grid-cols-[60px_1fr_auto_auto]'), 'auction week gets a 4th grid track from sm up');
   ok(withAuction.includes('hidden sm:flex flex-col items-end'), 'the auction cell is the column at sm and up');
   ok(withAuction.includes('sm:hidden flex items-center'), 'and folds to a line under the bar on a phone');
-  ok(withAuction.includes('>Auction<'), 'auction week labels the column');
+  // Labelled "Live Sales" since 2026-10 (not "Live": the green LIVE badge means today's real-time till): the column is live sales (online auction + Whatnot).
+  ok(withAuction.includes('>Live Sales<'), 'auction week labels the column "Live Sales"');
+  ok(!withAuction.includes('>Auction<'), 'and no longer "Auction"');
   ok(withAuction.includes('grid-cols-[60px_1fr_auto] sm:'), 'a phone keeps 3 tracks even in an auction week');
 
   ok(/grid-cols-\[60px_1fr_auto\](?! sm:)/.test(without), 'a week with no auction keeps 3 tracks at every width');
-  ok(!without.includes('Auction'), 'a week with no auction shows no auction column at all');
+  ok(!without.includes('>Live Sales<'), 'a week with no auction shows no live column at all');
 
   // The two stores that never run an auction must see no change whatsoever.
   eq(rowsOf(without).length, 3, 'no-auction week renders 2 day rows + 1 total row');
@@ -125,7 +127,7 @@ console.log('\n── Daily tab · Auction column ──');
   eq(nums[0], 1963, 'the day figure is POS + auction');
   eq(nums[1], 2000, 'the budget is next to it, unchanged');
   ok(nums.includes(963), 'the auction cell carries the auction dollars');
-  ok(row.includes('title="POS «1000.00» + auction «963.00»"'), 'the net figure says what it is made of');
+  ok(row.includes('title="POS «1000.00» + live sales «963.00»"'), 'the net figure says what it is made of');
 }
 
 // 3 ── The rows sum to the total row. This is the invariant that was broken:
@@ -219,7 +221,7 @@ console.log('\n── Daily tab · Auction column ──');
 
   ok(mk(34).includes('sm:grid-cols-[60px_1fr_auto_auto]'), 'week 34 (has auction) draws the column');
   ok(/grid-cols-\[60px_1fr_auto\](?! sm:)/.test(mk(35)), 're-rendering into week 35 drops the column');
-  ok(!mk(35).includes('Auction'), 'and drops its caption with it');
+  ok(mk(34).includes('>Live Sales<') && !mk(35).includes('>Live Sales<'), 'and drops its caption with it');
 }
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'} — ${pass} passed, ${fail} failed\n`);

@@ -1501,7 +1501,7 @@
                       <div id="cm-bin-val" class="mt-1 font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div>
                     </div>
                     <div id="cm-auction-col" class="text-right transition rounded-lg px-2.5 py-2">
-                      <div class="flex items-center justify-end gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-violet flex-shrink-0"></span>Auction · <span id="cm-auction-pct">—</span></div>
+                      <div class="flex items-center justify-end gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-violet flex-shrink-0"></span>Live Sales · <span id="cm-auction-pct">—</span></div>
                       <div id="cm-auction-val" class="mt-1 font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div>
                     </div>
                   </div>
@@ -7251,7 +7251,7 @@
                 <input id="mso-total" type="number" step="0.01" placeholder="Total $" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
                 <input id="mso-retail" type="number" step="0.01" placeholder="Retail $" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
                 <input id="mso-bin" type="number" step="0.01" placeholder="Bin $" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
-                <input id="mso-auction" type="number" step="0.01" placeholder="Auction $" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
+                <input id="mso-auction" type="number" step="0.01" placeholder="Live Sales $" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
               </div>
               <div class="flex items-center gap-3 mb-4">
                 <button onclick="runManualSalesSingle()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] rounded-lg transition-colors">
@@ -11239,7 +11239,7 @@
     if (!(lyNet > 0) || !(tyCmp > 0)) { slot.innerHTML = ''; return; }
     const pct = (tyCmp - lyNet) / lyNet * 100, up = pct >= 0;
     const c = up ? '#22c55e' : '#ef4444';
-    slot.innerHTML = `<span style="display:inline-flex;align-items:center;gap:5px;margin-top:7px;padding:3px 9px;border-radius:9999px;font-size:11px;font-weight:700;background:${up ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)'};border:1px solid ${up ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'};color:${c}" title="Retail + Bins vs the same weekday of the same retail week last year (auction excluded — no last-year auction data)">${up ? LY_UP : LY_DOWN}${fmtDollar(lyNet)} ${up ? '+' : '−'}${Math.abs(pct).toFixed(1)}% LY</span>`;
+    slot.innerHTML = `<span style="display:inline-flex;align-items:center;gap:5px;margin-top:7px;padding:3px 9px;border-radius:9999px;font-size:11px;font-weight:700;background:${up ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)'};border:1px solid ${up ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'};color:${c}" title="Retail + Bins vs the same weekday of the same retail week last year (live sales excluded — no last-year live sales data)">${up ? LY_UP : LY_DOWN}${fmtDollar(lyNet)} ${up ? '+' : '−'}${Math.abs(pct).toFixed(1)}% LY</span>`;
   }
   function fillLYTile(slotId, tyVal, lyVal) {
     const slot = document.getElementById(slotId);
@@ -11357,7 +11357,7 @@
       <div class="pr-mixleg">
         <span><i style="background:#14110a"></i>Retail ${pctOf(tRetail).toFixed(1)}% · <span class="pr-num">${fmtDollar(tRetail)}</span></span>
         <span><i style="background:#8a877d"></i>Bins ${pctOf(tBin).toFixed(1)}% · <span class="pr-num">${fmtDollar(tBin)}</span></span>
-        <span><i style="background:#d6d3ca"></i>Auction ${pctOf(tAuction).toFixed(1)}% · <span class="pr-num">${fmtDollar(tAuction)}</span></span>
+        <span><i style="background:#d6d3ca"></i>Live Sales ${pctOf(tAuction).toFixed(1)}% · <span class="pr-num">${fmtDollar(tAuction)}</span></span>
       </div>
       <div class="pr-sec">Budget to date</div>
       <div class="pr-bud">
@@ -11367,7 +11367,7 @@
       <div class="pr-sec">By store</div>
       <table><thead><tr>
         <th class="pr-l">Store</th><th>Net</th><th>Budget</th><th>+/−</th><th>Pace</th>
-        <th>Retail</th><th>Bins</th><th>Auction</th><th>LY</th><th>vs LY</th>
+        <th>Retail</th><th>Bins</th><th>Live Sales</th><th>LY</th><th>vs LY</th>
       </tr></thead><tbody>
         ${rows.map(r => `<tr><td class="pr-l">${escapeHtml(r.name)}</td>${cell(fmtDollar(r.net))}${cell(r.budget > 0 ? fmtDollar(r.budget) : '—')}${cell(r.budget > 0 ? prSigned(r.delta) : '—')}${cell(r.pct != null ? r.pct + '%' : '—')}${cell(fmtDollar(r.retail))}${cell(fmtDollar(r.bin))}${cell(r.auction ? fmtDollar(r.auction) : '—')}${cell(r.lyNet > 0 ? fmtDollar(r.lyNet) : '—')}${cell(prPct(r.lyPct))}</tr>`).join('')}
         <tr class="pr-tot"><td class="pr-l">All stores</td>${cell(fmtDollar(tNet))}${cell(tBud > 0 ? fmtDollar(tBud) : '—')}${cell(tBud > 0 ? prSigned(tDelta) : '—')}${cell(tPace != null ? tPace + '%' : '—')}${cell(fmtDollar(tRetail))}${cell(fmtDollar(tBin))}${cell(tAuction ? fmtDollar(tAuction) : '—')}${cell(tLY > 0 ? fmtDollar(tLY) : '—')}${cell(prPct(tLYPct))}</tr>
@@ -11380,7 +11380,7 @@
         <td class="pr-l pr-num">${tOrders > 0 ? tOrders.toLocaleString('en-US') : '—'}</td>
         <td class="pr-l pr-num">${ops && ops.units > 0 ? fmtDollar(ops.asp) : '—'}</td>
       </tr></tbody></table>
-      <div class="pr-ft"><span>LY / vs LY compare Retail + Bins only — the last-year figures carry no auction channel.</span></div>
+      <div class="pr-ft"><span>LY / vs LY compare Retail + Bins only — the last-year figures carry no live sales.</span></div>
       <div class="pr-ft" style="border-top:none;margin-top:2px;padding-top:0"><span>www.retjghub.com · internal use only</span><span>Printed from the RETJG Hub dashboard</span></div>`;
     return rows.length;
   }
@@ -11643,7 +11643,7 @@
         </div>
 
         <div class="mt-4 grid grid-cols-3 gap-2">
-          ${chTile('Retail', fmtDollar(v1Retail), 'retail', 'ly-retail-' + cardCode)}${chTile('BIN', fmtDollar(v1Bin), 'bin', 'ly-bin-' + cardCode)}${tile('Auction', fmtDollar(v1Auction))}
+          ${chTile('Retail', fmtDollar(v1Retail), 'retail', 'ly-retail-' + cardCode)}${chTile('BIN', fmtDollar(v1Bin), 'bin', 'ly-bin-' + cardCode)}${tile('Live Sales', fmtDollar(v1Auction))}
         </div>
 
         <div class="mt-2 grid grid-cols-4 gap-2">
@@ -12034,7 +12034,7 @@
       // The figure is net, so say what it is made of rather than leaving the
       // reader to subtract the Auction column from it.
       const salesTitle = (auction && pos != null)
-        ? ` title="POS ${fmtDollar(pos)} + auction ${fmtDollar(auction)}"`
+        ? ` title="POS ${fmtDollar(pos)} + live sales ${fmtDollar(auction)}"`
         : '';
       const salesHtml = sales != null
         ? `<span${salesTitle} class="text-base sm:text-lg font-bold tabular-nums text-opl-ink dark:text-op-ink tracking-tight">${fmtDollar(sales)}</span>${liveTag}`
@@ -12045,7 +12045,7 @@
       // colour so the value can stay ink: accent-violet measures 4.23:1 on
       // opl-panel and 4.21:1 on op-panel, fine for a decorative chip (≥3:1) and
       // short of AA for text in BOTH themes.
-      const aucCaption = `<span class="flex items-center gap-1 text-[9px] font-bold uppercase tracking-[0.05em] text-opl-inkDim dark:text-op-inkDim whitespace-nowrap"><span class="w-1.5 h-1.5 rounded-sm bg-accent-violet flex-shrink-0"></span>Auction</span>`;
+      const aucCaption = `<span class="flex items-center gap-1 text-[9px] font-bold uppercase tracking-[0.05em] text-opl-inkDim dark:text-op-inkDim whitespace-nowrap"><span class="w-1.5 h-1.5 rounded-sm bg-accent-violet flex-shrink-0"></span>Live Sales</span>`;
       const aucValue = auction
         ? `<span class="text-[12.5px] font-bold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(auction)}</span>`
         : '<span class="text-[12.5px] text-opl-inkDim dark:text-op-inkDim">—</span>';
@@ -12103,11 +12103,11 @@
         <div class="min-w-0">
           <div class="text-lg sm:text-xl font-bold tabular-nums text-opl-ink dark:text-op-ink tracking-tight">${fmtDollar(wkSales)}</div>
           <div class="mt-0.5 text-[11.5px] text-opl-inkDim dark:text-op-inkDim tabular-nums">vs <b class="text-opl-ink dark:text-op-ink font-semibold">${fmtDollar(wkBudget)}</b> · ${reportedDays} of ${sorted.length} days reported</div>
-          ${hasAuction ? `<div class="sm:hidden mt-1 flex items-center gap-1.5"><span class="flex items-center gap-1 text-[9px] font-bold uppercase tracking-[0.05em] text-opl-inkDim dark:text-op-inkDim whitespace-nowrap"><span class="w-1.5 h-1.5 rounded-sm bg-accent-violet flex-shrink-0"></span>Auction</span><span class="text-[12.5px] font-bold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(wkAuction)}</span></div>` : ''}
+          ${hasAuction ? `<div class="sm:hidden mt-1 flex items-center gap-1.5"><span class="flex items-center gap-1 text-[9px] font-bold uppercase tracking-[0.05em] text-opl-inkDim dark:text-op-inkDim whitespace-nowrap"><span class="w-1.5 h-1.5 rounded-sm bg-accent-violet flex-shrink-0"></span>Live Sales</span><span class="text-[12.5px] font-bold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(wkAuction)}</span></div>` : ''}
         </div>
         ${hasAuction ? `
         <div class="hidden sm:flex flex-col items-end gap-0.5 flex-shrink-0 min-w-[64px]">
-          <span class="flex items-center gap-1 text-[9px] font-bold uppercase tracking-[0.05em] text-opl-inkDim dark:text-op-inkDim whitespace-nowrap"><span class="w-1.5 h-1.5 rounded-sm bg-accent-violet flex-shrink-0"></span>Auction</span>
+          <span class="flex items-center gap-1 text-[9px] font-bold uppercase tracking-[0.05em] text-opl-inkDim dark:text-op-inkDim whitespace-nowrap"><span class="w-1.5 h-1.5 rounded-sm bg-accent-violet flex-shrink-0"></span>Live Sales</span>
           <span class="text-[12.5px] font-bold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(wkAuction)}</span>
         </div>` : ''}
         <div class="flex flex-col items-end gap-1 flex-shrink-0 min-w-[80px]">
@@ -12948,7 +12948,7 @@
                   <div class="mt-0.5 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(bin)}</div>
                 </div>
                 <div class="transition-opacity duration-300" style="opacity:${auction > 0 ? 1 : 0.32}">
-                  <div class="flex items-center gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-violet flex-shrink-0"></span>Auction · ${cmFmtPct(aPct, auction)}</div>
+                  <div class="flex items-center gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-violet flex-shrink-0"></span>Live Sales · ${cmFmtPct(aPct, auction)}</div>
                   <div class="mt-0.5 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(auction)}</div>
                 </div>
               </div>
@@ -23734,7 +23734,7 @@
         ratio: { num: numer, numL3: numerL3, denWeek: weeklyOrders },
         totalLabel: 'The categories above',
         gapRow: {
-          label: 'Auction, Custom Sales, Other / Non-Item, refunds',
+          label: 'Live sales, Custom Sales, Other / Non-Item, refunds',
           values: weeks.map((_, i) => ratioOf(chainSeries[i] - shownSeries[i], weeklyOrders[i])),
           total: ratioOf(sumA(chainSeries) - sumA(shownSeries), sumA(weeklyOrders)),
         },
@@ -23805,7 +23805,7 @@
         <div class="mt-1 text-[11.5px] text-opl-inkDim dark:text-op-inkDim">${escapeHtml(dateRange)}</div>
         <div class="mt-2 text-sm tabular-nums">${sVar != null ? `<span class="font-semibold ${sVarColor}">${sVarSign}${fmt$0s(Math.abs(sVar))}${sPace != null ? ` · ${Math.round(sPace)}%` : ''}</span> <span class="text-opl-inkDim dark:text-op-inkDim">of ${fmt$0s(sBud)} budget</span>` : '<span class="text-opl-inkDim dark:text-op-inkDim">No budget set</span>'}</div>
         ${sPace != null ? `<div class="mt-3 h-2 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]"><div class="h-full rounded-full transition-[width] duration-500" style="width:${sBarW}%;background:${sBarColor}"></div></div>` : ''}
-        <div class="mt-4 grid grid-cols-4 gap-2">${chipS('Retail', totals.retail)}${chipS('Bin', totals.bin)}${chipS('Auction', totals.auction)}${chipS('Net', totals.netSales)}</div>
+        <div class="mt-4 grid grid-cols-4 gap-2">${chipS('Retail', totals.retail)}${chipS('Bin', totals.bin)}${chipS('Live Sales', totals.auction)}${chipS('Net', totals.netSales)}</div>
       </div>
     </section>`;
 
@@ -37131,7 +37131,7 @@
     const chOf = (x) => [
       { label: 'Retail',  val: x.retail,  bar: 'bg-accent-green',  dot: 'text-accent-green'  },
       { label: 'BIN',     val: x.bin,     bar: 'bg-accent-blue',   dot: 'text-accent-blue'   },
-      { label: 'Auction', val: x.auction, bar: 'bg-accent-violet', dot: 'text-accent-violet' },
+      { label: 'Live Sales', val: x.auction, bar: 'bg-accent-violet', dot: 'text-accent-violet' },
     ];
     const CH = chOf(fig);
     const chTotal = CH.reduce((n, c) => n + c.val, 0);
