@@ -75,8 +75,8 @@ export default {
     // Authenticate before anything else, so an unauthenticated caller learns
     // nothing about what this endpoint accepts. Fail closed when unconfigured.
     if (!env.MCP_KEY || !env.REPORTING_API_KEY) return json({ error: 'Not configured' }, 503);
-    const m = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get('Authorization') || '');
-    if (!m || !(await sameKey(m[1], env.MCP_KEY))) {
+    if (!(await sameKey(presentedKey(request), env.MCP_KEY))) {
+      logRefusal(request, env);
       return json({ error: 'Unauthorized' }, 401, { 'WWW-Authenticate': 'Bearer' });
     }
 
@@ -167,6 +167,30 @@ function onlyStore(body, store) {
   const stores = body.stores.filter(s => s.storeId === id);
   if (!stores.length) throw new ToolError(`Unknown store "${store}". Valid ids: ${body.stores.map(s => s.storeId).join(', ')}`);
   return { ...body, stores };
+}
+
+// The key as the caller sent it. Claude's connector form takes a raw header, and
+// the first live attempt (2026-10-13) was refused three times with a header
+// present: the value is pasted with "Bearer ", without it, or with it twice when
+// the form adds its own. All of those carry the same key, so accept them; the
+// comparison itself stays exact. X-API-Key is accepted for forms that name it.
+function presentedKey(request) {
+  const auth = (request.headers.get('Authorization') || '').trim();
+  const m = /^(?:bearer\s+)*(\S+)$/i.exec(auth);
+  return m ? m[1] : (request.headers.get('X-API-Key') || '').trim();
+}
+
+// What a refused credential LOOKED like, so a failed connector setup can be
+// diagnosed from `wrangler tail` (which redacts Authorization). Shape only:
+// lengths, word count, and whether the real key appears in it. Never the value.
+function logRefusal(request, env) {
+  const auth = request.headers.get('Authorization');
+  const xKey = request.headers.get('X-API-Key');
+  const shape = (v) => v == null ? null : {
+    length: v.length, words: v.trim() ? v.trim().split(/\s+/).length : 0,
+    bearerPrefix: /^\s*bearer\s/i.test(v), containsKey: v.includes(env.MCP_KEY),
+  };
+  console.log(JSON.stringify({ event: 'mcp_auth_refused', authorization: shape(auth), xApiKey: shape(xKey) }));
 }
 
 // Constant-time comparison of two strings of any length: compare their digests.
