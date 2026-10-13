@@ -10,8 +10,11 @@ Every consumer (Chief of Staff, `retjg` CLI, `retjg-mcp`) reads it; rounding is 
 - [x] Swept the other reporting sums: period totals round on return (`periodTotals`), netSales
       rounds in `reportedFigures`, `salesSoFarToday` rounds; store-history emits no LY. Nothing else
 - [x] `npm test`: 9200 assertions, 105 suites
-- [ ] Deploy (Brian), guarded: branch contains main and worker.js differs by exactly this line
-- [ ] Live: `retjg yesterday` lySalesForDate has ≤ 2 decimals for every store, 3 clean passes
+- [x] Deploy (Brian, 2026-10-13): `clover-sales-api` 04a7e48f, guarded one-liner (branch ⊇ main and
+      worker.js differs by exactly this line); first try refused because #329 had landed, merged main, re-ran.
+      Bindings + all 6 crons present
+- [x] Live: 3 consecutive clean passes 16:48 ET, all 6 stores at cents (BL2 4165.110000000001 → 4165.11);
+      store-history and afternoon-briefing unchanged
 
 # Weekly marketing model: intake targets + Buffer proof (2026-10-13)
 
