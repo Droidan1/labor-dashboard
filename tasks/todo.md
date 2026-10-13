@@ -14,15 +14,16 @@ Plan:
       (`worker.fetch` behind a local HTTP server); proves header auth, no key in the URL, no request
       without a key, store filter, history params, error exits
 - [x] `npm test` green: 8950 assertions, 101 suites
-- [ ] Live check against prod once Brian has put the key in the Keychain (the CLI reads it; I never see it)
+- [x] Live check against prod (2026-10-13, key from the Keychain, never printed): `stores` 6 stores;
+      `yesterday --store BL2` 10-12 reported $5,523.99; `today --store BL1` live, asOf with -04:00;
+      `history --days 3 --store bl14` 10-10→10-12, all reported. Full `yesterday` is ~15 KB
 - [x] ORIENT.md: how to install and use it
 
 **Review:** 48 assertions drive the real CLI against the real worker. Six deliberate bugs, each caught
 (wrong auth header 21 failures, key in URL 1, no-key guard removed 3, store filter dropped 5, HTML
 200 accepted 2, `--days` not sent 2). ⚠️ The mutation loop left mutation #1 in the file despite a
 final restore; a full `npm test` caught it, and the file was restored and checked by `shasum`
-(lesson extended in tasks/lessons.md). Live prod check still owed: no key in the Keychain yet.
-Next step for Desktop chat / ChatGPT / Muse: a remote MCP server over the same three endpoints.
+(lesson extended in tasks/lessons.md). Next step for Desktop chat / ChatGPT / Muse: a remote MCP server over the same three endpoints.
 
 
 # Executive Summary email + Whatnot live sales (2026-10-12)
