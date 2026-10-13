@@ -1,3 +1,38 @@
+# `retjg` MCP server, phase 1: fixed key, for Claude (2026-10-13)
+
+**Request (Brian):** an MCP server so agents without a shell can get the data. Muse runs shell
+commands, so the CLI already covers it; this is for Claude Desktop chat and ChatGPT.
+
+**Decision (Brian, 2026-10-13): key first, OAuth next.** Claude's custom connectors accept a fixed
+request header; ChatGPT's accept only OAuth or no auth (most sources, Aug-Sep 2026). So phase 1 serves
+Claude (Desktop, claude.ai, phone) with a fixed key, and phase 2 adds "sign in with RETJG HUB" for
+ChatGPT and per-person store scoping.
+
+**Design:** a separate worker `retjg-mcp` (`mcp/`) on the custom domain `mcp.retjghub.com`. Stateless
+MCP over Streamable HTTP (JSON responses, no SSE, no deps), four read-only tools mirroring the CLI.
+It reaches the main worker through a service binding, with its own upstream key, so: Claude's key
+(`MCP_KEY`) is not the Chief of Staff key and can be revoked alone; no change to `worker.js`; and no
+same-zone worker-to-worker fetch. The reading rules live in one file the CLI's help is pinned to.
+
+Plan:
+- [x] `mcp/worker.mjs` + `mcp/reading-rules.mjs` + `mcp/wrangler.toml`
+- [x] `scripts/test-retjg-mcp.mjs` (75 assertions): the real MCP worker driving the real main worker through a stubbed
+      binding: auth, protocol, every tool, upstream key handling, rules pinned to the CLI
+- [x] Official MCP SDK client 1.32.1 against a local server: connect, 4 tools listed, each called,
+      bad args → isError, ping, wrong key refused. `wrangler deploy --dry-run`: 9 KB, binding `API`
+- [x] `npm test` green: 9067 assertions, 103 suites
+- [ ] Deploy (Brian): secrets from the Keychain, `wrangler deploy` from `mcp/`; then I verify live
+- [ ] Brian adds the connector in Claude
+- [x] ORIENT.md
+
+**Review:** 11 mutations, made in a scratch copy (lesson of 2026-10-13), each caught: MCP key sent
+upstream (20 failures), auth check removed (6), compare always true (3), fail-open without MCP_KEY (1),
+store filter dropped (3), argument checks skipped (7), notifications answered (2), version not echoed
+(1), not read-only (1), upstream key echoed in an error (1), a rule drifting from the CLI (1). Real
+files checked by `shasum` afterwards. Two mutants first CRASHED the suite (a tool error hit
+`JSON.parse`); the helper now asserts instead, so a failure reads as a failure.
+
+
 # `retjg` CLI — agent access to the reporting API (2026-10-13)
 
 **Request (Brian):** connect his agents (Claude Code, Claude Desktop, Codex, ChatGPT, Muse) to the app's

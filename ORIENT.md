@@ -48,8 +48,16 @@ An installable **PWA sales + labor dashboard** for the Bargain Lane / RETJG reta
 with a shell (Claude Code, Codex) runs `retjg --help` and gets the commands plus the rules for reading
 the numbers. Install with `install -m 755 cli/retjg.mjs /opt/homebrew/bin/retjg` (a copy, not a
 symlink: this checkout changes branch all the time). The key comes from `RETJG_API_KEY` or the
-Keychain item `retjg-api-key`, and is only ever sent as a header. Agents without a shell (Claude
-Desktop chat, ChatGPT) need an MCP server, which is not built yet.
+Keychain item `retjg-api-key`, and is only ever sent as a header.
+
+Agents without a shell use the **MCP server** in `mcp/`: a separate worker, `retjg-mcp`, at
+`https://mcp.retjghub.com/mcp`, with the same four questions as MCP tools. Claude (Desktop, claude.ai,
+phone) connects as a custom connector with "No sign in" plus a request header
+`Authorization: Bearer <MCP_KEY>` (Keychain item `retjg-mcp-key`). It reads through the main worker by
+service binding with its own `REPORTING_API_KEY`, so Claude's key can be revoked alone. Deploy it with
+`cd mcp && npx wrangler deploy`. 🛑 Run that from inside `mcp/`: from the repo root the same command
+deploys the MAIN worker. ChatGPT accepts only OAuth, which is phase 2. The reading rules live in
+`mcp/reading-rules.mjs`, and a test fails if the CLI's `--help` drifts from them.
 
 ## Known weirdness (the traps)
 
