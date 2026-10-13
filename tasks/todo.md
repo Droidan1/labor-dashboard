@@ -36,10 +36,17 @@ Step two: Buffer proof (South Bend = BL2)
 - [x] Brian created a personal API key (`~/.config/buffer/api-key`) → channels listed read-only, IDs in
       weekly-marketing-intake.md: all 4 Facebook pages (5 stores) + brand TikTok + 3 GBP (2× Fort Wayne,
       South Bend). **Missing: Instagram (all), GBP for Battle Creek and Indy East.**
-- [x] Public photo links: `GET|HEAD https://api.retjghub.com/p/<uuid>.<ext>`, above every auth gate, serving
+- [x] Public photo links: `GET|HEAD https://api.retjghub.com/p/<id>-<uuid>.<ext>`, above every auth gate, serving
       only a `marketing_photos` row's image (rejected → 404; no secret, no migration: the UUID already in the
       R2 key is the capability, and only the upload response ever returns it). `test-public-photo.mjs` 34
       (32 fail on main); `npm test` 9159 / 105 suites. Branch `claude/public-photo-links`
+- [x] Security review of 984d926 (fresh eyes). Fixed in the next commit, each with a failing-first check:
+      🛑 stored XSS — the route echoed the uploader's Content-Type, and photo-upload / thumbnail-upload took
+      any "image/*" incl. image/svg+xml (code review content-flow-1): now a raster allowlist at both uploads and
+      at serve, plus `CSP: default-src 'none'; sandbox`; 🛑 unauthenticated full-table LIKE scan per made-up
+      link: URL is now `/p/<id>-<uuid>.<ext>`, a primary-key read; cache 1 year → 1 hour (deletion is the
+      takedown); team/other photos stay sign-in only. Left: small originals keep EXIF (GPS = the store),
+      `status='rejected'` is never set by anything (photo-delete is the takedown)
 - [ ] Push + PR, merge, worker deploy; then fetch one link from outside to confirm
 - [x] Draft post to South Bend (cannot publish) → `6ace65cbd718c7e2826f6d09`, read back as draft, no due
       time. Facebook requires `metadata.facebook.type`. Payload recorded in weekly-marketing-intake.md

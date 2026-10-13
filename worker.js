@@ -7514,9 +7514,19 @@ function etDayStartIso(dateStr) {
   return new Date(getStartOfDayET(dateStr)).toISOString();
 }
 
-// One submitted photo, publicly, for Buffer (see the /p/ route in fetch). Every
-// refusal is the same bare 404, so a probe learns nothing about what exists.
-const PUBLIC_PHOTO_PATH = /^\/p\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.([a-z0-9]{2,5})$/;
+// Raster photo types only. `startsWith("image/")` also admitted image/svg+xml —
+// an image that runs script — and "image/,text/html"; served from this origin,
+// either is stored XSS against whoever opens the link (code review content-flow-1).
+const SAFE_IMAGE_TYPE = /^image\/(jpeg|jpg|png|webp|gif|heic|heif|avif)$/i;
+
+// One submitted photo, publicly, for Buffer (see the /p/ route in fetch):
+//   /p/<marketing_photos.id>-<the UUID in its R2 key>.<the key's extension>
+// The id makes it a primary-key lookup, so a stream of made-up links costs one
+// indexed read each, not a table scan. The UUID is the secret. Every refusal is
+// the same bare 404, so a probe learns nothing about what exists.
+const PUBLIC_PHOTO_PATH = /^\/p\/([1-9][0-9]{0,9})-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.([a-z0-9]{2,5})$/;
+// What a store would post. Team photos (staff) and "other" stay sign-in only.
+const PUBLIC_PHOTO_TYPES = ["retail", "bins", "event"];
 async function servePublicPhoto(request, env, url) {
   const notFound = () => new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain" } });
   if (request.method !== "GET" && request.method !== "HEAD") {
@@ -7524,22 +7534,25 @@ async function servePublicPhoto(request, env, url) {
   }
   const m = url.pathname.match(PUBLIC_PHOTO_PATH);
   if (!m || !env.DB || !env.MEDIA) return notFound();
-  const [, uuid, ext] = m;
+  const [, id, uuid, ext] = m;
   // The row is what makes it servable: only marketing_photos keys qualify, so a
   // bin-dump or truck photo (also UUID-named, same bucket) can never be reached.
-  const { results } = await env.DB.prepare(
-    "SELECT r2_key, content_type, status FROM marketing_photos WHERE r2_key LIKE ? LIMIT 2"
-  ).bind(`marketing/%/${uuid}.%`).all().catch(() => ({ results: [] }));
-  const row = results && results.length === 1 ? results[0] : null;
-  if (!row || !String(row.r2_key).endsWith(`/${uuid}.${ext}`)) return notFound();
-  if (row.status === "rejected" || !String(row.content_type || "").startsWith("image/")) return notFound();
-  const obj = await env.MEDIA.get(row.r2_key).catch(() => null);
+  const row = await env.DB.prepare(
+    "SELECT r2_key, content_type, photo_type, status FROM marketing_photos WHERE id = ?"
+  ).bind(Number(id)).first().catch(() => null);
+  if (!row || !String(row.r2_key).startsWith("marketing/") || !String(row.r2_key).endsWith(`/${uuid}.${ext}`)) return notFound();
+  if (row.status === "rejected" || !PUBLIC_PHOTO_TYPES.includes(row.photo_type)) return notFound();
+  const ct = String(row.content_type || "").toLowerCase();
+  if (!SAFE_IMAGE_TYPE.test(ct)) return notFound();
+  const obj = await (request.method === "HEAD" && env.MEDIA.head ? env.MEDIA.head(row.r2_key) : env.MEDIA.get(row.r2_key)).catch(() => null);
   if (!obj) return notFound();
   const headers = {
-    "Content-Type": row.content_type,
-    // A photo never changes after upload; a new photo is a new UUID.
-    "Cache-Control": "public, max-age=31536000, immutable",
+    "Content-Type": ct,
     "X-Content-Type-Options": "nosniff",
+    // Belt and braces: even a mislabelled file cannot run anything here.
+    "Content-Security-Policy": "default-src 'none'; sandbox",
+    // An hour, not a year: deleting a photo is the takedown, and it should take.
+    "Cache-Control": "public, max-age=3600",
   };
   if (obj.size != null) headers["Content-Length"] = String(obj.size);
   return new Response(request.method === "HEAD" ? null : obj.body, { headers });
@@ -16161,14 +16174,15 @@ export default {
     const url = new URL(request.url);
     const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
 
-    // ── Public photo links: GET|HEAD /p/<uuid>.<ext> ──────────────
+    // ── Public photo links: GET|HEAD /p/<id>-<uuid>.<ext> ─────────
     // Buffer cannot take an upload: it fetches each image from a public URL when
     // the post goes out, which for a queued post is hours or days later. So a
     // submitted marketing photo gets a permanent, sign-in-free address.
     // Deliberately ABOVE every auth gate, and safe there because it can only ever
-    // answer with one thing: a marketing_photos row's image. The UUID in the URL
-    // is the random one already in that row's R2 key — 122 bits, and returned by
-    // no endpoint except the upload's own response — so the link is the capability.
+    // answer with one thing: a raster image from a marketing_photos row of a type
+    // a store would post. The UUID in the URL is the random one already in that
+    // row's R2 key — 122 bits, and returned by no endpoint except the upload's own
+    // response — so the link is the capability.
     if (url.pathname.startsWith("/p/")) return servePublicPhoto(request, env, url);
 
     // ── Reporting API (external, static-key auth) ─────────────────
@@ -17267,7 +17281,7 @@ export default {
         const ptype = TYPES.includes(ptypeRaw) ? ptypeRaw : "other";
         if (!file || typeof file.arrayBuffer !== "function") return new Response(JSON.stringify({ error: "No photo file" }), { status: 400, headers: corsJson });
         const ct = file.type || "application/octet-stream";
-        if (!ct.startsWith("image/")) return new Response(JSON.stringify({ error: "File must be an image" }), { status: 400, headers: corsJson });
+        if (!SAFE_IMAGE_TYPE.test(ct)) return new Response(JSON.stringify({ error: "File must be a photo (JPEG, PNG, WebP, GIF, HEIC or AVIF)" }), { status: 400, headers: corsJson });
         const buf = await file.arrayBuffer();
         const bytes = buf.byteLength;
         if (bytes > 15 * 1024 * 1024) return new Response(JSON.stringify({ error: "Image too large (max 15MB)" }), { status: 400, headers: corsJson });
@@ -17431,7 +17445,7 @@ export default {
         const file = form.get("thumbnail") || form.get("photo");
         if (!file || typeof file.arrayBuffer !== "function") return new Response(JSON.stringify({ error: "No image file" }), { status: 400, headers: corsJson });
         const ct = file.type || "application/octet-stream";
-        if (!ct.startsWith("image/")) return new Response(JSON.stringify({ error: "File must be an image" }), { status: 400, headers: corsJson });
+        if (!SAFE_IMAGE_TYPE.test(ct)) return new Response(JSON.stringify({ error: "File must be a photo (JPEG, PNG, WebP, GIF, HEIC or AVIF)" }), { status: 400, headers: corsJson });
         const buf = await file.arrayBuffer();
         const bytes = buf.byteLength;
         if (bytes > 15 * 1024 * 1024) return new Response(JSON.stringify({ error: "Image too large (max 15MB)" }), { status: 400, headers: corsJson });
