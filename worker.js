@@ -15852,6 +15852,20 @@ function laborBucketKey(date, grain) {
 // per store, which is why ?action=backfill has always been per-store.
 const SHEET_IMPORT_TRAILING_DAYS = 21;
 
+// Days AFTER today are refreshed too, through the end of next month, but only
+// their plan columns (budget, labour plan, week) — there are no actuals or
+// Clover snapshot to read yet. The Executive Summary's monthly plan and
+// full-week pace read these rows, and before 2026-10 nothing refreshed them
+// short of a manual full backfill: a Sheet edit to a future day reached the app
+// only when that day entered the trailing window, then the plan jumped
+// overnight. One D1 batch per store tab, no KV reads: +6 subrequests.
+function sheetPlanThrough(todayStr) {
+  const d = new Date(todayStr.slice(0, 7) + '-01T12:00:00Z');
+  d.setUTCMonth(d.getUTCMonth() + 2);          // first of the month after next
+  d.setUTCDate(0);                             // → last day of next month
+  return d.toISOString().slice(0, 10);
+}
+
 function sheetParseNum(cell) {
   if (!cell || cell.v == null || cell.v === "") return null;
   if (typeof cell.v === "number") return cell.v;
@@ -15876,13 +15890,27 @@ function sheetParseDate(cell) {
   return null;
 }
 
-async function importSheetToD1(env, { filterStore = null, fromDate = null, toDate = null } = {}) {
+// `planThrough` (YYYY-MM-DD, nightly cron only): rows after `toDate` up to it
+// get a plan-only upsert instead of being skipped. null keeps the old behaviour.
+async function importSheetToD1(env, { filterStore = null, fromDate = null, toDate = null, planThrough = null } = {}) {
   const COL = SHEET_COL;
   const storeEntries = Object.entries(STORE_TABS).filter(([, code]) => !filterStore || code === filterStore);
 
   const summary = {};
+  // Future days: plan columns only, with the same Sheet-wins rules as the full
+  // upsert below. Every other column is left as it is.
+  const planStmt = planThrough && env.DB.prepare(
+    `INSERT INTO daily_sales (store, date, week, budget, budget_labor_pct, budget_labor_hours)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(store, date) DO UPDATE SET
+       week=CASE WHEN is_manual_override=1 THEN week ELSE excluded.week END,
+       budget=CASE WHEN is_manual_override=1 THEN budget ELSE excluded.budget END,
+       budget_labor_pct=CASE WHEN is_manual_override=1 THEN budget_labor_pct ELSE COALESCE(excluded.budget_labor_pct, budget_labor_pct) END,
+       budget_labor_hours=CASE WHEN is_manual_override=1 THEN budget_labor_hours ELSE COALESCE(excluded.budget_labor_hours, budget_labor_hours) END`
+  );
   for (const [tabName, storeCode] of storeEntries) {
     let imported = 0, skipped = 0, errors = 0;
+    const planBatch = [];
     try {
       // Fetch Google Sheets data via GViz API
       const gvizUrl = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?headers=0&sheet=${encodeURIComponent(tabName)}&tqx=out:json`;
@@ -15906,7 +15934,16 @@ async function importSheetToD1(env, { filterStore = null, fromDate = null, toDat
         // relies on this to stay inside its subrequest budget, so the check
         // must come BEFORE the KV read below, not after.
         if (fromDate && dateStr < fromDate) { skipped++; continue; }
-        if (toDate && dateStr > toDate) { skipped++; continue; }
+        if (toDate && dateStr > toDate) {
+          if (planStmt && dateStr <= planThrough) {
+            planBatch.push(planStmt.bind(storeCode, dateStr,
+              c[COL.WEEK]?.v != null ? String(c[COL.WEEK].v) : null,
+              sheetParseNum(c[COL.B_TOTAL]),
+              sheetParseNum(c[COL.B_LABOR]) || null,
+              sheetParseNum(c[COL.B_HOURS]) || null));
+          } else skipped++;
+          continue;
+        }
 
         const week = c[COL.WEEK]?.v != null ? String(c[COL.WEEK].v) : null;
         const bTotal = sheetParseNum(c[COL.B_TOTAL]);
@@ -15998,7 +16035,12 @@ async function importSheetToD1(env, { filterStore = null, fromDate = null, toDat
           console.error(`Backfill D1 error ${storeCode} ${dateStr}:`, e.message);
         }
       }
-      summary[storeCode] = { imported, skipped, errors };
+      let planned = 0;
+      if (planBatch.length) {
+        try { await env.DB.batch(planBatch); planned = planBatch.length; }
+        catch (e) { errors++; console.error(`Plan refresh D1 error ${storeCode}:`, e.message); }
+      }
+      summary[storeCode] = planStmt ? { imported, planned, skipped, errors } : { imported, skipped, errors };
     } catch (e) {
       summary[storeCode] = { error: e.message };
     }
@@ -29123,6 +29165,7 @@ export default {
       const sheetSummary = await importSheetToD1(env, {
         fromDate: fromD.toISOString().slice(0, 10),
         toDate: to,
+        planThrough: sheetPlanThrough(to),
       });
       console.log("Sheet import (trailing window):", JSON.stringify(sheetSummary));
     } catch (err) {
