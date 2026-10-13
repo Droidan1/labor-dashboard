@@ -40,7 +40,7 @@ Plan (one channel per source, the column becomes their SUM, so no consumer chang
       fail on 723185f: stale recap copy overwrote its correction; seen map grew past the 9 KB property cap;
       replies/subject changes mishandled; a multi-day email could post onto one day; a rejected or total-less
       row wiped its store-day. Rollout adds `preview()` → Claude compares each day to prod → `backfill()`
-- [ ] Brian: get bhoward@bargainlane.com added to the recap recipients (today: Ryan + James only)
+- [x] Brian: bhoward@bargainlane.com added to the recap recipients (2026-10-13)
 - [x] Phase 2 worker: Executive Summary builder + email, replaces daily summary (chain-wide + scoped),
       preview endpoint renders it; footnote says Whatnot is gross; "recap not received" when missing.
       `buildExecSummaryData` / `buildExecSummaryEmailHtml`; EXEC_SUMMARY_STORES (Holland out by name);
@@ -56,6 +56,18 @@ Plan (one channel per source, the column becomes their SUM, so no consumer chang
       (a file format) and the WRS synthetic "Auction" CATEGORY row (stored in weekly history; renaming splits
       the T13 series). sw.js v279. scripts/browser-live-sales-label.mjs 40/40 (light+dark, 375+1400)
 - [ ] Tests through `worker.fetch` / `worker.scheduled`; `npm test`; both themes for Phase 3
+
+**Review (2026-10-13).** Shipped in four PRs, all merged and live:
+#319 live sales = online auction + Whatnot (worker c94405dc + Apps Script feeder, Sep 30-Oct 11 backfill: 24
+store-days, 0 mismatches, Battle Creek Oct 1-11 $10,201 -> $22,515); #320 Executive Summary replaces the Daily
+Sales Summary (worker a20fdd42); #321 dashboard label "Live Sales" (Pages 4c56c3f, live index.html sha-matched
+main on 3 passes, sw v279); #322 feeder every 10 minutes. First send Tue 10/13 12:00 UTC: 6 chain + 9 scoped,
+all `sent`, same as the 10/12 baseline; Monday's Whatnot (BL1 $4,779) loaded at 7:49 by a manual run because the
+hour triggers never fired and the recap landed 7:03 — fixed by #322. Two fresh-eyes reviews found 10 defects
+before any reached prod (stale recap copy overwriting its correction; a missing-day warning that could never fire
+because prod pre-creates rows with total 0; et al.), each fixed with a test that fails without the fix.
+Still open: future-day budgets only refresh on a manual backfill (nightly import is today − 20..today); WRS
+synthetic "Auction" category row left by design; Dec 2025-Jan 2026 rows double-count auction (~$8.0k, history).
 
 **Found, not in scope:** Sheet BL1 Oct 25 Retail NS budget cell is blank (Sheet $4,875 vs app $12,862); the
 nightly import will overwrite the app on Oct 25 and Coliseum's October plan drops $7,987. Sheet fix, Brian.
