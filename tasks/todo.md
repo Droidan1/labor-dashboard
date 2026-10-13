@@ -1,3 +1,30 @@
+# `retjg` CLI — agent access to the reporting API (2026-10-13)
+
+**Request (Brian):** connect his agents (Claude Code, Claude Desktop, Codex, ChatGPT, Muse) to the app's
+data; start with a CLI. A CLI only reaches agents that can run a shell (Claude Code, Codex); Desktop
+chat, ChatGPT and Muse need the remote MCP server, which is the next step.
+
+**Assumptions:** read-only; wraps the three existing `MORNING_BRIEFING_KEY` endpoints with no worker
+change; key from `RETJG_API_KEY` or the macOS Keychain item `retjg-api-key`, sent only as a header;
+JSON on stdout so agents can parse it; the API_HANDOVER.md interpretation traps go in `--help`.
+
+Plan:
+- [x] `cli/retjg.mjs`: `stores`, `yesterday`, `today`, `history`, `--store`, `--days`; stdlib only
+- [x] `scripts/test-retjg-cli.mjs`: runs the real CLI as a subprocess against the real worker
+      (`worker.fetch` behind a local HTTP server); proves header auth, no key in the URL, no request
+      without a key, store filter, history params, error exits
+- [x] `npm test` green: 8950 assertions, 101 suites
+- [ ] Live check against prod once Brian has put the key in the Keychain (the CLI reads it; I never see it)
+- [x] ORIENT.md: how to install and use it
+
+**Review:** 48 assertions drive the real CLI against the real worker. Six deliberate bugs, each caught
+(wrong auth header 21 failures, key in URL 1, no-key guard removed 3, store filter dropped 5, HTML
+200 accepted 2, `--days` not sent 2). ⚠️ The mutation loop left mutation #1 in the file despite a
+final restore; a full `npm test` caught it, and the file was restored and checked by `shasum`
+(lesson extended in tasks/lessons.md). Live prod check still owed: no key in the Keychain yet.
+Next step for Desktop chat / ChatGPT / Muse: a remote MCP server over the same three endpoints.
+
+
 # Executive Summary email + Whatnot live sales (2026-10-12)
 
 **Request (Brian, from his boss):** replace the Daily Sales Summary with an "Executive Summary": headline
