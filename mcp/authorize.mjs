@@ -14,9 +14,10 @@
 // Then agent-identity (key-gated) says whether they may connect: admitted().
 //
 // 🛑 Only two clients exist: ChatGPT and Claude, by their Client ID Metadata Document
-// URLs. Any other client_id is refused BEFORE the library fetches its document, so
-// nobody can register a look-alike client and show a signed-in admin a consent page
-// that sends the code to their own server. Dynamic registration is off (worker.mjs).
+// URLs. Any other client_id is refused BEFORE the library fetches its document, here
+// and at the token endpoint (worker.mjs), so nobody can register a look-alike client
+// and show a signed-in admin a consent page that sends the code to their own server,
+// or make this worker fetch arbitrary URLs. Dynamic registration is off.
 
 import { AuthorizationError } from '@cloudflare/workers-oauth-provider';
 
@@ -42,11 +43,13 @@ export function admitted(who) {
     && typeof who.id === 'string' && who.id !== '' && !who.id.includes(':');
 }
 
-// Throws when the main worker cannot answer, so a caller can tell "refused" from
-// "unreachable" — the refresh check must not revoke anyone over an outage.
-export async function agentIdentity(env, email) {
-  const r = await env.API.fetch(new Request(`${API}?action=agent-identity&email=${encodeURIComponent(email)}`, {
-    headers: { 'X-API-Key': env.REPORTING_API_KEY },
+// Throws when the main worker cannot answer (including its 503 on a failed database
+// read), so a caller can tell "refused" from "unreachable": the refresh check must not
+// revoke anyone over an outage. By { id } (the hourly refresh) or { email } (sign-in);
+// the email goes in a header, never the URL, which lands in logs.
+export async function agentIdentity(env, { id, email }) {
+  const r = await env.API.fetch(new Request(`${API}?action=agent-identity${id ? `&id=${encodeURIComponent(id)}` : ''}`, {
+    headers: { 'X-API-Key': env.REPORTING_API_KEY, ...(!id && { 'X-Agent-Email': email }) },
   }));
   if (r.status !== 200) throw new Error(`agent-identity answered ${r.status}`);
   return r.json();
@@ -72,7 +75,7 @@ async function sha256hex(s) {
 }
 
 // ── The handler ────────────────────────────────────────────────────────────
-export async function authorize(request, env) {
+export async function authorize(request, env, ctx) {
   const url = new URL(request.url);
   if (url.pathname !== '/authorize') {
     return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
@@ -80,7 +83,7 @@ export async function authorize(request, env) {
   try {
     if (request.method === 'GET') return await start(request, env, url.search);
     if (request.method !== 'POST') return message(405, 'Method not allowed', 'Start again from ChatGPT or Claude.');
-    return await step(request, env);
+    return await step(request, env, ctx);
   } catch (e) {
     if (e instanceof AuthorizationError) return message(400, 'This sign-in has expired', 'Start again from ChatGPT or Claude.');
     console.log(JSON.stringify({ event: 'mcp_authorize_error', message: String(e && e.message).slice(0, 120) }));
@@ -88,10 +91,12 @@ export async function authorize(request, env) {
   }
 }
 
-async function step(request, env) {
+async function step(request, env, ctx) {
 
   // A cross-site form post never carries our Origin; the consent handle's SameSite
-  // cookie is the real guard, this is a second one.
+  // cookie is the real guard, this is a second one. 🛑 It works only because pages
+  // send Referrer-Policy: same-origin — with no-referrer a browser posts Origin: null
+  // and this would refuse every real Allow (fresh-eyes review, 2026-10-13).
   const origin = request.headers.get('Origin');
   if (origin && origin !== ORIGIN) return message(403, 'Not allowed', 'This form can only be sent from this page.');
 
@@ -120,10 +125,13 @@ async function step(request, env) {
       const throttle = `retjg:code-sent:${await sha256hex(email)}`;
       if (!(await env.OAUTH_KV.get(throttle))) {
         await env.OAUTH_KV.put(throttle, '1', { expirationTtl: 60 });
-        // auth-login answers ok for unknown emails, but 500 only for a real account
-        // whose email failed to send — never surface the difference.
-        const r = await post(env, 'auth-login', { email }).catch(() => null);
-        if (!r || r.status !== 200) console.log(JSON.stringify({ event: 'mcp_code_send_failed', status: r ? r.status : 'unreachable' }));
+        // In the background: auth-login does its database write and the email only
+        // for a real account, so awaiting it would let the response time say whether
+        // the address has one. Its status is logged, never shown.
+        const sending = post(env, 'auth-login', { email })
+          .then(r => { if (r.status !== 200) console.log(JSON.stringify({ event: 'mcp_code_send_failed', status: r.status })); })
+          .catch(() => console.log(JSON.stringify({ event: 'mcp_code_send_failed', status: 'unreachable' })));
+        if (ctx && ctx.waitUntil) ctx.waitUntil(sending); else await sending;
       }
       return render(env, { ...view, state: 'code', email });
     }
@@ -168,13 +176,13 @@ async function start(request, env, search) {
   const { handle, headers } = await env.OAUTH_PROVIDER.beginConsent(authReq);
   const email = await emailForSession(env, (request.headers.get('Cookie') || '').match(SESSION_RE)?.[1]);
   let who = null;
-  if (email) { try { who = await agentIdentity(env, email); } catch { who = null; } }
+  if (email) { try { who = await agentIdentity(env, { email }); } catch { who = null; } }
   return render(env, { handle, q: search, authReq, state: who ? (admitted(who) ? 'signed-in' : 'refused') : 'email', who }, headers);
 }
 
 async function grant(request, env, view, email) {
   let who;
-  try { who = await agentIdentity(env, email); }
+  try { who = await agentIdentity(env, { email }); }
   catch { return message(503, 'RETJG HUB is not answering', 'Try again in a minute.'); }
   if (!admitted(who)) return render(env, { ...view, state: 'refused', who: who.found ? who : { email } });
   const requested = view.authReq.scope || [];
@@ -205,7 +213,10 @@ function secure(headers = new Headers()) {
   h.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'");
   h.set('X-Frame-Options', 'DENY');
   h.set('Cache-Control', 'no-store');
-  h.set('Referrer-Policy', 'no-referrer');
+  // 🛑 same-origin, not no-referrer: no-referrer makes a browser send Origin: null on
+  // this page's own form posts, which the Origin check refuses. same-origin still
+  // sends nothing to chatgpt.com / claude.ai on the redirect.
+  h.set('Referrer-Policy', 'same-origin');
   h.set('X-Content-Type-Options', 'nosniff');
   return h;
 }
@@ -250,7 +261,9 @@ async function render(env, { handle, q, authReq, state, who, email, error }, con
     'Email me a code');
   let body = `<h1>Connect ${client} to RETJG HUB</h1>`
     + `<p class="dim">${client}${d.clientDomain ? ` (${esc(d.clientDomain)})` : ''} wants read-only access to Bargain Lane sales, `
-    + `Retail Summary and Labor data, for every store. It will be sent back to <strong>${esc(d.redirectHost)}</strong>.</p>`;
+    + `Retail Summary and Labor data, for every store. It will be sent back to <strong>${esc(d.redirectHost)}</strong>.</p>`
+    + `<p class="dim">Only continue if you just started connecting ${client} yourself. If someone sent you this link, close this page.</p>`
+    + (d.redirectIsLoopback ? `<p class="bad">This sends access to an app on this computer, not to ${client}'s website.</p>` : '');
   if (error) body += `<p class="bad">${esc(error)}</p>`;
   if (state === 'signed-in') {
     body += `<p>Signed in as <strong>${esc(who.email)}</strong>.</p>` + form('allow', '', 'Allow') + deny

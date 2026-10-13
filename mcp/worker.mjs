@@ -14,8 +14,8 @@
 //
 // 🔑 Keys stay apart. Claude's MCP_KEY and the OAuth tokens open this worker; only
 // REPORTING_API_KEY goes upstream, and it never leaves Cloudflare.
-import { OAuthProvider, OAuthError, GrantType } from '@cloudflare/workers-oauth-provider';
-import { authorize, agentIdentity, admitted, AGENT_ROLES, SCOPES } from './authorize.mjs';
+import { OAuthProvider, OAuthError, GrantType, insufficientScope } from '@cloudflare/workers-oauth-provider';
+import { authorize, agentIdentity, admitted, AGENT_ROLES, SCOPES, ALLOWED_CLIENTS } from './authorize.mjs';
 // The tools come from QUERIES in cli/reporting.mjs, the table the retjg CLI's
 // commands come from too, so the two surfaces cannot drift.
 import { QUERIES, READING_RULES, UsageError, QueryError, checkArgs, inputSchema } from '../cli/reporting.mjs';
@@ -49,7 +49,7 @@ class ToolError extends Error {}
 export const PROVIDER_OPTIONS = {
   apiRoute: '/mcp',
   apiHandler: { fetch: (request, env, ctx) => oauthMcp(request, env, ctx) },
-  defaultHandler: { fetch: (request, env) => authorize(request, env) },
+  defaultHandler: { fetch: (request, env, ctx) => authorize(request, env, ctx) },
   authorizeEndpoint: '/authorize',
   tokenEndpoint: '/oauth/token',
   scopesSupported: SCOPES,
@@ -82,6 +82,11 @@ export default {
       logRefusal(request, env);
       return json({ error: 'Unauthorized' }, 401, { 'WWW-Authenticate': 'Bearer' });
     }
+    // The allowlist holds at the token endpoint too: otherwise any https client_id
+    // makes the library fetch that URL, and logs it raw (a forged log line).
+    if (url.pathname === '/oauth/token' && request.method === 'POST' && !ALLOWED_CLIENTS.has(await tokenClient(request.clone()))) {
+      return json({ error: 'invalid_client', error_description: 'Unknown client' }, 401);
+    }
     const res = await provider.fetch(request, env, ctx);
     if (url.pathname === '/mcp' && res.status === 401 && hasCredential(request)) logRefusal(request, env);
     return res;
@@ -95,6 +100,9 @@ async function oauthMcp(request, env, ctx) {
   if (!p || !AGENT_ROLES.has(p.role) || typeof p.userId !== 'string' || !p.userId) {
     return json({ error: 'Forbidden' }, 403);
   }
+  if (!(ctx.auth && Array.isArray(ctx.auth.scope) && ctx.auth.scope.includes('mcp:read'))) {
+    return insufficientScope(ctx.auth, ['mcp:read']);
+  }
   console.log(JSON.stringify({ event: 'mcp_oauth_call', user: p.userId, client: ctx.auth && ctx.auth.clientId }));
   return serveMcp(request, env);
 }
@@ -106,7 +114,8 @@ async function oauthMcp(request, env, ctx) {
 async function recheckOnRefresh({ grantType, props, env }) {
   if (grantType !== GrantType.REFRESH_TOKEN) return;
   let who;
-  try { who = await agentIdentity(env, props && props.email); }
+  // By user id: no email in a URL every hour.
+  try { who = await agentIdentity(env, { id: props && props.userId }); }
   catch {
     throw new OAuthError('temporarily_unavailable', { statusCode: 503, description: 'RETJG HUB is not answering; try again.' });
   }
@@ -141,6 +150,18 @@ async function serveMcp(request, env) {
     const error = e instanceof RpcError ? { code: e.code, message: e.message } : { code: -32603, message: 'Internal error' };
     return json({ jsonrpc: '2.0', id: msg.id, error });
   }
+}
+
+// Which client a token request names: client_id, or a client assertion's iss
+// (ChatGPT may omit client_id when it signs one). Unverified: only for the allowlist.
+async function tokenClient(request) {
+  try {
+    const form = await request.formData();
+    const id = form.get('client_id');
+    if (id) return String(id);
+    const jwt = String(form.get('client_assertion') || '').split('.')[1];
+    return jwt ? String(JSON.parse(atob(jwt.replace(/-/g, '+').replace(/_/g, '/'))).iss || '') : '';
+  } catch { return ''; }
 }
 
 const hasCredential = (request) => !!(request.headers.get('Authorization') || request.headers.get('X-API-Key'));

@@ -14598,8 +14598,10 @@ async function getAuthUser(request, env) {
 // special-cases it rather than backfilling rows for every business added.
 //
 // Loaded once per request in getAuthUser and attached as `user.grants`.
-async function loadGrants(env, userId) {
-  if (!env.DB) return [];
+// { strict: true } rethrows a database error instead of answering "no grants": a
+// caller that turns "no grants" into a revocation must not mistake an outage for one.
+async function loadGrants(env, userId, { strict = false } = {}) {
+  if (!env.DB) { if (strict) throw new Error('DB not configured'); return []; }
   try {
     const { results } = await env.DB.prepare(
       `SELECT g.business_id, g.role, g.units, b.name AS business_name, b.unit_noun
@@ -14620,7 +14622,8 @@ async function loadGrants(env, userId) {
       }
       return { ...g, units };
     });
-  } catch (_) {
+  } catch (e) {
+    if (strict) throw e;
     // Table may not exist yet (pre migration-030). Callers fall back below.
     return [];
   }
@@ -16293,26 +16296,36 @@ export default {
           });
         }
         if (reportingAction === "agent-identity") {
-          // ?action=agent-identity&email=… → { email, found, id, role, active, associate, stores, bargainLane }
+          // GET ?action=agent-identity&id=<user id>   (retjg-mcp's hourly re-check)
+          // GET ?action=agent-identity + header X-Agent-Email: <email>   (sign-in)
+          // 🔑 The email travels in a header, never the URL, which lands in logs.
+          // → { email, found, id, role, active, associate, stores, bargainLane }
           const noStore = { ...corsJson, "Cache-Control": "no-store" };
-          const email = (url.searchParams.get("email") || "").trim().toLowerCase();
-          if (!email.includes("@")) {
-            return new Response(JSON.stringify({ error: "email required" }), { status: 400, headers: noStore });
+          const id = (url.searchParams.get("id") || "").trim();
+          const email = (request.headers.get("X-Agent-Email") || "").trim().toLowerCase();
+          if (!id && !email.includes("@")) {
+            return new Response(JSON.stringify({ error: "id or X-Agent-Email required" }), { status: 400, headers: noStore });
           }
-          const row = await env.DB.prepare(
-            "SELECT id, role, stores, status, (pin_hash IS NOT NULL) AS is_associate FROM users WHERE email = ?"
-          ).bind(email).first();
-          if (!row) return new Response(JSON.stringify({ email, found: false }), { headers: noStore });
-          // The user as getAuthUser builds it, minus what the answer never needs.
-          let stores = null;
-          try { stores = row.stores ? JSON.parse(row.stores) : null; } catch (_) { stores = []; }
-          const user = { id: row.id, role: row.role, stores,
-            grants: row.role === "superuser" ? [] : await loadGrants(env, row.id) };
-          return new Response(JSON.stringify({
-            email, found: true, id: row.id, role: row.role,
-            active: row.status === "active", associate: !!row.is_associate,
-            stores: allowedStores(user), bargainLane: canAccessBusiness(user, "bl"),
-          }), { headers: noStore });
+          try {
+            const row = await env.DB.prepare(
+              `SELECT id, email, role, stores, status, (pin_hash IS NOT NULL) AS is_associate FROM users WHERE ${id ? "id" : "email"} = ?`
+            ).bind(id || email).first();
+            if (!row) return new Response(JSON.stringify({ found: false }), { headers: noStore });
+            // The user as getAuthUser builds it, minus what the answer never needs.
+            let stores = null;
+            try { stores = row.stores ? JSON.parse(row.stores) : null; } catch (_) { stores = []; }
+            // 🛑 strict: a failed grants read must answer 503, not "no Bargain Lane" —
+            // retjg-mcp revokes on a definite no, so an outage must never look like one.
+            const user = { id: row.id, role: row.role, stores,
+              grants: row.role === "superuser" ? [] : await loadGrants(env, row.id, { strict: true }) };
+            return new Response(JSON.stringify({
+              email: row.email, found: true, id: row.id, role: row.role,
+              active: row.status === "active", associate: !!row.is_associate,
+              stores: allowedStores(user), bargainLane: canAccessBusiness(user, "bl"),
+            }), { headers: noStore });
+          } catch (e) {
+            return new Response(JSON.stringify({ error: "Lookup failed" }), { status: 503, headers: noStore });
+          }
         }
         // ?action=store-history&days=30[&storeId=BL1]
         const data = await buildStoreHistoryData(env, {

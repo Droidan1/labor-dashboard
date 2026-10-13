@@ -43,13 +43,14 @@ const docs = {
 blockNetwork();
 const blocked = globalThis.fetch;
 const fetched = [], mails = [];
+let resendDelay = 0;      // ms; a real mail API is not instant, and the timing check needs that
 globalThis.fetch = async (u, init) => {
   const s = typeof u === 'string' ? u : u instanceof URL ? u.href : u.url;
   fetched.push(s);
   const js = (o) => new Response(JSON.stringify(o), { status: 200, headers: { 'Content-Type': 'application/json' } });
   if (docs[s]) return js(docs[s]);
   if (s === 'https://chatgpt.com/oauth/jwks.json') return js({ keys: [pub] });
-  if (s.startsWith('https://api.resend.com/')) { mails.push(s); return js({ id: 'm' }); }
+  if (s.startsWith('https://api.resend.com/')) { if (resendDelay) await new Promise(r => setTimeout(r, resendDelay)); mails.push(s); return js({ id: 'm' }); }
   return blocked(u, init);
 };
 
@@ -57,13 +58,17 @@ globalThis.fetch = async (u, init) => {
 const { default: mcp, PROVIDER_OPTIONS } = await import(pathToFileURL(path.join(repo, 'mcp', 'worker.mjs')).href);
 const { getOAuthApi } = await import('@cloudflare/workers-oauth-provider');
 const upstream = [];
+const minted = [];        // every session id the main worker handed back, to prove none leaks
 let apiDown = false;
 const env = {
   MCP_KEY, REPORTING_API_KEY: UP, OAUTH_KV: kvNamespace(),
   API: { fetch: async (r) => {
     if (apiDown) throw new Error('binding down');
-    upstream.push({ url: r.url, key: r.headers.get('X-API-Key'), auth: r.headers.get('Authorization') });
-    return main.fetch(r, mainEnv, { ...baseCtx });
+    upstream.push({ url: r.url, key: r.headers.get('X-API-Key'), auth: r.headers.get('Authorization'), agentEmail: r.headers.get('X-Agent-Email') });
+    const res = await main.fetch(r, mainEnv, { ...baseCtx });
+    const sid = (res.headers.get('Set-Cookie') || '').match(/session=([^;]+)/)?.[1];
+    if (sid) minted.push(sid);
+    return res;
   } },
 };
 const seen = [];          // every response body and header, for the leak checks
@@ -71,8 +76,11 @@ const logs = [];
 const realLog = console.log, realErr = console.error, realWarn = console.warn;
 // Captured, not printed: the leak check reads every line the worker or the library writes.
 console.log = console.error = console.warn = (...a) => { logs.push(a.map(String).join(' ')); };
+const pending = [];        // ctx.waitUntil work (send-code mails in the background)
+const settle = async () => { while (pending.length) await pending.shift(); };
 async function call(req) {
-  const r = await mcp.fetch(req, env, { waitUntil() {}, passThroughOnException() {} }); // fresh ctx: the library writes ctx.props
+  // A fresh ctx per request: the library writes ctx.props.
+  const r = await mcp.fetch(req, env, { waitUntil: (p) => pending.push(p), passThroughOnException() {} });
   const text = await r.clone().text();
   seen.push(text, JSON.stringify([...r.headers]));
   return r;
@@ -171,6 +179,9 @@ let chat;
   ok(html.includes('Signed in as <strong>bgeorges@retjg.com</strong>'), 'recognises the signed-in admin');
   ok((page.headers.get('Content-Security-Policy') || '').includes("frame-ancestors 'none'") && page.headers.get('X-Frame-Options') === 'DENY', 'cannot be framed');
   eq(page.headers.get('Cache-Control'), 'no-store', 'never cached');
+  // 🛑 Not no-referrer: with it a browser posts this page's forms with Origin: null,
+  // and the Origin check refuses every real Allow (fresh-eyes review, 2026-10-13).
+  eq(page.headers.get('Referrer-Policy'), 'same-origin', 'Referrer-Policy same-origin, so the forms post their real Origin');
   ok(Object.keys(b.jar).some(k => k.startsWith('__Host-')), 'the consent handle is bound to this browser by a __Host- cookie');
   const allow = await b.post({ step: 'allow', ...hiddenOf(html) });
   eq(allow.status, 302, 'Allow → 302');
@@ -206,13 +217,22 @@ let claude;
   const html = await page.text();
   ok(html.includes('Email me a code') && !html.includes('Signed in as'), 'not signed in: asks for an email');
   const h = hiddenOf(html);
+  resendDelay = 300;
+  const t0 = Date.now();
   const sent = await b.post({ step: 'send-code', email: 'BGeorges@retjg.com', ...h });
+  const took = Date.now() - t0;
   const sentHtml = await sent.text();
   ok(sentHtml.includes("we've emailed a 6-digit code"), 'says a code was sent');
-  eq(mails.length, 1, 'one email went out');
+  eq(mails.length, 0, 'the page answered before the email went: response time cannot say an account exists');
+  ok(took < 250, `send-code answered in ${took} ms with a 300 ms mail provider`);
+  await settle();
+  resendDelay = 0;
+  eq(mails.length, 1, 'one email went out, in the background');
   await b.post({ step: 'send-code', email: 'bgeorges@retjg.com', ...h });
+  await settle();
   eq(mails.length, 1, 'a second send inside a minute is throttled');
   const unknown = await (await b.post({ step: 'send-code', email: 'nobody@example.com', ...h })).text();
+  await settle();
   ok(unknown.includes("we've emailed a 6-digit code"), 'an unknown email gets the same page (no account oracle)');
   eq(mails.length, 1, 'and no email');
   const code = codeFor('bgeorges@retjg.com');
@@ -257,6 +277,7 @@ let claude;
     const h = hiddenOf(await (await b.go(authorizeUrl(CLAUDE, challenge).url)).text());
     await env.OAUTH_KV.delete((await env.OAUTH_KV.list({ prefix: 'retjg:code-sent:' })).keys[0]?.name || 'x');
     await b.post({ step: 'send-code', email: 'howardbrian260@gmail.com', ...h });
+    await settle();
     const r = await b.post({ step: 'verify', email: 'howardbrian260@gmail.com', code: codeFor('howardbrian260@gmail.com'), ...h });
     ok(r.status === 200 && (await r.text()).includes("can't connect AI assistants yet"), 'a manager by code: refused');
   }
@@ -331,7 +352,9 @@ let claude;
   const n = upstream.length;
   const r1 = await token(CHATGPT, { grant_type: 'refresh_token', refresh_token: chat.refresh_token });
   eq(r1.status, 200, 'a refresh works');
-  ok(upstream.slice(n).some(u => u.url.includes('action=agent-identity') && u.url.includes('bgeorges%40retjg.com') && u.key === UP), 'and asked the main worker who this is');
+  const look = upstream.slice(n).filter(u => u.url.includes('action=agent-identity'));
+  ok(look.length === 1 && look[0].url.includes('id=u-admin') && look[0].key === UP, 'and asked the main worker who this is, by user id');
+  ok(look.every(u => !u.url.includes('%40') && !u.url.includes('@') && !u.agentEmail), 'with no email in the URL or a header');
   chat = r1.body;
   eq((await rpc(chat.access_token, 'tools/list')).status, 200, 'the new access token works');
 
@@ -343,11 +366,30 @@ let claude;
   eq(after.status, 200, 'and the grant survived: the next refresh works');
   chat = after.body;
 
+  // A database error reading grants is an outage, not "no Bargain Lane": keep the grant.
+  const realPrepare = mainEnv.DB.prepare.bind(mainEnv.DB);
+  mainEnv.DB.prepare = (sql) => (/user_grants/.test(sql) ? { bind: () => ({ all: async () => { throw new Error('D1_ERROR'); } }) } : realPrepare(sql));
+  const dberr = await token(CHATGPT, { grant_type: 'refresh_token', refresh_token: chat.refresh_token });
+  mainEnv.DB.prepare = realPrepare;
+  eq([dberr.status, dberr.body?.error], [503, 'temporarily_unavailable'], 'a D1 error reading grants → 503, not a revocation');
+  const healed = await token(CHATGPT, { grant_type: 'refresh_token', refresh_token: chat.refresh_token });
+  eq(healed.status, 200, 'and the grant survived it');
+  chat = healed.body;
+
+  // A second, independent grant (Claude) for the same admin, to show revocation is per grant.
+  const b = browser({ session: 'sess-u-admin' });
+  const { verifier, challenge } = await pkce();
+  const html = await (await b.go(authorizeUrl(CLAUDE, challenge).url)).text();
+  const cl = await token(CLAUDE, { grant_type: 'authorization_code', redirect_uri: CLAUDE_CB, code_verifier: verifier,
+    code: new URL((await b.post({ step: 'allow', ...hiddenOf(html) })).headers.get('Location')).searchParams.get('code') });
+  const grantOf = (t) => t.split(':')[1];
   db.prepare("UPDATE users SET role = 'manager' WHERE id = 'u-admin'").run();
   const demoted = await token(CHATGPT, { grant_type: 'refresh_token', refresh_token: chat.refresh_token });
   eq(demoted.body?.error, 'invalid_grant', 'demoted to manager → the refresh is refused (invalid_grant)');
-  eq((await env.OAUTH_KV.list({ prefix: 'grant:u-admin:' })).keys.length, 0, "and every one of that user's grants is gone");
-  eq((await rpc(chat.access_token, 'tools/list')).status, 401, 'and the access token in hand stops working');
+  eq(await env.OAUTH_KV.get(`grant:u-admin:${grantOf(chat.access_token)}`), null, 'and that grant is gone');
+  eq((await rpc(chat.access_token, 'tools/list')).status, 401, 'and its access token stops working');
+  eq((await token(CLAUDE, { grant_type: 'refresh_token', refresh_token: cl.body.refresh_token })).body?.error, 'invalid_grant',
+    "the same admin's other grant is refused at its own next refresh (each grant is cut off within the hour)");
   db.prepare("UPDATE users SET role = 'admin' WHERE id = 'u-admin'").run();
 }
 
@@ -360,6 +402,50 @@ let claude;
     props: { userId: 'u-mgr1', email: 'howardbrian260@gmail.com', role: 'manager' }, metadata: {} });
   const t = await token(CLAUDE, { grant_type: 'authorization_code', code: new URL(redirectTo).searchParams.get('code'), redirect_uri: CLAUDE_CB, code_verifier: verifier });
   eq((await rpc(t.body?.access_token, 'tools/list')).status, 403, 'a manager-props token → 403 at /mcp, even if a grant ever existed');
+
+  const { verifier: v2, challenge: c2 } = await pkce();
+  const req2 = await api.parseAuthRequest(new Request(authorizeUrl(CLAUDE, c2).url));
+  const { redirectTo: r2 } = await api.completeAuthorization({ request: req2, userId: 'u-admin', scope: ['offline_access'],
+    props: { userId: 'u-admin', email: 'bgeorges@retjg.com', role: 'admin' }, metadata: {} });
+  const t2 = await token(CLAUDE, { grant_type: 'authorization_code', code: new URL(r2).searchParams.get('code'), redirect_uri: CLAUDE_CB, code_verifier: v2 });
+  eq((await rpc(t2.body?.access_token, 'tools/list')).status, 403, 'a token without mcp:read → 403 insufficient_scope');
+
+  // ChatGPT's own document offers `none` beside private_key_jwt, so it may redeem with
+  // PKCE alone; pinned so a future tightening does not silently break ChatGPT.
+  const b = browser({ session: 'sess-u-admin' });
+  const { verifier: v3, challenge: c3 } = await pkce();
+  const html = await (await b.go(authorizeUrl(CHATGPT, c3).url)).text();
+  const code3 = new URL((await b.post({ step: 'allow', ...hiddenOf(html) })).headers.get('Location')).searchParams.get('code');
+  const body = new URLSearchParams({ client_id: CHATGPT, resource: RESOURCE, grant_type: 'authorization_code', code: code3, redirect_uri: CHATGPT_CB, code_verifier: v3 });
+  const none = await call(new Request(ORIGIN + '/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body }));
+  eq(none.status, 200, "ChatGPT's code with PKCE and no assertion (its document's `none`) also redeems");
+}
+
+// ════ 7b. The token endpoint serves only the two clients ═══════════════════
+{
+  const n = fetched.length;
+  const r = await call(new Request(ORIGIN + '/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: 'x:y:z', client_id: 'https://evil.example/client.json' }) }));
+  eq([r.status, (await r.json()).error], [401, 'invalid_client'], 'an unknown client at the token endpoint → invalid_client');
+  ok(!fetched.slice(n).some(u => u.includes('evil.example')), 'and its document is never fetched');
+  const forged = 'https://evil.example/c\n{"event":"mcp_oauth_granted","user":"u-su"}';
+  const l = logs.length;
+  await call(new Request(ORIGIN + '/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: 'x:y:z', client_id: forged }) }));
+  ok(!logs.slice(l).some(x => x.includes('mcp_oauth_granted')), 'a client_id cannot write a forged line into the logs');
+  const hdr = await call(new Request(ORIGIN + '/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: 'x:y:z' }) }));
+  eq(hdr.status, 401, 'a token request naming no client → invalid_client');
+}
+
+// ════ 7c. Paths and methods ════════════════════════════════════════════════
+{
+  eq((await call(new Request(ORIGIN + '/mcp', { method: 'HEAD', headers: { Authorization: 'Bearer ' + MCP_KEY } }))).status, 405, 'HEAD with the static key → 405, not the tools');
+  for (const p of ['//mcp', '/MCP', '/mcp%2F']) {
+    ok((await call(new Request(ORIGIN + p, { method: 'POST', headers: { Authorization: 'Bearer ' + MCP_KEY }, body: '{}' }))).status !== 200, `${p} with the static key is not the MCP endpoint`);
+  }
+  ok(/^compatibility_flags = \["global_fetch_strictly_public"\]$/m.test(fs.readFileSync(path.join(repo, 'mcp/wrangler.toml'), 'utf8')),
+    'mcp/wrangler.toml really sets global_fetch_strictly_public (the test stubs force it on)');
 }
 
 // ════ 8. Claude's static key still works, and an unset key never opens ═════
@@ -422,7 +508,11 @@ let claude;
   const sessionIds = db.prepare('SELECT id FROM sessions').all().map(r => r.id);
   const everything = seen.join('\n') + '\n' + logs.join('\n');
   for (const s of [...secrets, ...codes]) ok(!everything.includes(s), `never in a response or a log: ${s.slice(0, 8)}…`);
-  ok(!sessionIds.some(id => everything.includes(id)), 'no session id appears in any response or log');
+  ok(!sessionIds.some(id => everything.includes(id)), 'no stored session id appears in any response or log');
+  ok(minted.length >= 2 && !minted.some(id => everything.includes(id)), `none of the ${minted.length} sessions the code sign-ins minted appears either`);
+  const lookups = upstream.filter(u => u.url.includes('action=agent-identity'));
+  ok(lookups.length > 3 && lookups.every(u => !u.url.includes('@') && !u.url.includes('%40')),
+    `no identity lookup (sign-in or refresh, ${lookups.length} of them) put an email in its URL, which lands in logs`);
   const kvText = [...env.OAUTH_KV._map.values()].map(e => e.value).join('\n');
   ok(!kvText.includes('bgeorges@retjg.com') && !kvText.includes('howardbrian260@gmail.com'), 'no email is stored in KV in the clear');
 }

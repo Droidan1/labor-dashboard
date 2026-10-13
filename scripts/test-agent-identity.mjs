@@ -24,16 +24,18 @@ const { db, env } = makeEnv(repo);
 env.MORNING_BRIEFING_KEY = KEY;
 blockNetwork();
 
-const ask = (email, { key = KEY, method = 'GET' } = {}) => worker.fetch(new Request(
-  'https://api.retjghub.com/?action=agent-identity' + (email == null ? '' : '&email=' + encodeURIComponent(email)),
-  { method, headers: key ? { 'X-API-Key': key } : {} }), env, ctx);
+// The email goes in a header (never the URL, which lands in logs); the hourly
+// re-check asks by user id instead.
+const ask = (email, { key = KEY, method = 'GET', id } = {}) => worker.fetch(new Request(
+  'https://api.retjghub.com/?action=agent-identity' + (id ? '&id=' + encodeURIComponent(id) : ''),
+  { method, headers: { ...(key && { 'X-API-Key': key }), ...(email != null && { 'X-Agent-Email': email }) } }), env, ctx);
 const body = async (r) => JSON.parse(await r.text());
 
 // ── The gate ───────────────────────────────────────────────────────────────
 eq((await ask('bhoward@bargainlane.com', { key: null })).status, 401, 'no key → 401');
 eq((await ask('bhoward@bargainlane.com', { key: 'wrong' })).status, 401, 'wrong key → 401');
 eq((await ask('bhoward@bargainlane.com', { method: 'POST' })).status, 405, 'POST → 405');
-eq((await ask(null)).status, 400, 'no email → 400');
+eq((await ask(null)).status, 400, 'no email and no id → 400');
 eq((await ask('not-an-email')).status, 400, 'an email without @ → 400');
 
 // ── Who each account is ────────────────────────────────────────────────────
@@ -80,7 +82,22 @@ const KEYS = ['email', 'found', 'id', 'role', 'active', 'associate', 'stores', '
   const r = await ask('nobody@example.com');
   const b = await body(r);
   eq(r.status, 200, 'an unknown email → 200');
-  eq(b, { email: 'nobody@example.com', found: false }, 'and only found:false');
+  eq(b, { found: false }, 'and only found:false');
+}
+{
+  const b = await body(await ask(null, { id: 'u-admin' }));
+  eq([b.found, b.email, b.role, b.stores], [true, 'bgeorges@retjg.com', 'admin', null], 'asked by user id: the same answer, no email in the URL');
+  eq(await body(await ask(null, { id: 'u-nope' })), { found: false }, 'an unknown id → found:false');
+}
+{
+  // 🛑 A failed grants read must be a 503, never "no Bargain Lane": retjg-mcp revokes
+  // a grant on a definite no, so an outage would otherwise revoke an admin.
+  const realPrepare = env.DB.prepare.bind(env.DB);
+  env.DB.prepare = (sql) => (/user_grants/.test(sql) ? { bind: () => ({ all: async () => { throw new Error('D1_ERROR: network'); } }) } : realPrepare(sql));
+  const r = await ask('bgeorges@retjg.com');
+  env.DB.prepare = realPrepare;
+  eq(r.status, 503, 'a database error reading grants → 503, not bargainLane:false');
+  ok(!(await r.text()).includes('bargainLane'), 'and no verdict at all');
 }
 {
   const text = await (await ask('bhoward@bargainlane.com')).text();

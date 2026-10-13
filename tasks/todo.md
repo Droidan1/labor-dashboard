@@ -22,7 +22,19 @@ static key (OpenAI docs), so OAuth is the only way in for it.
 - [x] 16 mutations in a lane: 13 caught, 3 survived (stores clause, Bargain Lane clause, email in grant
       metadata) until admitted() was tested clause by clause, an admin without a BL grant was tried end to
       end, and the KV leak check moved to before section 6 revokes the grants. `npm test` 9686 / 110
-- [ ] Fresh-eyes adversarial review (subagent) before pushing
+- [x] Fresh-eyes adversarial review (subagent, with PoCs). Fixed:
+      HIGH `Referrer-Policy: no-referrer` made browsers post `Origin: null`, so the Origin check refused
+      every real Allow (→ same-origin, pinned); MEDIUM a D1 error in loadGrants read as "no Bargain Lane"
+      and REVOKED the admin (→ agent-identity reads grants strict, 503 on error); the token endpoint fetched
+      any client_id document and logged it raw (→ allowlist there too); send-code timing showed account
+      existence (→ waitUntil); scope never checked at /mcp (→ mcp:read required); email in the lookup URL
+      every refresh (→ refresh by id, sign-in by header); consent page now warns "only if you started it"
+      and on loopback redirects. Tests fixed where they passed vacuously (minted session ids, per-grant
+      revocation) + paths, HEAD, the compat flag in wrangler.toml, ChatGPT `none` pinned. OAuth 138,
+      identity 22; 22 mutations caught (1 survivor, fixed); `npm test` 9710 / 110.
+      Not fixed (in the PR): ChatGPT may redeem with `none` (its own document offers it); throttle is
+      best-effort under a burst; re-authorizing a client revokes its earlier grant (library default);
+      pre-existing: auth-login has no throttle and lets one email hold many live codes
 - [ ] PR; Brian: main worker deploy (agent-identity) → `wrangler kv namespace create OAUTH_KV` → id into
       mcp/wrangler.toml → retjg-mcp deploy; live checks; ChatGPT Pro developer mode connect
 
