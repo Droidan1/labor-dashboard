@@ -21,7 +21,11 @@ Plan:
 - [x] Official MCP SDK client 1.32.1 against a local server: connect, 4 tools listed, each called,
       bad args → isError, ping, wrong key refused. `wrangler deploy --dry-run`: 9 KB, binding `API`
 - [x] `npm test` green: 9067 assertions, 103 suites
-- [ ] Deploy (Brian): secrets from the Keychain, `wrangler deploy` from `mcp/`; then I verify live
+- [x] Deploy (Brian, 2026-10-13): `retjg-mcp` version 397d2303 on mcp.retjghub.com (custom domain),
+      binding `env.API (clover-sales-api)`, 8.99 KiB. Before the secrets: 503 `Not configured` ×3 (fails
+      closed). Both secrets piped from the Keychain with `--name retjg-mcp`. Live check, 11 assertions per
+      pass: first pass 9/11 (mid-rollout instances), then 3 consecutive clean passes 09:53 ET. Figures
+      match the CLI: BL2 10-12 $5,523.99; BL14 10-10→10-12 $8,711.09 / $8,605.53 / $7,816.68
 - [ ] Brian adds the connector in Claude
 - [x] ORIENT.md
 
