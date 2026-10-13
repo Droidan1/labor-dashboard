@@ -1,3 +1,21 @@
+# Round `lySalesForDate` to cents (2026-10-13)
+
+**Found while testing the Claude connector:** `?action=morning-briefing` served BL2's
+`lySalesForDate` as `4165.110000000001`. `worker.js` summed `retail + bin` without `roundCents`.
+Every consumer (Chief of Staff, `retjg` CLI, `retjg-mcp`) reads it; rounding is backward-compatible.
+
+- [x] Failing test first: BL14 last-year row 4981.8 + 130.64 (= 5112.4400000000005, the pair
+      that once shipped as netSales) in test-briefing-period-to-date.mjs; failed 86/1 before the fix
+- [x] Fix: `roundCents(...)` in `buildMorningBriefingData`'s lyMap; null still means no row
+- [x] Swept the other reporting sums: period totals round on return (`periodTotals`), netSales
+      rounds in `reportedFigures`, `salesSoFarToday` rounds; store-history emits no LY. Nothing else
+- [x] `npm test`: 9200 assertions, 105 suites
+- [x] Deploy (Brian, 2026-10-13): `clover-sales-api` 04a7e48f, guarded one-liner (branch ⊇ main and
+      worker.js differs by exactly this line); first try refused because #329 had landed, merged main, re-ran.
+      Bindings + all 6 crons present
+- [x] Live: 3 consecutive clean passes 16:48 ET, all 6 stores at cents (BL2 4165.110000000001 → 4165.11);
+      store-history and afternoon-briefing unchanged
+
 # Weekly marketing model: intake targets + Buffer proof (2026-10-13)
 
 **Request (marketing meeting 2026-10-13):** RETJG HUB stays the intake; Buffer queues and publishes; managers
@@ -80,12 +98,16 @@ Plan:
       closed). Both secrets piped from the Keychain with `--name retjg-mcp`. Live check, 11 assertions per
       pass: first pass 9/11 (mid-rollout instances), then 3 consecutive clean passes 09:53 ET. Figures
       match the CLI: BL2 10-12 $5,523.99; BL14 10-10→10-12 $8,711.09 / $8,605.53 / $7,816.68
-- [ ] Brian adds the connector in Claude. First attempt (2026-10-13 ~20:05Z per tail) refused 3× with an
+- [x] Brian adds the connector in Claude: WORKS (2026-10-13 20:17Z), after fix ac91359 (live c04a41bd). First attempt (2026-10-13 ~20:05Z per tail) refused 3× with an
       Authorization header present; tail redacts it. Fix ac91359: accept the key with/without Bearer
       (or doubled, or in X-API-Key) and log refusals by shape only. Also seen: Claude's client opens with
       MCP 2026-07-28 (stateless, `Mcp-Method` header). Per the spec a dual-era client falls back to
       `initialize` on a 4xx without a modern error body, so this legacy-only server still works.
       Native 2026-07-28 support (server/discover, resultType, ttlMs) is a follow-up
+      Live after the fix: Claude-User sent 2026-07-28 → 400, then initialize → 200, initialized → 202,
+      tools/list → 200, exactly the spec's fallback. Verified from this session through Brian's own
+      connector: get_yesterday_sales BL2 → $5,523.99. Rollout polled to 3 clean passes (bare, doubled
+      and Bearer key → 200; wrong → 401), then the 11-check live suite 3×
 - [x] ORIENT.md
 
 **Review:** 11 mutations, made in a scratch copy (lesson of 2026-10-13), each caught: MCP key sent
