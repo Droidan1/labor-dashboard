@@ -43,6 +43,14 @@ An installable **PWA sales + labor dashboard** for the Bargain Lane / RETJG reta
 
 🛑 **Do not reach for a date range.** Re-pulling an *already healthy* old date **loses refunds** that have aged out of Clover's ~90-day window — every unnecessary date is a small permanent loss. That's why `repair-run` refuses `start`/`end` outright.
 
+**Give an agent sales data** — `cli/retjg.mjs` (`retjg`), a read-only CLI over the reporting API
+(`morning-briefing`, `afternoon-briefing`, `store-history`; key = `MORNING_BRIEFING_KEY`). Any agent
+with a shell (Claude Code, Codex) runs `retjg --help` and gets the commands plus the rules for reading
+the numbers. Install with `install -m 755 cli/retjg.mjs /opt/homebrew/bin/retjg` (a copy, not a
+symlink: this checkout changes branch all the time). The key comes from `RETJG_API_KEY` or the
+Keychain item `retjg-api-key`, and is only ever sent as a header. Agents without a shell (Claude
+Desktop chat, ChatGPT) need an MCP server, which is not built yet.
+
 ## Known weirdness (the traps)
 
 - 🛑 **`fatal: mmap failed: Operation canceled` is iCLOUD, not file size.** This was blamed on the 985 KB `index.html` for a long time; it is not. A clone under `~/Desktop` (or `~/Documents`) is inside **iCloud Drive's Desktop & Documents sync**, so git writes a pack into `.git/objects/pack/` and then `mmap`s it to index it — and iCloud hands back a placeholder instead of bytes, which surfaces as `ECANCELED`. Confirmed 2026-09-08: fetching into `/Users/brianhoward/Desktop/labor-dashboard` failed every time, including with `core.packedGitWindowSize`/`packedGitLimit`/`pack.threads` turned right down, while a plain `git clone` into `~/dev/labor-dashboard` resolved 3910 objects and 2552 deltas without complaint. **Keep the working clone outside `~/Desktop` and `~/Documents`.** The big files only make it hit sooner; they are not the cause, and tuning git's memory does nothing.

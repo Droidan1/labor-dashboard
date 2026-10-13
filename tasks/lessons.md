@@ -63,6 +63,20 @@ restore a file it did not write.** Before trusting a MISSED, reproduce it alone.
   removed it. **Guard the link with `[ -L L ] ||`, or use `ln -sfn`, and never chain a fallback
   behind `&& … ||`**: the `||` also fires when the first command fails.
 
+### Recurred (2026-10-13, `retjg` CLI): I mutated the real file, and the restore did not stick
+
+I ran six mutations against `cli/retjg.mjs` in place, restoring from a scratch backup with `cp`
+before each and once more at the end. The final run printed 48/48, so the restore looked done. The
+next `npm test` failed 21 assertions, and `diff` showed that the file still held **mutation #1**
+(the wrong auth header). I did not find out why the later `cp`s did not land. It did not matter: I
+broke this section's own rule by mutating the tree rather than a copy, and only an unrelated full
+run caught it before the commit.
+
+- **Mutate a copy, never the file you will commit.** For a single-file CLI, point the suite at the
+  copy with an env var, or copy the repo to a lane as above.
+- **After any in-place edit-and-restore, compare checksums (`shasum file backup`) before you commit.**
+  A passing run after a restore proves nothing about the bytes on disk.
+
 ## A `\u` escape I typed reached the file as the character itself (2026-09-25)
 
 Writing Sign Studio's renderer, I typed the alphabet regex as `\u0020-\u007E\u00A0-…`. The
