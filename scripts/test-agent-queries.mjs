@@ -9,7 +9,7 @@
 // code. Defaults (the Labor weeks) are computed here independently of it.
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { loadWorker, makeEnv, ctx, blockNetwork, req } from './lib/worker-harness.mjs';
+import { loadWorker, makeEnv, ctx, blockNetwork, stubWorkersRuntime, req } from './lib/worker-harness.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -45,6 +45,8 @@ for (const [k, s] of ['BL1', 'BL2'].entries()) {
 const idx = (d) => dates.indexOf(d);
 
 // ── The MCP worker, bound to the real main worker ──────────────────────────
+// mcp/worker.mjs imports the OAuth library, which needs the Workers runtime stubbed.
+await stubWorkersRuntime();
 const { default: mcp } = await import(pathToFileURL(path.join(repo, 'mcp', 'worker.mjs')).href);
 const upstream = [];
 const env = { MCP_KEY: MCP, REPORTING_API_KEY: UP,

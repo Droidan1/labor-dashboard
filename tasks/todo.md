@@ -1,3 +1,31 @@
+# Phase 2a: ChatGPT signs in to retjg-mcp with RETJG HUB (OAuth), admins only (2026-10-13)
+
+**Plan:** `~/.claude/plans/tingly-churning-noodle.md` (approved). **Decisions (Brian):** ChatGPT **Pro**
+(read/fetch MCP in developer mode, web only); **admins first, managers next** (2b). ChatGPT cannot send a
+static key (OpenAI docs), so OAuth is the only way in for it.
+
+- [x] Step 0: `@cloudflare/workers-oauth-provider` 1.2.3 pinned (root package.json); read its `.d.ts` and
+      docs. Confirmed: consent helpers' shapes, `invalid_grant` from tokenExchangeCallback revokes the grant,
+      `temporarily_unavailable` does not, private_key_jwt `aud` = issuer or token endpoint, CIMD needs
+      `Cloudflare.compatibilityFlags.global_fetch_strictly_public`. No CIMD allowlist option, so ours is in
+      /authorize (before any document fetch). The plan stood.
+- [x] Harness: `stubWorkersRuntime()` (cloudflare:workers via node:module hooks) + `kvNamespace()` (prefix,
+      cursor, TTL ≥ 60, expiry). Live CIMD documents saved as `scripts/fixtures/cimd-{chatgpt,claude}.json`
+- [x] Main worker `agent-identity` (key-gated, GET, 8 fields, no-store): `test-agent-identity.mjs` 18
+      (failed 15 before)
+- [x] `mcp/authorize.mjs` + `mcp/worker.mjs` (static key first, then the provider; `serveMcp`;
+      `oauthMcp` re-checks role; `recheckOnRefresh`). ⚠️ Deviation: written before the OAuth test, so the
+      test was then shown failing against main's retjg-mcp (50 FAIL + crash)
+- [x] `test-retjg-mcp-oauth.mjs` 118: discovery, ChatGPT session flow (private_key_jwt + PKCE), Claude
+      email+code flow, refusals with no grant, PKCE/code reuse, refresh recheck / outage / demotion,
+      manager-props token 403, static key, admitted() clause by clause, escaping, contrast both themes, leaks
+- [x] 16 mutations in a lane: 13 caught, 3 survived (stores clause, Bargain Lane clause, email in grant
+      metadata) until admitted() was tested clause by clause, an admin without a BL grant was tried end to
+      end, and the KV leak check moved to before section 6 revokes the grants. `npm test` 9686 / 110
+- [ ] Fresh-eyes adversarial review (subagent) before pushing
+- [ ] PR; Brian: main worker deploy (agent-identity) → `wrangler kv namespace create OAUTH_KV` → id into
+      mcp/wrangler.toml → retjg-mcp deploy; live checks; ChatGPT Pro developer mode connect
+
 # Sign-in code: no guessing it (2026-10-13)
 
 **Found while planning phase 2 (OAuth reuses this sign-in):** `auth-verify-otp` checked the 6-digit

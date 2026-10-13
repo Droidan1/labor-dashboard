@@ -16212,7 +16212,12 @@ export default {
     // ended up serving buyer PII unauthenticated; the fix is to make the gate
     // impossible to get subtly wrong the second time. Returns a Response to
     // send, or null to proceed.
-    const REPORTING_ACTIONS = new Set(["morning-briefing", "store-history", "afternoon-briefing"]);
+    // agent-identity (2026-10-13): who an email is, for retjg-mcp's OAuth sign-in and its
+    // hourly re-check. It widens MORNING_BRIEFING_KEY to "is this email a user, with what
+    // role and stores" — its holders (Chief of Staff, the retjg CLI, retjg-mcp) already
+    // read every store. Answers from allowedStores()/canAccessBusiness(), the same rules
+    // the session path applies, so it cannot disagree with the app.
+    const REPORTING_ACTIONS = new Set(["morning-briefing", "store-history", "afternoon-briefing", "agent-identity"]);
     // The Retail Summary and Labor pages' own read endpoints, for agents (the
     // retjg CLI and the retjg-mcp connector) — Brian, 2026-10-13. With the key
     // they pass THIS gate and then run the page's own handler with no user, so
@@ -16286,6 +16291,28 @@ export default {
           return new Response(JSON.stringify(data), {
             headers: { ...corsJson, "Cache-Control": "public, max-age=60" },
           });
+        }
+        if (reportingAction === "agent-identity") {
+          // ?action=agent-identity&email=… → { email, found, id, role, active, associate, stores, bargainLane }
+          const noStore = { ...corsJson, "Cache-Control": "no-store" };
+          const email = (url.searchParams.get("email") || "").trim().toLowerCase();
+          if (!email.includes("@")) {
+            return new Response(JSON.stringify({ error: "email required" }), { status: 400, headers: noStore });
+          }
+          const row = await env.DB.prepare(
+            "SELECT id, role, stores, status, (pin_hash IS NOT NULL) AS is_associate FROM users WHERE email = ?"
+          ).bind(email).first();
+          if (!row) return new Response(JSON.stringify({ email, found: false }), { headers: noStore });
+          // The user as getAuthUser builds it, minus what the answer never needs.
+          let stores = null;
+          try { stores = row.stores ? JSON.parse(row.stores) : null; } catch (_) { stores = []; }
+          const user = { id: row.id, role: row.role, stores,
+            grants: row.role === "superuser" ? [] : await loadGrants(env, row.id) };
+          return new Response(JSON.stringify({
+            email, found: true, id: row.id, role: row.role,
+            active: row.status === "active", associate: !!row.is_associate,
+            stores: allowedStores(user), bargainLane: canAccessBusiness(user, "bl"),
+          }), { headers: noStore });
         }
         // ?action=store-history&days=30[&storeId=BL1]
         const data = await buildStoreHistoryData(env, {

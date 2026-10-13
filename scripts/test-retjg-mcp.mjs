@@ -11,7 +11,7 @@
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { loadWorker, makeEnv, ctx, blockNetwork } from './lib/worker-harness.mjs';
+import { loadWorker, makeEnv, ctx, blockNetwork, stubWorkersRuntime } from './lib/worker-harness.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -34,6 +34,8 @@ db.prepare(`INSERT INTO daily_sales (store, date, total, auction, budget, order_
             VALUES (?, ?, ?, ?, ?, ?, ?)`)
   .run('BL2', yesterdayET, 4364.39, null, 4556, 238, yesterdayET + 'T07:55:00Z');
 
+// mcp/worker.mjs imports the OAuth library, which needs the Workers runtime stubbed.
+await stubWorkersRuntime();
 const { default: mcp } = await import(pathToFileURL(path.join(repo, 'mcp', 'worker.mjs')).href);
 const { READING_RULES, QUERIES } = await import(pathToFileURL(path.join(repo, 'cli', 'reporting.mjs')).href);
 
