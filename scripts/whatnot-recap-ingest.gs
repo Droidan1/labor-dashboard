@@ -19,7 +19,8 @@
  *   1. script.google.com → New project → paste this file.
  *   2. Project Settings → Script Properties → add SNAPSHOT_SECRET (the worker's
  *      secret). It is NOT written in this file: this repo is public.
- *   3. Run `installTrigger` once and authorize Gmail when prompted.
+ *   3. Run `installTrigger` once and authorize Gmail when prompted (runDaily
+      then runs every 10 minutes).
  *   4. Run `preview` and check its log (View → Logs): one line per day per store.
    5. Run `backfill` once to load every recap already in the inbox.
  */
@@ -46,16 +47,18 @@ const CONFIG = {
 
 // ─── ENTRY POINTS ────────────────────────────────────────────────────────────
 
-/** Install the daily triggers (run once). The recap lands ~5 AM ET; the
- *  Executive Summary sends at 8 AM. 6 AM is primary, 7 AM and 1 PM are
- *  idempotent safety nets (Apps Script triggers fire within the hour). */
+/** Install the trigger (run once; re-running replaces it). runDaily every 10
+ *  minutes: the recap's arrival time varies (7:03 AM on 2026-10-13) and the
+ *  Executive Summary sends at 8 AM, so it is picked up within 10 minutes of
+ *  landing. Fixed-hour triggers were tried first and never fired: they run in
+ *  the project's time zone and anywhere inside their hour. A run with nothing
+ *  new posts nothing (see postedRecaps), so the cadence costs one Gmail search. */
 function installTrigger() {
   ScriptApp.getProjectTriggers()
     .filter(t => t.getHandlerFunction() === 'runDaily')
     .forEach(t => ScriptApp.deleteTrigger(t));
-  [6, 7, 13].forEach(h =>
-    ScriptApp.newTrigger('runDaily').timeBased().everyDays(1).atHour(h).create());
-  Logger.log('Installed daily triggers: runDaily @ 6 AM, 7 AM, 1 PM');
+  ScriptApp.newTrigger('runDaily').timeBased().everyMinutes(10).create();
+  Logger.log('Installed trigger: runDaily every 10 minutes');
 }
 
 /** Recaps from the last few days, unless the same or a newer copy of that

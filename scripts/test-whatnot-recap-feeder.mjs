@@ -117,5 +117,28 @@ const totalsOf = (posts) => posts.map(p => [p.rows[0].date, p.rows.map(r => r.to
   ok(r.logs.some(l => l.startsWith('2026-10-09') && l.includes('BL1 $3368') && l.includes('BL14 $3050')), 'preview sums a store\'s shows');
 }
 
+// ── 5. The schedule: every 10 minutes, not fixed hours ───────────────────────
+// 2026-10-13: the 6/7 AM hour triggers never fired (an hour trigger runs in the
+// PROJECT's time zone, and fires anywhere inside its hour), and the recap reached
+// the inbox at 7:03, so the 8 AM email nearly went out without Monday's Whatnot.
+// A 10-minute cadence has no time zone and picks a recap up within 10 minutes.
+{
+  const r = rig([]);
+  const made = [], deleted = [];
+  const builder = (fn) => { const t = { fn }; return {
+    timeBased: () => ({
+      everyMinutes: (n) => ({ create: () => { t.minutes = n; made.push(t); } }),
+      everyDays: () => ({ atHour: (h) => ({ create: () => { t.hour = h; made.push(t); }, inTimezone: () => ({ create: () => { t.hour = h; made.push(t); } }) }) }),
+    }) }; };
+  r.sb.ScriptApp = {
+    getProjectTriggers: () => [{ getHandlerFunction: () => 'runDaily', id: 'old6' }, { getHandlerFunction: () => 'runDaily', id: 'old7' }, { getHandlerFunction: () => 'other', id: 'keep' }],
+    deleteTrigger: (t) => deleted.push(t.id),
+    newTrigger: builder,
+  };
+  vm.runInContext('installTrigger()', r.sb);
+  eq(deleted, ['old6', 'old7'], 'replaces every old runDaily trigger, and only those');
+  eq(made.map(t => [t.fn, t.minutes, t.hour]), [['runDaily', 10, undefined]], 'one trigger: runDaily every 10 minutes, no fixed hour');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
