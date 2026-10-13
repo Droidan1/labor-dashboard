@@ -4439,32 +4439,36 @@
       </div>
 
       <div class="max-w-xl mx-auto px-4 sm:px-6 py-6 space-y-5">
+        <!-- Weekly targets: bars for the selected store, or every store for an admin. -->
+        <div id="sp-targets" class="hidden rounded-card bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border p-4"></div>
+
         <div>
           <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Store</label>
-          <select id="sp-store" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-accent-green"></select>
+          <select id="sp-store" onchange="spRenderTargets()" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-accent-green"></select>
         </div>
 
         <div>
-          <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Photo type</label>
+          <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">What are you uploading?</label>
           <div id="sp-type-chips" class="flex flex-wrap gap-2"></div>
         </div>
 
         <div>
           <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Photos</label>
-          <label for="sp-files" class="flex flex-col items-center justify-center gap-2 w-full py-8 rounded-2xl border-2 border-dashed border-[rgba(20,16,8,0.15)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim cursor-pointer hover:border-accent-green/50 transition-colors">
+          <label id="sp-drop" for="sp-files" class="flex flex-col items-center justify-center gap-2 w-full py-8 rounded-2xl border-2 border-dashed border-[rgba(20,16,8,0.15)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim cursor-pointer hover:border-accent-green/50 transition-colors">
             <svg class="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            <span class="text-sm font-medium">Tap to upload photos</span>
+            <span id="sp-drop-text" class="text-sm font-medium text-center px-4">Tap to upload photos</span>
           </label>
           <input id="sp-files" type="file" accept="image/*" multiple class="hidden" onchange="spFilesChange()">
           <div id="sp-thumbs" class="grid grid-cols-3 gap-2 mt-3"></div>
         </div>
 
         <div>
-          <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Note (optional)</label>
-          <textarea id="sp-note" rows="2" placeholder="Anything the marketing team should know?" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-accent-green"></textarea>
+          <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Price, sale or restock info (optional)</label>
+          <textarea id="sp-note" rows="2" placeholder="e.g. Halloween bedding $8 · appliance restock Friday 2pm" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-accent-green"></textarea>
+          <p class="mt-1 text-xs text-opl-inkDim dark:text-op-inkDim">The AI uses this when it writes the post.</p>
         </div>
 
-        <button id="sp-submit" onclick="spSubmit()" class="w-full bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] font-semibold text-sm py-3 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Submit photos</button>
+        <button id="sp-submit" onclick="spSubmit()" class="w-full bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] font-semibold text-sm py-3 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Choose a type to continue</button>
         <p id="sp-status" class="hidden text-sm text-center"></p>
       </div>
     </div><!-- end #page-submit-photos -->
@@ -13315,7 +13319,7 @@
     // The phone's Menu page is exempt the same way no-access is: it is navigation,
     // not a grantable page, and it lists only what the sidebar already shows them.
     if (isAssociate(currentUser) && page !== 'no-access' && page !== 'menu') {
-      if (pageLevel(page) < 1) return;
+      if (pageLevel(page) < 1 && !ASSOCIATE_OPEN_PAGES.includes(page)) return;
     }
     // Guard pages that show money. The worker refuses the data for these roles
     // (NO_FINANCIAL_ACCESS) but the shell would still render, so gate here too.
@@ -19378,8 +19382,11 @@
   // froze there and not on iPhone.
   const SP_PREVIEW_MAX = 320;    // preview tile + the thumbnail stored in R2
   const SP_UPLOAD_MAX  = 2048;   // long-edge cap for the uploaded original
-  let spType = 'retail';
+  // No default type: a preselected "retail" filed every unlabelled batch as retail,
+  // and the weekly targets count by type. The uploader picks one or cannot submit.
+  let spType = null;
   let spFiles = [];
+  let spTargets = null;        // last ?action=photo-targets answer
 
   // Release every preview URL. Any path that empties spFiles must go through
   // this — dropping the entries alone leaks the blobs they pin.
@@ -19388,22 +19395,36 @@
     spFiles = [];
   }
 
+  // The stores this account may upload for, in STORES order. Listing every store
+  // and defaulting to the first sent a South Bend manager's batch to Coliseum,
+  // where the worker refused each photo with a 403 the page reported as "failed".
+  function spStores() {
+    const all = STORES.map(s => s.split('/')[0]);
+    let held = currentUser && currentUser.stores;
+    if (typeof held === 'string') { try { held = JSON.parse(held); } catch (e) { held = []; } }
+    return Array.isArray(held) ? all.filter(c => held.includes(c)) : all;
+  }
+  function spIsAdmin() {
+    return !!currentUser && (currentUser.role === 'superuser' || currentUser.role === 'admin');
+  }
+
   function initSubmitPhotos() {
     const sel = el('sp-store');
     if (sel) {
-      sel.innerHTML = STORES.map(s => {
-        const code = s.split('/')[0];
+      sel.innerHTML = spStores().map(code => {
+        const s = STORES.find(x => x.startsWith(code + '/')) || code;
         const name = s.slice(s.indexOf(' ') + 1);
         return `<option value="${code}">${escapeHtml(name)} (${code})</option>`;
       }).join('');
     }
-    spType = 'retail';
+    spType = null;
     spClearFiles();
     renderSpTypes();
     if (el('sp-files')) el('sp-files').value = '';
     if (el('sp-thumbs')) el('sp-thumbs').innerHTML = '';
     if (el('sp-note')) el('sp-note').value = '';
     if (el('sp-status')) el('sp-status').classList.add('hidden');
+    spLoadTargets();
   }
   window.initSubmitPhotos = initSubmitPhotos;
 
@@ -19413,9 +19434,120 @@
       const on = v === spType;
       return `<button type="button" onclick="spSetType('${v}')" class="px-3 py-1.5 rounded-full text-xs font-semibold border transition ${on ? 'bg-accent-green text-[#06210f] border-accent-green' : 'border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim'}">${l}</button>`;
     }).join('');
+    // Until a type is picked, the drop zone says so and does not open the picker.
+    const drop = el('sp-drop');
+    if (drop) {
+      drop.classList.toggle('opacity-50', !spType);
+      drop.classList.toggle('pointer-events-none', !spType);
+    }
+    if (el('sp-drop-text')) el('sp-drop-text').textContent = spType ? 'Tap to upload photos' : 'Choose what you are uploading first';
+    const btn = el('sp-submit');
+    if (btn && !btn.textContent.startsWith('Uploading')) {
+      btn.disabled = !spType;
+      btn.textContent = spType ? 'Submit photos' : 'Choose a type to continue';
+    }
   }
   function spSetType(v) { spType = v; renderSpTypes(); }
   window.spSetType = spSetType;
+
+  // ── Weekly targets ───────────────────────────────────────────────────
+  // Same thresholds as the landing page's pace bar (lpPaceBar): red under 30% of
+  // target, amber under 100%, green at or over it. Text takes darker light-theme
+  // shades than the bar, because #22c55e / #f59e0b / #ef4444 on white measure
+  // 2.3 / 2.1 / 3.8:1; these measure 5.02 / 4.92 / 5.44.
+  function spPct(n, t) { return t > 0 ? n / t * 100 : 100; }
+  function spBarCls(p) { return p >= 100 ? 'bg-accent-green' : p < 30 ? 'bg-op-bad' : 'bg-accent-amber'; }
+  function spTxtCls(p) {
+    return p >= 100 ? 'text-[#15803d] dark:text-accent-green'
+      : p < 30 ? 'text-opl-bad dark:text-op-bad' : 'text-[#a16207] dark:text-accent-amber';
+  }
+  function spDay(ymd) {
+    return new Date(ymd + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+  }
+
+  async function spLoadTargets() {
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=photo-targets`, { credentials: 'include' });
+      const d = await r.json().catch(() => ({}));
+      spTargets = r.ok && d.ok ? d : null;
+    } catch (_) { spTargets = null; }
+    spRenderTargets();
+  }
+
+  function spRenderTargets() {
+    const box = el('sp-targets');
+    if (!box) return;
+    const d = spTargets;
+    if (!d || !d.stores || !d.stores.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+    const t = d.targets;
+    const late = etDayOf(Date.now()) > d.week.due;
+    const head = (title) => `<div class="flex items-baseline justify-between gap-3">
+        <span class="lp-eyebrow">${escapeHtml(title)}</span>
+        <span class="text-xs font-semibold text-opl-inkDim dark:text-op-inkDim whitespace-nowrap">${late ? 'Was due' : 'Due'} ${spDay(d.week.due)}</span></div>`;
+    let html;
+    if (spIsAdmin()) {
+      const cell = (n, tg) => `<td class="py-2 text-right font-semibold tabular-nums ${spTxtCls(spPct(n, tg))}">${n}/${tg}</td>`;
+      const inp = 'w-20 text-right rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-2 py-1.5';
+      html = head('All stores · this week') + `
+        <table class="mt-3 w-full text-sm">
+          <thead><tr class="text-[11px] uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim">
+            <th class="text-left font-semibold pb-2">Store</th><th class="text-right font-semibold pb-2">Retail</th><th class="text-right font-semibold pb-2">Bins</th></tr></thead>
+          <tbody>${d.stores.map(s => `<tr class="border-t border-[rgba(20,16,8,0.07)] dark:border-[rgba(255,255,255,0.06)]">
+            <td class="py-2 text-opl-ink dark:text-op-ink">${escapeHtml(s.label)}</td>${cell(s.retail, t.retail)}${cell(s.bins, t.bins)}</tr>`).join('')}</tbody>
+        </table>
+        <button type="button" onclick="spToggleTargetEdit()" class="mt-3 text-sm font-semibold text-[#15803d] dark:text-accent-green">Edit weekly targets</button>
+        <div id="sp-target-edit" class="hidden mt-3 rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-opl-panelHi dark:bg-[rgba(255,255,255,0.02)] p-3 space-y-2.5">
+          <div class="text-xs text-opl-inkDim dark:text-op-inkDim">Same targets for every store, from this week on. Due Thursday.</div>
+          <label class="flex items-center justify-between text-sm text-opl-ink dark:text-op-ink">Retail photos
+            <input id="sp-tgt-retail" type="number" min="0" max="500" step="1" inputmode="numeric" value="${t.retail}" class="${inp}"></label>
+          <label class="flex items-center justify-between text-sm text-opl-ink dark:text-op-ink">Bin photos
+            <input id="sp-tgt-bins" type="number" min="0" max="500" step="1" inputmode="numeric" value="${t.bins}" class="${inp}"></label>
+          <button id="sp-tgt-save" type="button" onclick="spSaveTargets()" class="w-full bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] font-semibold text-sm py-2.5 rounded-xl transition-colors disabled:opacity-50">Save targets</button>
+          <p id="sp-tgt-msg" class="hidden text-xs text-center"></p>
+        </div>`;
+    } else {
+      const s = d.stores.find(x => x.store === (el('sp-store') && el('sp-store').value)) || d.stores[0];
+      const bar = (label, n, tg) => {
+        const p = spPct(n, tg);
+        return `<div>
+          <div class="flex items-baseline justify-between text-sm">
+            <span class="font-medium text-opl-ink dark:text-op-ink">${label}</span>
+            <span class="font-semibold tabular-nums ${spTxtCls(p)}">${n} / ${tg}${p >= 100 ? ' ✓' : ''}</span></div>
+          <div class="mt-1.5 h-1.5 rounded-full bg-[rgba(20,16,8,0.07)] dark:bg-[rgba(255,255,255,0.07)] overflow-hidden">
+            <div class="h-full rounded-full ${spBarCls(p)}" style="width:${Math.min(100, p)}%"></div></div></div>`;
+      };
+      const who = s.people === 1 ? '1 person' : `${s.people} people`;
+      html = head(`${s.label} · this week`) + `
+        <div class="mt-3 space-y-3">${bar('Retail photos', s.retail, t.retail)}${bar('Bin photos', s.bins, t.bins)}</div>
+        <p class="mt-3 text-xs text-opl-inkDim dark:text-op-inkDim">Counts uploads from everyone at ${escapeHtml(s.label)} (${who} so far). Resets Sunday.</p>`;
+    }
+    box.innerHTML = html;
+    box.classList.remove('hidden');
+  }
+  window.spRenderTargets = spRenderTargets;
+
+  function spToggleTargetEdit() { el('sp-target-edit')?.classList.toggle('hidden'); }
+  window.spToggleTargetEdit = spToggleTargetEdit;
+
+  async function spSaveTargets() {
+    const msg = el('sp-tgt-msg'), btn = el('sp-tgt-save');
+    const show = (text, cls) => { msg.textContent = text; msg.className = 'text-xs text-center ' + cls; };
+    const value = { retail: el('sp-tgt-retail').value.trim(), bins: el('sp-tgt-bins').value.trim() };
+    btn.disabled = true;
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=content-setting`, {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'upload_targets', value }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) { btn.disabled = false; return show(d.error || 'Could not save the targets.', 'text-opl-bad dark:text-op-bad'); }
+      await spLoadTargets();
+    } catch (_) {
+      btn.disabled = false;
+      show('Could not save the targets. Check your connection.', 'text-opl-bad dark:text-op-bad');
+    }
+  }
+  window.spSaveTargets = spSaveTargets;
 
   function spRenderThumbs() {
     const wrap = el('sp-thumbs');
@@ -19506,6 +19638,7 @@
     const status = el('sp-status');
     const show = (msg, cls) => { status.textContent = msg; status.className = 'text-sm text-center ' + cls; status.classList.remove('hidden'); };
     if (!store) return show('Pick a store.', 'text-op-bad');
+    if (!spType) return show('Choose what you are uploading.', 'text-op-bad');
     if (!spFiles.length) return show('Add at least one photo.', 'text-op-bad');
     const btn = el('sp-submit'); btn.disabled = true;
     let ok = 0, fail = 0;
@@ -19538,7 +19671,9 @@
         if (r.ok && d.ok) ok++; else fail++;
       } catch (_) { fail++; }
     }
-    btn.disabled = false; btn.textContent = 'Submit photos';
+    btn.textContent = '';
+    renderSpTypes();             // restores the button for the type still chosen
+    if (ok > 0) spLoadTargets(); // the bars move as soon as the batch lands
     if (ok > 0) {
       // Fire-and-forget: one batched alert to admins/superusers that this store
       // submitted photos. The worker re-derives the uploader from the session
@@ -36067,6 +36202,11 @@
     { id: 'merch-scan', label: 'Price Scan', nav: 'nav-merch-scan' },
     { id: 'merch-signs', label: 'Sign Studio', nav: 'nav-merch-signs' },
   ];
+  // Pages EVERY associate may open, no grant needed (Brian, 2026-10-13: associates
+  // upload photos too, so the weekly targets fill across shifts). The worker already
+  // lets any signed-in user upload — photo-upload is in NON_FINANCIAL_ACTIONS — so
+  // there is no ACTION_PAGE entry to pair with this, and nothing for an admin to tick.
+  const ASSOCIATE_OPEN_PAGES = ['submit-photos'];
   // Mirrors PAGE_LEVELS in worker.js. The worker is the real gate; this only
   // stops the UI offering what the API would refuse.
   const PAGE_LEVEL_N = { view: 1, edit: 2 };
@@ -36091,7 +36231,7 @@
     // every morning instead of whatever the object happened to enumerate first.
     if (isAssociate(user)) {
       const first = GRANTABLE_PAGES.find(p => pageLevel(p.id, user) > 0);
-      return first ? first.id : 'no-access';
+      return first ? first.id : ASSOCIATE_OPEN_PAGES[0];
     }
     if (!canSeeFinancials(user)) return 'no-access';
     const biz = userBusinesses(user);
@@ -37440,6 +37580,7 @@
     for (const p of GRANTABLE_PAGES) {
       if (pageLevel(p.id, user) > 0) el(p.nav)?.classList.remove('hidden');
     }
+    for (const id of ASSOCIATE_OPEN_PAGES) el('nav-' + id)?.classList.remove('hidden');
     // Every grantable page lives INSIDE a group — Inventory, and since Price Scan,
     // Merchandising — so un-hiding the child is not enough on its own: the subtraction
     // above hid the group wrapper and the header (the header carries .nav-item), and each
@@ -37450,6 +37591,7 @@
     for (const [sub, group, header, open] of [
       ['nav-inventory-sub', 'nav-inventory-group', 'nav-inventory', window.toggleInventoryMenu],
       ['nav-merch-sub', 'nav-merch-group', 'nav-merch', window.toggleMerchMenu],
+      ['nav-marketing-sub', 'nav-marketing-group', 'nav-marketing', window.toggleMarketingMenu],
     ]) {
       if (!el(sub)?.querySelector('.nav-subitem:not(.hidden)')) continue;
       el(group)?.classList.remove('hidden');

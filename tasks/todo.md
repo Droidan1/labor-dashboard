@@ -1,3 +1,33 @@
+# Weekly marketing model: intake targets + Buffer proof (2026-10-13)
+
+**Request (marketing meeting 2026-10-13):** RETJG HUB stays the intake; Buffer queues and publishes; managers
+never log into Buffer. Step one is intake (weekly targets, video), step two is one Buffer post end to end.
+Spec, measurements and the manager email: [weekly-marketing-intake.md](weekly-marketing-intake.md).
+
+Step one: intake. **Decided 2026-10-13:** 20 retail / 20 bins / 1 store walk ≥ 3:00, week Sun–Sat ET, due Thursday,
+associates can upload. Preview for review: `_preview/step1-intake.html` (gitignored).
+- [x] Map the current Submit Photos surface and measure 6 weeks of uploads (prod, read-only)
+- [x] Draft the spec and the manager instructions
+- [x] Preview approved 2026-10-13, **without the email section** (Brian: "don't add the email part")
+- [x] PR 1 built on `claude/marketing-intake-targets`: `?action=photo-targets` (open to every signed-in
+      user, store-scoped), `upload_targets` setting (admin, validated 0–500), progress bars / admin table +
+      editor, store picker = the user's own stores, no default type, associates open Submit Photos with no
+      grant, notes reach the caption prompt (fenced as data), associate upload alerts name the person
+      - verified: `test-photo-targets.mjs` 42 (fails on main), `test-bin-photo-autodraft.mjs` +6 (4 fail on
+        main), `browser-submit-photo-targets.mjs` 55/55 both themes incl. AA contrast (31 fail on main),
+        `npm test` 9123 assertions / 104 suites
+- [ ] PR 1: fresh-eyes review, push, PR; worker deploy (backward-compatible) before the merge
+- [ ] PR 2: store-walk video (R2 multipart, ≥ 3:00 checked on the phone), migration
+- ~~PR 3: marketing line in the 8 AM Executive Summary~~ dropped by Brian 2026-10-13
+- [ ] Brian sends the manager email after PR 1 and 2 are live
+
+Step two: Buffer proof (South Bend = BL2)
+- [x] Read-only channel-listing script (scratchpad `buffer-channels.mjs`; key read from `~/.config/buffer/api-key`)
+- [ ] Brian creates a personal API key → list orgs/channels, record IDs, confirm Instagram + the missing GBP profiles
+- [ ] Public, unguessable, non-expiring photo URL route (Buffer fetches media at publish time; ours are login-only)
+- [ ] Draft post to South Bend (cannot publish) → record the payload that works
+- [ ] With Brian's go-ahead: one scheduled South Bend retail post → record blockers
+
 # `retjg` MCP server, phase 1: fixed key, for Claude (2026-10-13)
 
 **Request (Brian):** an MCP server so agents without a shell can get the data. Muse runs shell
