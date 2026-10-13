@@ -9717,6 +9717,22 @@ function randomHex(bytes) {
   return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+// The emailed sign-in code: uniform over 100000–999999 from the CSPRNG. It was
+// Math.random() until 2026-10-13. No leading zero on purpose: the login code box
+// is <input type="number">, which drops one (index.html, beside #login-otp).
+// Values at or above the largest multiple of 900000 below 2^32 are redrawn, so no
+// code is likelier than another.
+function randomOtpCode() {
+  const span = 900000, limit = Math.floor(0x100000000 / span) * span;
+  const buf = new Uint32Array(1);
+  do crypto.getRandomValues(buf); while (buf[0] >= limit);
+  return String(100000 + (buf[0] % span));
+}
+
+// Wrong guesses allowed against an emailed code before it stops working
+// (magic_links.otp_attempts, migration-077). The link in the same email still works.
+const OTP_MAX_ATTEMPTS = 5;
+
 // ─── Retail lookup (TinyFish) ─────────────────────────────────────────────────
 //
 // What a customer can actually pay for this thing today, from a FIRST-PARTY seller.
@@ -16304,7 +16320,7 @@ export default {
         ).bind(normalized).all();
         if (results && results.length) {
           const token = randomHex(32);
-          const otpCode = String(Math.floor(100000 + Math.random() * 900000)); // 6-digit OTP
+          const otpCode = randomOtpCode(); // 6-digit OTP, from the CSPRNG
           const expires = new Date(Date.now() + 15 * 60 * 1000).toISOString();
           await env.DB.prepare(
             "INSERT INTO magic_links (token, email, expires_at, otp_code) VALUES (?, ?, ?, ?)"
@@ -16373,14 +16389,30 @@ export default {
           return new Response(JSON.stringify({ error: "Missing email or code" }), { status: 400, headers: corsJson });
         }
         const normalized = email.trim().toLowerCase();
+        const guess = String(otp).trim();
         const now = new Date().toISOString();
-        const { results } = await env.DB.prepare(
-          "SELECT token FROM magic_links WHERE email = ? AND otp_code = ? AND expires_at > ? AND used_at IS NULL"
-        ).bind(normalized, String(otp).trim(), now).all();
-        if (!results || !results.length) {
-          return new Response(JSON.stringify({ error: "Invalid or expired code" }), { status: 401, headers: corsJson });
+        // 🛑 CLAIM AN ATTEMPT AND READ THE CODES IN ONE STATEMENT. "Check the code,
+        // then count the miss" lets a burst of parallel guesses all pass the check
+        // before any count lands. Here every guess spends one attempt on every live
+        // code for this email first, and a code at OTP_MAX_ATTEMPTS is never read
+        // again: however many guesses arrive at once, at most that many are weighed.
+        // Asking for more codes buys nothing, since a miss counts against all of them.
+        const { results: live } = await env.DB.prepare(
+          `UPDATE magic_links SET otp_attempts = otp_attempts + 1
+            WHERE email = ? AND used_at IS NULL AND expires_at > ? AND otp_attempts < ?
+            RETURNING token, otp_code`
+        ).bind(normalized, now, OTP_MAX_ATTEMPTS).all();
+        const hit = (live || []).find(r => r.otp_code === guess);
+        if (!hit) {
+          const spent = await env.DB.prepare(
+            "SELECT COUNT(*) AS n FROM magic_links WHERE email = ? AND used_at IS NULL AND expires_at > ? AND otp_attempts >= ?"
+          ).bind(normalized, now, OTP_MAX_ATTEMPTS).first();
+          const locked = !(live && live.length) && spent && spent.n > 0;
+          return new Response(JSON.stringify(locked
+            ? { error: "Too many wrong codes. Request a new code, or use the link in the email.", code: "OTP_LOCKED" }
+            : { error: "Invalid or expired code" }), { status: 401, headers: corsJson });
         }
-        const { token } = results[0];
+        const { token } = hit;
         // Mark used
         await env.DB.prepare("UPDATE magic_links SET used_at = ? WHERE token = ?").bind(now, token).run();
         // Load user
