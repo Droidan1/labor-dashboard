@@ -71,3 +71,37 @@ Delivered as three PRs: (1) targets + bars + admin control + picker/type/associa
 > daily stories as you do now.
 >
 > The bars on Submit Photos show where your store stands, and we'll go over it on the morning call.
+
+## Buffer channels (read-only API listing, 2026-10-13)
+
+Organization "My organization" `6ac7d9ef5b8598803aae883d`, Team plan limits (500 requests/day, 15,000/30 days).
+Every channel's timezone is America/Indiana/Indianapolis (Eastern).
+
+| Store | Facebook | Instagram | Google Business Profile | TikTok |
+|---|---|---|---|---|
+| Coliseum (BL1) | `6ac7dd7f6a5c39ccb654853c` "Bargain Lane" (page 113655020488471, shared with Dupont) | **missing** | Fort Wayne: `6ac7ddf26a5c39ccb6548d8b` or `…8d88` (which is which: unconfirmed) | brand `6ac7ddc26a5c39ccb6548b37` @bargain.lane |
+| Dupont (BL4) | same shared page as Coliseum | **missing** | Fort Wayne: the other of `…8d8b` / `…8d88` | brand |
+| South Bend (BL2) | `6ac7dd7f6a5c39ccb6548539` | **missing** | `6ac7ddf26a5c39ccb6548d8a` | brand |
+| Battle Creek (BL14) | `6ac7dd7f6a5c39ccb654853a` | **missing** | **missing** | brand |
+| Indy East (BL16) | `6ac7dd7f6a5c39ccb6548536` | **missing** | **missing** | brand |
+
+Fort Wayne GBP maps links: `…8d8b` → cid 1482067967315306501, `…8d88` → cid 2103643477400346677.
+Buffer has already set posting times on each channel (e.g. GBP Mon–Thu mornings, nothing Fri–Sun;
+TikTok one slot on some days), which `addToQueue` would use.
+
+## South Bend draft test (2026-10-13, approved by Brian)
+
+Created Buffer draft `6ace65cbd718c7e2826f6d09` on South Bend Facebook at 17:09:31Z; read back as
+`status: draft`, `dueAt: null` (cannot publish until someone schedules it in Buffer). The payload that works:
+
+    createPost(input: {
+      text, channelId: "6ac7dd7f6a5c39ccb6548539",
+      schedulingType: automatic, mode: addToQueue, saveToDraft: true,
+      metadata: { facebook: { type: post } }        # post | story | reel — REQUIRED for Facebook
+    })
+
+Learned: the first try without `metadata.facebook.type` was refused ("Facebook posts require a type").
+Each network carries its own required metadata, so the Hub's payload builder needs one per service.
+Still to prove: an image post (needs public, non-expiring photo URLs from the worker), a scheduled
+(non-draft) post, and Google / TikTok payloads. Buffer also lists posts that went out on the page
+outside Buffer (empty text, e.g. stories), so a post list is not "posts we made".

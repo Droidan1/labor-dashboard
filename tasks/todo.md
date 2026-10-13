@@ -24,16 +24,25 @@ associates can upload. Preview for review: `_preview/step1-intake.html` (gitigno
       (3) an admin's half-typed targets were lost on store change or an upload re-draw;
       (4) two vacuous `check(true)` and a landing check that always read `window.currentUser` (undefined).
       Left as a product note: an associate stripped of every grant now lands on Submit Photos, not no-access.
-- [ ] PR 1: push + PR (Brian's go-ahead), merge, then worker deploy from a fresh clone of main
+- [x] PR 1: #327 merged 17:01:18Z as `b879c05`; Brian deployed the worker from a fresh clone of it,
+      `7935cbbf` at 100% (MEDIA, BL16, 6 crons in the output). Page byte-identical to `b879c05` on 3 passes
+      (17:02:41–52Z), sw v280. Worker CONTENT not byte-checked (no token here); Brian to open Submit Photos
 - [ ] PR 2: store-walk video (R2 multipart, ≥ 3:00 checked on the phone), migration
 - ~~PR 3: marketing line in the 8 AM Executive Summary~~ dropped by Brian 2026-10-13
 - [ ] Brian sends the manager email after PR 1 and 2 are live
 
 Step two: Buffer proof (South Bend = BL2)
 - [x] Read-only channel-listing script (scratchpad `buffer-channels.mjs`; key read from `~/.config/buffer/api-key`)
-- [ ] Brian creates a personal API key → list orgs/channels, record IDs, confirm Instagram + the missing GBP profiles
-- [ ] Public, unguessable, non-expiring photo URL route (Buffer fetches media at publish time; ours are login-only)
-- [ ] Draft post to South Bend (cannot publish) → record the payload that works
+- [x] Brian created a personal API key (`~/.config/buffer/api-key`) → channels listed read-only, IDs in
+      weekly-marketing-intake.md: all 4 Facebook pages (5 stores) + brand TikTok + 3 GBP (2× Fort Wayne,
+      South Bend). **Missing: Instagram (all), GBP for Battle Creek and Indy East.**
+- [x] Public photo links: `GET|HEAD https://api.retjghub.com/p/<uuid>.<ext>`, above every auth gate, serving
+      only a `marketing_photos` row's image (rejected → 404; no secret, no migration: the UUID already in the
+      R2 key is the capability, and only the upload response ever returns it). `test-public-photo.mjs` 34
+      (32 fail on main); `npm test` 9159 / 105 suites. Branch `claude/public-photo-links`
+- [ ] Push + PR, merge, worker deploy; then fetch one link from outside to confirm
+- [x] Draft post to South Bend (cannot publish) → `6ace65cbd718c7e2826f6d09`, read back as draft, no due
+      time. Facebook requires `metadata.facebook.type`. Payload recorded in weekly-marketing-intake.md
 - [ ] With Brian's go-ahead: one scheduled South Bend retail post → record blockers
 
 # `retjg` MCP server, phase 1: fixed key, for Claude (2026-10-13)
