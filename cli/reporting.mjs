@@ -321,6 +321,8 @@ export const QUERIES = [
     description: 'The Retail Summary T13 tab: per week (ending Saturday) and store, net sales, qty, transactions, ASP, '
       + 'labor % and budget; optionally category units, net and orders per week.',
     args: [opt('end'), opt('weeks'), opt('storeId'), opt('categories')],
+    // Measured live 2026-10-13: l3 for every store over 13 weeks is ~290k characters (~83k tokens).
+    check: (a) => { if (a.categories === 'l3' && !a.storeId) throw new UsageError('categories l3 needs a storeId: subcategories for every store at once is too large for one answer'); },
     request: (a) => ({ action: 'weekly-t13', end: a.end || addDays(todayET(), -1), weeks: a.weeks }),
     shape: shapeWeeks,
   },

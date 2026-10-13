@@ -24,6 +24,9 @@ const INSTRUCTIONS = 'Read-only sales, Retail Summary and labor data for the Bar
   + READING_RULES.map(r => '- ' + r).join('\n');
 
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+// Larger than this and most agents truncate or refuse a tool result (~28k tokens).
+// Measured live 2026-10-13: the biggest narrowed answers are ~90k characters.
+export const MAX_RESULT_CHARS = 100_000;
 
 export const TOOLS = QUERIES.map(q => ({
   name: q.name, title: q.title, description: q.description,
@@ -91,7 +94,12 @@ async function handle(method, params, env) {
     try {
       const args = checkArgs(query, params.arguments ?? {});
       const out = query.shape(await report(env, query.request(args)), args);
-      return { content: [{ type: 'text', text: JSON.stringify(out) }] };
+      const text = JSON.stringify(out);
+      if (text.length > MAX_RESULT_CHARS) {
+        throw new ToolError(`This answer is ${Math.round(text.length / 1000)}k characters, too large for one tool result. `
+          + 'Narrow it: give a storeId, a shorter date range or fewer weeks, level l2 instead of l3, or bucket total.');
+      }
+      return { content: [{ type: 'text', text }] };
     } catch (e) {
       if (e instanceof ToolError || e instanceof UsageError || e instanceof QueryError) {
         return { content: [{ type: 'text', text: e.message }], isError: true };

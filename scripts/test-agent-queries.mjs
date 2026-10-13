@@ -118,6 +118,9 @@ const page = async (q) => JSON.parse(await (await main.fetch(req('/' + q, { user
   eq(Object.keys(wl2.weeks[last].stores), ['BL2'], 'storeId narrows the weeks');
   eq(wl2.weeks[last].categories.net, p.perStoreL2Net[last].BL2, 'a store\'s weekly category net is the page\'s');
   ok((await tool('get_trailing_weeks', { weeks: 0 })).isError, 'weeks 0 is refused');
+  const n3 = upstream.length;
+  ok(/needs a storeId/.test((await tool('get_trailing_weeks', { categories: 'l3' })).text || ''), 'subcategories for every store at once are refused');
+  eq(upstream.length, n3, 'before they reach the worker');
 }
 
 // ── get_category_sales ─────────────────────────────────────────────────────
@@ -198,6 +201,19 @@ const planWeek = shift(sat, 7), actTo = sat;
   const n = upstream.length;
   ok((await tool('get_labor_plan', { week: '2026-10-16' })).isError, 'a week that is not a Saturday is refused');
   eq(upstream.length, n, 'before it reaches the worker');
+}
+
+// ── An answer too large for one tool result is refused with how to narrow it ─
+{
+  const big = { stores: Array.from({ length: 3000 }, (_, i) => ({ storeId: 'S' + i, name: 'x'.repeat(40) })) };
+  const bigEnv = { ...env, API: { fetch: async () => new Response(JSON.stringify(big)) } };
+  const r = await mcp.fetch(new Request('https://mcp.retjghub.com/mcp', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + MCP },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 999, method: 'tools/call', params: { name: 'get_yesterday_sales', arguments: {} } }),
+  }), bigEnv, ctx);
+  const res = (await r.json()).result;
+  ok(res?.isError && /too large for one tool result/.test(res.content[0].text) && /storeId/.test(res.content[0].text),
+    'an oversized answer is a tool error that says how to narrow it');
 }
 
 // ── Every upstream call was a keyed GET ────────────────────────────────────

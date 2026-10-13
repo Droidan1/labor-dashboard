@@ -34,7 +34,9 @@ Plan (step 1 = worker; step 2 = MCP tools + CLI commands, sized for agents):
 - [ ] ⚠️ NOT fixed here, already on main: the catch-all live route at the end of the chain is reachable
       by staff with `?action=push-subscribe&store=BL1` (GET matches nothing and drops through); in prod
       it would fetch live Clover orders and write the store's snapshot + daily_sales row. Separate task
-- [ ] PR; Brian deploys (guarded); live check with the key, 3 clean passes
+- [x] PR #331. Worker deployed by Brian 2026-10-13 (guarded one-liner): `clover-sales-api` 899ea811,
+      bindings + 6 crons. Live, 6 checks per pass (labor-plan 5 stores, summary all stores, keyed +
+      history_d1 → 400, no key → NO_SESSION, wrong key → key gate 401, yesterday unchanged): 3 clean passes 17:55
 
 Step 2 (same branch, built while the review ran; no worker change):
 - [x] `cli/reporting.mjs`: ONE table of all 11 queries (4 existing + 7 new), the reading rules, argument
@@ -47,7 +49,10 @@ Step 2 (same branch, built while the review ran; no worker change):
       seeds and the page's own answer; CLI suite 60, MCP suite 94; 11 mutations, 10 caught + 1 equivalent
       (store not upper-cased: the worker upper-cases it, worker.js:20787); `npm test` 9366 / 107
 - [x] Bug found by the new test: the rounding pass did `'net' in 7` on a day count and threw
-- [ ] Reinstall the CLI as a directory (ORIENT.md); deploy retjg-mcp after the worker; live checks
+- [x] All 10 new command forms run live. Sizes (compact): most 5-26k chars; l3 across weeks ~85-91k;
+      `weeks --categories l3` for every store ~292k (~83k tokens), so it now needs a storeId, and the MCP
+      refuses any answer over 100k chars with how to narrow it (both mutation-checked)
+- [ ] Deploy retjg-mcp (Brian); live MCP checks; reinstall the CLI as a directory (ORIENT.md)
 # Round `lySalesForDate` to cents (2026-10-13)
 
 **Found while testing the Claude connector:** `?action=morning-briefing` served BL2's
