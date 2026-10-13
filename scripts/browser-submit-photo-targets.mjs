@@ -183,10 +183,11 @@ for (const dark of [true, false]) {
     await page.waitForTimeout(400);
     await page.fill('#sp-note', 'Halloween bedding $8');
     await page.click('#sp-submit');
-    await page.waitForFunction(() => /7 \/ 20/.test(document.getElementById('sp-targets')?.textContent || ''), null, { timeout: 5000 });
+    const moved = await page.waitForFunction(() => /7 \/ 20/.test(document.getElementById('sp-targets')?.textContent || ''), null, { timeout: 5000 })
+      .then(() => true, () => false);
+    check(moved, `[${t}] the retail bar moves to 7 / 20 after the upload`);
     const up = await page.evaluate(() => window.__uploads);
     check(JSON.stringify(up) === '[{"store":"BL2","type":"retail","note":"Halloween bedding $8"}]', `[${t}] uploaded as retail for South Bend, with the note (${JSON.stringify(up)})`);
-    check(true, `[${t}] the retail bar moves to 7 / 20 after the upload`);
     check(await text(page, '#sp-submit') === 'Submit photos', `[${t}] Submit is ready again for the same type`);
     check(errs.length === 0, `[${t}] no page errors (${errs.join(' | ').slice(0, 200)})`);
   });
@@ -203,12 +204,22 @@ for (const dark of [true, false]) {
     check(await shown(page, '#sp-target-edit'), `[${t}] Edit opens the targets form`);
     await readable(page, '#sp-target-edit', t);
     await shot(page, `admin-${t}`);
+    await page.fill('#sp-tgt-retail', '24');
+    // 🔑 Found in review: changing store (or an upload landing) re-drew the card and threw
+    // away what an admin had typed. The picker no longer re-draws an admin's card, and a
+    // re-draw keeps the form open with its values.
+    await page.selectOption('#sp-store', 'BL4');
+    await page.evaluate(() => window.spRenderTargets());
+    check(await shown(page, '#sp-target-edit') && await page.inputValue('#sp-tgt-retail') === '24',
+      `[${t}] a re-draw mid-edit keeps the form open and the typed value`);
     await page.fill('#sp-tgt-retail', '25');
     await page.click('#sp-tgt-save');
-    await page.waitForFunction(() => /6\/25/.test(document.getElementById('sp-targets')?.textContent || ''), null, { timeout: 5000 });
+    const reread = await page.waitForFunction(() => /6\/25/.test(document.getElementById('sp-targets')?.textContent || ''), null, { timeout: 5000 })
+      .then(() => true, () => false);
+    check(reread, `[${t}] the table re-reads against the new target`);
+    check(!(await shown(page, '#sp-target-edit')), `[${t}] and the form closes once saved`);
     const sent = await page.evaluate(() => window.__settings);
     check(JSON.stringify(sent) === '[{"key":"upload_targets","value":{"retail":"25","bins":"20"}}]', `[${t}] saved as the upload_targets setting (${JSON.stringify(sent)})`);
-    check(true, `[${t}] the table re-reads against the new target`);
     check(errs.length === 0, `[${t}] no page errors (${errs.join(' | ').slice(0, 200)})`);
   });
 }
@@ -216,8 +227,11 @@ for (const dark of [true, false]) {
 // ── 3. An associate with no grants, on a phone ───────────────────────────────
 await section('3', async () => {
   const { page, errs } = await open(ASSOC, { dark: true, width: 375, height: 812, mobile: true });
-  check(await page.evaluate(() => window.landingPageFor(window.currentUser || {})) === 'submit-photos'
-     || await shown(page, '#page-submit-photos'), '🔑 an associate with no page grants lands on Submit Photos, not "no access"');
+  // `currentUser` is a top-level `let`, so it is reachable by name but is not on window.
+  check(await page.evaluate(() => landingPageFor(currentUser)) === 'submit-photos',
+    '🔑 an associate with no page grants lands on Submit Photos, not "no access"');
+  check(await page.evaluate(() => landingPageFor({ associate: true, pages: { 'bin-dump': 'edit' } })) === 'bin-dump',
+    'one with a grant still lands on the granted page');
   await page.evaluate(() => window.navigateToPage('submit-photos'));
   await page.waitForTimeout(500);
   check(await shown(page, '#page-submit-photos'), '🔑 an associate can open Submit Photos');

@@ -4444,7 +4444,7 @@
 
         <div>
           <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Store</label>
-          <select id="sp-store" onchange="spRenderTargets()" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-accent-green"></select>
+          <select id="sp-store" onchange="spStoreChanged()" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-accent-green"></select>
         </div>
 
         <div>
@@ -4465,7 +4465,7 @@
         <div>
           <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Price, sale or restock info (optional)</label>
           <textarea id="sp-note" rows="2" placeholder="e.g. Halloween bedding $8 · appliance restock Friday 2pm" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-accent-green"></textarea>
-          <p class="mt-1 text-xs text-opl-inkDim dark:text-op-inkDim">The AI uses this when it writes the post.</p>
+          <p class="mt-1 text-xs text-opl-inkDim dark:text-op-inkDim">Sent with these photos, so the post can mention it.</p>
         </div>
 
         <button id="sp-submit" onclick="spSubmit()" class="w-full bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] font-semibold text-sm py-3 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Choose a type to continue</button>
@@ -19521,10 +19521,21 @@
         <div class="mt-3 space-y-3">${bar('Retail photos', s.retail, t.retail)}${bar('Bin photos', s.bins, t.bins)}</div>
         <p class="mt-3 text-xs text-opl-inkDim dark:text-op-inkDim">Counts uploads from everyone at ${escapeHtml(s.label)} (${who} so far). Resets Sunday.</p>`;
     }
+    // An admin halfway through editing keeps the form open and what they typed:
+    // an upload landing mid-edit re-reads the counts and re-draws this card.
+    const wasOpen = el('sp-target-edit') && !el('sp-target-edit').classList.contains('hidden');
+    const typed = wasOpen ? { retail: el('sp-tgt-retail').value, bins: el('sp-tgt-bins').value } : null;
     box.innerHTML = html;
     box.classList.remove('hidden');
+    if (typed) {
+      el('sp-target-edit').classList.remove('hidden');
+      el('sp-tgt-retail').value = typed.retail; el('sp-tgt-bins').value = typed.bins;
+    }
   }
   window.spRenderTargets = spRenderTargets;
+  // The admin table is every store, so picking a store changes nothing in it.
+  function spStoreChanged() { if (!spIsAdmin()) spRenderTargets(); }
+  window.spStoreChanged = spStoreChanged;
 
   function spToggleTargetEdit() { el('sp-target-edit')?.classList.toggle('hidden'); }
   window.spToggleTargetEdit = spToggleTargetEdit;
@@ -19541,6 +19552,7 @@
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.ok) { btn.disabled = false; return show(d.error || 'Could not save the targets.', 'text-opl-bad dark:text-op-bad'); }
+      el('sp-target-edit').classList.add('hidden');   // saved: close it, so the re-draw does not reopen it
       await spLoadTargets();
     } catch (_) {
       btn.disabled = false;

@@ -62,7 +62,7 @@ Delivered as three PRs: (1) targets + bars + admin control + picker/type/associa
 > They reset every Sunday.
 >
 > **Pick the right type** (Retail, Bins, or Store walk) before you submit. If you know a price, a sale, or a
-> restock time, add it in the info box. The AI writes the post from it.
+> restock time, add it in the info box so the post can mention it.
 >
 > **Take good photos**: good light, product filling the frame, no customers' faces, and only what is
 > actually on our floor.

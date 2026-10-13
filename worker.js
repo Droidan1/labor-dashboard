@@ -7337,8 +7337,9 @@ async function buildCaption(env, opts) {
       `SELECT DISTINCT TRIM(note) AS note FROM marketing_photos
         WHERE id IN (${ids.map(() => "?").join(",")}) AND note IS NOT NULL AND TRIM(note) <> '' LIMIT 5`
     ).bind(...ids).all().catch(() => null);
-    // One line each, and no fence markers, so a note cannot close the fence it sits in.
-    notes = ((rows && rows.results) || []).map(r => String(r.note).replace(/<<<|>>>/g, "").replace(/\s+/g, " ").trim().slice(0, 200)).filter(Boolean);
+    // One line each, and no angle brackets at all: stripping only "<<<" and ">>>"
+    // let ">><<<>" collapse into a fresh ">>>" and close the fence from inside.
+    notes = ((rows && rows.results) || []).map(r => String(r.note).replace(/[<>]/g, "").replace(/\s+/g, " ").trim().slice(0, 200)).filter(Boolean);
   }
   const photoImgs = [];
   if (env.DB && env.MEDIA && photoIds.length) {

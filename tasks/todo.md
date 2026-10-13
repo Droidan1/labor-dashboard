@@ -16,7 +16,15 @@ associates can upload. Preview for review: `_preview/step1-intake.html` (gitigno
       - verified: `test-photo-targets.mjs` 42 (fails on main), `test-bin-photo-autodraft.mjs` +6 (4 fail on
         main), `browser-submit-photo-targets.mjs` 55/55 both themes incl. AA contrast (31 fail on main),
         `npm test` 9123 assertions / 104 suites
-- [ ] PR 1: fresh-eyes review, push, PR; worker deploy (backward-compatible) before the merge
+- [x] PR 1 fresh-eyes review: 4 fixed, each with a check that fails on b3dfe9b —
+      (1) a note could rebuild ">>>" from ">><<<>" and close the caption fence: now strips every < and >;
+      (2) the note hint claimed the AI always reads it — true only for the batch that creates the week's
+      bin draft (the caption is written once; retail has no auto-post until step 2): hint now says
+      "Sent with these photos, so the post can mention it";
+      (3) an admin's half-typed targets were lost on store change or an upload re-draw;
+      (4) two vacuous `check(true)` and a landing check that always read `window.currentUser` (undefined).
+      Left as a product note: an associate stripped of every grant now lands on Submit Photos, not no-access.
+- [ ] PR 1: push + PR (Brian's go-ahead), merge, then worker deploy from a fresh clone of main
 - [ ] PR 2: store-walk video (R2 multipart, ≥ 3:00 checked on the phone), migration
 - ~~PR 3: marketing line in the 8 AM Executive Summary~~ dropped by Brian 2026-10-13
 - [ ] Brian sends the manager email after PR 1 and 2 are live
