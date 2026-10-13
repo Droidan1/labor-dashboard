@@ -5937,7 +5937,7 @@ async function buildMorningBriefingData(env) {
   const yMap = {}, tMap = {}, lyMap = {}, winByStore = {};
   for (const r of (yRows || [])) yMap[r.store] = r;
   for (const r of (tRows || [])) tMap[r.store] = r;
-  for (const r of (lyRows || [])) lyMap[r.store] = (Number(r.retail) || 0) + (Number(r.bin) || 0);
+  for (const r of (lyRows || [])) lyMap[r.store] = roundCents((Number(r.retail) || 0) + (Number(r.bin) || 0));
   for (const r of (winRows || [])) (winByStore[r.store] || (winByStore[r.store] = [])).push(r);
 
   // Weeks are stored globally — the same label covers the same dates for every

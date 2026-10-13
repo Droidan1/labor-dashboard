@@ -1,3 +1,18 @@
+# Round `lySalesForDate` to cents (2026-10-13)
+
+**Found while testing the Claude connector:** `?action=morning-briefing` served BL2's
+`lySalesForDate` as `4165.110000000001`. `worker.js` summed `retail + bin` without `roundCents`.
+Every consumer (Chief of Staff, `retjg` CLI, `retjg-mcp`) reads it; rounding is backward-compatible.
+
+- [x] Failing test first: BL14 last-year row 4981.8 + 130.64 (= 5112.4400000000005, the pair
+      that once shipped as netSales) in test-briefing-period-to-date.mjs; failed 86/1 before the fix
+- [x] Fix: `roundCents(...)` in `buildMorningBriefingData`'s lyMap; null still means no row
+- [x] Swept the other reporting sums: period totals round on return (`periodTotals`), netSales
+      rounds in `reportedFigures`, `salesSoFarToday` rounds; store-history emits no LY. Nothing else
+- [x] `npm test`: 9200 assertions, 105 suites
+- [ ] Deploy (Brian), guarded: branch contains main and worker.js differs by exactly this line
+- [ ] Live: `retjg yesterday` lySalesForDate has ≤ 2 decimals for every store, 3 clean passes
+
 # Weekly marketing model: intake targets + Buffer proof (2026-10-13)
 
 **Request (marketing meeting 2026-10-13):** RETJG HUB stays the intake; Buffer queues and publishes; managers

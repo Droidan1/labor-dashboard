@@ -93,6 +93,9 @@ async function briefing(env) {
     ...['2026-08-09','2026-08-10'].map(d => ['BL8', d, '33', 0, null, 5000, null, false]),
   ]);
   db.prepare('INSERT INTO last_year_sales (store,date,retail,bin) VALUES (?,?,?,?)').run('BL1', '2025-08-12', 1500, 700);
+  // retail + bin in floating point is 5112.4400000000005 — the same pair that
+  // once shipped unrounded as netSales. Live, BL2 served 4165.110000000001 here.
+  db.prepare('INSERT INTO last_year_sales (store,date,retail,bin) VALUES (?,?,?,?)').run('BL14', '2025-08-12', 4981.8, 130.64);
 
   const by = await atNoonOn('2026-08-12', () => briefing(env));
 
@@ -135,6 +138,7 @@ async function briefing(env) {
   // Prior year: same weekday, 364 days back.
   eq(by.BL1.lySalesForDate, 2200, 'lySalesForDate is retail + bin at salesDate - 364 (2025-08-12)');
   eq(by.BL2.lySalesForDate, null, 'no prior-year row → null, never 0');
+  eq(by.BL14.lySalesForDate, 5112.44, 'lySalesForDate is rounded to cents, not 5112.4400000000005');
 
   // A dark store has no usable day in either period.
   eq(by.BL4.wtdDaysReported, 0, 'a dark store reports zero usable days');
