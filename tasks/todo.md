@@ -25,7 +25,11 @@ Design:
       once, 2 survived (2-sample leading-zero check; "miss counts newest code only") until the test sampled
       100 codes and checked an earlier email's code still works; `npm test` 9550 / 108. Prod schema read-only
       (PRAGMA): magic_links has used_at, no otp_attempts yet
-- [ ] PR; Brian runs migration-077 (prod D1, rule 7), then deploys the worker (guarded); live check
+- [x] PR #332. Brian ran migration-077 on prod (1 query, 5 ms); PRAGMA shows otp_attempts INTEGER NOT
+      NULL DEFAULT 0. Worker deployed by Brian (guarded): 5817e033. Live `content/v2` worker.js is
+      BYTE-IDENTICAL to this branch's dry-run bundle (1,096,494 bytes, sha256 d3a558f6…); api.retjghub.com
+      auth-me 200
+- [ ] Brian signs in once with an emailed code (the end-to-end check only a real inbox can do)
 # Agents get Retail Summary + Labor: step 1, key read-through in the worker (2026-10-13)
 
 **Request (Brian):** before phase 2 (OAuth), give the MCP "everything in the Retail Summary and
