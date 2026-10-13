@@ -16197,8 +16197,25 @@ export default {
     // impossible to get subtly wrong the second time. Returns a Response to
     // send, or null to proceed.
     const REPORTING_ACTIONS = new Set(["morning-briefing", "store-history", "afternoon-briefing"]);
+    // The Retail Summary and Labor pages' own read endpoints, for agents (the
+    // retjg CLI and the retjg-mcp connector) — Brian, 2026-10-13. With the key
+    // they pass THIS gate and then run the page's own handler with no user, so
+    // allowedStores(null) answers every store, as for a superuser. Without the
+    // key they are exactly the session endpoints they always were.
+    //
+    // 🛑 READ-ONLY BY CONSTRUCTION: the gate admits GET only, and only these
+    // seven. The Labor page's one write (manual-override) is not here and still
+    // needs a session. Adding an action to this set hands it to every holder of
+    // MORNING_BRIEFING_KEY chain-wide; scripts/test-reporting-read-through.mjs
+    // pins that each answer equals a superuser session's.
+    const REPORTING_READ_THROUGH = new Set([
+      "weekly-summary", "weekly-store-detail", "weekly-t13", "category-series", "category-hours",
+      "labor", "labor-plan",
+    ]);
     const reportingAction = url.searchParams.get("action");
-    if (REPORTING_ACTIONS.has(reportingAction)) {
+    const reportingKeyGiven = request.headers.has("X-API-Key") || url.searchParams.has("key");
+    const reportingReadThrough = REPORTING_READ_THROUGH.has(reportingAction) && reportingKeyGiven;
+    if (REPORTING_ACTIONS.has(reportingAction) || reportingReadThrough) {
       const denied = (() => {
         if (request.method !== "GET") {
           return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: corsJson });
@@ -16217,7 +16234,11 @@ export default {
         return null;
       })();
       if (denied) return denied;
-
+    }
+    // A read-through request has passed the key check and goes on to the page's
+    // own handler below, past the session and financial gates (which honour
+    // `reportingReadThrough`); only the three reporting actions are answered here.
+    if (REPORTING_ACTIONS.has(reportingAction)) {
       try {
         if (reportingAction === "morning-briefing") {
           const data = await buildMorningBriefingData(env);
@@ -16970,7 +16991,10 @@ export default {
     // (admin tooling, cron callbacks, backfill scripts).
     const isAdminSecret = hasSnapshotSecret(request, env);
     let currentUser = null;
-    if (!isAdminSecret) {
+    // reportingReadThrough: already authenticated by MORNING_BRIEFING_KEY at the
+    // reporting gate, GET only, one of seven read actions. It carries no user,
+    // so the business gate below skips it and allowedStores(null) is chain-wide.
+    if (!isAdminSecret && !reportingReadThrough) {
       currentUser = await getAuthUser(request, env);
       if (!currentUser) {
         return new Response(JSON.stringify({ error: "Unauthorized", code: "NO_SESSION" }), {
@@ -16987,7 +17011,7 @@ export default {
     // Fires only for a role outside FINANCIAL_ROLES — today that is `staff`
     // and anything unrecognised. Every role that exists in production
     // (superuser, admin, manager) is unaffected.
-    if (!isAdminSecret && !canSeeFinancials(currentUser)) {
+    if (!isAdminSecret && !reportingReadThrough && !canSeeFinancials(currentUser)) {
       const requestedAction = url.searchParams.get("action") || "";
       // ...and one more way to say yes: the action serves a PAGE this account was
       // granted, at the level that action needs. That is how an associate reaches

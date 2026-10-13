@@ -1,3 +1,30 @@
+# Agents get Retail Summary + Labor: step 1, key read-through in the worker (2026-10-13)
+
+**Request (Brian):** before phase 2 (OAuth), give the MCP "everything in the Retail Summary and
+everything in Labor". **Decisions (2026-10-13):** reuse `MORNING_BRIEFING_KEY` (Brian chose it over a
+separate agent key, knowing the Chief of Staff app / boss's key gains the same reads) · include the
+hourly Categories view (live Clover, 7-day cap) · add the data to the CLI as well as the MCP.
+
+**Research (Explore agent, worker.js line refs on e275d07):** both pages are fed only by read-only GETs
+behind session → financial gate → business gate → `allowedStores()`: `weekly-summary` 20925,
+`weekly-store-detail` 21020, `weekly-t13` 21055, `category-series` 21320, `category-hours` 21409 (live
+Clover; writes the `item-cats:<store>` KV cache as a side effect), `labor` 20743, `labor-plan` 20838.
+No per-employee data anywhere (hours are store×day totals). The only write either page makes is the
+Hours tab's `manual-override` POST, which stays out. Cost/GP/GPM are in weekly-summary/store-detail.
+
+**Design:** the same reporting gate (one copy) also admits those 7 actions when the request carries
+the key: GET only, key checked exactly as today, then the request continues to the page's own
+handler with no user, so `allowedStores(null)` = every store, like a superuser. A request without
+the key is untouched (session path). Nothing else is reachable with the key.
+
+Plan (step 1 = worker; step 2 = MCP tools + CLI commands, sized for agents):
+- [x] Test first: `scripts/test-reporting-read-through.mjs` driving `worker.fetch`: each of the 7 with
+      the key == the superuser session's response; wrong/empty/absent key; POST → 405; writes and
+      other actions still need a session; session scoping unchanged for a 1-store manager
+- [x] Gate change in worker.js (failed 48/41 before). 88 assertions; 8 mutations in a scratch copy each
+      caught; `npm test` 9288 assertions, 106 suites
+- [ ] Fresh-eyes adversarial review of the gate (subagent) before pushing
+- [ ] PR; Brian deploys (guarded); live check with the key, 3 clean passes
 # Round `lySalesForDate` to cents (2026-10-13)
 
 **Found while testing the Claude connector:** `?action=morning-briefing` served BL2's
