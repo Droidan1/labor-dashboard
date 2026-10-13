@@ -52,7 +52,13 @@ Step 2 (same branch, built while the review ran; no worker change):
 - [x] All 10 new command forms run live. Sizes (compact): most 5-26k chars; l3 across weeks ~85-91k;
       `weeks --categories l3` for every store ~292k (~83k tokens), so it now needs a storeId, and the MCP
       refuses any answer over 100k chars with how to narrow it (both mutation-checked)
-- [ ] Deploy retjg-mcp (Brian); live MCP checks; reinstall the CLI as a directory (ORIENT.md)
+- [x] retjg-mcp deployed by Brian: first 2b4495cd at 17:54 ET, three minutes BEFORE the size-guard
+      commit 0de526f (25.72 KiB; caught because the upload size did not match the dry run, and the live
+      server still answered l3-for-every-store); redeployed cf60ea86 (26.38 KiB). Live: 12 checks per pass
+      (no key 401, 11 tools, the l3 guard, all 8 data tools answer at 2-11k chars, no key in any result),
+      3 clean passes 18:00 ET
+- [x] CLI reinstalled as a directory: /opt/homebrew/bin/retjg -> /opt/homebrew/lib/retjg/retjg.mjs,
+      shasums equal the commit; `retjg labor-plan` live defaults to 2026-10-24 like the page
 # Round `lySalesForDate` to cents (2026-10-13)
 
 **Found while testing the Claude connector:** `?action=morning-briefing` served BL2's
