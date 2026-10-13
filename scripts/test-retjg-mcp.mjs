@@ -80,6 +80,33 @@ const data = (r) => {
   eq((await post(init, { e: { ...env, MCP_KEY: '' } })).status, 503, 'no MCP_KEY configured → 503, never open');
   eq((await post(init, { e: { ...env, REPORTING_API_KEY: '' } })).status, 503, 'no upstream key configured → 503');
   eq(upstream.length, 0, 'no rejected request reached the main worker');
+
+  // The forms Claude's connector header box produced on 2026-10-13, all one key.
+  const raw = (v, name = 'Authorization') => post(init, { key: null, headers: { [name]: v } });
+  eq((await raw(MCP_KEY)).status, 200, 'the bare key in Authorization is accepted');
+  eq((await raw('Bearer Bearer ' + MCP_KEY)).status, 200, '"Bearer" twice (the form adds its own) is accepted');
+  eq((await raw('bearer ' + MCP_KEY + '  ')).status, 200, 'lower-case bearer and trailing spaces are accepted');
+  eq((await raw(MCP_KEY, 'X-API-Key')).status, 200, 'the key in X-API-Key is accepted');
+  eq((await raw('Bearer')).status, 401, '"Bearer" with no key → 401');
+  eq((await raw('Basic ' + MCP_KEY)).status, 401, 'another scheme → 401');
+  eq((await raw('Bearer ' + MCP_KEY + ' extra')).status, 401, 'the key plus another word → 401');
+
+  // A refusal is logged by SHAPE, so a broken connector can be diagnosed from
+  // `wrangler tail`, which redacts the header itself.
+  const logged = [];
+  const realLog = console.log;
+  console.log = (...a) => logged.push(a.join(' '));
+  try {
+    await raw('Basic ' + MCP_KEY);
+    await raw('wrong-key', 'X-API-Key');
+  } finally { console.log = realLog; }
+  const ev = logged.map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(e => e?.event === 'mcp_auth_refused');
+  eq(ev.length, 2, 'each refusal is logged once');
+  eq(ev[0]?.authorization?.containsKey, true, 'the log says the real key was inside the refused header');
+  eq(ev[0]?.authorization?.bearerPrefix, false, 'the log says whether it started with Bearer');
+  eq(ev[1]?.xApiKey?.length, 9, 'the log gives the length of a refused value');
+  ok(logged.every(l => !l.includes(MCP_KEY) && !l.includes('wrong-key')), 'no refused or real key value is ever logged');
+  eq(upstream.length, 0, 'still nothing reached the main worker');
 }
 
 // ── Transport ──────────────────────────────────────────────────────────────
