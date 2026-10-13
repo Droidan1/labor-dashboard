@@ -55,8 +55,9 @@ Agents without a shell use the **MCP server** in `mcp/`: a separate worker, `ret
 phone) connects as a custom connector with "No sign in" plus a request header
 `Authorization: Bearer <MCP_KEY>` (Keychain item `retjg-mcp-key`). It reads through the main worker by
 service binding with its own `REPORTING_API_KEY`, so Claude's key can be revoked alone. Deploy it with
-`cd mcp && npx wrangler deploy`. 🛑 Run that from inside `mcp/`: from the repo root the same command
-deploys the MAIN worker. ChatGPT accepts only OAuth, which is phase 2. The reading rules live in
+`npx wrangler deploy -c <repo>/mcp/wrangler.toml` (dry-run first: 9.72 KiB, one binding `env.API`). 🛑 A bare
+`npx wrangler deploy` from the repo root deploys the MAIN worker. `wrangler tail retjg-mcp` redacts the
+`Authorization` header; refused keys are logged by shape as `mcp_auth_refused`. ChatGPT accepts only OAuth, which is phase 2. The reading rules live in
 `mcp/reading-rules.mjs`, and a test fails if the CLI's `--help` drifts from them.
 
 ## Known weirdness (the traps)
