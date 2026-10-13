@@ -1,0 +1,18 @@
+# retjg-mcp — read-only MCP server over the reporting API, for Claude's custom
+# connectors (Desktop, claude.ai, phone). Deployed separately from the main
+# worker: `cd mcp && npx wrangler deploy`.
+#
+# Secrets (never in this file — the repo is public):
+#   MCP_KEY            what Claude sends as "Authorization: Bearer <key>"
+#   REPORTING_API_KEY  the main worker's MORNING_BRIEFING_KEY, used upstream
+name = "retjg-mcp"
+main = "worker.mjs"
+compatibility_date = "2026-09-01"
+workers_dev = false
+
+routes = [{ pattern = "mcp.retjghub.com", custom_domain = true }]
+
+# The main worker, called directly rather than over the public hostname.
+[[services]]
+binding = "API"
+service = "clover-sales-api"
