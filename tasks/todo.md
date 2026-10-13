@@ -50,7 +50,11 @@ Plan (one channel per source, the column becomes their SUM, so no consumer chang
       updated for the new layout, negative scoping assertions unchanged; `npm test` 8876 / 100 suites
 - [x] Real prod rows rendered through the new worker: Mon 10/12 WTD $40,503 (= first preview $38,081 +
       BL14 10/11 Whatnot $2,422), no overflow at 375px
-- [ ] Phase 3 page: "Auction" → "Live" on the dashboard
+- [x] Phase 3 page: "Auction" → "Live Sales" (Brian chose it over plain "Live": the green LIVE badge already
+      means today's real-time till). 15 labels: hero + store-detail mix, store-card tile, Daily-tab caption,
+      print legend/column, chips, tooltips, manual-override placeholder. Left: the CSV import column `auction`
+      (a file format) and the WRS synthetic "Auction" CATEGORY row (stored in weekly history; renaming splits
+      the T13 series). sw.js v279. scripts/browser-live-sales-label.mjs 40/40 (light+dark, 375+1400)
 - [ ] Tests through `worker.fetch` / `worker.scheduled`; `npm test`; both themes for Phase 3
 
 **Found, not in scope:** Sheet BL1 Oct 25 Retail NS budget cell is blank (Sheet $4,875 vs app $12,862); the
