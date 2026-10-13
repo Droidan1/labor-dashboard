@@ -1,3 +1,31 @@
+# Sign-in code: no guessing it (2026-10-13)
+
+**Found while planning phase 2 (OAuth reuses this sign-in):** `auth-verify-otp` checked the 6-digit
+emailed code with no limit on wrong guesses, and `auth-login` made it with `Math.random()`. Anyone who
+knows a user's email could request a code and guess the ~900k possibilities for its 15 minutes.
+Associates' PIN login already locks after 10 wrong codes (`PIN_MAX_FAILURES`); the email code had
+nothing. Brian: "fix the code issue first".
+
+Design:
+- Codes from `crypto.getRandomValues`, uniform over 100000–999999. Not 000000–999999: the login code
+  box is `type="number"` (index.html:946), which drops a leading zero — the PIN box's own comment says so.
+- `migration-077.sql`: `magic_links.otp_attempts INTEGER NOT NULL DEFAULT 0` (additive).
+- Each guess CLAIMS an attempt and reads the codes in ONE statement (`UPDATE … WHERE otp_attempts < 5
+  RETURNING`), so parallel guesses cannot all pass a check before the counts land; at most 5 guesses
+  are ever evaluated against a code. A miss counts against every live code for that email.
+- After 5 the code is dead: "Too many wrong codes. Request a new code, or use the link in the email."
+  The emailed LINK (a 32-byte token, unguessable) still works, so a stranger burning someone's code
+  cannot lock them out.
+- Deploy order: migration BEFORE worker (the new worker reads the column; the old one ignores it).
+
+- [x] Test first: `scripts/test-otp-hardening.mjs` (worker.fetch): codes vary under a stubbed
+      Math.random; right code works; 5 misses kill it even for the right code; parallel guesses still
+      cap at 5; a new code works after; the link still works after; misses spread over live codes
+- [x] migration-077 + worker change (test failed 25/11 before). 141 assertions; 9 mutations: 7 caught at
+      once, 2 survived (2-sample leading-zero check; "miss counts newest code only") until the test sampled
+      100 codes and checked an earlier email's code still works; `npm test` 9550 / 108. Prod schema read-only
+      (PRAGMA): magic_links has used_at, no otp_attempts yet
+- [ ] PR; Brian runs migration-077 (prod D1, rule 7), then deploys the worker (guarded); live check
 # Agents get Retail Summary + Labor: step 1, key read-through in the worker (2026-10-13)
 
 **Request (Brian):** before phase 2 (OAuth), give the MCP "everything in the Retail Summary and
