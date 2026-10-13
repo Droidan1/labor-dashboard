@@ -25,6 +25,19 @@ Plan (step 1 = worker; step 2 = MCP tools + CLI commands, sized for agents):
       caught; `npm test` 9288 assertions, 106 suites
 - [ ] Fresh-eyes adversarial review of the gate (subagent) before pushing
 - [ ] PR; Brian deploys (guarded); live check with the key, 3 clean passes
+
+Step 2 (same branch, built while the review ran; no worker change):
+- [x] `cli/reporting.mjs`: ONE table of all 11 queries (4 existing + 7 new), the reading rules, argument
+      checks and trimming. CLI commands and MCP tools are generated from it; `mcp/reading-rules.mjs` is gone
+- [x] New: summary, categories (≤366 days), weeks, category-sales (total/day/week/month), category-hours
+      (hour/slot, ≤7 days), labor and labor-plan (defaults = the Labor page's weeks)
+- [x] Rules: Pct fields are percents outside the three sales tools; the two labor % differ; coverage;
+      complete days only; BL12 → BL16
+- [x] `scripts/test-agent-queries.mjs` (60) drives MCP → binding → real worker, sums checked against
+      seeds and the page's own answer; CLI suite 60, MCP suite 94; 11 mutations, 10 caught + 1 equivalent
+      (store not upper-cased: the worker upper-cases it, worker.js:20787); `npm test` 9366 / 107
+- [x] Bug found by the new test: the rounding pass did `'net' in 7` on a day count and threw
+- [ ] Reinstall the CLI as a directory (ORIENT.md); deploy retjg-mcp after the worker; live checks
 # Round `lySalesForDate` to cents (2026-10-13)
 
 **Found while testing the Claude connector:** `?action=morning-briefing` served BL2's
