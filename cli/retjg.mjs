@@ -1,54 +1,56 @@
 #!/usr/bin/env node
 // retjg — a read-only command line into the RETJG HUB reporting API, for agents
-// (Claude Code, Codex) and people. It wraps the three endpoints behind
-// MORNING_BRIEFING_KEY (worker.js, "Reporting API"), adds no data of its own
-// and can write nothing.
+// (Claude Code, Codex, Muse) and people. The commands come from QUERIES in
+// ./reporting.mjs, the same table the retjg-mcp server's tools come from, so
+// the two cannot drift. It adds no data of its own and can write nothing.
 //
 // 🔑 The key goes in the X-API-Key header and never in the URL. The worker also
 // accepts ?key=, but a URL lands in shell history, proxy logs and agent
 // transcripts.
 //
-// The interpretation rules in HELP are condensed from the API's handover doc
-// (GSD/worker/API_HANDOVER.md §2). They are here because an agent reads --help
-// and nothing else, and every one of them is a way to read a correct number
-// wrongly.
+// Installed as this whole directory (ORIENT.md) so the import below resolves:
+// /opt/homebrew/bin/retjg is a symlink to …/lib/retjg/retjg.mjs.
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
+import { QUERIES, READING_RULES, UsageError, QueryError, checkArgs, argSpec } from './reporting.mjs';
 
 const BASE = process.env.RETJG_API_URL || 'https://api.retjghub.com/';
 const KEYCHAIN_SERVICE = process.env.RETJG_KEYCHAIN_SERVICE || 'retjg-api-key';
 
-const HELP = `retjg — read-only sales data for RETJG HUB (Bargain Lane stores).
+const flagOf = (name) => argSpec(name).flag;
+const usageLine = (q) => {
+  const flags = q.args.map(({ name, required }) => {
+    const s = argSpec(name);
+    const v = s.type === 'enum' ? s.values.join('|') : s.type === 'date' ? 'YYYY-MM-DD' : s.type === 'integer' ? 'N' : 'BL1';
+    return required ? `--${s.flag} ${v}` : `[--${s.flag} ${v}]`;
+  });
+  return `  retjg ${[q.cli, ...flags].join(' ')}\n      ${wrap(q.description, '      ')}`;
+};
+function wrap(text, indent) {
+  const out = [];
+  let line = '';
+  for (const word of text.split(' ')) {
+    if ((line + ' ' + word).length > 92 - indent.length && line) { out.push(line); line = word; }
+    else line = line ? line + ' ' + word : word;
+  }
+  if (line) out.push(line);
+  return out.join('\n' + indent);
+}
+
+const HELP = `retjg — read-only sales and labor data for RETJG HUB (Bargain Lane stores).
 
 Usage:
-  retjg stores                              store ids and names
-  retjg yesterday [--store BL1]             yesterday per store: sales, budget, WTD/MTD,
-                                            last year, labor, margin, categories
-  retjg today [--store BL1]                 today so far, live from the POS (~2-3 s)
-  retjg history [--days 30] [--store BL1]   one row per day ending yesterday, newest first
-                                            (--days caps at 400)
+${QUERIES.map(usageLine).join('\n')}
 
 Output is JSON on stdout. Errors are JSON on stderr. Exit 0 = ok, 1 = the API failed or
-refused, 2 = bad usage or no key.
+refused, 2 = bad usage or no key. Dates are Eastern time.
 
 Key: RETJG_API_KEY, or the macOS Keychain item "${KEYCHAIN_SERVICE}". Store it once with
   security add-generic-password -a "$USER" -s ${KEYCHAIN_SERVICE} -w
 API: ${BASE} (override with RETJG_API_URL)
 
 Read before drawing conclusions. The numbers are right; the obvious reading often is not.
-  - Money is plain USD. Percentages and margins are fractions: 0.43 = 43%.
-  - null means unknown, never zero. reportingStatus "no_data" = the figure is unverified,
-    not an outage. "closed" = a real 0 (Holland, BL8, closed for good 2026-07-25).
-  - netSales = posSales (the till) + auctionSales (live sales: online auction + Whatnot).
-  - Compare lySalesForDate with posSales, never netSales: last year has no live sales.
-  - Do not compare or trend DAILY grossMargin. Bin prices fall through the week while bin
-    cost is flat, so a store swings ~27% to ~67% in a normal week. Use wtdGrossMargin.
-    A negative bin or category margin late in the week is expected, not a problem.
-  - grossMargin is null when costCoverage < 0.90. In history it is always null.
-  - Check wtdDaysReported / mtdDaysReported before using a WTD or MTD figure.
-  - laborActualPct is worked hours x a flat rate / sales, not payroll.
-  - today: salesSoFarToday is till only but todayBudget includes live sales, so stores
-    with live sales read ~2-4% light on pace.
+${READING_RULES.map(r => '  - ' + wrap(r, '    ')).join('\n')}
 `;
 
 function fail(code, body) {
@@ -69,10 +71,10 @@ function apiKey() {
 
 async function call(key, params) {
   const url = new URL(BASE);
-  for (const [k, v] of Object.entries(params)) if (v != null) url.searchParams.set(k, v);
+  for (const [k, v] of Object.entries(params)) if (v != null) url.searchParams.set(k, String(v));
   let res;
   try {
-    res = await fetch(url, { headers: { 'X-API-Key': key }, signal: AbortSignal.timeout(30000) });
+    res = await fetch(url, { headers: { 'X-API-Key': key }, signal: AbortSignal.timeout(60000) });
   } catch (e) {
     fail(1, { error: `Could not reach ${url.origin}: ${e.message}` });
   }
@@ -83,47 +85,56 @@ async function call(key, params) {
     fail(1, {
       status: res.status,
       error: body?.error || text.slice(0, 200),
+      ...(body && typeof body === 'object' && Object.fromEntries(Object.entries(body).filter(([k]) => k !== 'error'))),
       ...(res.status === 401 && { hint: 'The API refused the key. Check RETJG_API_KEY or the Keychain item.' }),
     });
   }
   // A Cloudflare host answers an unknown path with the app's index.html and a
   // 200, so a wrong RETJG_API_URL looks like success unless the body is checked.
-  if (!body || !Array.isArray(body.stores)) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
     fail(1, { error: `Not a reporting API response from ${url.origin}`, body: text.slice(0, 200) });
   }
   return body;
 }
 
-function onlyStore(body, store) {
-  if (!store) return body;
-  const id = store.trim().toUpperCase();
-  const stores = body.stores.filter(s => s.storeId === id);
-  if (!stores.length) fail(1, { error: `Unknown store "${store}"`, stores: body.stores.map(s => s.storeId) });
-  return { ...body, stores };
-}
-
-let args;
+// Every flag any command takes, as a string; each command then accepts only its own.
+const FLAGS = Object.fromEntries([...new Set(QUERIES.flatMap(q => q.args.map(a => flagOf(a.name))))]
+  .map(f => [f, { type: 'string' }]));
+let parsed;
 try {
-  args = parseArgs({
-    allowPositionals: true,
-    options: { store: { type: 'string' }, days: { type: 'string' }, help: { type: 'boolean', short: 'h' } },
-  });
+  parsed = parseArgs({ allowPositionals: true, options: { ...FLAGS, help: { type: 'boolean', short: 'h' } } });
 } catch (e) {
   process.stderr.write(e.message + '\n\n' + HELP);
   process.exit(2);
 }
-const { values: opts, positionals: [cmd, ...extra] } = args;
+const { values: opts, positionals: [cmd, ...extra] } = parsed;
 
-const COMMANDS = ['stores', 'yesterday', 'today', 'history'];
 if (opts.help || cmd === 'help' || !cmd) {
   process.stdout.write(HELP);
   process.exit(cmd || opts.help ? 0 : 2);
 }
-if (!COMMANDS.includes(cmd) || extra.length) {
+const query = QUERIES.find(q => q.cli === cmd);
+if (!query || extra.length) {
   process.stderr.write(`Unknown command: ${[cmd, ...extra].join(' ')}\n\n` + HELP);
   process.exit(2);
 }
-if (opts.days != null && !/^[1-9]\d*$/.test(opts.days)) fail(2, { error: '--days must be a positive whole number' });
+
+// Flags → the query's arguments. A flag this command does not take is refused.
+const args = {};
+const byFlag = Object.fromEntries(query.args.map(a => [flagOf(a.name), a.name]));
+for (const [flag, value] of Object.entries(opts)) {
+  if (flag === 'help' || value === undefined) continue;
+  const name = byFlag[flag];
+  if (!name) fail(2, { error: `retjg ${cmd} does not take --${flag}. It takes: ${Object.keys(byFlag).map(f => '--' + f).join(', ') || 'no flags'}` });
+  args[name] = argSpec(name).type === 'integer' && /^-?\d+$/.test(value) ? Number(value) : value;
+}
+try {
+  checkArgs(query, args);
+} catch (e) {
+  // The table names arguments as the MCP does (storeId); say them as flags here (--store).
+  if (e instanceof UsageError) fail(2, { error: e.message.replace(/^(\w+)/, (m) => (argSpec(m) ? `--${argSpec(m).flag}` : m)) });
+  throw e;
+}
 
 const key = apiKey();
 if (!key) {
@@ -131,14 +142,10 @@ if (!key) {
 }
 
 let out;
-if (cmd === 'stores') {
-  const body = await call(key, { action: 'morning-briefing' });
-  out = body.stores.map(s => ({ storeId: s.storeId, name: s.name }));
-} else if (cmd === 'yesterday') {
-  out = onlyStore(await call(key, { action: 'morning-briefing' }), opts.store);
-} else if (cmd === 'today') {
-  out = onlyStore(await call(key, { action: 'afternoon-briefing' }), opts.store);
-} else {
-  out = await call(key, { action: 'store-history', days: opts.days, storeId: opts.store?.trim().toUpperCase() });
+try {
+  out = query.shape(await call(key, query.request(args)), args);
+} catch (e) {
+  if (e instanceof QueryError) fail(1, { error: e.message, ...e.extra });
+  throw e;
 }
 process.stdout.write(JSON.stringify(out, null, 2) + '\n');

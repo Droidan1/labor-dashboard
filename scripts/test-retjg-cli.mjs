@@ -169,6 +169,31 @@ const json = (s) => { try { return JSON.parse(s); } catch { return null; } };
   eq(body?.stores?.[0]?.salesSoFarToday, null, 'today passes an unverified figure through as null');
 }
 
+// ── The Retail Summary and Labor commands (shared table, cli/reporting.mjs) ─
+{
+  const before = seen.length;
+  const r = await run(['labor-plan', '--week', '2026-10-17', '--store', 'bl2']);
+  eq(r.code, 0, 'labor-plan exits 0');
+  const q = new URL(seen[before].url, BASE).searchParams;
+  eq([q.get('action'), q.get('week'), q.get('store')].join(), 'labor-plan,2026-10-17,BL2', 'labor-plan maps --week and --store to the worker\'s params');
+  ok(json(r.stdout)?.byStore?.BL2, 'labor-plan prints the plan for the store');
+
+  const s = await run(['summary', '--from', '2026-10-01', '--to', '2026-10-02']);
+  eq(s.code, 0, 'summary exits 0');
+  ok(json(s.stdout)?.stores && json(s.stdout)?.company, 'summary prints company and store totals');
+
+  const n = seen.length;
+  const missing = await run(['categories', '--from', '2026-10-01', '--to', '2026-10-02']);
+  eq(missing.code, 2, 'categories without --store exits 2');
+  ok(/--store is required/.test(missing.stderr), 'and names the missing flag as a flag');
+  const foreign = await run(['labor', '--days', '5']);
+  eq(foreign.code, 2, 'a flag the command does not take exits 2');
+  ok(/does not take --days/.test(foreign.stderr), 'and says which flag');
+  eq((await run(['weeks', '--weeks', '0'])).code, 2, '--weeks 0 is refused');
+  eq((await run(['labor-plan', '--week', '2026-10-16'])).code, 2, 'a --week that is not a Saturday is refused');
+  eq(seen.length, n, 'no refused command reached the API');
+}
+
 // ── The key never appears in a URL ───────────────────────────────────────
 ok(seen.length > 0 && seen.every(s => !new URL(s.url, BASE).searchParams.has('key') && !s.url.includes(KEY)),
   `the key was never put in a URL (${seen.length} requests checked)`);

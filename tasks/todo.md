@@ -1,3 +1,64 @@
+# Agents get Retail Summary + Labor: step 1, key read-through in the worker (2026-10-13)
+
+**Request (Brian):** before phase 2 (OAuth), give the MCP "everything in the Retail Summary and
+everything in Labor". **Decisions (2026-10-13):** reuse `MORNING_BRIEFING_KEY` (Brian chose it over a
+separate agent key, knowing the Chief of Staff app / boss's key gains the same reads) · include the
+hourly Categories view (live Clover, 7-day cap) · add the data to the CLI as well as the MCP.
+
+**Research (Explore agent, worker.js line refs on e275d07):** both pages are fed only by read-only GETs
+behind session → financial gate → business gate → `allowedStores()`: `weekly-summary` 20925,
+`weekly-store-detail` 21020, `weekly-t13` 21055, `category-series` 21320, `category-hours` 21409 (live
+Clover; writes the `item-cats:<store>` KV cache as a side effect), `labor` 20743, `labor-plan` 20838.
+No per-employee data anywhere (hours are store×day totals). The only write either page makes is the
+Hours tab's `manual-override` POST, which stays out. Cost/GP/GPM are in weekly-summary/store-detail.
+
+**Design:** the same reporting gate (one copy) also admits those 7 actions when the request carries
+the key: GET only, key checked exactly as today, then the request continues to the page's own
+handler with no user, so `allowedStores(null)` = every store, like a superuser. A request without
+the key is untouched (session path). Nothing else is reachable with the key.
+
+Plan (step 1 = worker; step 2 = MCP tools + CLI commands, sized for agents):
+- [x] Test first: `scripts/test-reporting-read-through.mjs` driving `worker.fetch`: each of the 7 with
+      the key == the superuser session's response; wrong/empty/absent key; POST → 405; writes and
+      other actions still need a session; session scoping unchanged for a 1-store manager
+- [x] Gate change in worker.js (failed 48/41 before). 88 assertions; 8 mutations in a scratch copy each
+      caught; `npm test` 9288 assertions, 106 suites
+- [x] Fresh-eyes adversarial review (subagent). Found (1) LOW, mine: a keyed read-through request
+      carrying `history_d1=true` / `history=true` was answered by those routes, which sit above the seven
+      and are chosen by another parameter; (2) MEDIUM, already on main: staff/associates reach the same
+      routes past the financial gate with a NON-financial action (`?action=vapid-public-key&history_d1=true`).
+      Fixed both: read-through admits only the 11 params the seven handlers read (400 otherwise), and the
+      history routes answer only requests without an action (the dashboard sends none, index.html:9482/9582).
+      Keyed reads are now logged by action. Suite 128; 7 more mutations caught (one survived until a KV
+      `sales:` snapshot was seeded: the check had compared two empty answers). `npm test` 9406 / 107
+- [ ] ⚠️ NOT fixed here, already on main: the catch-all live route at the end of the chain is reachable
+      by staff with `?action=push-subscribe&store=BL1` (GET matches nothing and drops through); in prod
+      it would fetch live Clover orders and write the store's snapshot + daily_sales row. Separate task
+- [x] PR #331. Worker deployed by Brian 2026-10-13 (guarded one-liner): `clover-sales-api` 899ea811,
+      bindings + 6 crons. Live, 6 checks per pass (labor-plan 5 stores, summary all stores, keyed +
+      history_d1 → 400, no key → NO_SESSION, wrong key → key gate 401, yesterday unchanged): 3 clean passes 17:55
+
+Step 2 (same branch, built while the review ran; no worker change):
+- [x] `cli/reporting.mjs`: ONE table of all 11 queries (4 existing + 7 new), the reading rules, argument
+      checks and trimming. CLI commands and MCP tools are generated from it; `mcp/reading-rules.mjs` is gone
+- [x] New: summary, categories (≤366 days), weeks, category-sales (total/day/week/month), category-hours
+      (hour/slot, ≤7 days), labor and labor-plan (defaults = the Labor page's weeks)
+- [x] Rules: Pct fields are percents outside the three sales tools; the two labor % differ; coverage;
+      complete days only; BL12 → BL16
+- [x] `scripts/test-agent-queries.mjs` (60) drives MCP → binding → real worker, sums checked against
+      seeds and the page's own answer; CLI suite 60, MCP suite 94; 11 mutations, 10 caught + 1 equivalent
+      (store not upper-cased: the worker upper-cases it, worker.js:20787); `npm test` 9366 / 107
+- [x] Bug found by the new test: the rounding pass did `'net' in 7` on a day count and threw
+- [x] All 10 new command forms run live. Sizes (compact): most 5-26k chars; l3 across weeks ~85-91k;
+      `weeks --categories l3` for every store ~292k (~83k tokens), so it now needs a storeId, and the MCP
+      refuses any answer over 100k chars with how to narrow it (both mutation-checked)
+- [x] retjg-mcp deployed by Brian: first 2b4495cd at 17:54 ET, three minutes BEFORE the size-guard
+      commit 0de526f (25.72 KiB; caught because the upload size did not match the dry run, and the live
+      server still answered l3-for-every-store); redeployed cf60ea86 (26.38 KiB). Live: 12 checks per pass
+      (no key 401, 11 tools, the l3 guard, all 8 data tools answer at 2-11k chars, no key in any result),
+      3 clean passes 18:00 ET
+- [x] CLI reinstalled as a directory: /opt/homebrew/bin/retjg -> /opt/homebrew/lib/retjg/retjg.mjs,
+      shasums equal the commit; `retjg labor-plan` live defaults to 2026-10-24 like the page
 # Round `lySalesForDate` to cents (2026-10-13)
 
 **Found while testing the Claude connector:** `?action=morning-briefing` served BL2's

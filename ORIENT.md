@@ -43,22 +43,27 @@ An installable **PWA sales + labor dashboard** for the Bargain Lane / RETJG reta
 
 🛑 **Do not reach for a date range.** Re-pulling an *already healthy* old date **loses refunds** that have aged out of Clover's ~90-day window — every unnecessary date is a small permanent loss. That's why `repair-run` refuses `start`/`end` outright.
 
-**Give an agent sales data** — `cli/retjg.mjs` (`retjg`), a read-only CLI over the reporting API
-(`morning-briefing`, `afternoon-briefing`, `store-history`; key = `MORNING_BRIEFING_KEY`). Any agent
-with a shell (Claude Code, Codex) runs `retjg --help` and gets the commands plus the rules for reading
-the numbers. Install with `install -m 755 cli/retjg.mjs /opt/homebrew/bin/retjg` (a copy, not a
-symlink: this checkout changes branch all the time). The key comes from `RETJG_API_KEY` or the
-Keychain item `retjg-api-key`, and is only ever sent as a header.
+**Give an agent sales and labor data** — every question an agent can ask is defined once, in
+`cli/reporting.mjs` (`QUERIES`: eleven read-only queries, the reading rules, and how each answer is
+trimmed). Two surfaces are generated from it, so they cannot drift:
 
-Agents without a shell use the **MCP server** in `mcp/`: a separate worker, `retjg-mcp`, at
-`https://mcp.retjghub.com/mcp`, with the same four questions as MCP tools. Claude (Desktop, claude.ai,
-phone) connects as a custom connector with "No sign in" plus a request header
-`Authorization: Bearer <MCP_KEY>` (Keychain item `retjg-mcp-key`). It reads through the main worker by
-service binding with its own `REPORTING_API_KEY`, so Claude's key can be revoked alone. Deploy it with
-`npx wrangler deploy -c <repo>/mcp/wrangler.toml` (dry-run first: 9.72 KiB, one binding `env.API`). 🛑 A bare
-`npx wrangler deploy` from the repo root deploys the MAIN worker. `wrangler tail retjg-mcp` redacts the
-`Authorization` header; refused keys are logged by shape as `mcp_auth_refused`. ChatGPT accepts only OAuth, which is phase 2. The reading rules live in
-`mcp/reading-rules.mjs`, and a test fails if the CLI's `--help` drifts from them.
+- **CLI** `retjg` (`cli/retjg.mjs`) for agents with a shell (Claude Code, Codex, Muse): `retjg --help`
+  lists every command and the rules for reading the numbers. Install it as a directory, because it imports
+  `reporting.mjs`: `install -d /opt/homebrew/lib/retjg && install -m 644 cli/reporting.mjs /opt/homebrew/lib/retjg/ && install -m 755 cli/retjg.mjs /opt/homebrew/lib/retjg/ && ln -sf /opt/homebrew/lib/retjg/retjg.mjs /opt/homebrew/bin/retjg`.
+  These are copies, not links into this checkout, which changes branch all the time. Key: `RETJG_API_KEY`
+  or the Keychain item `retjg-api-key`, only ever sent as a header.
+- **MCP server** in `mcp/` for agents without a shell: worker `retjg-mcp` at `https://mcp.retjghub.com/mcp`.
+  Claude (Desktop, claude.ai, phone) connects as a custom connector with "No sign in" plus a request header
+  `Authorization: Bearer <MCP_KEY>` (Keychain item `retjg-mcp-key`). It reads through the main worker by
+  service binding with its own `REPORTING_API_KEY`, so Claude's key can be revoked alone. Deploy it with
+  `npx wrangler deploy -c <repo>/mcp/wrangler.toml` (dry-run first: ~26 KiB, one binding `env.API`). 🛑 A bare
+  `npx wrangler deploy` from the repo root deploys the MAIN worker. `wrangler tail retjg-mcp` redacts the
+  `Authorization` header; refused keys are logged by shape as `mcp_auth_refused`. ChatGPT needs OAuth (phase 2).
+
+Both use `MORNING_BRIEFING_KEY`, which opens the three reporting endpoints plus, since 2026-10-13, the
+Retail Summary and Labor pages' seven read endpoints (`REPORTING_READ_THROUGH` in `worker.js`): GET only,
+every store, nothing that writes. Adding a query that needs another endpoint means adding that action there
+too, and `scripts/test-reporting-read-through.mjs` pins each one to a superuser session's answer.
 
 ## Known weirdness (the traps)
 

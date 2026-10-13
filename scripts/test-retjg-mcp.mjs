@@ -35,7 +35,7 @@ db.prepare(`INSERT INTO daily_sales (store, date, total, auction, budget, order_
   .run('BL2', yesterdayET, 4364.39, null, 4556, 238, yesterdayET + 'T07:55:00Z');
 
 const { default: mcp } = await import(pathToFileURL(path.join(repo, 'mcp', 'worker.mjs')).href);
-const { READING_RULES } = await import(pathToFileURL(path.join(repo, 'mcp', 'reading-rules.mjs')).href);
+const { READING_RULES, QUERIES } = await import(pathToFileURL(path.join(repo, 'cli', 'reporting.mjs')).href);
 
 // Every upstream request, so the tests can assert on what this server SENT.
 const upstream = [];
@@ -142,7 +142,10 @@ const data = (r) => {
 // ── tools/list ─────────────────────────────────────────────────────────────
 {
   const tools = (await rpc('tools/list')).result?.tools;
-  eq(tools?.map(t => t.name).join(), 'list_stores,get_yesterday_sales,get_today_sales,get_sales_history', 'four tools');
+  eq(tools?.map(t => t.name).join(), ['list_stores', 'get_yesterday_sales', 'get_today_sales', 'get_sales_history',
+    'get_retail_summary', 'get_store_categories', 'get_trailing_weeks', 'get_category_sales', 'get_category_sales_by_hour',
+    'get_labor', 'get_labor_plan'].join(), 'eleven tools, in a fixed order');
+  eq(tools?.map(t => t.name).join(), QUERIES.map(q => q.name).join(), 'the tools ARE the shared query table');
   ok(tools?.every(t => t.inputSchema?.type === 'object' && t.description), 'every tool has a description and an object schema');
   ok(tools?.every(t => t.annotations?.readOnlyHint === true && t.annotations?.destructiveHint === false), 'every tool is marked read-only');
 }

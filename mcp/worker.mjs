@@ -11,56 +11,27 @@
 // worker with REPORTING_API_KEY through a service binding. Claude's access can
 // be revoked without touching the Chief of Staff app, and the upstream key never
 // leaves Cloudflare.
-import { READING_RULES } from './reading-rules.mjs';
+// The tools come from QUERIES in cli/reporting.mjs, the table the retjg CLI's
+// commands come from too, so the two surfaces cannot drift.
+import { QUERIES, READING_RULES, UsageError, QueryError, checkArgs, inputSchema } from '../cli/reporting.mjs';
 
 // Newest first: an unknown requested version is answered with the newest.
 const PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26'];
-const SERVER_INFO = { name: 'retjg-hub', title: 'RETJG HUB sales', version: '1.0.0' };
-const INSTRUCTIONS = 'Read-only sales data for the Bargain Lane stores in RETJG HUB. '
-  + 'Call list_stores for store ids. Before drawing conclusions from the numbers:\n'
+const SERVER_INFO = { name: 'retjg-hub', title: 'RETJG HUB sales and labor', version: '1.1.0' };
+const INSTRUCTIONS = 'Read-only sales, Retail Summary and labor data for the Bargain Lane stores in RETJG HUB. '
+  + 'Call list_stores for store ids. Dates are YYYY-MM-DD, Eastern time; yesterday is the latest complete day. '
+  + 'Before drawing conclusions from the numbers:\n'
   + READING_RULES.map(r => '- ' + r).join('\n');
 
-const STORE_ID = { type: 'string', description: 'Store id, e.g. BL1 (see list_stores). Omit for every store.' };
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
-const schema = (properties) => ({ type: 'object', properties, additionalProperties: false });
+// Larger than this and most agents truncate or refuse a tool result (~28k tokens).
+// Measured live 2026-10-13: the biggest narrowed answers are ~90k characters.
+export const MAX_RESULT_CHARS = 100_000;
 
-export const TOOLS = [
-  {
-    name: 'list_stores', title: 'List stores',
-    description: 'Store ids and names.',
-    inputSchema: schema({}), annotations: READ_ONLY,
-  },
-  {
-    name: 'get_yesterday_sales', title: "Yesterday's sales",
-    description: 'Yesterday (Eastern time) per store: net, till and live sales; budget; WTD and MTD '
-      + "with budgets; last year's same day; labor; transactions; gross margin and categories.",
-    inputSchema: schema({ storeId: STORE_ID }), annotations: READ_ONLY,
-  },
-  {
-    name: 'get_today_sales', title: "Today's sales so far",
-    description: "Today so far, live from the POS: sales, transactions and today's budget. Takes a few seconds.",
-    inputSchema: schema({ storeId: STORE_ID }), annotations: READ_ONLY,
-  },
-  {
-    name: 'get_sales_history', title: 'Daily sales history',
-    description: 'One row per store per day, newest first, ending yesterday. No gaps: a day with no '
-      + 'trustworthy figure appears as no_data with nulls.',
-    inputSchema: schema({
-      storeId: STORE_ID,
-      days: { type: 'integer', minimum: 1, maximum: 400, description: 'Days back from yesterday. Default 30.' },
-    }),
-    annotations: READ_ONLY,
-  },
-];
-
-const TOOL_IMPL = {
-  list_stores: async (a, env) =>
-    (await report(env, { action: 'morning-briefing' })).stores.map(s => ({ storeId: s.storeId, name: s.name })),
-  get_yesterday_sales: async (a, env) => onlyStore(await report(env, { action: 'morning-briefing' }), a.storeId),
-  get_today_sales: async (a, env) => onlyStore(await report(env, { action: 'afternoon-briefing' }), a.storeId),
-  get_sales_history: (a, env) =>
-    report(env, { action: 'store-history', days: a.days, storeId: a.storeId?.trim().toUpperCase() }),
-};
+export const TOOLS = QUERIES.map(q => ({
+  name: q.name, title: q.title, description: q.description,
+  inputSchema: inputSchema(q), annotations: READ_ONLY,
+}));
 
 class RpcError extends Error { constructor(code, message) { super(message); this.code = code; } }
 // A tool that ran and failed. It goes back as a result with isError, so the
@@ -118,30 +89,25 @@ async function handle(method, params, env) {
   if (method === 'ping') return {};
   if (method === 'tools/list') return { tools: TOOLS };
   if (method === 'tools/call') {
-    const tool = TOOLS.find(t => t.name === params.name);
-    if (!tool) throw new RpcError(-32602, `Unknown tool: ${params.name}`);
+    const query = QUERIES.find(q => q.name === params.name);
+    if (!query) throw new RpcError(-32602, `Unknown tool: ${params.name}`);
     try {
-      const out = await TOOL_IMPL[tool.name](checkArgs(tool, params.arguments ?? {}), env);
-      return { content: [{ type: 'text', text: JSON.stringify(out) }] };
+      const args = checkArgs(query, params.arguments ?? {});
+      const out = query.shape(await report(env, query.request(args)), args);
+      const text = JSON.stringify(out);
+      if (text.length > MAX_RESULT_CHARS) {
+        throw new ToolError(`This answer is ${Math.round(text.length / 1000)}k characters, too large for one tool result. `
+          + 'Narrow it: give a storeId, a shorter date range or fewer weeks, level l2 instead of l3, or bucket total.');
+      }
+      return { content: [{ type: 'text', text }] };
     } catch (e) {
-      if (e instanceof ToolError) return { content: [{ type: 'text', text: e.message }], isError: true };
+      if (e instanceof ToolError || e instanceof UsageError || e instanceof QueryError) {
+        return { content: [{ type: 'text', text: e.message }], isError: true };
+      }
       throw e;
     }
   }
   throw new RpcError(-32601, `Method not found: ${method}`);
-}
-
-function checkArgs(tool, args) {
-  if (!args || typeof args !== 'object' || Array.isArray(args)) throw new ToolError('arguments must be an object');
-  const props = tool.inputSchema.properties;
-  for (const k of Object.keys(args)) {
-    if (!(k in props)) throw new ToolError(`Unknown argument "${k}". This tool takes: ${Object.keys(props).join(', ') || 'nothing'}`);
-  }
-  if (args.storeId != null && typeof args.storeId !== 'string') throw new ToolError('storeId must be a string, e.g. "BL1"');
-  if (args.days != null && !(Number.isInteger(args.days) && args.days >= 1 && args.days <= 400)) {
-    throw new ToolError('days must be a whole number from 1 to 400');
-  }
-  return args;
 }
 
 async function report(env, params) {
@@ -157,16 +123,8 @@ async function report(env, params) {
   let body = null;
   try { body = JSON.parse(text); } catch {}
   if (!res.ok) throw new ToolError(`The reporting API answered ${res.status}: ${body?.error || 'no detail'}`);
-  if (!body || !Array.isArray(body.stores)) throw new ToolError('The reporting API returned an unexpected response.');
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new ToolError('The reporting API returned an unexpected response.');
   return body;
-}
-
-function onlyStore(body, store) {
-  if (!store) return body;
-  const id = store.trim().toUpperCase();
-  const stores = body.stores.filter(s => s.storeId === id);
-  if (!stores.length) throw new ToolError(`Unknown store "${store}". Valid ids: ${body.stores.map(s => s.storeId).join(', ')}`);
-  return { ...body, stores };
 }
 
 // The key as the caller sent it. Claude's connector form takes a raw header, and
