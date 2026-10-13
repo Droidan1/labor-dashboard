@@ -16212,6 +16212,15 @@ export default {
       "weekly-summary", "weekly-store-detail", "weekly-t13", "category-series", "category-hours",
       "labor", "labor-plan",
     ]);
+    // 🛑 And only the parameters those seven handlers read. A read-through
+    // request falls through the whole route chain to its handler, so any route
+    // ABOVE it that is chosen by something other than `action` would answer
+    // instead: a fresh-eyes review reached ?history_d1=true that way
+    // (2026-10-13). Refusing every other parameter makes "exactly seven" hold
+    // whatever is later added above them, instead of by where code happens to sit.
+    const READ_THROUGH_PARAMS = new Set([
+      "action", "key", "from", "to", "store", "level", "grain", "week", "year", "end", "endWeek", "weeks",
+    ]);
     const reportingAction = url.searchParams.get("action");
     const reportingKeyGiven = request.headers.has("X-API-Key") || url.searchParams.has("key");
     const reportingReadThrough = REPORTING_READ_THROUGH.has(reportingAction) && reportingKeyGiven;
@@ -16230,6 +16239,14 @@ export default {
         }
         if (!env.DB) {
           return new Response(JSON.stringify({ error: "Database unavailable" }), { status: 503, headers: corsJson });
+        }
+        if (reportingReadThrough) {
+          const unsupported = [...new Set(url.searchParams.keys())].filter(k => !READ_THROUGH_PARAMS.has(k));
+          if (unsupported.length) {
+            return new Response(JSON.stringify({ error: "Unsupported parameter", params: unsupported }), { status: 400, headers: corsJson });
+          }
+          // One line per keyed read, so key use is visible in `wrangler tail`.
+          console.log(JSON.stringify({ reporting_read_through: reportingAction }));
         }
         return null;
       })();
@@ -19018,7 +19035,11 @@ export default {
     }
 
     // ── History endpoint: ?history=true&store=BL1&from=2026-03-25&to=2026-04-01
-    if (url.searchParams.get("history") === "true") {
+    // 🛑 Only WITHOUT an `action`, as the dashboard calls it (index.html). The
+    // financial gate decides by action, so an action from NON_FINANCIAL_ACTIONS
+    // carried alongside `history` let staff and associates read their store's
+    // sales past it (fresh-eyes review, 2026-10-13). Same for history_d1 below.
+    if (url.searchParams.get("history") === "true" && !url.searchParams.has("action")) {
       const store = url.searchParams.get("store");
       if (!store) {
         return new Response(JSON.stringify({ error: "Please specify a store" }), {
@@ -19054,7 +19075,7 @@ export default {
     }
 
     // ── D1 History endpoint: ?history_d1=true&store=BL1&from=YYYY-MM-DD&to=YYYY-MM-DD
-    if (url.searchParams.get("history_d1") === "true") {
+    if (url.searchParams.get("history_d1") === "true" && !url.searchParams.has("action")) {
       if (!env.DB) {
         return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
       }

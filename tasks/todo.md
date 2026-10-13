@@ -23,7 +23,17 @@ Plan (step 1 = worker; step 2 = MCP tools + CLI commands, sized for agents):
       other actions still need a session; session scoping unchanged for a 1-store manager
 - [x] Gate change in worker.js (failed 48/41 before). 88 assertions; 8 mutations in a scratch copy each
       caught; `npm test` 9288 assertions, 106 suites
-- [ ] Fresh-eyes adversarial review of the gate (subagent) before pushing
+- [x] Fresh-eyes adversarial review (subagent). Found (1) LOW, mine: a keyed read-through request
+      carrying `history_d1=true` / `history=true` was answered by those routes, which sit above the seven
+      and are chosen by another parameter; (2) MEDIUM, already on main: staff/associates reach the same
+      routes past the financial gate with a NON-financial action (`?action=vapid-public-key&history_d1=true`).
+      Fixed both: read-through admits only the 11 params the seven handlers read (400 otherwise), and the
+      history routes answer only requests without an action (the dashboard sends none, index.html:9482/9582).
+      Keyed reads are now logged by action. Suite 128; 7 more mutations caught (one survived until a KV
+      `sales:` snapshot was seeded: the check had compared two empty answers). `npm test` 9406 / 107
+- [ ] ⚠️ NOT fixed here, already on main: the catch-all live route at the end of the chain is reachable
+      by staff with `?action=push-subscribe&store=BL1` (GET matches nothing and drops through); in prod
+      it would fetch live Clover orders and write the store's snapshot + daily_sales row. Separate task
 - [ ] PR; Brian deploys (guarded); live check with the key, 3 clean passes
 
 Step 2 (same branch, built while the review ran; no worker change):

@@ -19,7 +19,10 @@ import { loadWorker, makeEnv, ctx, blockNetwork, req } from './lib/worker-harnes
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
-const ok = (c, m) => { if (c) pass++; else { fail++; console.log('  FAIL: ' + m); } };
+// Bound once: a section below swaps console.log to capture the worker's logs,
+// and a FAIL printed through the swapped one would vanish into the capture.
+const say = console.log.bind(console);
+const ok = (c, m) => { if (c) pass++; else { fail++; say('  FAIL: ' + m); } };
 const eq = (a, b, m) => ok(a === b, `${m} — expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}`);
 
 const KEY = 'test-briefing-key';
@@ -31,8 +34,8 @@ blockNetwork();
 // A real fortnight so the answers are not empty — an equality between two empty
 // payloads proves nothing. Sun 2026-09-27 … Sat 2026-10-10.
 const ins = db.prepare(`INSERT OR REPLACE INTO daily_sales
-  (store, date, total, retail, bin, budget, order_count, budget_labor_hours, labor_hours, snapshot_time)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  (store, date, week, total, retail, bin, budget, order_count, budget_labor_hours, labor_hours, snapshot_time)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 const days = [];
 for (let d = new Date('2026-09-27T12:00:00Z'); d <= new Date('2026-10-10T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 1)) {
   days.push(d.toISOString().slice(0, 10));
@@ -40,9 +43,17 @@ for (let d = new Date('2026-09-27T12:00:00Z'); d <= new Date('2026-10-10T12:00:0
 const STORES = ['BL1', 'BL2', 'BL4', 'BL14', 'BL16'];
 STORES.forEach((s, i) => days.forEach((date, j) => {
   const total = 1000 + 100 * i + j;
-  ins.run(s, date, total, total - 300, 300, 1100 + 100 * i, 50 + j, 40 + i, 38 + i + (j % 3), date + 'T07:55:00Z');
+  // week = the fiscal week label the import writes; weekly-t13 groups and keys by it.
+  ins.run(s, date, j < 7 ? '40' : '41', total, total - 300, 300, 1100 + 100 * i, 50 + j, 40 + i, 38 + i + (j % 3), date + 'T07:55:00Z');
 }));
 const bl2Week = days.slice(0, 7).reduce((a, _, j) => a + 1100 + j, 0); // BL2, 09-27 … 10-03
+// Item snapshots too, so the category and trailing-week equalities compare real
+// payloads (the review found them comparing near-empty ones).
+for (const s of STORES) for (const [j, date] of days.entries()) {
+  await env.SALES_SNAPSHOTS.put(`items:${s.toLowerCase()}:${date}`, JSON.stringify({ orderCount: 20, categories: [
+    { category: 'Home', qty: 3 + j, netSales: 30 + j, l3Rows: [{ l3: 'FG BL HOME - KITCHEN', qty: 3 + j, netSales: 30 + j }] },
+  ] }));
+}
 
 const ACTIONS = {
   'weekly-summary':      '?action=weekly-summary&from=2026-09-27&to=2026-10-03',
@@ -82,6 +93,59 @@ for (const [action, q] of Object.entries(ACTIONS)) {
   ok(lb?.periods?.length >= 2 && STORES.every(s => lb.stores?.includes(s)), 'labor through the key covers every labor store');
   const lp = await bodyOf(await fetchW(withKey(ACTIONS['labor-plan'])));
   ok(lp?.byStore && STORES.every(s => lp.byStore[s]), 'labor-plan through the key covers every store');
+  const cs = await bodyOf(await fetchW(withKey(ACTIONS['category-series'])));
+  eq(cs?.l2?.BL2?.['2026-09-27']?.Home?.[0], 30, 'category-series through the key carries the seeded category net');
+  const t13 = await bodyOf(await fetchW(withKey(ACTIONS['weekly-t13'])));
+  ok((t13?.total?.netSales || []).some(n => n > 0), 'weekly-t13 through the key carries real weekly sales');
+}
+
+// ── 1b. Only the seven handlers' own parameters ────────────────────────────
+// 🛑 A read-through request falls through the route chain, so a route above the
+// seven chosen by another parameter would answer instead. The review reached
+// ?history_d1=true and ?history=true that way.
+{
+  const logged = [];
+  const realLog = console.log;
+  console.log = (...a) => logged.push(a.join(' '));
+  try {
+    for (const [action, q] of Object.entries(ACTIONS)) {
+      for (const extra of ['&history_d1=true&store=BL1&from=2026-10-01&to=2026-10-01', '&history=true&store=BL1&from=2026-10-01&to=2026-10-01']) {
+        const r = await fetchW(withKey(q + extra));
+        const b = await bodyOf(r);
+        eq(r.status, 400, `${action}${extra.split('&')[1]}: refused, not answered by the history route`);
+        ok(Array.isArray(b?.params) && b.params.some(p => p.startsWith('history')), `${action}: the refusal names the parameter`);
+      }
+    }
+    const odd = await bodyOf(await fetchW(withKey(ACTIONS.labor + '&foo=1')));
+    eq(JSON.stringify(odd?.params), '["foo"]', 'any parameter the handler does not read is refused');
+    eq((await fetchW(withKey(ACTIONS.labor, { method: 'HEAD' }))).status, 405, 'HEAD with the key → 405');
+    await fetchW(withKey(ACTIONS['labor-plan']));
+  } finally { console.log = realLog; }
+  ok(logged.some(l => l === JSON.stringify({ reporting_read_through: 'labor-plan' })), 'a keyed read is logged by action, for wrangler tail');
+  ok(logged.every(l => !l.includes(KEY)), 'the key itself is never logged');
+}
+
+// ── 1c. The history routes answer only requests without an action ──────────
+// The review's second finding, already on main: the financial gate decides by
+// action, so a NON-financial action carried with history_d1 let staff (and
+// every PIN associate, role staff) read their store's sales past it.
+{
+  const hist = '&history_d1=true&store=BL1&from=2026-10-01&to=2026-10-01';
+  const control = await fetchW(req('/?' + hist.slice(1), { user: 'u-su' }));
+  const ctext = await control.text();
+  eq(control.status, 200, 'control: the dashboard\'s own history_d1 call (no action) still answers a superuser');
+  ok(ctext.includes('1004'), 'control: and returns BL1\'s seeded 2026-10-01 total');
+  const staffNoAction = await fetchW(req('/?' + hist.slice(1), { user: 'u-staff' }));
+  eq(staffNoAction.status, 403, 'staff without an action is refused, as before');
+  const sneak = await fetchW(req('/?action=vapid-public-key' + hist, { user: 'u-staff' }));
+  ok(!(await sneak.text()).includes('1004'), 'staff carrying a non-financial action no longer get BL1\'s sales from history_d1');
+  // The KV history route reads sales:<store>:<date>; seed one with a value no
+  // other payload carries, or the check below compares two empty answers.
+  await env.SALES_SNAPSHOTS.put('sales:bl1:2026-10-01', JSON.stringify({ total: 777777.77 }));
+  const kvHist = 'history=true&store=BL1&from=2026-10-01&to=2026-10-01';
+  ok((await (await fetchW(req('/?' + kvHist, { user: 'u-su' }))).text()).includes('777777.77'), 'control: history (KV, no action) still answers a superuser');
+  const sneak2 = await fetchW(req('/?action=vapid-public-key&' + kvHist, { user: 'u-staff' }));
+  ok(!(await sneak2.text()).includes('777777.77'), 'nor do they get it from history');
 }
 
 // ── 2. A wrong, empty or unconfigured key is refused before any handler ────
