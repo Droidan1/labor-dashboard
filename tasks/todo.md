@@ -80,7 +80,12 @@ Plan:
       closed). Both secrets piped from the Keychain with `--name retjg-mcp`. Live check, 11 assertions per
       pass: first pass 9/11 (mid-rollout instances), then 3 consecutive clean passes 09:53 ET. Figures
       match the CLI: BL2 10-12 $5,523.99; BL14 10-10→10-12 $8,711.09 / $8,605.53 / $7,816.68
-- [ ] Brian adds the connector in Claude
+- [ ] Brian adds the connector in Claude. First attempt (2026-10-13 ~20:05Z per tail) refused 3× with an
+      Authorization header present; tail redacts it. Fix ac91359: accept the key with/without Bearer
+      (or doubled, or in X-API-Key) and log refusals by shape only. Also seen: Claude's client opens with
+      MCP 2026-07-28 (stateless, `Mcp-Method` header). Per the spec a dual-era client falls back to
+      `initialize` on a 4xx without a modern error body, so this legacy-only server still works.
+      Native 2026-07-28 support (server/discover, resultType, ttlMs) is a follow-up
 - [x] ORIENT.md
 
 **Review:** 11 mutations, made in a scratch copy (lesson of 2026-10-13), each caught: MCP key sent

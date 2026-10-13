@@ -289,6 +289,15 @@ own attention around the merge, which is the one moment I do not control.
      - A squash or rebase merge slips past this test. Read the PR's `merged` field then.
      - Before editing a PR description, read that PR in the same turn and require
        `merged: false`.
+   - **Third time (#326, 2026-10-13): I read the state and the push still went.** My command was
+     `… && gh pr view 326 --json state -q .state && git commit … && git push`. It printed
+     `MERGED` and pushed a4cd0b1 to the merged branch anyway: `gh pr view` exits 0 whatever
+     the state, so a state READ inside an `&&` chain is not a GUARD. Brian had merged #326 at
+     13:56Z, between my last push and this one, while I was debugging the live connector.
+     - Recovered: cherry-picked onto a branch from `origin/main` as ac91359. Nothing reached
+       `main` wrongly, and the stranded commit was never deployed.
+     - **The guard must be a test that FAILS:** use the `merge-base --is-ancestor` form above, or
+       `[ "$(gh pr view N --json state -q .state)" = OPEN ] && git push`. Never a bare read.
 7. **Push a change only once the check that could change its diff has finished (2026-09-28).**
    - **What happened:** I pushed c43816a (midnight on the clock-change Sundays) to #297 at 13:27
      while an agent was still mapping every caller. The description said: "being mapped now…
