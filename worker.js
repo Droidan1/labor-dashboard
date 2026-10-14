@@ -283,6 +283,7 @@ const L3_TO_L2 = {
   "FG BL HARDLINES - STORAGE": "Hardlines",
   "FG BL HARDLINES - TOYS": "Hardlines",
   "FG BL HARDLINES - SPORTING GOODS": "Hardlines",
+  "FG BL HARDLINES - BAZAAR": "Hardlines",
   "FG T BULLSEYE": "Hardlines",
   "APPLIANCES - BL STORES": "Hardlines",
   "Bakers Secret - Kitchen Cooking": "Home",
@@ -29112,6 +29113,18 @@ export default {
     const result = await processSaleSchedules(env, new Date());
     return new Response(JSON.stringify({ ok: true, ...result }), { headers: corsJson });
   }
+
+    // 🛑 Nothing with an ?action= reaches the live route below. The financial gate
+    // decides by action name, so a NON-financial action that matched no branch —
+    // e.g. a POST-only one like push-subscribe sent as a GET — used to fall
+    // through here and hand staff (every PIN associate) their store's live sales,
+    // rewriting its snapshot and daily_sales row on the way. The dashboard's own
+    // call is `?store=X&since=…`, never with an action.
+    if (url.searchParams.has("action")) {
+      return new Response(JSON.stringify({ error: "Unknown action" }), {
+        status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     // ── Live data endpoint (existing): ?store=BL1, today in Eastern time (any since= is ignored)
     const storeKey = url.searchParams.get("store");

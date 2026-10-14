@@ -21,7 +21,57 @@ Design (mcp/worker.mjs only; worker.js untouched):
       no change for 2025 clients. Fixed: Mcp-Name markers case-sensitive + padded (else literal);
       -32022 also lists the 2025 versions (Python SDK falls back only then); ttlMs 1 h → 5 min; nameless
       tools/call → -32602. Modern test 59
+- [x] 6 more mutants on those fixes (/i marker, unpadded, nameless call, 2025-less -32022, decode off,
+      public scope), all caught
 - [ ] PR; deploy retjg-mcp (Brian, poll the rollout); live: Claude's real calls go native (tail)
+# New L3 category: FG BL HARDLINES - BAZAAR (BL-50445, $2.51/unit) (2026-10-14)
+
+**Ask (Brian):** add category "FG BL Hardlines-Bazaar", item number BL-50445, cost $2.51, so he can create
+the item in Clover from the app. The category is NOT in Clover yet, so its name is a choice. Brian chose
+`FG BL HARDLINES - BAZAAR` to match the 8 sibling Hardlines categories (after I had built two other spellings
+assuming the category already existed).
+
+Findings:
+- Inventory › Create item already handles a NEW category end to end: it creates the category in Clover
+  by the typed name (case-insensitive find-or-create, per store) and maps it to the picked L2 through an
+  admin `l3Map` override. That override also makes it costable. So Brian is not blocked on this branch.
+- The built-in entry still earns its place. It is one answer instead of a KV override, it appears on the
+  Merchandising surfaces (`merchTree` reads `L3_TO_L2` only), and the ISR mirror knows it. With it
+  deployed first, the form sees a matching built-in and writes no override.
+- The sticker code needs no code: the app learns code ↔ category from Clover item codes (`mosResolve`).
+- Don't use the form's Cost field for this: it saves under the CODE (`BL-50445`), and sales look item
+  costs up by the IM# in the item NAME. Use the category cost.
+
+- [x] Test first: test-category-mapping §4 (worker.fetch) — cost save accepted, editor lists it under
+      Hardlines, a sale books to its own Hardlines row at $2.51 ext cost. 5 failed on main's code, 14/14 now
+- [x] `L3_TO_L2` + `ISR_L3_TO_L2` entry (Hardlines); CACHE_NAME v280 → v281 + shell-cache fixture
+- [x] `npm test`: 9732 assertions / 111 suites
+- [ ] Brian: create the item (L3 typed exactly `FG BL HARDLINES - BAZAAR`, L2 Hardlines), then set
+      $2.51 in Settings → L3 Category Costs. 🛑 not a bare POST: the endpoint REPLACES the whole cost map
+- [ ] Push + PR + merge; worker deploy (Brian)
+- [ ] Confirm the first real sale lands in its own Hardlines row at $2.51
+
+# Catch-all route: no ?action= reaches the live sales route (2026-10-14)
+
+**Why (Brian: "do the catch-all route fix first"):** the last route in worker.js (`?store=BL1`, today live
+from Clover) answered ANY request no branch matched. The financial gate decides by action name, so staff
+(every PIN associate) could send a NON-financial action that matches nothing — e.g. POST-only
+`push-subscribe` as a GET — and get their store's live sales, with the route rewriting that store's KV
+snapshot and daily_sales row. Found by the phase 2a review, pre-existing.
+
+Audit first: every action name sent by index.html, sw.js, scripts, cli and mcp has its own branch; the
+dashboard's live call is `?store=X&since=…` with no action; `?action=hourly&store=` is handled by its own
+branch. So a 404 for "any ?action= that reached the end" changes nothing a real client does.
+
+- [x] Test first: `scripts/test-catch-all-route.mjs` (worker.fetch, Clover stubbed so the live route
+      really runs) — failed 9 before (staff got 200 + $123.45 + a write for push-subscribe/
+      push-unsubscribe/passkey-delete; a manager GETting delete-sale-schedule got live data)
+- [x] Guard: `if (url.searchParams.has("action")) → 404 {"error":"Unknown action"}` just before the live
+      route; ORIENT.md's "falls through" line updated
+- [x] 3 mutants in a lane (no guard, truthy `get`, status 200), all caught; `npm test` 9743 / 112
+- [x] PR #335 merged (15bd562). Brian deployed main 3cae8fc (with #336): worker 26e47dbb, live
+      `content/v2` worker.js BYTE-IDENTICAL to a dry-run of origin/main (1,100,021 bytes, sha256 af311719…).
+      No live probe: the guard sits behind sign-in, and a signed-in probe would write if it were absent
 
 # auth-login: throttle sends, one live code per email (2026-10-14)
 
