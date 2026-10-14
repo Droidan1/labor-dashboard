@@ -252,3 +252,69 @@ export function loadLadder(repo) {
   ].join("\n");
   return new Function(body)();
 }
+
+// ─── The Workers runtime, for code that imports it (retjg-mcp's OAuth library) ─
+//
+// @cloudflare/workers-oauth-provider starts with `import { WorkerEntrypoint } from
+// "cloudflare:workers"`, which plain Node cannot resolve, and turns Client ID Metadata
+// Documents on only when `Cloudflare.compatibilityFlags.global_fetch_strictly_public` is
+// true (the flag mcp/wrangler.toml sets). Call this BEFORE the dynamic import of anything
+// that loads the library. Idempotent.
+export async function stubWorkersRuntime() {
+  if (globalThis.__workersRuntimeStubbed) return;
+  globalThis.__workersRuntimeStubbed = true;
+  const { registerHooks } = await import('node:module');
+  const shim = 'export class WorkerEntrypoint { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }\n'
+    + 'export class DurableObject {}\nexport class RpcTarget {}\n';
+  registerHooks({
+    resolve(specifier, context, next) {
+      if (specifier === 'cloudflare:workers') {
+        return { url: 'data:text/javascript,' + encodeURIComponent(shim), shortCircuit: true };
+      }
+      return next(specifier, context);
+    },
+  });
+  globalThis.Cloudflare = { compatibilityFlags: { global_fetch_strictly_public: true } };
+}
+
+// ─── A KV namespace that behaves like one ─────────────────────────────────────
+//
+// kv() above ignores `prefix` and TTLs, which suites built on it rely on, so it stays.
+// This one mirrors what the OAuth library depends on: list() honours prefix (its
+// revokeGrant lists `token:<user>:<grant>:` and deletes what comes back, so a stub that
+// ignored the prefix would delete EVERY user's tokens and hide the bug), keys come back
+// sorted, put() refuses an expirationTtl under 60 like real KV, and expiry is measured
+// against Date.now() so a test can move the clock.
+export function kvNamespace() {
+  const m = new Map(); // key -> { value: string, expires: ms|null, metadata }
+  const live = (k) => {
+    const e = m.get(k);
+    if (!e) return null;
+    if (e.expires != null && e.expires <= Date.now()) { m.delete(k); return null; }
+    return e;
+  };
+  const read = (v, type) => (type === 'json' ? JSON.parse(v) : type === 'arrayBuffer' ? new TextEncoder().encode(v).buffer : v);
+  const typeOf = (opt) => (typeof opt === 'string' ? opt : opt?.type || 'text');
+  return {
+    async get(k, opt) { const e = live(k); return e ? read(e.value, typeOf(opt)) : null; },
+    async getWithMetadata(k, opt) { const e = live(k); return { value: e ? read(e.value, typeOf(opt)) : null, metadata: e?.metadata ?? null }; },
+    async put(k, v, opts = {}) {
+      if (opts.expirationTtl != null && opts.expirationTtl < 60) throw new Error(`KV put failed: expirationTtl ${opts.expirationTtl} is under 60`);
+      const expires = opts.expirationTtl != null ? Date.now() + opts.expirationTtl * 1000
+        : opts.expiration != null ? opts.expiration * 1000 : null;
+      m.set(k, { value: typeof v === 'string' ? v : JSON.stringify(v), expires, metadata: opts.metadata ?? null });
+    },
+    async delete(k) { m.delete(k); },
+    async list({ prefix = '', limit = 1000, cursor } = {}) {
+      const names = [...m.keys()].filter(k => k.startsWith(prefix) && live(k)).sort();
+      const start = cursor ? Number(cursor) : 0;
+      const page = names.slice(start, start + limit);
+      const done = start + limit >= names.length;
+      return {
+        keys: page.map(name => ({ name, ...(m.get(name).expires != null && { expiration: Math.floor(m.get(name).expires / 1000) }) })),
+        list_complete: done, ...(done ? {} : { cursor: String(start + limit) }),
+      };
+    },
+    _map: m,
+  };
+}

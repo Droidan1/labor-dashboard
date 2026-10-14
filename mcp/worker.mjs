@@ -1,16 +1,21 @@
-// retjg-mcp — a read-only MCP server over the RETJG HUB reporting API, for
-// Claude's custom connectors (Desktop, claude.ai, phone). Phase 1 of 2: a fixed
-// key. Phase 2 adds OAuth so ChatGPT, which accepts only OAuth or no auth, can
-// connect too.
+// retjg-mcp — a read-only MCP server over the RETJG HUB reporting API.
 //
-// Stateless Streamable HTTP: each POST to /mcp carries one JSON-RPC message and
-// gets plain JSON back. No sessions and no SSE stream, which the spec allows, so
-// there is no Durable Object and no dependency to bundle.
+// Two ways in (phase 2a, 2026-10-13):
+//   - Claude's custom connector sends a fixed `Authorization: Bearer <MCP_KEY>` (phase 1).
+//   - ChatGPT (which accepts only OAuth) and optionally Claude sign in with OAuth 2.1:
+//     an owner or admin signs in with RETJG HUB at /authorize (mcp/authorize.mjs) and the
+//     assistant gets a token. @cloudflare/workers-oauth-provider runs discovery, codes,
+//     tokens, refresh and revocation, storing everything hashed in OAUTH_KV.
+// Either way the data path is the same: this worker calls the main worker through the API
+// service binding with REPORTING_API_KEY (every store). Phase 2b scopes it per person.
 //
-// 🔑 Two keys, never one. Claude sends MCP_KEY; this worker calls the main
-// worker with REPORTING_API_KEY through a service binding. Claude's access can
-// be revoked without touching the Chief of Staff app, and the upstream key never
-// leaves Cloudflare.
+// Stateless Streamable HTTP: each POST to /mcp carries one JSON-RPC message and gets
+// plain JSON back. No sessions and no SSE stream, which the spec allows.
+//
+// 🔑 Keys stay apart. Claude's MCP_KEY and the OAuth tokens open this worker; only
+// REPORTING_API_KEY goes upstream, and it never leaves Cloudflare.
+import { OAuthProvider, OAuthError, GrantType, insufficientScope } from '@cloudflare/workers-oauth-provider';
+import { authorize, agentIdentity, admitted, AGENT_ROLES, SCOPES, ALLOWED_CLIENTS } from './authorize.mjs';
 // The tools come from QUERIES in cli/reporting.mjs, the table the retjg CLI's
 // commands come from too, so the two surfaces cannot drift.
 import { QUERIES, READING_RULES, UsageError, QueryError, checkArgs, inputSchema } from '../cli/reporting.mjs';
@@ -38,43 +43,128 @@ class RpcError extends Error { constructor(code, message) { super(message); this
 // model can read it and correct itself, rather than as a protocol error.
 class ToolError extends Error {}
 
-export default {
-  async fetch(request, env) {
-    const url = new URL(request.url);
-    if (url.pathname !== '/mcp') return json({ error: 'Not found' }, 404);
+// The token endpoint is /oauth/token; there is no registration endpoint, so the only
+// clients are the two Client ID Metadata Documents /authorize allowlists.
+// Exported for the tests, which mint a grant through the same options.
+export const PROVIDER_OPTIONS = {
+  apiRoute: '/mcp',
+  apiHandler: { fetch: (request, env, ctx) => oauthMcp(request, env, ctx) },
+  defaultHandler: { fetch: (request, env, ctx) => authorize(request, env, ctx) },
+  authorizeEndpoint: '/authorize',
+  tokenEndpoint: '/oauth/token',
+  scopesSupported: SCOPES,
+  resourceMetadata: {
+    resource: 'https://mcp.retjghub.com/mcp',
+    authorization_servers: ['https://mcp.retjghub.com'],
+    resource_name: 'RETJG HUB',
+  },
+  clientIdMetadataDocumentEnabled: true,
+  tokenExchangeCallback: recheckOnRefresh,
+  // Defaults: access tokens 1 hour, grants 30 days (then sign in again).
+};
+const provider = new OAuthProvider(PROVIDER_OPTIONS);
 
-    // Authenticate before anything else, so an unauthenticated caller learns
-    // nothing about what this endpoint accepts. Fail closed when unconfigured.
-    if (!env.MCP_KEY || !env.REPORTING_API_KEY) return json({ error: 'Not configured' }, 503);
-    if (!(await sameKey(presentedKey(request), env.MCP_KEY))) {
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    // Fail closed when unconfigured.
+    if (!env.REPORTING_API_KEY || (!env.MCP_KEY && !env.OAUTH_KV)) return json({ error: 'Not configured' }, 503);
+
+    // Claude's fixed key, compared before anything else. 🛑 `env.MCP_KEY &&` is
+    // load-bearing: sameKey('', '') is true, so an unset key would open this to anyone.
+    if (url.pathname === '/mcp' && env.MCP_KEY && await sameKey(presentedKey(request), env.MCP_KEY)) {
+      return serveMcp(request, env);
+    }
+
+    // Without the OAuth store this is exactly phase 1.
+    if (!env.OAUTH_KV) {
+      if (url.pathname !== '/mcp') return json({ error: 'Not found' }, 404);
       logRefusal(request, env);
       return json({ error: 'Unauthorized' }, 401, { 'WWW-Authenticate': 'Bearer' });
     }
-
-    if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405, { Allow: 'POST' });
-    const version = request.headers.get('MCP-Protocol-Version');
-    if (version && !PROTOCOL_VERSIONS.includes(version)) {
-      return json({ error: `Unsupported MCP-Protocol-Version: ${version}` }, 400);
+    // The allowlist holds at the token endpoint too: otherwise any https client_id
+    // makes the library fetch that URL, and logs it raw (a forged log line).
+    if (url.pathname === '/oauth/token' && request.method === 'POST' && !ALLOWED_CLIENTS.has(await tokenClient(request.clone()))) {
+      return json({ error: 'invalid_client', error_description: 'Unknown client' }, 401);
     }
-
-    let msg;
-    try { msg = await request.json(); } catch {
-      return json({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }, 400);
-    }
-    if (!msg || typeof msg !== 'object' || Array.isArray(msg) || msg.jsonrpc !== '2.0') {
-      return json({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid Request' } }, 400);
-    }
-    // A notification (no id) or a response (no method) is acknowledged, not answered.
-    if (!('method' in msg) || !('id' in msg)) return new Response(null, { status: 202 });
-
-    try {
-      return json({ jsonrpc: '2.0', id: msg.id, result: await handle(msg.method, msg.params || {}, env) });
-    } catch (e) {
-      const error = e instanceof RpcError ? { code: e.code, message: e.message } : { code: -32603, message: 'Internal error' };
-      return json({ jsonrpc: '2.0', id: msg.id, error });
-    }
+    const res = await provider.fetch(request, env, ctx);
+    if (url.pathname === '/mcp' && res.status === 401 && hasCredential(request)) logRefusal(request, env);
+    return res;
   },
 };
+
+// A request that came in with an OAuth token the library accepted. ctx.props is what
+// /authorize stored; checked again here so a grant can never outrank phase 2a's rule.
+async function oauthMcp(request, env, ctx) {
+  const p = ctx && ctx.props;
+  if (!p || !AGENT_ROLES.has(p.role) || typeof p.userId !== 'string' || !p.userId) {
+    return json({ error: 'Forbidden' }, 403);
+  }
+  if (!(ctx.auth && Array.isArray(ctx.auth.scope) && ctx.auth.scope.includes('mcp:read'))) {
+    return insufficientScope(ctx.auth, ['mcp:read']);
+  }
+  console.log(JSON.stringify({ event: 'mcp_oauth_call', user: p.userId, client: ctx.auth && ctx.auth.clientId }));
+  return serveMcp(request, env);
+}
+
+// Every refresh re-asks the main worker who this is (≤ 1 hour after a demotion or a
+// suspension, the assistant is out). 🛑 The two errors mean different things:
+// invalid_grant REVOKES the grant and its tokens, so it is only for a definite "no";
+// an outage or a bad upstream key answers temporarily_unavailable and keeps the grant.
+async function recheckOnRefresh({ grantType, props, env }) {
+  if (grantType !== GrantType.REFRESH_TOKEN) return;
+  let who;
+  // By user id: no email in a URL every hour.
+  try { who = await agentIdentity(env, { id: props && props.userId }); }
+  catch {
+    throw new OAuthError('temporarily_unavailable', { statusCode: 503, description: 'RETJG HUB is not answering; try again.' });
+  }
+  if (!admitted(who) || who.id !== (props && props.userId)) {
+    throw new OAuthError('invalid_grant', { description: 'This account can no longer connect to RETJG HUB.' });
+  }
+  const next = { userId: who.id, email: who.email, role: who.role };
+  return { newProps: next, accessTokenProps: next };
+}
+
+// The MCP protocol itself, after whichever authentication let the request in.
+async function serveMcp(request, env) {
+  if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405, { Allow: 'POST' });
+  const version = request.headers.get('MCP-Protocol-Version');
+  if (version && !PROTOCOL_VERSIONS.includes(version)) {
+    return json({ error: `Unsupported MCP-Protocol-Version: ${version}` }, 400);
+  }
+
+  let msg;
+  try { msg = await request.json(); } catch {
+    return json({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }, 400);
+  }
+  if (!msg || typeof msg !== 'object' || Array.isArray(msg) || msg.jsonrpc !== '2.0') {
+    return json({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid Request' } }, 400);
+  }
+  // A notification (no id) or a response (no method) is acknowledged, not answered.
+  if (!('method' in msg) || !('id' in msg)) return new Response(null, { status: 202 });
+
+  try {
+    return json({ jsonrpc: '2.0', id: msg.id, result: await handle(msg.method, msg.params || {}, env) });
+  } catch (e) {
+    const error = e instanceof RpcError ? { code: e.code, message: e.message } : { code: -32603, message: 'Internal error' };
+    return json({ jsonrpc: '2.0', id: msg.id, error });
+  }
+}
+
+// Which client a token request names: client_id, or a client assertion's iss
+// (ChatGPT may omit client_id when it signs one). Unverified: only for the allowlist.
+async function tokenClient(request) {
+  try {
+    const form = await request.formData();
+    const id = form.get('client_id');
+    if (id) return String(id);
+    const jwt = String(form.get('client_assertion') || '').split('.')[1];
+    return jwt ? String(JSON.parse(atob(jwt.replace(/-/g, '+').replace(/_/g, '/'))).iss || '') : '';
+  } catch { return ''; }
+}
+
+const hasCredential = (request) => !!(request.headers.get('Authorization') || request.headers.get('X-API-Key'));
 
 async function handle(method, params, env) {
   if (method === 'initialize') {
@@ -146,7 +236,9 @@ function logRefusal(request, env) {
   const xKey = request.headers.get('X-API-Key');
   const shape = (v) => v == null ? null : {
     length: v.length, words: v.trim() ? v.trim().split(/\s+/).length : 0,
-    bearerPrefix: /^\s*bearer\s/i.test(v), containsKey: v.includes(env.MCP_KEY),
+    bearerPrefix: /^\s*bearer\s/i.test(v), containsKey: !!env.MCP_KEY && v.includes(env.MCP_KEY),
+    // An OAuth token is userId:grantId:secret; says which kind failed, never the value.
+    oauthShaped: /^(?:bearer\s+)?[^:\s]+:[^:\s]+:[^:\s]+$/i.test(v.trim()),
   };
   console.log(JSON.stringify({ event: 'mcp_auth_refused', authorization: shape(auth), xApiKey: shape(xKey) }));
 }

@@ -1,3 +1,46 @@
+# Phase 2a: ChatGPT signs in to retjg-mcp with RETJG HUB (OAuth), admins only (2026-10-13)
+
+**Plan:** `~/.claude/plans/tingly-churning-noodle.md` (approved). **Decisions (Brian):** ChatGPT **Pro**
+(read/fetch MCP in developer mode, web only); **admins first, managers next** (2b). ChatGPT cannot send a
+static key (OpenAI docs), so OAuth is the only way in for it.
+
+- [x] Step 0: `@cloudflare/workers-oauth-provider` 1.2.3 pinned (root package.json); read its `.d.ts` and
+      docs. Confirmed: consent helpers' shapes, `invalid_grant` from tokenExchangeCallback revokes the grant,
+      `temporarily_unavailable` does not, private_key_jwt `aud` = issuer or token endpoint, CIMD needs
+      `Cloudflare.compatibilityFlags.global_fetch_strictly_public`. No CIMD allowlist option, so ours is in
+      /authorize (before any document fetch). The plan stood.
+- [x] Harness: `stubWorkersRuntime()` (cloudflare:workers via node:module hooks) + `kvNamespace()` (prefix,
+      cursor, TTL ≥ 60, expiry). Live CIMD documents saved as `scripts/fixtures/cimd-{chatgpt,claude}.json`
+- [x] Main worker `agent-identity` (key-gated, GET, 8 fields, no-store): `test-agent-identity.mjs` 18
+      (failed 15 before)
+- [x] `mcp/authorize.mjs` + `mcp/worker.mjs` (static key first, then the provider; `serveMcp`;
+      `oauthMcp` re-checks role; `recheckOnRefresh`). ⚠️ Deviation: written before the OAuth test, so the
+      test was then shown failing against main's retjg-mcp (50 FAIL + crash)
+- [x] `test-retjg-mcp-oauth.mjs` 118: discovery, ChatGPT session flow (private_key_jwt + PKCE), Claude
+      email+code flow, refusals with no grant, PKCE/code reuse, refresh recheck / outage / demotion,
+      manager-props token 403, static key, admitted() clause by clause, escaping, contrast both themes, leaks
+- [x] 16 mutations in a lane: 13 caught, 3 survived (stores clause, Bargain Lane clause, email in grant
+      metadata) until admitted() was tested clause by clause, an admin without a BL grant was tried end to
+      end, and the KV leak check moved to before section 6 revokes the grants. `npm test` 9686 / 110
+- [x] Fresh-eyes adversarial review (subagent, with PoCs). Fixed:
+      HIGH `Referrer-Policy: no-referrer` made browsers post `Origin: null`, so the Origin check refused
+      every real Allow (→ same-origin, pinned); MEDIUM a D1 error in loadGrants read as "no Bargain Lane"
+      and REVOKED the admin (→ agent-identity reads grants strict, 503 on error); the token endpoint fetched
+      any client_id document and logged it raw (→ allowlist there too); send-code timing showed account
+      existence (→ waitUntil); scope never checked at /mcp (→ mcp:read required); email in the lookup URL
+      every refresh (→ refresh by id, sign-in by header); consent page now warns "only if you started it"
+      and on loopback redirects. Tests fixed where they passed vacuously (minted session ids, per-grant
+      revocation) + paths, HEAD, the compat flag in wrangler.toml, ChatGPT `none` pinned. OAuth 138,
+      identity 22; 22 mutations caught (1 survivor, fixed); `npm test` 9710 / 110.
+      Not fixed (in the PR): ChatGPT may redeem with `none` (its own document offers it); throttle is
+      best-effort under a burst; re-authorizing a client revokes its earlier grant (library default);
+      pre-existing: auth-login has no throttle and lets one email hold many live codes
+- [x] PR #333. Main worker deployed by Brian (guarded): 86d48a00, 1072.64 KiB. Live agent-identity, 8 checks
+      per pass (Brian by header and by id: superuser, stores null, BL; no key/wrong key 401; POST 405;
+      unknown → found:false; no-store; 8 fields): 3 clean passes 08:28 ET 2026-10-14
+- [x] OAUTH_KV created by Brian (id 64b2734b617847809df251afeaace2bd) → mcp/wrangler.toml
+- [ ] retjg-mcp deploy (Brian); live checks; ChatGPT Pro developer mode connect
+
 # Sign-in code: no guessing it (2026-10-13)
 
 **Found while planning phase 2 (OAuth reuses this sign-in):** `auth-verify-otp` checked the 6-digit
@@ -25,7 +68,11 @@ Design:
       once, 2 survived (2-sample leading-zero check; "miss counts newest code only") until the test sampled
       100 codes and checked an earlier email's code still works; `npm test` 9550 / 108. Prod schema read-only
       (PRAGMA): magic_links has used_at, no otp_attempts yet
-- [ ] PR; Brian runs migration-077 (prod D1, rule 7), then deploys the worker (guarded); live check
+- [x] PR #332. Brian ran migration-077 on prod (1 query, 5 ms); PRAGMA shows otp_attempts INTEGER NOT
+      NULL DEFAULT 0. Worker deployed by Brian (guarded): 5817e033. Live `content/v2` worker.js is
+      BYTE-IDENTICAL to this branch's dry-run bundle (1,096,494 bytes, sha256 d3a558f6…); api.retjghub.com
+      auth-me 200
+- [ ] Brian signs in once with an emailed code (the end-to-end check only a real inbox can do)
 # Agents get Retail Summary + Labor: step 1, key read-through in the worker (2026-10-13)
 
 **Request (Brian):** before phase 2 (OAuth), give the MCP "everything in the Retail Summary and

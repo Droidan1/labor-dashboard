@@ -13,5 +13,8 @@
   "type": "commonjs",
   "devDependencies": {
     "tailwindcss": "^3.4.19"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "1.2.3"
   }
 }

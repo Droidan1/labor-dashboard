@@ -1,13 +1,20 @@
 # retjg-mcp — read-only MCP server over the reporting API, for Claude's custom
-# connectors (Desktop, claude.ai, phone). Deployed separately from the main
-# worker: `cd mcp && npx wrangler deploy`.
+# connector (static key) and, via OAuth sign-in with RETJG HUB, ChatGPT (and
+# optionally Claude). Deployed separately from the main worker:
+#   npx wrangler deploy -c <repo>/mcp/wrangler.toml
+# 🛑 Never a bare `npx wrangler deploy` from the repo root: that is the MAIN worker.
 #
 # Secrets (never in this file — the repo is public):
 #   MCP_KEY            what Claude sends as "Authorization: Bearer <key>"
 #   REPORTING_API_KEY  the main worker's MORNING_BRIEFING_KEY, used upstream
+# KV OAUTH_KV: the OAuth library's store (grants, hashed tokens, encrypted props).
+# Without the binding the worker behaves exactly as phase 1 (static key only).
 name = "retjg-mcp"
 main = "worker.mjs"
 compatibility_date = "2026-09-01"
+# The OAuth library fetches ChatGPT's and Claude's client metadata documents only
+# when fetch() is restricted to the public internet (SSRF protection).
+compatibility_flags = ["global_fetch_strictly_public"]
 workers_dev = false
 
 routes = [{ pattern = "mcp.retjghub.com", custom_domain = true }]
@@ -16,3 +23,9 @@ routes = [{ pattern = "mcp.retjghub.com", custom_domain = true }]
 [[services]]
 binding = "API"
 service = "clover-sales-api"
+
+# The OAuth library's store: grants, hashed tokens and codes, encrypted props.
+# Created 2026-10-14 with `npx wrangler kv namespace create OAUTH_KV` (an id, not a secret).
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "64b2734b617847809df251afeaace2bd"

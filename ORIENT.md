@@ -53,12 +53,22 @@ trimmed). Two surfaces are generated from it, so they cannot drift:
   These are copies, not links into this checkout, which changes branch all the time. Key: `RETJG_API_KEY`
   or the Keychain item `retjg-api-key`, only ever sent as a header.
 - **MCP server** in `mcp/` for agents without a shell: worker `retjg-mcp` at `https://mcp.retjghub.com/mcp`.
-  Claude (Desktop, claude.ai, phone) connects as a custom connector with "No sign in" plus a request header
-  `Authorization: Bearer <MCP_KEY>` (Keychain item `retjg-mcp-key`). It reads through the main worker by
-  service binding with its own `REPORTING_API_KEY`, so Claude's key can be revoked alone. Deploy it with
-  `npx wrangler deploy -c <repo>/mcp/wrangler.toml` (dry-run first: ~26 KiB, one binding `env.API`). 🛑 A bare
-  `npx wrangler deploy` from the repo root deploys the MAIN worker. `wrangler tail retjg-mcp` redacts the
-  `Authorization` header; refused keys are logged by shape as `mcp_auth_refused`. ChatGPT needs OAuth (phase 2).
+  Two ways in:
+  - Claude's connector: "No sign in" plus a request header `Authorization: Bearer <MCP_KEY>` (Keychain item
+    `retjg-mcp-key`).
+  - **OAuth** (phase 2a, 2026-10-13), for ChatGPT (developer mode, web) and optionally a second Claude
+    connector: the assistant sends you to `mcp.retjghub.com/authorize`, you sign in with RETJG HUB (an
+    already-signed-in browser goes straight to consent; otherwise email → 6-digit code), and press Allow.
+    Only active owner/admin accounts holding Bargain Lane get in (`admitted()` in `mcp/authorize.mjs`), and
+    only ChatGPT and Claude can be clients. Every hourly refresh re-checks the account via the main worker's
+    `agent-identity`; a demotion revokes, an outage does not. `@cloudflare/workers-oauth-provider` (pinned
+    1.2.3) runs the protocol and stores grants in the `OAUTH_KV` namespace.
+  Either way it reads through the main worker by service binding with its own `REPORTING_API_KEY`. Deploy it
+  with `npx wrangler deploy -c <repo>/mcp/wrangler.toml` (dry-run first: ~277 KiB, bindings `API` and
+  `OAUTH_KV`). 🛑 A bare `npx wrangler deploy` from the repo root deploys the MAIN worker.
+  `wrangler tail retjg-mcp` redacts `Authorization`; refusals log by shape (`mcp_auth_refused`), OAuth calls
+  as `mcp_oauth_call` / `mcp_oauth_granted` (user id, client). 🔑 `npm test` now needs `npm ci` first (the
+  MCP suites import the library), in every worktree too.
 
 Both use `MORNING_BRIEFING_KEY`, which opens the three reporting endpoints plus, since 2026-10-13, the
 Retail Summary and Labor pages' seven read endpoints (`REPORTING_READ_THROUGH` in `worker.js`): GET only,
