@@ -23,7 +23,13 @@ Design (mcp/worker.mjs only; worker.js untouched):
       tools/call → -32602. Modern test 59
 - [x] 6 more mutants on those fixes (/i marker, unpadded, nameless call, 2025-less -32022, decode off,
       public scope), all caught
-- [ ] PR; deploy retjg-mcp (Brian, poll the rollout); live: Claude's real calls go native (tail)
+- [x] PR #337. Brian deployed retjg-mcp 5a9912d3 (100%); live `content/v2` worker.js BYTE-IDENTICAL to the
+      dry run (289,124 bytes, sha256 2a72357a…). Live poll, 3 consecutive clean passes: 2026 discover +
+      tools/list (11, private), 2025 initialize unchanged (1.2.0), no key → 401
+- [x] Brian, new Claude chat: the tail shows Claude's REAL calls as `MCP-Protocol-Version: 2026-07-28` —
+      server/discover 200, tools/call get_today_sales 200, get_yesterday_sales 200; no initialize, no fallback
+- 🔑 Cloudflare's edge 403s (error 1010, banned client signature) Python's default `Python-urllib` UA at
+      mcp.retjghub.com before the worker sees it; my first poll hit it. A named UA passes
 # New L3 category: FG BL HARDLINES - BAZAAR (BL-50445, $2.51/unit) (2026-10-14)
 
 **Ask (Brian):** add category "FG BL Hardlines-Bazaar", item number BL-50445, cost $2.51, so he can create
