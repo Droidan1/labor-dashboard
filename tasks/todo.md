@@ -1,3 +1,14 @@
+# Drop phase 2b: managers do not get agent access (2026-10-14)
+
+**Decision (Brian):** "I don't want the manager to use this anymore." Phase 2b (per-person store scoping
+for managers in retjg-mcp) is dropped. Nothing to build: `admitted()` already admits only owners/admins
+and re-checks at every refresh. Live grants that day: 3, all owner/admin (`usr_superuser_001` + 2 admins).
+
+- [x] The three comments that promised 2b (mcp/authorize.mjs AGENT_ROLES, mcp/worker.mjs header + CACHE)
+      now state the rule instead: the data path reads every store, so only every-store accounts get in
+- [x] Comment-only: the retjg-mcp bundle is code-identical to live 5a9912d3 (the one differing line is
+      esbuild's node_modules path marker), so no redeploy. `npm test` passes
+
 # retjg-mcp speaks MCP 2026-07-28 natively (2026-10-14)
 
 **Why (Brian: "then Native support for the newer MCP version"):** Claude's and ChatGPT's clients already open

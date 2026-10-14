@@ -25,7 +25,9 @@ export const ALLOWED_CLIENTS = new Map([
   ['https://chatgpt.com/oauth/client.json', 'ChatGPT'],
   ['https://claude.ai/oauth/mcp-oauth-client-metadata', 'Claude'],
 ]);
-// Phase 2a: accounts that already see every store. Phase 2b adds per-person scoping.
+// 🛑 Only accounts that already see every store: the data path reads with REPORTING_API_KEY
+// (every store), so admitting anyone narrower would hand them the whole chain. Managers are
+// deliberately not admitted (Brian, 2026-10-14: managers do not use agent access).
 export const AGENT_ROLES = new Set(['superuser', 'admin']);
 export const SCOPES = ['mcp:read', 'offline_access'];
 
