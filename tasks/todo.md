@@ -1,3 +1,29 @@
+# retjg-mcp speaks MCP 2026-07-28 natively (2026-10-14)
+
+**Why (Brian: "then Native support for the newer MCP version"):** Claude's and ChatGPT's clients already open
+with 2026-07-28; our server answered a plain 400 and they fell back to `initialize`. A 2026-only client
+could not connect at all. Spec read first (modelcontextprotocol.io/specification/2026-07-28, "Current";
+reference TS SDK v2.3.x) by a research subagent.
+
+Design (mcp/worker.mjs only; worker.js untouched):
+- Era read from the BODY like the SDK: `_meta["io.modelcontextprotocol/protocolVersion"]` present, or a
+  2026 header → 2026 path; else 2025 path, byte-for-byte as before.
+- 2026 checks in the SDK's order: envelope (-32602) → header/body mismatch (-32020) → version (-32022,
+  `{supported:['2026-07-28'], requested}`) → headers present + decoded `Mcp-Name` (-32020); all HTTP 400.
+- `server/discover`; `resultType:'complete'` + `_meta` serverInfo on every result; `ttlMs` 1 h +
+  `cacheScope:'private'` on discover and tools/list; initialize/ping/unknown → 404 -32601.
+- Each era names only its own versions: initialize never offers 2026-07-28, _meta never accepts 2025.
+
+- [x] Test first: `scripts/test-retjg-mcp-modern.mjs` (54) failed 42 before; +1 OAuth-path check in
+      test-retjg-mcp-oauth (139); legacy test-retjg-mcp unchanged (94)
+- [x] 14 mutants in lanes, all caught; `npm test` 9782 / 112
+- [x] Fresh-eyes review (ran the real TS 2.3.1 + Python 2.3.0 SDK clients and the official conformance suite):
+      no change for 2025 clients. Fixed: Mcp-Name markers case-sensitive + padded (else literal);
+      -32022 also lists the 2025 versions (Python SDK falls back only then); ttlMs 1 h → 5 min; nameless
+      tools/call → -32602. Modern test 59
+- [x] 6 more mutants on those fixes (/i marker, unpadded, nameless call, 2025-less -32022, decode off,
+      public scope), all caught
+- [ ] PR; deploy retjg-mcp (Brian, poll the rollout); live: Claude's real calls go native (tail)
 # New L3 category: FG BL HARDLINES - BAZAAR (BL-50445, $2.51/unit) (2026-10-14)
 
 **Ask (Brian):** add category "FG BL Hardlines-Bazaar", item number BL-50445, cost $2.51, so he can create
@@ -43,7 +69,9 @@ branch. So a 404 for "any ?action= that reached the end" changes nothing a real 
 - [x] Guard: `if (url.searchParams.has("action")) → 404 {"error":"Unknown action"}` just before the live
       route; ORIENT.md's "falls through" line updated
 - [x] 3 mutants in a lane (no guard, truthy `get`, status 200), all caught; `npm test` 9743 / 112
-- [ ] PR; deploy (Brian); live check
+- [x] PR #335 merged (15bd562). Brian deployed main 3cae8fc (with #336): worker 26e47dbb, live
+      `content/v2` worker.js BYTE-IDENTICAL to a dry-run of origin/main (1,100,021 bytes, sha256 af311719…).
+      No live probe: the guard sits behind sign-in, and a signed-in probe would write if it were absent
 
 # auth-login: throttle sends, one live code per email (2026-10-14)
 

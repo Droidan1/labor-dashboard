@@ -20,9 +20,21 @@ import { authorize, agentIdentity, admitted, AGENT_ROLES, SCOPES, ALLOWED_CLIENT
 // commands come from too, so the two surfaces cannot drift.
 import { QUERIES, READING_RULES, UsageError, QueryError, checkArgs, inputSchema } from '../cli/reporting.mjs';
 
-// Newest first: an unknown requested version is answered with the newest.
-const PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26'];
-const SERVER_INFO = { name: 'retjg-hub', title: 'RETJG HUB sales and labor', version: '1.1.0' };
+// Two eras of MCP. 2025 clients open with `initialize` and agree one of these
+// (newest first: an unknown requested version is answered with the newest)…
+const LEGACY_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26'];
+// …and 2026 clients skip it, stating their version and capabilities on EVERY request
+// in params._meta. A 2026 version is never offered to `initialize`, and a 2025 one is
+// never accepted in _meta. Only the -32022 error lists both, so a client can fall back
+// to `initialize` (the spec's example does; the Python SDK falls back only then).
+const MODERN_VERSIONS = ['2026-07-28'];
+const P = 'io.modelcontextprotocol/';
+const SERVER_INFO = { name: 'retjg-hub', title: 'RETJG HUB sales and labor', version: '1.2.0' };
+const CAPABILITIES = { tools: { listChanged: false } };
+// How long a 2026 client may reuse server/discover and tools/list. Short, because a
+// deploy that changes QUERIES should reach clients within minutes. 'private' (this
+// caller only, never a shared cache) stays right if phase 2b gives managers another list.
+const CACHE = { ttlMs: 300_000, cacheScope: 'private' };
 const INSTRUCTIONS = 'Read-only sales, Retail Summary and labor data for the Bargain Lane stores in RETJG HUB. '
   + 'Call list_stores for store ids. Dates are YYYY-MM-DD, Eastern time; yesterday is the latest complete day. '
   + 'Before drawing conclusions from the numbers:\n'
@@ -129,10 +141,6 @@ async function recheckOnRefresh({ grantType, props, env }) {
 // The MCP protocol itself, after whichever authentication let the request in.
 async function serveMcp(request, env) {
   if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405, { Allow: 'POST' });
-  const version = request.headers.get('MCP-Protocol-Version');
-  if (version && !PROTOCOL_VERSIONS.includes(version)) {
-    return json({ error: `Unsupported MCP-Protocol-Version: ${version}` }, 400);
-  }
 
   let msg;
   try { msg = await request.json(); } catch {
@@ -141,11 +149,76 @@ async function serveMcp(request, env) {
   if (!msg || typeof msg !== 'object' || Array.isArray(msg) || msg.jsonrpc !== '2.0') {
     return json({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid Request' } }, 400);
   }
+  // The era is read from the BODY, as the reference SDK does: a 2026 request names
+  // its version in _meta. A 2026 header with no _meta is a malformed 2026 request.
+  const params = msg.params && typeof msg.params === 'object' && !Array.isArray(msg.params) ? msg.params : {};
+  const header = request.headers.get('MCP-Protocol-Version');
+  const modern = (params._meta && typeof params._meta === 'object' && Object.hasOwn(params._meta, P + 'protocolVersion'))
+    || (/^\d{4}-\d{2}-\d{2}$/.test(header || '') && header >= MODERN_VERSIONS[MODERN_VERSIONS.length - 1]);
+  if (!modern && header && !LEGACY_VERSIONS.includes(header)) {
+    return json({ error: `Unsupported MCP-Protocol-Version: ${header}` }, 400);
+  }
   // A notification (no id) or a response (no method) is acknowledged, not answered.
   if (!('method' in msg) || !('id' in msg)) return new Response(null, { status: 202 });
 
+  if (!modern) return answer(msg, () => handle(msg.method, msg.params || {}, env));
+  return serveModern(request, msg, params, env);
+}
+
+// MCP 2026-07-28 (modelcontextprotocol.io/specification/2026-07-28): no initialize,
+// the version and capabilities in every request's _meta, the method and tool name
+// repeated in headers, and every result marked resultType "complete".
+async function serveModern(request, msg, params, env) {
+  const refuse = (code, message, data, status = 400) =>
+    json({ jsonrpc: '2.0', id: msg.id, error: { code, message, ...(data && { data }) } }, status);
+  const meta = params._meta || {};
+  const version = meta[P + 'protocolVersion'];
+  const caps = meta[P + 'clientCapabilities'];
+  if (typeof version !== 'string' || !caps || typeof caps !== 'object' || Array.isArray(caps)) {
+    return refuse(-32602, `Every request needs _meta "${P}protocolVersion" (a string) and "${P}clientCapabilities" (an object).`);
+  }
+  const header = request.headers.get('MCP-Protocol-Version');
+  const method = request.headers.get('Mcp-Method');
+  if ((header && header !== version) || (method && method !== msg.method)) {
+    return refuse(-32020, 'The MCP-Protocol-Version and Mcp-Method headers must match the request body.');
+  }
+  if (!MODERN_VERSIONS.includes(version)) {
+    return refuse(-32022, `Unsupported protocol version: ${version}`, { supported: [...MODERN_VERSIONS, ...LEGACY_VERSIONS], requested: version });
+  }
+  if (!header || !method) return refuse(-32020, 'The MCP-Protocol-Version and Mcp-Method headers are required.');
+  // (No params.name at all is not a header problem: tools/call answers -32602 below.)
+  if (msg.method === 'tools/call' && typeof params.name === 'string' && mcpName(request) !== params.name) {
+    return refuse(-32020, 'The Mcp-Name header must match params.name.');
+  }
+
+  const serverInfo = { _meta: { [P + 'serverInfo']: SERVER_INFO } };
+  if (msg.method === 'server/discover') {
+    return answer(msg, () => ({ resultType: 'complete', supportedVersions: MODERN_VERSIONS, capabilities: CAPABILITIES,
+      instructions: INSTRUCTIONS, ...CACHE, ...serverInfo }));
+  }
+  // initialize and ping are gone in this era; here (only) an unknown method is a 404.
+  if (msg.method !== 'tools/list' && msg.method !== 'tools/call') {
+    return refuse(-32601, `Method not found: ${msg.method}`, null, 404);
+  }
+  return answer(msg, async () => ({ resultType: 'complete', ...await handle(msg.method, params, env),
+    ...(msg.method === 'tools/list' && CACHE), ...serverInfo }));
+}
+
+// Mcp-Name as sent, or decoded from its =?base64?…?= form (for names that are not
+// plain ASCII). The markers are lowercase and case-sensitive, and the base64 padded;
+// anything else is a literal name. null when the base64 is not valid UTF-8.
+function mcpName(request) {
+  const raw = request.headers.get('Mcp-Name');
+  const m = raw && /^=\?base64\?([A-Za-z0-9+/]*={0,2})\?=$/.exec(raw);
+  if (!m || m[1].length % 4) return raw;
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(atob(m[1]), c => c.charCodeAt(0))); }
+  catch { return null; }
+}
+
+// One JSON-RPC answer: the result, or the error a handler threw (HTTP 200 either way).
+async function answer(msg, run) {
   try {
-    return json({ jsonrpc: '2.0', id: msg.id, result: await handle(msg.method, msg.params || {}, env) });
+    return json({ jsonrpc: '2.0', id: msg.id, result: await run() });
   } catch (e) {
     const error = e instanceof RpcError ? { code: e.code, message: e.message } : { code: -32603, message: 'Internal error' };
     return json({ jsonrpc: '2.0', id: msg.id, error });
@@ -170,8 +243,8 @@ async function handle(method, params, env) {
   if (method === 'initialize') {
     const asked = params.protocolVersion;
     return {
-      protocolVersion: PROTOCOL_VERSIONS.includes(asked) ? asked : PROTOCOL_VERSIONS[0],
-      capabilities: { tools: { listChanged: false } },
+      protocolVersion: LEGACY_VERSIONS.includes(asked) ? asked : LEGACY_VERSIONS[0],
+      capabilities: CAPABILITIES,
       serverInfo: SERVER_INFO,
       instructions: INSTRUCTIONS,
     };

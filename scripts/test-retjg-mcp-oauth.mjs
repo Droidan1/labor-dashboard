@@ -203,6 +203,16 @@ let chat;
   const ups = upstream.slice(before);
   ok(ups.length > 0 && ups.every(u => u.key === UP && !u.auth), 'upstream carries the reporting key, never the token');
   ok(logs.some(l => l.includes('"mcp_oauth_call"') && l.includes('u-admin')), 'the call is logged by user id');
+  // A 2026-07-28 client through the same token (test-retjg-mcp-modern.mjs covers the era itself).
+  const P = 'io.modelcontextprotocol/';
+  const m26 = await call(new Request(RESOURCE, { method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + chat.access_token,
+      'MCP-Protocol-Version': '2026-07-28', 'Mcp-Method': 'tools/call', 'Mcp-Name': 'list_stores' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'list_stores', arguments: {},
+      _meta: { [P + 'protocolVersion']: '2026-07-28', [P + 'clientCapabilities']: {} } } }) }));
+  const m26b = await m26.json().catch(() => null);
+  eq([m26.status, m26b?.result?.resultType, JSON.parse(m26b?.result?.content?.[0]?.text || '[]').length], [200, 'complete', 6],
+    'a 2026-07-28 tools/call with an OAuth token is served natively');
   const again = await b.post({ step: 'allow', ...hiddenOf(html) });
   eq(again.status, 400, 'the same consent handle cannot be used twice');
 }
