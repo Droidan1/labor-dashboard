@@ -39,7 +39,15 @@ static key (OpenAI docs), so OAuth is the only way in for it.
       per pass (Brian by header and by id: superuser, stores null, BL; no key/wrong key 401; POST 405;
       unknown → found:false; no-store; 8 fields): 3 clean passes 08:28 ET 2026-10-14
 - [x] OAUTH_KV created by Brian (id 64b2734b617847809df251afeaace2bd) → mcp/wrangler.toml
-- [ ] retjg-mcp deploy (Brian); live checks; ChatGPT Pro developer mode connect
+- [x] retjg-mcp deployed by Brian (guarded): ba573b53, 279.29 KiB, bindings OAUTH_KV + API. Live, 8 checks
+      per pass (AS + PRM metadata exact; /mcp 401 + resource_metadata; static key 11 tools; foreign client
+      400 at /authorize and invalid_client at /oauth/token; ChatGPT's real CIMD fetched → consent page;
+      CSP / same-origin / no-store): 3 clean passes 08:35 ET 2026-10-14
+- [x] **ChatGPT Pro connected (Brian, 12:38 UTC)**, seen in `wrangler tail`: 401 → discovery → /authorize →
+      Allow → `mcp_oauth_granted usr_superuser_001 ChatGPT` → /oauth/token 200 → openai-mcp tried 2026-07-28
+      (400), fell back, tools/list. 11 tools in ChatGPT. 12:45 a question answered South Bend's sales
+      (3 OAuth /mcp calls, 200). 🔑 A client identifying as "openai-mcp/1.0.0 (Codex)" used the same
+      grant at 12:40: Codex rides ChatGPT's connectors
 
 # Sign-in code: no guessing it (2026-10-13)
 
