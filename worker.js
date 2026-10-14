@@ -4989,6 +4989,15 @@ const BUSINESS_AGNOSTIC_ACTIONS = new Set([
 // Every remaining routed action serves Bargain Lane. Listed explicitly rather
 // than defaulted, so adding an E-Commerce endpoint forces a deliberate choice.
 const ACTION_BUSINESS = new Map([
+  ["website-content-admin", "bl"],
+  ["website-campaign-save", "bl"],
+  ["website-photo-set-save", "bl"],
+  ["website-pricing-save", "bl"],
+  ["buffer-status", "bl"],
+  ["buffer-channel-save", "bl"],
+  ["buffer-queue-draft", "bl"],
+  ["buffer-approve-draft", "bl"],
+  ["buffer-cancel-job", "bl"],
   // First non-bl entry — the business gate's first real use.
   ["ebay-cases", "ecom"],
   ["afternoon-briefing", "bl"],
@@ -16191,10 +16200,255 @@ async function importSheetToD1(env, { filterStore = null, fromDate = null, toDat
   return summary;
 }
 
+// Shared website content uses HUB's D1, users and marketing media. No POS writes.
+const WEBSITE_CONTENT_ACTIONS = new Set([
+  'website-content-admin', 'website-campaign-save', 'website-photo-set-save',
+  'website-pricing-save', 'buffer-status', 'buffer-channel-save', 'buffer-queue-draft', 'buffer-cancel-job', 'buffer-approve-draft',
+]);
+function websiteJson(body, status = 200, headers = {}) {
+  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers } });
+}
+function websiteError(message, status = 400) { const error = new Error(message); error.status = status; throw error; }
+function websiteString(value, label, max = 200) {
+  if (typeof value !== 'string' || !value.trim() || value.trim().length > max) websiteError(`Invalid ${label}`);
+  return value.trim();
+}
+function websiteWindow(body) {
+  const parse = (value) => {
+    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/.test(value)) websiteError('Dates require an explicit UTC offset');
+    const time = Date.parse(value);
+    if (!Number.isFinite(time)) websiteError('Invalid date');
+    return new Date(time).toISOString();
+  };
+  const starts = parse(body.startsAt), ends = parse(body.endsAt);
+  if (ends <= starts) websiteError('End must follow start');
+  return { starts, ends };
+}
+function websiteStatus(value) {
+  if (!['draft', 'approved', 'archived'].includes(value)) websiteError('Invalid content status');
+  return value;
+}
+function websiteStores(value) {
+  if (!Array.isArray(value) || !value.length || value.length > ALL_STORES.length || value.some(x => !ALL_STORES.includes(x))) websiteError('Choose active store codes');
+  return [...new Set(value)];
+}
+function websitePhotoUrl(photo, env) {
+  if (!photo || photo.status === 'rejected' || !PUBLIC_PHOTO_TYPES.includes(photo.photo_type) || !SAFE_IMAGE_TYPE.test(photo.content_type || '')) return null;
+  const match = String(photo.r2_key || '').match(/^marketing\/[^/]+\/[^/]+\/[^/]+\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.([a-z0-9]{2,5})$/);
+  return match ? `${apiOrigin(env)}/p/${photo.id}-${match[1]}.${match[2]}` : null;
+}
+async function websitePhotos(env, ids, stores, binsOnly = false) {
+  if (!Array.isArray(ids) || ids.length > 30 || ids.some(id => !Number.isInteger(id) || id < 1) || new Set(ids).size !== ids.length) websiteError('Invalid photo selection');
+  if (!ids.length) return [];
+  const { results } = await env.DB.prepare(`SELECT id, store, photo_type, r2_key, content_type, status FROM marketing_photos WHERE id IN (${ids.map(() => '?').join(',')})`).bind(...ids).all();
+  const map = new Map((results || []).map(p => [p.id, p]));
+  return ids.map(id => {
+    const photo = map.get(id), url = websitePhotoUrl(photo, env);
+    if (!photo || !stores.includes(photo.store) || !url || (binsOnly && photo.photo_type !== 'bins')) websiteError('Photo is unavailable or belongs to another store');
+    return { id, url };
+  });
+}
+async function websitePublicContent(request, env, url) {
+  const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS' };
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
+  if (!['GET', 'HEAD'].includes(request.method)) return websiteJson({ error: 'Method not allowed' }, 405, { ...headers, Allow: 'GET, HEAD, OPTIONS' });
+  if (!env.DB) return websiteJson({ error: 'Content unavailable' }, 503, headers);
+  const store = url.searchParams.get('store');
+  if (store && !ALL_STORES.includes(store)) return websiteJson({ error: 'Unknown active store' }, 404, headers);
+  try {
+    const now = new Date().toISOString();
+    const campaigns = await env.DB.prepare("SELECT id, title, description, department, discount, stores, photo_id, starts_at, ends_at, revision FROM website_campaigns WHERE status='approved' AND starts_at<=? AND ends_at>? ORDER BY starts_at DESC LIMIT 30").bind(now, now).all();
+    const visibleCampaigns = [];
+    for (const row of campaigns.results || []) {
+      const stores = JSON.parse(row.stores);
+      if (!Array.isArray(stores) || stores.some(s => !ALL_STORES.includes(s)) || (store && !stores.includes(store))) continue;
+      let hero = null;
+      if (row.photo_id) {
+        try { hero = (await websitePhotos(env, [row.photo_id], stores))[0]?.url || null; } catch { /* revoked image never leaks */ }
+      }
+      visibleCampaigns.push({ id: row.id, title: row.title, description: row.description, department: row.department, discount: row.discount, stores, imageUrl: hero, startsAt: row.starts_at, endsAt: row.ends_at, revision: row.revision });
+    }
+    const sets = await env.DB.prepare("SELECT id, store, title, photo_ids, starts_at, ends_at, revision FROM website_photo_sets WHERE status='approved' AND starts_at<=? AND ends_at>?" + (store ? ' AND store=?' : '') + ' ORDER BY starts_at DESC LIMIT 12').bind(now, now, ...(store ? [store] : [])).all();
+    const galleries = [];
+    for (const row of sets.results || []) {
+      if (!ALL_STORES.includes(row.store)) continue;
+      const ids = JSON.parse(row.photo_ids);
+      // Revalidate each photo on every read. A deletion/rejection takes effect immediately.
+      const photos = [];
+      for (const id of (Array.isArray(ids) ? ids : []).slice(0, 30)) {
+        try { photos.push(...await websitePhotos(env, [id], [row.store], true)); } catch { /* omitted */ }
+      }
+      if (photos.length) galleries.push({ id: row.id, store: row.store, title: row.title, photos, startsAt: row.starts_at, endsAt: row.ends_at, revision: row.revision });
+    }
+    const prices = await env.DB.prepare("SELECT value FROM website_settings WHERE key='bin-pricing'").first();
+    const body = { version: 1, generatedAt: now, store: store || null, campaigns: visibleCampaigns, galleries, binPricing: prices ? JSON.parse(prices.value) : null };
+    const response = websiteJson(body, 200, headers);
+    return request.method === 'HEAD' ? new Response(null, { status: 200, headers: response.headers }) : response;
+  } catch { return websiteJson({ error: 'Content unavailable' }, 503, headers); }
+}
+async function websiteSharedAction(request, env, url, currentUser, isAdminSecret, corsJson) {
+  const action = url.searchParams.get('action');
+  const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+  if (denied) return denied;
+  if (!env.DB) return websiteJson({ error: 'Content storage unavailable' }, 503, corsJson);
+  const read = ['website-content-admin', 'buffer-status'].includes(action);
+  if (request.method !== (read ? 'GET' : 'POST')) return websiteJson({ error: 'Method not allowed' }, 405, corsJson);
+  try {
+    if (action === 'website-content-admin') {
+      const [campaigns, sets, settings, photos, drafts] = await Promise.all([
+        env.DB.prepare('SELECT * FROM website_campaigns ORDER BY updated_at DESC LIMIT 100').all(),
+        env.DB.prepare('SELECT * FROM website_photo_sets ORDER BY updated_at DESC LIMIT 100').all(),
+        env.DB.prepare('SELECT key, value, updated_at FROM website_settings').all(),
+        env.DB.prepare("SELECT id, store, photo_type, r2_key, content_type, status FROM marketing_photos WHERE status!='rejected' ORDER BY id DESC LIMIT 250").all(),
+        env.DB.prepare("SELECT id, store, caption, photo_ids, status, updated_at FROM marketing_drafts WHERE status IN ('draft','approved') ORDER BY updated_at DESC LIMIT 100").all(),
+      ]);
+      const safePhotos = (photos.results || []).map(p => ({ id: p.id, store: p.store, type: p.photo_type, url: websitePhotoUrl(p, env) })).filter(p => p.url && ALL_STORES.includes(p.store));
+      return websiteJson({ campaigns: campaigns.results, photoSets: sets.results, settings: settings.results, photos: safePhotos, drafts: drafts.results }, 200, corsJson);
+    }
+    if (action === 'buffer-status') {
+      const [channels, jobs] = await Promise.all([
+        env.DB.prepare('SELECT store, channel_id, service, name, active FROM buffer_channels').all(),
+        env.DB.prepare('SELECT id, draft_id, channel_id, store, due_at, status, buffer_post_id, last_error, updated_at FROM buffer_outbox ORDER BY created_at DESC LIMIT 100').all(),
+      ]);
+      return websiteJson({ configured: !!env.BUFFER_API_KEY, deliveryEnabled: env.BUFFER_PUBLISH_ENABLED === 'true', channels: channels.results, jobs: jobs.results }, 200, corsJson);
+    }
+    const body = await request.json().catch(() => websiteError('Invalid JSON'));
+    if (!body || typeof body !== 'object' || Array.isArray(body)) websiteError('Invalid body');
+    const actor = currentUser?.email || 'service', now = new Date().toISOString();
+    if (action === 'website-campaign-save' || action === 'website-photo-set-save') {
+      const { starts, ends } = websiteWindow(body), status = websiteStatus(body.status), title = websiteString(body.title, 'title', 80);
+      const id = body.id ? websiteString(body.id, 'id', 60) : crypto.randomUUID();
+      const table = action === 'website-campaign-save' ? 'website_campaigns' : 'website_photo_sets';
+      const prior = await env.DB.prepare(`SELECT revision FROM ${table} WHERE id=?`).bind(id).first();
+      if (body.id && !prior) websiteError('Content not found', 404);
+      if (prior && (!Number.isInteger(body.expectedRevision) || body.expectedRevision !== prior.revision)) websiteError('Content changed. Reload before saving.', 409);
+      let statement;
+      if (action === 'website-campaign-save') {
+        const stores = websiteStores(body.stores), description = websiteString(body.description, 'description', 500), department = websiteString(body.department, 'department', 60);
+        if (!Number.isInteger(body.discount) || body.discount < 1 || body.discount > 99) websiteError('Discount must be a whole percentage from 1 to 99');
+        const photoId = body.photoId == null ? null : body.photoId;
+        if (photoId != null) await websitePhotos(env, [photoId], stores);
+        statement = prior
+          ? env.DB.prepare('UPDATE website_campaigns SET title=?, description=?, department=?, discount=?, stores=?, photo_id=?, starts_at=?, ends_at=?, status=?, revision=revision+1, updated_by=?, updated_at=? WHERE id=? AND revision=?').bind(title, description, department, body.discount, JSON.stringify(stores), photoId, starts, ends, status, actor, now, id, prior.revision)
+          : env.DB.prepare('INSERT INTO website_campaigns (id,title,description,department,discount,stores,photo_id,starts_at,ends_at,status,updated_by,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').bind(id, title, description, department, body.discount, JSON.stringify(stores), photoId, starts, ends, status, actor, now);
+      } else {
+        const [store] = websiteStores([body.store]);
+        if (!Array.isArray(body.photoIds) || !body.photoIds.length) websiteError('Choose bin photos');
+        await websitePhotos(env, body.photoIds, [store], true);
+        statement = prior
+          ? env.DB.prepare('UPDATE website_photo_sets SET store=?, title=?, photo_ids=?, starts_at=?, ends_at=?, status=?, revision=revision+1, updated_by=?, updated_at=? WHERE id=? AND revision=?').bind(store, title, JSON.stringify(body.photoIds), starts, ends, status, actor, now, id, prior.revision)
+          : env.DB.prepare('INSERT INTO website_photo_sets (id,store,title,photo_ids,starts_at,ends_at,status,updated_by,updated_at) VALUES (?,?,?,?,?,?,?,?,?)').bind(id, store, title, JSON.stringify(body.photoIds), starts, ends, status, actor, now);
+      }
+      const result = await statement.run();
+      if (!result.meta?.changes) websiteError('Content changed. Reload before saving.', 409);
+      return websiteJson({ ok: true, id, revision: (prior?.revision || 0) + 1 }, prior ? 200 : 201, corsJson);
+    }
+    if (action === 'website-pricing-save') {
+      const schedule = body.schedule;
+      if (!schedule || typeof schedule !== 'object' || Array.isArray(schedule)) websiteError('Invalid price schedule');
+      const clean = {};
+      for (const day of ['fridayBefore2', 'fridayAfter2', 'saturday', 'sunday', 'monday', 'tuesday', 'wednesday']) {
+        if (typeof schedule[day] !== 'number' || !Number.isFinite(schedule[day]) || schedule[day] < 0 || schedule[day] > 1000) websiteError(`Invalid ${day} price`);
+        clean[day] = Math.round(schedule[day] * 100) / 100;
+      }
+      clean.timezone = 'America/Indiana/Indianapolis';
+      await env.DB.prepare("INSERT INTO website_settings(key,value,updated_by,updated_at) VALUES('bin-pricing',?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_by=excluded.updated_by, updated_at=excluded.updated_at").bind(JSON.stringify(clean), actor, now).run();
+      return websiteJson({ ok: true }, 200, corsJson);
+    }
+    if (action === 'buffer-channel-save') {
+      const [store] = websiteStores([body.store]);
+      if (!/^[0-9a-f]{24}$/.test(body.channelId || '')) websiteError('Invalid Buffer channel ID');
+      if (!['facebook','instagram','googlebusiness','threads'].includes(body.service)) websiteError('Unsupported channel service');
+      const name = websiteString(body.name, 'channel name', 100);
+      await env.DB.prepare('INSERT INTO buffer_channels(store,channel_id,service,name,active) VALUES(?,?,?,?,?) ON CONFLICT(store,channel_id) DO UPDATE SET service=excluded.service,name=excluded.name,active=excluded.active').bind(store, body.channelId, body.service, name, body.active === false ? 0 : 1).run();
+      return websiteJson({ ok: true }, 200, corsJson);
+    }
+    if (action === 'buffer-cancel-job') {
+      const id = websiteString(body.id, 'job ID', 60);
+      const result = await env.DB.prepare("UPDATE buffer_outbox SET status='cancelled',updated_at=? WHERE id=? AND status='queued'").bind(now, id).run();
+      if (!result.meta?.changes) websiteError('Only an unsent queued job is cancellable here. Manage accepted posts in Buffer.', 409);
+      return websiteJson({ ok: true }, 200, corsJson);
+    }
+    if (action === 'buffer-approve-draft') {
+      if (!Number.isInteger(body.draftId) || body.draftId < 1) websiteError('Invalid draft ID');
+      const expected = websiteString(body.expectedUpdatedAt, 'draft version', 60);
+      const caption = websiteString(body.caption, 'caption', 10000);
+      const draft = await env.DB.prepare('SELECT store,photo_ids,status,updated_at FROM marketing_drafts WHERE id=?').bind(body.draftId).first();
+      if (!draft || !['draft','approved'].includes(draft.status) || !ALL_STORES.includes(draft.store)) websiteError('Draft unavailable', 404);
+      if (draft.updated_at !== expected) websiteError('Draft changed. Reload before approving.', 409);
+      let ids; try { ids = JSON.parse(draft.photo_ids || '[]'); } catch { websiteError('Invalid draft photos'); }
+      await websitePhotos(env, ids, [draft.store]);
+      const result = await env.DB.prepare("UPDATE marketing_drafts SET caption=?,status='approved',updated_at=? WHERE id=? AND updated_at=? AND status IN ('draft','approved')").bind(caption, now, body.draftId, expected).run();
+      if (!result.meta?.changes) websiteError('Draft changed. Reload before approving.', 409);
+      return websiteJson({ ok: true, updatedAt: now }, 200, corsJson);
+    }
+    if (action === 'buffer-queue-draft') {
+      const requestKey = websiteString(body.requestId, 'request ID', 100);
+      if (!Number.isInteger(body.draftId) || body.draftId < 1) websiteError('Invalid draft ID');
+      const { ends: due } = websiteWindow({ startsAt: now, endsAt: body.dueAt });
+      if (Date.parse(due) < Date.now() + 60000) websiteError('Choose a publishing time at least one minute ahead');
+      const draft = await env.DB.prepare('SELECT id,store,caption,photo_ids,status FROM marketing_drafts WHERE id=?').bind(body.draftId).first();
+      if (!draft || draft.status !== 'approved' || !ALL_STORES.includes(draft.store)) websiteError('Approve the store draft before queueing');
+      const channel = await env.DB.prepare('SELECT channel_id FROM buffer_channels WHERE store=? AND channel_id=? AND active=1').bind(draft.store, body.channelId || '').first();
+      if (!channel) websiteError('Channel is not mapped to this store');
+      const text = websiteString(draft.caption, 'caption', 10000);
+      let ids; try { ids = JSON.parse(draft.photo_ids || '[]'); } catch { websiteError('Invalid draft photos'); }
+      const assets = await websitePhotos(env, ids, [draft.store]);
+      const prior = await env.DB.prepare('SELECT * FROM buffer_outbox WHERE request_key=? OR (draft_id=? AND channel_id=? AND due_at=?)').bind(requestKey, draft.id, channel.channel_id, due).first();
+      if (prior) {
+        if (prior.request_key !== requestKey || prior.draft_id !== draft.id || prior.channel_id !== channel.channel_id || prior.due_at !== due || prior.text !== text || prior.assets !== JSON.stringify(assets)) websiteError('A different submission already uses this request or slot', 409);
+        return websiteJson({ ok: true, id: prior.id, status: prior.status, repeated: true }, 200, corsJson);
+      }
+      const id = crypto.randomUUID();
+      try {
+        await env.DB.prepare("INSERT INTO buffer_outbox(id,request_key,draft_id,channel_id,store,text,assets,due_at,status,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,'queued',?,?,?)").bind(id, requestKey, draft.id, channel.channel_id, draft.store, text, JSON.stringify(assets), due, actor, now, now).run();
+      } catch (error) { if (/UNIQUE|constraint/i.test(String(error.message))) websiteError('Submission raced with another request. Reload the job list.', 409); throw error; }
+      return websiteJson({ ok: true, id, status: 'queued', deliveryEnabled: env.BUFFER_PUBLISH_ENABLED === 'true' }, 201, corsJson);
+    }
+    return websiteJson({ error: 'Unknown action' }, 404, corsJson);
+  } catch (error) {
+    return websiteJson({ error: error.status ? error.message : 'Shared content operation unavailable' }, error.status || 503, corsJson);
+  }
+}
+async function processBufferOutbox(env, now = new Date()) {
+  // Delivery is opt-in and credentials stay on the Worker. Queueing alone never sends.
+  if (!env.DB || !env.BUFFER_API_KEY || env.BUFFER_PUBLISH_ENABLED !== 'true') return { skipped: 'Buffer delivery is not enabled' };
+  const nowIso = now.toISOString();
+  // An interrupted send has an uncertain remote outcome. Never replay automatically.
+  await env.DB.prepare("UPDATE buffer_outbox SET status='needs_review',last_error='Submission outcome unknown. Check Buffer before retrying.',updated_at=? WHERE status='submitting' AND updated_at<?").bind(nowIso, new Date(now.getTime() - 10 * 60000).toISOString()).run();
+  const { results } = await env.DB.prepare("SELECT * FROM buffer_outbox WHERE status='queued' ORDER BY created_at LIMIT 5").all();
+  let scheduled = 0;
+  for (const job of results || []) {
+    const claim = await env.DB.prepare("UPDATE buffer_outbox SET status='submitting',updated_at=? WHERE id=? AND status='queued'").bind(nowIso, job.id).run();
+    if (!claim.meta?.changes) continue;
+    const finish = (status, message, postId = null) => env.DB.prepare('UPDATE buffer_outbox SET status=?,last_error=?,buffer_post_id=?,updated_at=? WHERE id=? AND status=\'submitting\'').bind(status, message, postId, new Date().toISOString(), job.id).run();
+    if (job.due_at <= nowIso) { await finish('failed', 'Publishing time has passed. Choose a new time.'); continue; }
+    const mapped = await env.DB.prepare('SELECT channel_id FROM buffer_channels WHERE store=? AND channel_id=? AND active=1').bind(job.store, job.channel_id).first();
+    if (!mapped) { await finish('failed', 'Channel mapping was removed.'); continue; }
+    let assets;
+    try { assets = await websitePhotos(env, JSON.parse(job.assets).map(p => p.id), [job.store]); }
+    catch { await finish('failed', 'A selected photo was removed or rejected.'); continue; }
+    try {
+      const response = await fetch('https://api.buffer.com', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.BUFFER_API_KEY}` },
+        signal: AbortSignal.timeout(20000),
+        body: JSON.stringify({ query: 'mutation ScheduleStorePost($input: CreatePostInput!) { createPost(input: $input) { ... on PostActionSuccess { post { id dueAt } } ... on MutationError { message } } }', variables: { input: { text: job.text, channelId: job.channel_id, needsApproval: false, saveToDraft: false, schedulingType: 'automatic', mode: 'customScheduled', dueAt: job.due_at, assets: assets.map(p => ({ image: { url: p.url } })) } } }),
+      });
+      const data = await response.json().catch(() => null), result = data?.data?.createPost;
+      if (response.ok && result?.post?.id) { await finish('scheduled', null, result.post.id); scheduled++; }
+      else if (response.ok && result?.message) await finish('failed', String(result.message).slice(0, 300));
+      else await finish('needs_review', 'Buffer did not confirm the submission. Check Buffer before retrying.');
+    } catch { await finish('needs_review', 'Connection ended before confirmation. Check Buffer before retrying.'); }
+  }
+  return { scheduled };
+}
+
 export default {
   // ── HTTP request handler ──────────────────────────────────────
   async fetch(request, env, ctx) {
     const corsHeaders = resolveCors(request, env);
+    const publicUrl = new URL(request.url);
+    if (publicUrl.pathname === "/website/content") return websitePublicContent(request, env, publicUrl);
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: corsHeaders });
     }
@@ -17179,6 +17433,8 @@ export default {
       }
     }
 
+    if (WEBSITE_CONTENT_ACTIONS.has(url.searchParams.get("action"))) return websiteSharedAction(request, env, url, currentUser, isAdminSecret, corsJson);
+
     // ── eBay Cases: read for the page ─────────────────────────────
     //    GET /?action=ebay-cases[&account=…]
     //
@@ -17808,6 +18064,10 @@ export default {
         // Guard: never delete a photo referenced by a scheduled/publishing draft.
         const locked = new Set();
         const dr = await env.DB.prepare("SELECT photo_ids FROM marketing_drafts WHERE status IN ('scheduled','publishing')").all().catch(() => ({ results: [] }));
+        const bufferLocks = await env.DB.prepare("SELECT assets FROM buffer_outbox WHERE status IN ('queued','submitting','scheduled','needs_review')").all();
+        for (const job of bufferLocks.results || []) {
+          for (const photo of JSON.parse(job.assets || '[]')) locked.add(Number(photo.id));
+        }
         for (const row of (dr.results || [])) {
           let pids = []; try { pids = JSON.parse(row.photo_ids || "[]"); } catch (_) {}
           for (const p of pids) locked.add(Number(p));
@@ -29295,6 +29555,7 @@ export default {
     // "* * * * *" — every-minute sale scheduler + scheduled bin-post publisher.
     // Two independent waitUntils so a failure in one can't abort the other.
     if (event.cron === "* * * * *") {
+      ctx.waitUntil(processBufferOutbox(env, new Date()).catch(e => console.error("Buffer outbox unavailable")));
       ctx.waitUntil(processSaleSchedules(env, new Date()));
       ctx.waitUntil(processScheduledPosts(env, new Date()).then(r => console.log("Scheduled posts:", JSON.stringify(r))));
       // Its own waitUntil, like the two above: a retail lookup that throws must not take
