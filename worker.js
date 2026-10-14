@@ -9729,6 +9729,14 @@ function randomOtpCode() {
   return String(100000 + (buf[0] % span));
 }
 
+// How often auth-login may send a code to one email (2026-10-14). The code leads to
+// a 30-day chain-wide agent token (retjg-mcp), so the send is capped as well as the
+// guessing: worst case 10 codes a day x OTP_MAX_ATTEMPTS guesses = 50 in 900,000.
+const OTP_SEND_MIN_SECONDS = 60;
+const OTP_SENDS_PER_HOUR = 5;
+const OTP_SENDS_PER_DAY = 10;
+const OTP_TTL_MS = 15 * 60 * 1000;
+
 // Wrong guesses allowed against an emailed code before it stops working
 // (magic_links.otp_attempts, migration-077). The link in the same email still works.
 const OTP_MAX_ATTEMPTS = 5;
@@ -16361,11 +16369,34 @@ export default {
         if (results && results.length) {
           const token = randomHex(32);
           const otpCode = randomOtpCode(); // 6-digit OTP, from the CSPRNG
-          const expires = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-          await env.DB.prepare(
-            "INSERT INTO magic_links (token, email, expires_at, otp_code) VALUES (?, ?, ?, ?)"
-          ).bind(token, normalized, expires, otpCode).run();
-          await sendMagicLinkEmail(normalized, token, otpCode, env);
+          const nowMs = Date.now();
+          const expires = new Date(nowMs + OTP_TTL_MS).toISOString();
+          // Rows are never deleted and a code expires OTP_TTL_MS after it is made, so
+          // "made after T" is "expires after T + OTP_TTL_MS". Invite rows carry no code.
+          const madeAfter = (secondsAgo) => new Date(nowMs + OTP_TTL_MS - secondsAgo * 1000).toISOString();
+          // 🛑 THE CAP IS IN THE INSERT. "Count, then insert" lets a burst all pass the
+          // count; one INSERT … SELECT … WHERE is atomic, so 20 at once still make one.
+          const made = await env.DB.prepare(
+            `INSERT INTO magic_links (token, email, expires_at, otp_code)
+             SELECT ?1, ?2, ?3, ?4
+              WHERE NOT EXISTS (SELECT 1 FROM magic_links WHERE email = ?2 AND otp_code IS NOT NULL AND expires_at > ?5)
+                AND (SELECT COUNT(*) FROM magic_links WHERE email = ?2 AND otp_code IS NOT NULL AND expires_at > ?6) < ?7
+                AND (SELECT COUNT(*) FROM magic_links WHERE email = ?2 AND otp_code IS NOT NULL AND expires_at > ?8) < ?9`
+          ).bind(token, normalized, expires, otpCode,
+            madeAfter(OTP_SEND_MIN_SECONDS), madeAfter(3600), OTP_SENDS_PER_HOUR, madeAfter(86400), OTP_SENDS_PER_DAY).run();
+          if (made && made.meta && made.meta.changes === 1) {
+            // One live CODE per email: asking for many no longer multiplies the odds of a
+            // guess. The older emails' LINKS still work — a 32-byte token cannot be guessed.
+            await env.DB.prepare(
+              `UPDATE magic_links SET otp_attempts = ?
+                WHERE email = ? AND token != ? AND used_at IS NULL AND otp_code IS NOT NULL AND otp_attempts < ?`
+            ).bind(OTP_MAX_ATTEMPTS, normalized, token, OTP_MAX_ATTEMPTS).run();
+            await sendMagicLinkEmail(normalized, token, otpCode, env);
+          } else {
+            // Throttled: nothing sent, and the same answer as a send, so it says nothing
+            // about the account.
+            console.log(JSON.stringify({ event: "auth_login_throttled" }));
+          }
         }
         return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
       } catch (e) {

@@ -44,20 +44,29 @@ async function login(email = EMAIL) {
 const verify = (otp, email = EMAIL) => post('auth-verify-otp', { email, otp });
 const wrongFor = (code) => String(code === '123456' ? 654321 : 123456);
 const sessions = () => db.prepare('SELECT COUNT(*) n FROM sessions').get().n;
+// auth-login sends at most one code a minute per email (test-auth-login-throttle.mjs).
+// Moving every code's timestamps back stands in for "a minute later" here.
+const age = (seconds) => {
+  for (const r of db.prepare('SELECT token, expires_at FROM magic_links').all()) {
+    db.prepare('UPDATE magic_links SET expires_at = ? WHERE token = ?')
+      .run(new Date(Date.parse(r.expires_at) - seconds * 1000).toISOString(), r.token);
+  }
+};
 
 // ── 1. Codes come from the CSPRNG, not Math.random ─────────────────────────
 {
   const realRandom = Math.random;
   Math.random = () => 0.5; // the old code would make 550000, every time
   let a, b;
-  try { a = (await login()).otp_code; b = (await login()).otp_code; }
+  // Each sample is a first send (rows cleared): the throttle is not under test here.
+  try { a = (await login()).otp_code; db.exec('DELETE FROM magic_links'); b = (await login()).otp_code; }
   finally { Math.random = realRandom; }
   ok(/^[1-9]\d{5}$/.test(a) && /^[1-9]\d{5}$/.test(b), `codes are six digits with no leading zero (the login box is type=number): ${a}, ${b}`);
   ok(!(a === '550000' && b === '550000') && a !== b, 'codes do not follow Math.random');
   // One code in ten would start with 0 if the range slipped to 000000-999999,
   // which two samples cannot see. A hundred can (missed with p ≈ 3e-5).
   const many = [];
-  for (let i = 0; i < 100; i++) many.push((await login()).otp_code);
+  for (let i = 0; i < 100; i++) { db.exec('DELETE FROM magic_links'); many.push((await login()).otp_code); }
   ok(many.every(c => /^[1-9]\d{5}$/.test(c)), `100 codes, none with a leading zero (first bad: ${many.find(c => !/^[1-9]\d{5}$/.test(c))})`);
   ok(new Set(many).size > 90, `100 codes are (nearly) all different: ${new Set(many).size}`);
   db.exec('DELETE FROM magic_links');
@@ -112,21 +121,29 @@ const sessions = () => db.prepare('SELECT COUNT(*) n FROM sessions').get().n;
   db.exec('DELETE FROM magic_links');
 }
 
-// ── 6. A miss counts against every live code for the email ─────────────────
+// ── 6. One live code per email, and a miss counts against every live code ──
 {
-  // Asked twice, the code from the FIRST email still works: every live code is
-  // weighed, not just the newest.
+  // Since 2026-10-14 a new code retires the older ones (auth-login), so asking for
+  // many codes no longer multiplies the odds of a guess. Their links still work.
   const first = await login();
-  await login();
-  eq((await verify(first.otp_code)).status, 200, 'the code from an earlier email still signs in');
+  age(61);
+  const second = await login();
+  ok(second.otp_code && second.token !== first.token, 'a minute later, a second code is sent');
+  eq((await verify(first.otp_code)).status, 401, 'the code from the earlier email no longer signs in');
+  eq((await verify(second.otp_code)).status, 200, 'the newest one does');
   db.exec('DELETE FROM magic_links');
 }
 {
-  const codes = [await login(), await login(), await login()].map(r => r.otp_code);
-  for (let i = 0; i < 5; i++) await verify('100000' === codes[0] ? '100001' : '100000');
+  // Several live codes can still exist (rows made before the change); a miss still
+  // counts against all of them.
+  const exp = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  const codes = ['111111', '222222', '333333'];
+  codes.forEach((c, i) => db.prepare('INSERT INTO magic_links (token, email, expires_at, otp_code) VALUES (?, ?, ?, ?)').run('legacy-' + i, EMAIL, exp, c));
+  for (let i = 0; i < 5; i++) await verify('100000');
   let anyIn = false;
   for (const c of codes) if ((await verify(c)).status === 200) anyIn = true;
-  ok(!anyIn, 'five misses kill every outstanding code, not just one (asking for many codes buys no extra guesses)');
+  ok(!anyIn, 'five misses kill every outstanding code, not just one');
+  age(61);
   const fresh = await login();
   eq((await verify(fresh.otp_code)).status, 200, 'a code requested afterwards works');
   db.exec('DELETE FROM magic_links');
