@@ -109,5 +109,40 @@ const li = (id, name, price = 5000) => ({ id: 'l-' + id, name, price, unitQty: 1
   ok(!cats['Home'], 'and they did not leak into Home');
 }
 
+// ── 4 · FG BL HARDLINES - BAZAAR (sticker code BL-50445, $2.51/unit) ─────
+// Added 2026-10-14, before the category existed in Clover: Brian creates it
+// from Inventory › Create item, which sends this exact string to Clover as the
+// new category's name. The lookup is an exact, case-sensitive match, so the
+// form and this map must agree character for character. The cost editor only
+// accepts a category the engine knows, so without the entry the $2.51 could not
+// be saved.
+{
+  const BAZAAR = 'FG BL HARDLINES - BAZAAR';
+  const save = await worker.fetch(req(`/?action=category-costs`, {
+    user: 'u-su', method: 'POST', body: { costs: { [BAZAAR]: 2.51 } },
+  }), env, ctx);
+  const saved = JSON.parse(await save.text());
+  ok(save.status === 200 && saved.count === 1 && saved.rejected === 0,
+     `the cost editor accepts ${BAZAAR}, got ${save.status} ${JSON.stringify(saved)}`);
+
+  const list = JSON.parse(await (await worker.fetch(
+    req(`/?action=category-costs`, { user: 'u-su' }), env, ctx)).text());
+  const entry = (list.categories || []).find(c => c.l3 === BAZAAR);
+  ok(entry?.l2 === 'Hardlines', `the editor lists it under Hardlines, got ${JSON.stringify(entry || null)}`);
+
+  // The item→category join is cached per store in KV; section 1 filled it
+  // without i5, so drop it or this sale reads as uncategorized.
+  await env.SALES_SNAPSHOTS.delete('item-cats:bl1');
+  stubClover({ lineItems: [li('i5', 'Bazaar Item', 500)], itemCategories: { i5: BAZAAR } });
+  const r = await worker.fetch(
+    req(`/?action=items-hour&store=BL1&date=${dateStr}&hour=${HOUR}`, { user: 'u-su' }), env, ctx);
+  const body = JSON.parse(await r.text());
+  const hard = (body.categories || []).find(c => c.category === 'Hardlines');
+  const row = (hard?.l3Rows || []).find(x => x.l3 === BAZAAR);
+  ok(!!row, `a Bazaar sale books to Hardlines under its own row, got ${JSON.stringify((body.categories || []).map(c => c.category))}`);
+  ok(row?.extCost === 2.51, `and is costed at $2.51, got ${JSON.stringify(row?.extCost)}`);
+  ok(row?.coverage?.category === 5, `from the category cost, got ${JSON.stringify(row?.coverage)}`);
+}
+
 console.log(`\ntest-category-mapping: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
