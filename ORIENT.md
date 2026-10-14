@@ -53,6 +53,8 @@ trimmed). Two surfaces are generated from it, so they cannot drift:
   These are copies, not links into this checkout, which changes branch all the time. Key: `RETJG_API_KEY`
   or the Keychain item `retjg-api-key`, only ever sent as a header.
 - **MCP server** in `mcp/` for agents without a shell: worker `retjg-mcp` at `https://mcp.retjghub.com/mcp`.
+  It speaks MCP 2026-07-28 natively (`server/discover`, per-request `_meta`) and 2025-11-25/06-18/03-26 via
+  `initialize`; the era is read from each request body (`scripts/test-retjg-mcp-modern.mjs`).
   Two ways in:
   - Claude's connector: "No sign in" plus a request header `Authorization: Bearer <MCP_KEY>` (Keychain item
     `retjg-mcp-key`).
