@@ -19,7 +19,9 @@ Design:
 - [x] Worker change; test-otp-hardening adapted (one live code; legacy multi-code rows still all burn on
       a miss) 140; 11 mutations in a lane, all caught (one rerun as a value change after a bind-count
       mismatch crashed it); `npm test` 9727 / 111
-- [ ] PR; Brian deploys (guarded); live check without sending mail to anyone but Brian
+- [x] PR #334. Worker deployed by Brian (guarded): c07f6f66 at 100%. Live `content/v2` worker.js BYTE-
+      IDENTICAL to this branch's dry-run bundle (1,099,754 bytes, sha256 deb16c70…); auth-me 200
+- [ ] Brian: one real sign-in (request a code, tap send again → ONE email; the code signs in)
 # Phase 2a: ChatGPT signs in to retjg-mcp with RETJG HUB (OAuth), admins only (2026-10-13)
 
 **Plan:** `~/.claude/plans/tingly-churning-noodle.md` (approved). **Decisions (Brian):** ChatGPT **Pro**
