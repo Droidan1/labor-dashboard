@@ -35,8 +35,11 @@ static key (OpenAI docs), so OAuth is the only way in for it.
       Not fixed (in the PR): ChatGPT may redeem with `none` (its own document offers it); throttle is
       best-effort under a burst; re-authorizing a client revokes its earlier grant (library default);
       pre-existing: auth-login has no throttle and lets one email hold many live codes
-- [ ] PR; Brian: main worker deploy (agent-identity) → `wrangler kv namespace create OAUTH_KV` → id into
-      mcp/wrangler.toml → retjg-mcp deploy; live checks; ChatGPT Pro developer mode connect
+- [x] PR #333. Main worker deployed by Brian (guarded): 86d48a00, 1072.64 KiB. Live agent-identity, 8 checks
+      per pass (Brian by header and by id: superuser, stores null, BL; no key/wrong key 401; POST 405;
+      unknown → found:false; no-store; 8 fields): 3 clean passes 08:28 ET 2026-10-14
+- [x] OAUTH_KV created by Brian (id 64b2734b617847809df251afeaace2bd) → mcp/wrangler.toml
+- [ ] retjg-mcp deploy (Brian); live checks; ChatGPT Pro developer mode connect
 
 # Sign-in code: no guessing it (2026-10-13)
 
