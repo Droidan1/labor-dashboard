@@ -21,7 +21,8 @@ Design:
       mismatch crashed it); `npm test` 9727 / 111
 - [x] PR #334. Worker deployed by Brian (guarded): c07f6f66 at 100%. Live `content/v2` worker.js BYTE-
       IDENTICAL to this branch's dry-run bundle (1,099,754 bytes, sha256 deb16c70…); auth-me 200
-- [ ] Brian: one real sign-in (request a code, tap send again → ONE email; the code signs in)
+- [x] Brian, 2026-10-14: real sign-in — requested a code, tapped send again: ONE email; the code signed in.
+      First human check of both the OTP hardening (#332) and this throttle
 # Phase 2a: ChatGPT signs in to retjg-mcp with RETJG HUB (OAuth), admins only (2026-10-13)
 
 **Plan:** `~/.claude/plans/tingly-churning-noodle.md` (approved). **Decisions (Brian):** ChatGPT **Pro**
