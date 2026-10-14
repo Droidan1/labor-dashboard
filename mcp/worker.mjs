@@ -7,7 +7,8 @@
 //     assistant gets a token. @cloudflare/workers-oauth-provider runs discovery, codes,
 //     tokens, refresh and revocation, storing everything hashed in OAUTH_KV.
 // Either way the data path is the same: this worker calls the main worker through the API
-// service binding with REPORTING_API_KEY (every store). Phase 2b scopes it per person.
+// service binding with REPORTING_API_KEY (every store), which is why only owners and admins
+// are admitted (mcp/authorize.mjs AGENT_ROLES).
 //
 // Stateless Streamable HTTP: each POST to /mcp carries one JSON-RPC message and gets
 // plain JSON back. No sessions and no SSE stream, which the spec allows.
@@ -32,8 +33,8 @@ const P = 'io.modelcontextprotocol/';
 const SERVER_INFO = { name: 'retjg-hub', title: 'RETJG HUB sales and labor', version: '1.2.0' };
 const CAPABILITIES = { tools: { listChanged: false } };
 // How long a 2026 client may reuse server/discover and tools/list. Short, because a
-// deploy that changes QUERIES should reach clients within minutes. 'private' (this
-// caller only, never a shared cache) stays right if phase 2b gives managers another list.
+// deploy that changes QUERIES should reach clients within minutes. 'private': this caller
+// only, never a shared cache.
 const CACHE = { ttlMs: 300_000, cacheScope: 'private' };
 const INSTRUCTIONS = 'Read-only sales, Retail Summary and labor data for the Bargain Lane stores in RETJG HUB. '
   + 'Call list_stores for store ids. Dates are YYYY-MM-DD, Eastern time; yesterday is the latest complete day. '
