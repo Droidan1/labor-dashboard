@@ -61,13 +61,17 @@ trimmed). Two surfaces are generated from it, so they cannot drift:
   - **OAuth** (phase 2a, 2026-10-13), for ChatGPT (developer mode, web) and optionally a second Claude
     connector: the assistant sends you to `mcp.retjghub.com/authorize`, you sign in with RETJG HUB (an
     already-signed-in browser goes straight to consent; otherwise email → 6-digit code), and press Allow.
-    Only active owner/admin accounts holding Bargain Lane get in (`admitted()` in `mcp/authorize.mjs`), and
-    only ChatGPT and Claude can be clients. Every hourly refresh re-checks the account via the main worker's
+    Only active owner/admin accounts holding Bargain Lane get in (`admitted()` in `mcp/authorize.mjs`); managers
+    never do (Brian, 2026-10-14), because the data path reads every store. Only ChatGPT and Claude can be clients. Every hourly refresh re-checks the account via the main worker's
     `agent-identity`; a demotion revokes, an outage does not. `@cloudflare/workers-oauth-provider` (pinned
     1.2.3) runs the protocol and stores grants in the `OAUTH_KV` namespace.
   Either way it reads through the main worker by service binding with its own `REPORTING_API_KEY`. Deploy it
-  with `npx wrangler deploy -c <repo>/mcp/wrangler.toml` (dry-run first: ~277 KiB, bindings `API` and
+  with `npx wrangler deploy -c <repo>/mcp/wrangler.toml` (dry-run first: ~282 KiB, bindings `API` and
   `OAUTH_KV`). 🛑 A bare `npx wrangler deploy` from the repo root deploys the MAIN worker.
+  🛑 Every retjg-mcp deploy is a mixed-rollout risk: a client that settled on 2026-07-28 with a new instance
+  fails on an old one until it reconnects (Claude's client tries 2026 first), and a rollback breaks it the
+  same way. Deploy at a quiet time and poll for 3 consecutive clean passes. Live checks need a named
+  `User-Agent`: Cloudflare's edge 403s Python's default `Python-urllib` (error 1010) before the worker.
   `wrangler tail retjg-mcp` redacts `Authorization`; refusals log by shape (`mcp_auth_refused`), OAuth calls
   as `mcp_oauth_call` / `mcp_oauth_granted` (user id, client). 🔑 `npm test` now needs `npm ci` first (the
   MCP suites import the library), in every worktree too.

@@ -4,7 +4,38 @@ _Direction and progress. Refreshed each session. Durable knowledge lives in [MEM
 
 ---
 
-## Current State — 2026-08-05
+## Current State — 2026-10-14 (agent access)
+
+_Scoped to the agent-access workstream. Other workstreams were not re-verified this session: the
+2026-08-05 state below is the last full refresh, and `tasks/todo.md` (newest first) has everything since._
+
+**Agents can read the business, read-only, and it is all in production** (PRs #325–#338):
+- **CLI `retjg`** for agents with a shell (Claude Code, Codex, Muse): 11 queries covering sales, the Retail
+  Summary and Labor pages, generated from one table (`cli/reporting.mjs`).
+- **MCP server `retjg-mcp`** at `mcp.retjghub.com/mcp` for agents without one: the same 11 tools.
+  - Claude connects with a static key.
+  - ChatGPT (Pro, developer mode) and Codex connect by OAuth, signing in with RETJG HUB. Owners and admins
+    only.
+  - Speaks MCP **2026-07-28 natively**, confirmed on Claude's real traffic, and the 2025 versions unchanged.
+- **Sign-in hardening behind it:** a crypto-random emailed code with 5 attempts (#332), and a send throttle
+  with one live code per email (#334).
+- **Catch-all route fix** (#335): a stray `?action=` no longer reaches live sales.
+- Live as of 2026-10-14: main worker `26e47dbb` (byte-identical to main `3cae8fc`), retjg-mcp `5a9912d3`.
+  3 OAuth grants, all owner or admin.
+
+**Decided (Brian, 2026-10-14):** managers do not get agent access, so phase 2b (per-person scoping) is
+dropped. See MEMORY.md.
+
+**Open, none blocking:**
+1. **No `Origin` check on `/mcp`.** Skipped on purpose: the endpoint takes bearer credentials only, and a
+   strict check could break a working connector.
+2. **No in-repo test drives a real MCP SDK client.** The review did it once from a scratch folder.
+3. **A Python agent on Python's default User-Agent is refused at the edge** (Cloudflare 1010). Change the zone
+   setting only if one ever needs MCP.
+
+---
+
+## Previous State — 2026-08-05
 
 **Multi-business permissions are STRUCTURALLY COMPLETE in production.** worker
 `a5a4a26b`, main `9753de2`. All four build-order steps of
