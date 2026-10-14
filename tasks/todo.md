@@ -1,3 +1,28 @@
+# auth-login: throttle sends, one live code per email (2026-10-14)
+
+**Why now (Brian: "do the auth-login throttle first"):** the emailed code now leads to a 30-day chain-wide
+OAuth token (phase 2a). `auth-login` had no send limit, so (a) anyone could flood an inbox, and (b) one email
+could hold many live codes; each guess is weighed against all of them, so 5 misses per round bought
+≈ 5N/900k odds. Found by the phase 2a review (G), pre-existing.
+
+Design:
+- ONE statement creates the code only if: no code for that email in the last 60 s, < 5 in the last hour,
+  < 10 in the last day (`INSERT … SELECT … WHERE`), so a burst cannot slip past a check. Rows are never
+  deleted; "created" = expires_at − 15 min; invite rows (no otp_code) are not counted.
+- A throttled request sends nothing and answers the same `{ok:true}` (no account oracle).
+- Issuing a code retires the older live codes for that email (`otp_attempts` = max). Their LINKS still
+  work (32-byte tokens). Worst case per email: 10 codes/day × 5 guesses = 50/900k a day.
+- No migration: uses existing columns.
+
+- [x] Test first: `scripts/test-auth-login-throttle.mjs` (worker.fetch, frozen clock) — 18; failed 9 before
+      (a burst made 20 codes, 7 an hour, the older code still worked)
+- [x] Worker change; test-otp-hardening adapted (one live code; legacy multi-code rows still all burn on
+      a miss) 140; 11 mutations in a lane, all caught (one rerun as a value change after a bind-count
+      mismatch crashed it); `npm test` 9727 / 111
+- [x] PR #334. Worker deployed by Brian (guarded): c07f6f66 at 100%. Live `content/v2` worker.js BYTE-
+      IDENTICAL to this branch's dry-run bundle (1,099,754 bytes, sha256 deb16c70…); auth-me 200
+- [x] Brian, 2026-10-14: real sign-in — requested a code, tapped send again: ONE email; the code signed in.
+      First human check of both the OTP hardening (#332) and this throttle
 # Phase 2a: ChatGPT signs in to retjg-mcp with RETJG HUB (OAuth), admins only (2026-10-13)
 
 **Plan:** `~/.claude/plans/tingly-churning-noodle.md` (approved). **Decisions (Brian):** ChatGPT **Pro**
