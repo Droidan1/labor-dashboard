@@ -25,6 +25,26 @@ Findings:
 - [ ] Push + PR + merge; worker deploy (Brian)
 - [ ] Confirm the first real sale lands in its own Hardlines row at $2.51
 
+# Catch-all route: no ?action= reaches the live sales route (2026-10-14)
+
+**Why (Brian: "do the catch-all route fix first"):** the last route in worker.js (`?store=BL1`, today live
+from Clover) answered ANY request no branch matched. The financial gate decides by action name, so staff
+(every PIN associate) could send a NON-financial action that matches nothing — e.g. POST-only
+`push-subscribe` as a GET — and get their store's live sales, with the route rewriting that store's KV
+snapshot and daily_sales row. Found by the phase 2a review, pre-existing.
+
+Audit first: every action name sent by index.html, sw.js, scripts, cli and mcp has its own branch; the
+dashboard's live call is `?store=X&since=…` with no action; `?action=hourly&store=` is handled by its own
+branch. So a 404 for "any ?action= that reached the end" changes nothing a real client does.
+
+- [x] Test first: `scripts/test-catch-all-route.mjs` (worker.fetch, Clover stubbed so the live route
+      really runs) — failed 9 before (staff got 200 + $123.45 + a write for push-subscribe/
+      push-unsubscribe/passkey-delete; a manager GETting delete-sale-schedule got live data)
+- [x] Guard: `if (url.searchParams.has("action")) → 404 {"error":"Unknown action"}` just before the live
+      route; ORIENT.md's "falls through" line updated
+- [x] 3 mutants in a lane (no guard, truthy `get`, status 200), all caught; `npm test` 9743 / 112
+- [ ] PR; deploy (Brian); live check
+
 # auth-login: throttle sends, one live code per email (2026-10-14)
 
 **Why now (Brian: "do the auth-login throttle first"):** the emailed code now leads to a 30-day chain-wide
