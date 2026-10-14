@@ -196,6 +196,25 @@ but both the number and half the diagnosis were invented.
    the italic lean I had assumed.
 </rules>
 
+### Recurred (2026-10-14, new L3 category): I wrote "Clover's spelling" for a category Clover did not have
+
+Brian: *"We have a new category we need to add, FG BL Hardlines-Bazaar."* I read "we have" as
+"it exists in Clover" and treated his string as Clover's exact spelling, because `L3_TO_L2`
+matches exactly. I wrote that into a test comment as if I had checked it, then asked him twice
+what Clover showed. The category was not in Clover at all. He wanted it in the app **so he could
+create it** through Inventory › Create item, and that form already does it end to end: it
+creates the category by the typed name and maps it to the picked L2. So the name was his to
+choose, and the change was never blocking him. I had read how a category is LOOKED UP and never
+how one gets CREATED.
+
+<rules>
+6. **Before matching a name to an outside system, ask whether it exists there yet.** If it does
+   not, the name is a decision to settle first, so offer the sibling pattern as the default.
+   Don't hunt for a spelling that nothing holds yet.
+7. **For "add X so I can do Y", read the path that does Y first.** It may already work without
+   the change.
+</rules>
+
 ## The third one today: my escalation lost a seven-second race (2026-09-21) · rule 6: re-read a PR's state before pushing to it (recurred 2026-09-25) · rule 7: push only verified work, because a merge can come before the verification (2026-09-28)
 
 Same trap as the entry below, and as 2026-09-18's. This time I did everything that entry

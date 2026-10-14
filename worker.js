@@ -283,6 +283,7 @@ const L3_TO_L2 = {
   "FG BL HARDLINES - STORAGE": "Hardlines",
   "FG BL HARDLINES - TOYS": "Hardlines",
   "FG BL HARDLINES - SPORTING GOODS": "Hardlines",
+  "FG BL HARDLINES - BAZAAR": "Hardlines",
   "FG T BULLSEYE": "Hardlines",
   "APPLIANCES - BL STORES": "Hardlines",
   "Bakers Secret - Kitchen Cooking": "Home",
