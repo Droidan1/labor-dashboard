@@ -12,7 +12,7 @@
 // /opt/homebrew/bin/retjg is a symlink to …/lib/retjg/retjg.mjs.
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
-import { QUERIES, READING_RULES, UsageError, QueryError, checkArgs, argSpec } from './reporting.mjs';
+import { QUERIES, READING_RULES, UsageError, QueryError, checkArgs, argSpec, runQuery } from './reporting.mjs';
 
 const BASE = process.env.RETJG_API_URL || 'https://api.retjghub.com/';
 const KEYCHAIN_SERVICE = process.env.RETJG_KEYCHAIN_SERVICE || 'retjg-api-key';
@@ -143,7 +143,7 @@ if (!key) {
 
 let out;
 try {
-  out = query.shape(await call(key, query.request(args)), args);
+  out = await runQuery(query, args, (params) => call(key, params));
 } catch (e) {
   if (e instanceof QueryError) fail(1, { error: e.message, ...e.extra });
   throw e;

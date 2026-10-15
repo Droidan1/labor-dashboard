@@ -146,7 +146,8 @@ const data = (r) => {
   const tools = (await rpc('tools/list')).result?.tools;
   eq(tools?.map(t => t.name).join(), ['list_stores', 'get_yesterday_sales', 'get_today_sales', 'get_sales_history',
     'get_retail_summary', 'get_store_categories', 'get_trailing_weeks', 'get_category_sales', 'get_category_sales_by_hour',
-    'get_labor', 'get_labor_plan'].join(), 'eleven tools, in a fixed order');
+    'get_labor', 'get_labor_plan', 'get_inventory_items', 'get_sale_schedules', 'get_bin_dumps', 'get_trucks', 'get_truck',
+    'get_out_of_stock'].join(), 'seventeen tools, in a fixed order');
   eq(tools?.map(t => t.name).join(), QUERIES.map(q => q.name).join(), 'the tools ARE the shared query table');
   ok(tools?.every(t => t.inputSchema?.type === 'object' && t.description), 'every tool has a description and an object schema');
   ok(tools?.every(t => t.annotations?.readOnlyHint === true && t.annotations?.destructiveHint === false), 'every tool is marked read-only');

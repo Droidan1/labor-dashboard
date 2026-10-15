@@ -43,9 +43,9 @@ An installable **PWA sales + labor dashboard** for the Bargain Lane / RETJG reta
 
 🛑 **Do not reach for a date range.** Re-pulling an *already healthy* old date **loses refunds** that have aged out of Clover's ~90-day window — every unnecessary date is a small permanent loss. That's why `repair-run` refuses `start`/`end` outright.
 
-**Give an agent sales and labor data** — every question an agent can ask is defined once, in
-`cli/reporting.mjs` (`QUERIES`: eleven read-only queries, the reading rules, and how each answer is
-trimmed). Two surfaces are generated from it, so they cannot drift:
+**Give an agent sales, labor and inventory data** — every question an agent can ask is defined once, in
+`cli/reporting.mjs` (`QUERIES`: seventeen read-only queries, the reading rules, and how each answer is
+trimmed; a query with `next` reads every page, run once in `runQuery`). Two surfaces are generated from it, so they cannot drift:
 
 - **CLI** `retjg` (`cli/retjg.mjs`) for agents with a shell (Claude Code, Codex, Muse): `retjg --help`
   lists every command and the rules for reading the numbers. Install it as a directory, because it imports
@@ -76,9 +76,11 @@ trimmed). Two surfaces are generated from it, so they cannot drift:
   as `mcp_oauth_call` / `mcp_oauth_granted` (user id, client). 🔑 `npm test` now needs `npm ci` first (the
   MCP suites import the library), in every worktree too.
 
-Both use `MORNING_BRIEFING_KEY`, which opens the three reporting endpoints plus, since 2026-10-13, the
-Retail Summary and Labor pages' seven read endpoints (`REPORTING_READ_THROUGH` in `worker.js`): GET only,
-every store, nothing that writes. Adding a query that needs another endpoint means adding that action there
+Both use `MORNING_BRIEFING_KEY`, which opens the three reporting endpoints plus fourteen page reads
+(`REPORTING_READ_THROUGH` in `worker.js`): the Retail Summary and Labor pages' seven (2026-10-13) and the
+Inventory pages' seven (2026-10-15: Viewer, Schedule Sale, Bin Dump, Receiver, Mark Out of Stock; not
+Opportunity Buys). GET only, every store, nothing that writes; their page and admin checks honour
+`reportingReadThrough`. Adding a query that needs another endpoint means adding that action there
 too, and `scripts/test-reporting-read-through.mjs` pins each one to a superuser session's answer.
 
 ## Known weirdness (the traps)

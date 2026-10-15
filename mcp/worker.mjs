@@ -19,7 +19,7 @@ import { OAuthProvider, OAuthError, GrantType, insufficientScope } from '@cloudf
 import { authorize, agentIdentity, admitted, AGENT_ROLES, SCOPES, ALLOWED_CLIENTS } from './authorize.mjs';
 // The tools come from QUERIES in cli/reporting.mjs, the table the retjg CLI's
 // commands come from too, so the two surfaces cannot drift.
-import { QUERIES, READING_RULES, UsageError, QueryError, checkArgs, inputSchema } from '../cli/reporting.mjs';
+import { QUERIES, READING_RULES, UsageError, QueryError, checkArgs, inputSchema, runQuery } from '../cli/reporting.mjs';
 
 // Two eras of MCP. 2025 clients open with `initialize` and agree one of these
 // (newest first: an unknown requested version is answered with the newest)…
@@ -257,11 +257,11 @@ async function handle(method, params, env) {
     if (!query) throw new RpcError(-32602, `Unknown tool: ${params.name}`);
     try {
       const args = checkArgs(query, params.arguments ?? {});
-      const out = query.shape(await report(env, query.request(args)), args);
+      const out = await runQuery(query, args, (p) => report(env, p));
       const text = JSON.stringify(out);
       if (text.length > MAX_RESULT_CHARS) {
         throw new ToolError(`This answer is ${Math.round(text.length / 1000)}k characters, too large for one tool result. `
-          + 'Narrow it: give a storeId, a shorter date range or fewer weeks, level l2 instead of l3, or bucket total.');
+          + 'Narrow it: give a storeId, a shorter date range or fewer weeks, level l2 instead of l3, bucket total, or a smaller limit.');
       }
       return { content: [{ type: 'text', text }] };
     } catch (e) {

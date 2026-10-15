@@ -16236,23 +16236,32 @@ export default {
     // allowedStores(null) answers every store, as for a superuser. Without the
     // key they are exactly the session endpoints they always were.
     //
-    // 🛑 READ-ONLY BY CONSTRUCTION: the gate admits GET only, and only these
-    // seven. The Labor page's one write (manual-override) is not here and still
-    // needs a session. Adding an action to this set hands it to every holder of
+    // 🛑 READ-ONLY BY CONSTRUCTION: the gate admits GET only, and only these.
+    // The Labor page's one write (manual-override) is not here and still needs a
+    // session. Adding an action to this set hands it to every holder of
     // MORNING_BRIEFING_KEY chain-wide; scripts/test-reporting-read-through.mjs
     // pins that each answer equals a superuser session's.
+    //
+    // The Inventory pages' reads joined 2026-10-15 (Brian: Viewer, Schedule Sale,
+    // Bin Dump, Receiver, Mark Out of Stock; not Opportunity Buys). Their page and
+    // admin checks honour `reportingReadThrough`. 🛑 Left out on purpose:
+    // mos-lookup, a GET that WRITES (it learns sticker codes); the photo routes;
+    // edit-time pre-checks; and Add Item's clover-categories, which writes a cache.
     const REPORTING_READ_THROUGH = new Set([
       "weekly-summary", "weekly-store-detail", "weekly-t13", "category-series", "category-hours",
       "labor", "labor-plan",
+      "inventory-items", "list-sale-schedules", "bin-dump-list", "truck-current", "truck-detail",
+      "truck-list", "mos-list",
     ]);
-    // 🛑 And only the parameters those seven handlers read. A read-through
+    // 🛑 And only the parameters those handlers read. A read-through
     // request falls through the whole route chain to its handler, so any route
     // ABOVE it that is chosen by something other than `action` would answer
     // instead: a fresh-eyes review reached ?history_d1=true that way
-    // (2026-10-13). Refusing every other parameter makes "exactly seven" hold
+    // (2026-10-13). Refusing every other parameter makes "exactly these" hold
     // whatever is later added above them, instead of by where code happens to sit.
     const READ_THROUGH_PARAMS = new Set([
       "action", "key", "from", "to", "store", "level", "grain", "week", "year", "end", "endWeek", "weeks",
+      "offset", "filter", "months", "limit", "id",
     ]);
     const reportingAction = url.searchParams.get("action");
     const reportingKeyGiven = request.headers.has("X-API-Key") || url.searchParams.has("key");
@@ -17113,7 +17122,7 @@ export default {
     const isAdminSecret = hasSnapshotSecret(request, env);
     let currentUser = null;
     // reportingReadThrough: already authenticated by MORNING_BRIEFING_KEY at the
-    // reporting gate, GET only, one of seven read actions. It carries no user,
+    // reporting gate, GET only, one of the REPORTING_READ_THROUGH reads. It carries no user,
     // so the business gate below skips it and allowedStores(null) is chain-wide.
     if (!isAdminSecret && !reportingReadThrough) {
       currentUser = await getAuthUser(request, env);
@@ -20633,7 +20642,7 @@ export default {
     // ── Admin: Inventory Items (paginated)
     //    GET ?action=inventory-items&store=BL1&offset=0
     if (url.searchParams.get("action") === "inventory-items") {
-      const unauth = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+      const unauth = requireInventoryAccess(currentUser, isAdminSecret || reportingReadThrough, corsJson);
       if (unauth) return unauth;
       const store = url.searchParams.get("store") || "";
       const offset = parseInt(url.searchParams.get("offset") || "0", 10);
@@ -25445,7 +25454,7 @@ export default {
 
     // GET ?action=bin-dump-list&store=BL1[&weeks=8]
     if (url.searchParams.get("action") === "bin-dump-list" && request.method === "GET") {
-      const pageDenied = requirePage(currentUser, isAdminSecret, "bin-dump", "view", corsJson);
+      const pageDenied = requirePage(currentUser, isAdminSecret || reportingReadThrough, "bin-dump", "view", corsJson);
       if (pageDenied) return pageDenied;
       if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
       const storeRaw = String(url.searchParams.get("store") || "").trim().toUpperCase();
@@ -25847,7 +25856,7 @@ export default {
 
     // GET ?action=truck-current&store=BL1 — the open truck and everything on it.
     if (url.searchParams.get("action") === "truck-current" && request.method === "GET") {
-      const pageDenied = requirePage(currentUser, isAdminSecret, "inventory-receiver", "view", corsJson);
+      const pageDenied = requirePage(currentUser, isAdminSecret || reportingReadThrough, "inventory-receiver", "view", corsJson);
       if (pageDenied) return pageDenied;
       const denied = storeActionGuard(url.searchParams.get("store"), currentUser, isAdminSecret, corsJson, { allowClosed: true });
       if (denied) return denied;
@@ -25882,7 +25891,7 @@ export default {
     // this page follows. An id is the only thing the caller supplies, so there is no store
     // parameter to point at one they hold in order to read a truck at one they do not.
     if (url.searchParams.get("action") === "truck-detail" && request.method === "GET") {
-      const pageDenied = requirePage(currentUser, isAdminSecret, "inventory-receiver", "view", corsJson);
+      const pageDenied = requirePage(currentUser, isAdminSecret || reportingReadThrough, "inventory-receiver", "view", corsJson);
       if (pageDenied) return pageDenied;
       if (!env.DB) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
       // 🛑 Checked for integer-ness, not coerced. `parseInt("") || 1` would answer with
@@ -26118,7 +26127,7 @@ export default {
 
     // GET ?action=truck-list&store=&months=&limit= — the Trucks tab.
     if (url.searchParams.get("action") === "truck-list" && request.method === "GET") {
-      const pageDenied = requirePage(currentUser, isAdminSecret, "inventory-receiver", "view", corsJson);
+      const pageDenied = requirePage(currentUser, isAdminSecret || reportingReadThrough, "inventory-receiver", "view", corsJson);
       if (pageDenied) return pageDenied;
       if (!env.DB) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
       const storeParam = String(url.searchParams.get("store") || "").trim().toUpperCase();
@@ -26419,7 +26428,7 @@ export default {
 
     // GET ?action=mos-list&store=BL1[&months=3|all][&limit=]
     if (url.searchParams.get("action") === "mos-list" && request.method === "GET") {
-      const pageDenied = requirePage(currentUser, isAdminSecret, "mos", "view", corsJson);
+      const pageDenied = requirePage(currentUser, isAdminSecret || reportingReadThrough, "mos", "view", corsJson);
       if (pageDenied) return pageDenied;
       if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
 
@@ -29017,7 +29026,7 @@ export default {
   // ── Admin: List sale schedules ──────────────────────────────────────────
   //    GET ?action=list-sale-schedules&store=BL1&filter=upcoming|active|past|all
   if (url.searchParams.get("action") === "list-sale-schedules") {
-    const unauth = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+    const unauth = requireInventoryAccess(currentUser, isAdminSecret || reportingReadThrough, corsJson);
     if (unauth) return unauth;
     const store = url.searchParams.get("store") || "";
     const filter = url.searchParams.get("filter") || "all";
