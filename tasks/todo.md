@@ -27,7 +27,7 @@ Design:
       == total) + `r.id` tie-break in the server's sort; list notes cut to 150 (300 ran ~122k at limit
       200); the reconcile rule says "with no filter"; ids lowercased. Its surviving mutants (totals over the
       unfiltered set, ET-month bucketing, no dedupe) now die; 8 more mutants, all caught
-- [ ] PR
+- [x] PR (this one); deploy (Brian) next
 - [ ] Deploy (Brian): worker → retjg-mcp → CLI reinstall; live checks with the key
 
 # Agents read the Inventory pages: Viewer, Schedule Sale, Bin Dump, Receiver, Mark Out of Stock (2026-10-15)
