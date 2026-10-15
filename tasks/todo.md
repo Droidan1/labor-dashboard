@@ -36,7 +36,13 @@ Design:
       EVERY other ACTION_BUSINESS action answers the key exactly as it answers no key; truncated paths;
       CLI `items` paging + `truck`. 14 more mutants incl. the ones that survived review, all caught
 - [x] `npm test`: 10,024 / 114 (test-price-scan failed once in ~6 full runs, passes alone; unrelated)
-- [ ] PR; deploy (Brian): worker → retjg-mcp → CLI reinstall; live checks with the key
+- [x] PR #341 (merged ab08e8c). Deploys by Brian, each live `content/v2` byte-identical to its dry run:
+      main worker f48eb392 (10 consecutive clean keyed polls of the seven reads; Opportunity Buys and an
+      unlisted parameter still refused); retjg-mcp 72aeba6e (3 clean polls, 17 tools, both protocol eras);
+      CLI reinstalled, `retjg items` / `out-of-stock` live
+- [x] Found live: BL1's POS cost field is empty on 1,064 of 1,081 items, while margins use the app's own
+      costs. The reading rule and tool description now say so (07324fc); retjg-mcp 55aae1a7 deployed from
+      a clean detached worktree of main, so prod == main
 
 # Drop phase 2b: managers do not get agent access (2026-10-14)
 
