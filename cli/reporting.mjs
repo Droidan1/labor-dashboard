@@ -31,7 +31,7 @@ export const READING_RULES = [
   'Two labor percents exist and they differ: the Retail Summary laborPct is the source sheet\'s figure; the Labor tools compute hours x $15 / sales. Do not mix them.',
   'Labor: actualLaborPct is null until every selling day in the period has hours (see complete and hoursMissingDays). In the plan, basis "budget-only" means no trend could be computed (reason says why) and recommendedHours is the budget plus 40 ASM hours.',
   'BL12 (Wyoming) is closed; its Clover account and history continue as BL16 (Indy East) from 2026-06-14.',
-  'Inventory money is USD per unit. An item cost of null means no cost on file (counted in noCost), never free; gpPct needs both a price and a cost.',
+  'Inventory money is USD per unit. In get_inventory_items, cost is the POS (Clover) item cost field, which most items leave empty: null there means none in the POS (counted in noCost), never free, and gpPct needs it. Sales margins (grossMargin, category gpmPct) come from the app\'s own item and category costs instead, so an item with no POS cost can still have a known margin in the sales tools.',
   'get_inventory_items reads the POS live (a few seconds) and lists at most limit rows, but its counts cover the whole catalog. Bin dump and truck totals cover every entry in the period even when only the newest rows are listed; complete false means the period hit the server cap and the totals are short.',
   'Out of stock: monthly totals always cover the whole period; moreRows means only the newest limit entries are listed. shrinkCost is the cost of Stolen, Damaged and Expired; storeUseCost is Store Use. linesWithoutCost and linesWithoutPrice mean those totals are short.',
 ];
@@ -532,7 +532,7 @@ export const QUERIES = [
   // ── Inventory (2026-10-15): Viewer, Schedule Sale, Bin Dump, Receiver, Mark Out of Stock ──
   {
     name: 'get_inventory_items', cli: 'items', title: 'Inventory items (Viewer)',
-    description: "The Inventory Viewer: one store's POS catalog with price, cost, GP %, category and hidden flag, "
+    description: "The Inventory Viewer: one store's POS catalog with price, POS cost (often empty; sales margins use the app's own costs), GP %, category and hidden flag, "
       + 'plus counts of items, hidden, no-cost and duplicate codes. Search or filter it; reads the POS live, a few seconds.',
     args: [req('storeId'), opt('search'), opt('itemFilter'), opt('limit')],
     request: (a) => ({ action: 'inventory-items', store: upper(a.storeId), offset: 0 }),
