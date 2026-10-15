@@ -12,6 +12,7 @@ _Deeper per-topic notes are in Claude's auto-memory at `~/.claude/projects/-User
 - 🔑 **`Sku Book Items` is not a product category.** Clover's POS renders one screen per category, so stores park high-frequency products in a category called `Sku Book Items` purely so cashiers can find them fast. **Never give it a category cost** — it is a grab-bag ($0.50 soda beside $200 baby gear). An item can legitimately be in *both* the sku book and its real category; `pickPrimaryCategory()` prefers the real one.
 - **BL16 (Indy East) reuses closed BL12 (Wyoming)'s Clover account** — same credentials, one merchant, two store identities.
 - 🔑 **A basket routinely holds both retail and bin items** — 2–8% of orders do (measured: 10 of 432 on BL1, 17 of 203 on BL4, 6 of 213 on a live day). So `retail.orders + bin.orders` is **not** a transaction count; the overlap is counted twice. Anything that divides by it reads low.
+- 🔑 **The Inventory Viewer's "cost" is Clover's own item cost field, and most items leave it empty** (BL1, 2026-10-15: 1,064 of 1,081). Sales margins never read it: they use the app's item and category costs in KV (`fetchItemCosts`). So "no cost" in the Viewer, or in `get_inventory_items`, does not mean the margin is unknown.
 
 ## Decisions, with reasons
 
@@ -37,6 +38,8 @@ _Deeper per-topic notes are in Claude's auto-memory at `~/.claude/projects/-User
 - **The emailed sign-in code is capped in the INSERT itself** (one per 60 s, 5/hour, 10/day per email; a new code retires the older ones; a throttled request answers the same `{ok:true}`). "Count, then insert" lets a burst of 20 all pass the count. The code now leads to a 30-day OAuth grant, which is why it was hardened.
 - **A request still carrying `?action=` at the end of the chain is a 404, never the live sales route** (2026-10-14). The financial gate decides by action name, so a non-financial action that matched nothing (a POST-only one sent as a GET) used to hand staff their store's live sales and rewrite its snapshot.
 - **retjg-mcp speaks two MCP eras, read from the request BODY** like the reference SDK (2026-10-14): `params._meta` naming a version → 2026-07-28; otherwise 2025 via `initialize`, unchanged. Each era names only its own versions (`initialize` never offers 2026; `_meta` never accepts 2025); only the `-32022` error lists both, because the Python SDK falls back to `initialize` only when it sees a 2025 version there.
+- **Agents read the Inventory pages: Viewer, Schedule Sale, Bin Dump, Receiver and Mark Out of Stock, with the names of who logged each entry. Opportunity Buys is excluded** (Brian, 2026-10-15). Seven GET handlers joined `REPORTING_READ_THROUGH`, and their page and admin checks honour `reportingReadThrough`. Totals in the tools cover every entry in the period, never only the rows listed: that is the same rule `mos-list` already follows server-side. `limit` is capped at 200, because the widest rows above that cannot fit in one MCP answer.
+- **The `/mcp` Origin check is skipped for now** (Brian, 2026-10-14). `/mcp` takes bearer credentials only and sends no CORS headers, so a browser page cannot make an authenticated cross-origin call, and 43 real calls carried no `Origin`. If it is ever done, it rides along with another retjg-mcp change, never its own deploy.
 
 ## Credentials
 
@@ -70,6 +73,7 @@ _Deeper per-topic notes are in Claude's auto-memory at `~/.claude/projects/-User
 - **`wrangler kv key list` reads LOCAL storage unless given `--remote`** (wrangler 4) and prints `[]` — an empty production namespace that isn't.
 - **A dry-run bundle built in a different checkout differs from live by one line**: esbuild's `// ../node_modules/…` module-path marker (comments themselves are stripped). Diff before calling a byte-compare a failure.
 - **`Referrer-Policy: no-referrer` makes browsers send `Origin: null` on a form POST**, which an Origin check refuses — it broke every real Allow on the OAuth consent page until it became `same-origin`.
+- 🛑 **A GET can write.** `mos-lookup` learns sticker codes into D1 on a GET, so "GET only" does not make an action safe to open to a key. Check each handler for writes, including KV cache writes, before adding it to `REPORTING_READ_THROUGH`.
 
 ## Verification standards this project has settled on
 
@@ -84,3 +88,4 @@ _Deeper per-topic notes are in Claude's auto-memory at `~/.claude/projects/-User
 - ⚠️ **Confirm a mutation landed in the region you meant to break.** A non-global `s///` removed the *first* matching guard in the file — one belonging to a different endpoint 270 lines earlier — and the file-wide occurrence count still dropped by one, which looks exactly like success.
 - ⚠️ **A fixture that supplies a value pre-computed cannot test the code that produces it.** Handing `mixed` to the range test left the counter that computes it entirely uncovered; deleting that counter kept the suite green. Drive the producer — stub Clover's HTTP responses and run the real aggregator.
 - **Stub the platform, not the code.** `?action=items` with `globalThis.fetch` routed to synthetic Clover payloads reaches the real `aggregateItemSales` through `worker.fetch`. That is the only way to test the channel arithmetic; regex-extracting it would drag in the category maps and every helper.
+- **Pin "the key opens nothing else" with a sweep, not a denylist.** `test-reporting-read-through` calls every action in `ACTION_BUSINESS` with the key and expects the same answer as with no key, and no write (D1 changes, KV/R2 puts and deletes, non-GET fetch). A hand-picked list of forbidden actions let a mutant that opened four delete actions survive.

@@ -4,34 +4,43 @@ _Direction and progress. Refreshed each session. Durable knowledge lives in [MEM
 
 ---
 
-## Current State — 2026-10-14 (agent access)
+## Current State — 2026-10-15 (agent access)
 
 _Scoped to the agent-access workstream. Other workstreams were not re-verified this session: the
 2026-08-05 state below is the last full refresh, and `tasks/todo.md` (newest first) has everything since._
 
-**Agents can read the business, read-only, and it is all in production** (PRs #325–#338):
-- **CLI `retjg`** for agents with a shell (Claude Code, Codex, Muse): 11 queries covering sales, the Retail
-  Summary and Labor pages, generated from one table (`cli/reporting.mjs`).
-- **MCP server `retjg-mcp`** at `mcp.retjghub.com/mcp` for agents without one: the same 11 tools.
-  - Claude connects with a static key.
-  - ChatGPT (Pro, developer mode) and Codex connect by OAuth, signing in with RETJG HUB. Owners and admins
-    only.
-  - Speaks MCP **2026-07-28 natively**, confirmed on Claude's real traffic, and the 2025 versions unchanged.
-- **Sign-in hardening behind it:** a crypto-random emailed code with 5 attempts (#332), and a send throttle
-  with one live code per email (#334).
+**Agents can read the business, read-only, and it is all in production** (PRs #325–#341):
+- **CLI `retjg`** for agents with a shell (Claude Code, Codex, Muse) and **MCP server `retjg-mcp`** at
+  `mcp.retjghub.com/mcp` for agents without one. Both offer the same 17 queries, generated from one table
+  (`cli/reporting.mjs`):
+  - sales, and the Retail Summary and Labor pages (11);
+  - since 2026-10-15, the Inventory pages (6): Viewer, Schedule Sale, Bin Dump, Receiver, Mark Out of
+    Stock. Names of who logged entries are included; Opportunity Buys is not.
+- **How agents connect:** Claude uses a static key. ChatGPT (Pro, developer mode) and Codex use OAuth,
+  signing in with RETJG HUB, owners and admins only.
+- **Protocol:** MCP 2026-07-28 natively, confirmed on Claude's real traffic; the 2025 versions still work.
+- **Sign-in hardening:** a crypto-random emailed code with 5 attempts (#332), and a send throttle with one
+  live code per email (#334).
 - **Catch-all route fix** (#335): a stray `?action=` no longer reaches live sales.
-- Live as of 2026-10-14: main worker `26e47dbb` (byte-identical to main `3cae8fc`), retjg-mcp `5a9912d3`.
-  3 OAuth grants, all owner or admin.
+- **Live as of 2026-10-15:** main worker `f48eb392` and retjg-mcp `55aae1a7`. Both are byte-identical to
+  builds of main `ab08e8c`. The CLI copy matches main.
 
-**Decided (Brian, 2026-10-14):** managers do not get agent access, so phase 2b (per-person scoping) is
-dropped. See MEMORY.md.
+**Decided (Brian):**
+- Managers do not get agent access, so phase 2b is dropped (2026-10-14).
+- The `/mcp` Origin check is skipped for now (2026-10-14).
+- Inventory scope as above (2026-10-15).
+
+See MEMORY.md.
 
 **Open, none blocking:**
-1. **No `Origin` check on `/mcp`.** Skipped on purpose: the endpoint takes bearer credentials only, and a
-   strict check could break a working connector.
-2. **No in-repo test drives a real MCP SDK client.** The review did it once from a scratch folder.
+1. **The Chief of Staff integration holds the same reporting key, so it now reads Inventory too**, including
+   costs and staff names. Brian's call whether it needs a key of its own.
+2. **No in-repo test drives a real MCP SDK client.** The reviews did it twice from a scratch folder.
 3. **A Python agent on Python's default User-Agent is refused at the edge** (Cloudflare 1010). Change the zone
    setting only if one ever needs MCP.
+4. **BL1's catalog has 135 duplicate codes**, by the Viewer's own matching (code, else SKU). Found in passing.
+5. **`test-price-scan` fails intermittently**: about one full run in six. It passes on its own, and the
+   cause has not been looked for.
 
 ---
 

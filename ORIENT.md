@@ -82,6 +82,8 @@ Inventory pages' seven (2026-10-15: Viewer, Schedule Sale, Bin Dump, Receiver, M
 Opportunity Buys). GET only, every store, nothing that writes; their page and admin checks honour
 `reportingReadThrough`. Adding a query that needs another endpoint means adding that action there
 too, and `scripts/test-reporting-read-through.mjs` pins each one to a superuser session's answer.
+🔑 The Viewer's (and `get_inventory_items`') "cost" is Clover's own item field, which most items leave empty;
+sales margins use the app's item and category costs, so "no cost" there does not mean an unknown margin.
 
 ## Known weirdness (the traps)
 
