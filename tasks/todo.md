@@ -28,7 +28,11 @@ Design:
       200); the reconcile rule says "with no filter"; ids lowercased. Its surviving mutants (totals over the
       unfiltered set, ET-month bucketing, no dedupe) now die; 8 more mutants, all caught
 - [x] PR (this one); deploy (Brian) next
-- [ ] Deploy (Brian): worker → retjg-mcp → CLI reinstall; live checks with the key
+- [x] Deploys by Brian, each live `content/v2` byte-identical to its dry run: main worker 3c0ba774 (3 clean
+      keyed polls: 23/23 prod requests over 5 stores, one request with items, this month's budgets; the
+      clamps hold live; supply-budgets-all and no key still refused; an Inventory read unaffected);
+      retjg-mcp b710453f (3 clean polls of all 20 tools); CLI reinstalled, `retjg supply-requests` /
+      `supply-budgets` live. Prod has NO October supply budgets set (chain budget 0): budgets read 0
 
 # Agents read the Inventory pages: Viewer, Schedule Sale, Bin Dump, Receiver, Mark Out of Stock (2026-10-15)
 
