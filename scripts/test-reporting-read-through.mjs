@@ -3,9 +3,10 @@
 // WHAT THIS PROTECTS. Agents (the retjg CLI and the retjg-mcp connector) need
 // what those two pages show. The pages' endpoints sit behind a session, the
 // financial gate, the business gate and allowedStores(). The key now opens
-// exactly fourteen of them, read-only, chain-wide, and nothing else: seven
-// Retail Summary / Labor reads (2026-10-13) and seven Inventory reads (2026-10-15:
-// Viewer, Schedule Sale, Bin Dump, Receiver, Mark Out of Stock — not Opportunity Buys).
+// exactly seventeen of them, read-only, chain-wide, and nothing else: seven
+// Retail Summary / Labor reads (2026-10-13), seven Inventory reads (2026-10-15:
+// Viewer, Schedule Sale, Bin Dump, Receiver, Mark Out of Stock — not Opportunity Buys)
+// and three Supply Request reads (2026-10-15: requests, one request, budgets).
 //
 // 🔑 The strongest check is a DIFFERENTIAL: for every action, the key's answer
 // must equal a superuser session's answer byte for byte. That proves the key
@@ -59,7 +60,7 @@ for (const s of STORES) for (const [j, date] of days.entries()) {
 }
 
 // The Inventory pages' tables, a few real rows each, and Clover's item list for BL2.
-for (const m of ['002', '058', '062', '065']) db.exec(fs.readFileSync(path.join(repo, `migration-${m}.sql`), 'utf8'));
+for (const m of ['002', '011', '058', '062', '065']) db.exec(fs.readFileSync(path.join(repo, `migration-${m}.sql`), 'utf8'));
 applyMigrationAlters(db, repo);
 const ago = (h) => new Date(Date.now() - h * 3600e3).toISOString();
 db.prepare(`INSERT INTO sale_schedules (schedule_group, store, item_id, item_name, discount_kind, discount_value,
@@ -78,6 +79,17 @@ pallet.run(openTruck, 'BL2', 'P-3', 35, 'Sam (associate)', ago(1));
 const mos = db.prepare(`INSERT INTO mos_entries (store, code, item_no, description, qty, unit_cost_cents, unit_price_cents, reason, logged_by, logged_at) VALUES (?,?,?,?,?,?,?,?,?,?)`);
 mos.run('BL2', 'BL-50038-1_5', '50038', 'Snacks', 3, 40, 150, 'Stolen', 'Sam (associate)', ago(6));
 mos.run('BL2', 'BL-50040-4', '50040', 'Cleaning', 1, 120, 400, 'Store Use', 'lead@bargainlane.com', ago(4));
+// Supply Request: two stores' requests, one with items and a comment, and October budgets.
+const sreq = db.prepare(`INSERT INTO supply_requests (id, user_id, user_email, store, status, priority, invoice_number, cost, notes, submitted_at, updated_at)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+const SUPPLY_ID = 'a'.repeat(32);
+sreq.run(SUPPLY_ID, 'u-mgr1', 'howardbrian260@gmail.com', 'BL1', 'ordered', 'normal', 'INV-9', 84.5, 'Mop heads', '2026-10-05T14:00:00Z', '2026-10-06T14:00:00Z');
+sreq.run('b'.repeat(32), 'u-mgr2', 'alyson@bargainlane.com', 'BL2', 'pending', 'urgent', null, null, 'Out of bags', '2026-10-07T14:00:00Z', '2026-10-07T14:00:00Z');
+db.prepare(`INSERT INTO supply_request_items (id, request_id, category, item_name, quantity, unit) VALUES ('i1', ?, 'Cleaning', 'Mop head', 6, 'units')`).run(SUPPLY_ID);
+db.prepare(`INSERT INTO supply_request_history (id, request_id, type, changed_by_id, changed_by_email, old_status, new_status, note, changed_at)
+  VALUES ('h1', ?, 'comment', 'u-su', 'bhoward@bargainlane.com', null, null, 'Ordered from Uline', '2026-10-06T14:00:00Z')`).run(SUPPLY_ID);
+db.prepare(`INSERT INTO supply_budgets (store, year, month, budget) VALUES ('BL1', 2026, 10, 250), ('BL2', 2026, 10, 300)`).run();
+
 env.BL2_MERCHANT_ID = 'M2';
 env.BL2_API_TOKEN = 'clover-token-bl2';
 const blockedFetch = globalThis.fetch;
@@ -110,6 +122,10 @@ const ACTIONS = {
   'truck-detail':        `?action=truck-detail&id=${closedTruck}`,
   'truck-list':          '?action=truck-list&store=ALL&months=6&limit=400',
   'mos-list':            '?action=mos-list&store=ALL&months=3&limit=500',
+  // Supply Request (2026-10-15)
+  'supply-requests':     '?action=supply-requests&limit=200&offset=0',
+  'supply-request':      `?action=supply-request&id=${SUPPLY_ID}`,
+  'supply-budgets':      '?action=supply-budgets&year=2026&month=10',
 };
 
 const fetchW = (r) => worker.fetch(r, env, ctx);
@@ -180,6 +196,13 @@ for (const [action, q] of Object.entries(ACTIONS)) {
   const tl = await bodyOf(await fetchW(withKey(ACTIONS['truck-list'])));
   eq(tl?.rows?.map(r => `${r.store}:${r.units}`).sort().join(), 'BL1:40,BL2:60', 'truck-list ALL through the key: both trucks with their units');
   const ml = await bodyOf(await fetchW(withKey(ACTIONS['mos-list'])));
+  const sr = await bodyOf(await fetchW(withKey(ACTIONS['supply-requests'])));
+  eq(JSON.stringify([sr?.total, sr?.requests?.map(r => r.store).sort()]), '[2,["BL1","BL2"]]', 'supply-requests through the key: every store\'s requests');
+  ok(sr?.requests?.some(r => r.user_email === 'alyson@bargainlane.com'), 'with who asked for them');
+  const one = await bodyOf(await fetchW(withKey(ACTIONS['supply-request'])));
+  eq(JSON.stringify([one?.request?.items?.[0]?.item_name, one?.request?.history?.[0]?.note]), '["Mop head","Ordered from Uline"]', 'supply-request through the key: its items and comments');
+  const sb = await bodyOf(await fetchW(withKey(ACTIONS['supply-budgets'])));
+  eq(JSON.stringify(sb?.budgets?.filter(b => b.store === 'BL1').map(b => [b.budget, b.spent, b.remaining])), '[[250,84.5,165.5]]', 'supply-budgets through the key: BL1\'s October budget, spend and remainder');
   const sum = (k) => (ml?.months || []).reduce((s, m) => s + (m[k] || 0), 0);
   eq(JSON.stringify([ml?.rows?.length, sum('shrink_cents'), sum('store_use_cents')]), '[2,120,120]',
     'mos-list ALL through the key: both entries, shrink and store use totalled by the server');
@@ -332,6 +355,10 @@ for (const [action, q] of Object.entries(ACTIONS)) {
   const mmos = await bodyOf(await fetchW(req('/' + ACTIONS['mos-list'], { user: 'u-mgr1' })));
   eq((mmos?.rows || []).length, 0, 'and their out-of-stock log (no BL1 entries seeded)');
   eq((await fetchW(req('/' + ACTIONS['truck-current'], { user: 'u-mgr1' }))).status, 403, 'a BL1 manager still cannot read BL2\'s open truck');
+  const msr = await bodyOf(await fetchW(req('/' + ACTIONS['supply-requests'], { user: 'u-mgr1' })));
+  eq((msr?.requests || []).map(r => r.store).join(), 'BL1', 'a BL1 manager\'s supply requests are still BL1 only');
+  eq((await fetchW(req('/?action=supply-request&id=' + 'b'.repeat(32), { user: 'u-mgr1' }))).status, 403, 'and they still cannot open BL2\'s request');
+  eq((await fetchW(req('/' + ACTIONS['supply-requests'], { user: 'u-staff' }))).status, 403, 'staff still cannot see supply requests');
 }
 
 console.log(`${pass} passed, ${fail} failed`);
