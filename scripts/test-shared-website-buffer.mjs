@@ -6,8 +6,8 @@ import { pathToFileURL } from 'node:url';
 import { makeEnv, applyMigrationAlters, req, ctx, blockNetwork } from './lib/worker-harness.mjs';
 const repo=path.resolve('.');
 const file=path.join(os.tmpdir(),`shared-content-${crypto.randomUUID()}.mjs`);
-fs.writeFileSync(file,fs.readFileSync('worker.js','utf8')+'\nexport { processBufferOutbox };\n');
-const {default:worker,processBufferOutbox}=await import(pathToFileURL(file).href);
+fs.writeFileSync(file,fs.readFileSync('worker.js','utf8')+'\nexport { processBufferOutbox, bufferPostMetadata };\n');
+const {default:worker,processBufferOutbox,bufferPostMetadata}=await import(pathToFileURL(file).href);
 const {db,env}=makeEnv(repo);
 for(const n of ['020','021','078'])db.exec(fs.readFileSync(`migration-${n}.sql`,'utf8'));
 applyMigrationAlters(db,repo);
@@ -56,11 +56,12 @@ const channel='12345678901234567890abcd';
 equal((await action('buffer-channel-save',{store:'BL1',channelId:channel,name:'Coliseum Facebook',service:'facebook'})).status,200,'channel mapped');
 let status=await action('buffer-status',undefined,'u-admin','GET');equal(status.body.configured,false,'connection honestly unconfigured');ok(!JSON.stringify(status.body).includes('BUFFER_API_KEY'),'no secret in status');
 const draftRow=db.prepare("INSERT INTO marketing_drafts(store,photo_ids,caption,status,created_at,updated_at) VALUES('BL1',?,'Approved caption','draft',?,?)").run(JSON.stringify([pid]),past,past);
-const draftId=Number(draftRow.lastInsertRowid),payload={draftId,channelId:channel,dueAt:future,requestId:'request-1'};
+const draftId=Number(draftRow.lastInsertRowid),payload={draftId,expectedUpdatedAt:past,channelId:channel,dueAt:future,requestId:'request-1'};
 equal((await action('buffer-queue-draft',payload)).status,400,'approval required');
 equal((await action('buffer-approve-draft',{draftId,caption:'Approved caption',expectedUpdatedAt:past},'u-mgr1')).status,403,'manager cannot approve outbound content');
 equal((await action('buffer-approve-draft',{draftId,caption:'Approved caption',expectedUpdatedAt:'stale'})).status,409,'stale approval refused');
 equal((await action('buffer-approve-draft',{draftId,caption:'Approved caption',expectedUpdatedAt:past})).status,200,'admin approves the existing HUB draft');
+payload.expectedUpdatedAt=db.prepare('SELECT updated_at FROM marketing_drafts WHERE id=?').get(draftId).updated_at;
 const adminContent=await action('website-content-admin',undefined,'u-admin','GET');
 equal(adminContent.body.drafts[0].status,'approved','approved draft available in control center');
 equal(adminContent.body.photos[0].url,`https://api.retjghub.com/p/${pid}-${uuid}.jpeg`,'photo picker uses stable image links');
@@ -69,7 +70,7 @@ let queued=await action('buffer-queue-draft',payload);equal(queued.status,201,'a
 equal((await action('buffer-queue-draft',payload)).body.id,jobId,'retry returns same job');
 equal((await action('buffer-queue-draft',{...payload,requestId:'different'})).status,409,'same publishing slot not duplicated');
 equal((await processBufferOutbox(env)).skipped,'Buffer delivery is not enabled','queue alone sends nothing');
-let calls=0;globalThis.fetch=async(url,options)=>{calls++;equal(url,'https://api.buffer.com','official endpoint');const b=JSON.parse(options.body);equal(b.variables.input.needsApproval,false,'approved HUB content explicit');equal(b.variables.input.assets[0].image.url,`https://api.retjghub.com/p/${pid}-${uuid}.jpeg`,'Buffer receives stable photo URL');return new Response(JSON.stringify({data:{createPost:{post:{id:'buffer-post-1',dueAt:future}}}}),{headers:{'Content-Type':'application/json'}})};
+let calls=0;globalThis.fetch=async(url,options)=>{calls++;equal(url,'https://api.buffer.com','official endpoint');const b=JSON.parse(options.body);equal(b.variables.input.needsApproval,false,'approved HUB content explicit');equal(b.variables.input.metadata,{facebook:{type:'post'}},'Facebook metadata reaches provider');equal(b.variables.input.assets[0].image.url,`https://api.retjghub.com/p/${pid}-${uuid}.jpeg`,'Buffer receives stable photo URL');return new Response(JSON.stringify({data:{createPost:{post:{id:'buffer-post-1',dueAt:future}}}}),{headers:{'Content-Type':'application/json'}})};
 env.BUFFER_API_KEY='test-secret-only';env.BUFFER_PUBLISH_ENABLED='true';
 equal((await processBufferOutbox(env)).scheduled,1,'Buffer accepts scheduled post');
 equal((await processBufferOutbox(env)).scheduled,0,'next tick does not resend');equal(calls,1,'one remote request');
@@ -83,4 +84,40 @@ const unknown=await action('buffer-queue-draft',next);equal(unknown.status,201,'
 globalThis.fetch=async()=>{calls++;throw new Error('connection interrupted')};
 await processBufferOutbox(env);equal(db.prepare('SELECT status FROM buffer_outbox WHERE id=?').get(unknown.body.id).status,'needs_review','unknown delivery requires reconciliation');
 const priorCalls=calls;await processBufferOutbox(env);equal(calls,priorCalls,'unknown outcome never replayed');
+// Real platform payloads and limits, not a mock that accepts any shape.
+for(const [service,metadata] of [['instagram',{instagram:{type:'post',shouldShareToFeed:true}}],['googlebusiness',{google:{type:'whats_new'}}],['tiktok',{tiktok:{title:'Approved caption'}}],['threads',{}]]) {
+ const ch=({instagram:'222222222222222222222222',googlebusiness:'333333333333333333333333',tiktok:'444444444444444444444444',threads:'555555555555555555555555'})[service];
+ equal((await action('buffer-channel-save',{store:'BL1',channelId:ch,name:service,service})).status,200,`${service} mapping accepted`);
+ const job=await action('buffer-queue-draft',{...payload,channelId:ch,requestId:'platform-'+service});equal(job.status,201,`${service} queued`);
+ globalThis.fetch=async(url,options)=>{const input=JSON.parse(options.body).variables.input;equal(input.metadata,metadata,`${service} provider metadata`);return new Response(JSON.stringify({data:{createPost:{post:{id:'post-'+service}}}}))};
+ equal((await processBufferOutbox(env)).scheduled,1,`${service} delivered once`);
+}
+const asset={url:'https://api.retjghub.com/p/image.jpeg'};
+for(const [service,limit] of Object.entries({facebook:10,instagram:10,googlebusiness:1,tiktok:10,threads:20})) {
+ assert.throws(()=>bufferPostMetadata(service,Array(limit+1).fill(asset),'Caption'),/at most/);checks++;
+}
+for(const service of ['instagram','tiktok']){assert.throws(()=>bufferPostMetadata(service,[],'Caption'),/at least one/);checks++;}
+assert.throws(()=>bufferPostMetadata('facebook',[{url:'https://api.retjghub.com/p/image.gif'}],'Caption'),/JPEG/);checks++;
+// Existing request IDs return persisted outcomes despite edited drafts, changed maps or time.
+const originalNow=Date.now;Date.now=()=>now+172800000;
+db.prepare('UPDATE buffer_channels SET active=0 WHERE channel_id=?').run(channel);
+db.prepare("UPDATE marketing_drafts SET caption='Edited after scheduling',status='draft' WHERE id=?").run(draftId);
+equal((await action('buffer-queue-draft',payload)).body.id,jobId,'lost-response retry returns original job after changes and due time');
+equal((await action('buffer-queue-draft',{...payload,channelId:'222222222222222222222222'})).status,409,'request ID cannot change identity');Date.now=originalNow;
+db.prepare('UPDATE buffer_channels SET active=1 WHERE channel_id=?').run(channel);
+// Direct Meta approval cannot serve as Buffer approval for a different snapshot.
+db.prepare("UPDATE marketing_drafts SET status='approved' WHERE id=?").run(draftId);
+equal((await action('buffer-queue-draft',{...payload,requestId:'changed-caption',dueAt:new Date(now+180000000).toISOString()})).status,409,'approval snapshot must match exact content');
+const edit=await action('draft-save',{id:draftId,store:'BL1',caption:'New caption',photo_ids:[pid]});equal(edit.status,200,'existing editor saves');
+equal(db.prepare('SELECT status FROM marketing_drafts WHERE id=?').get(draftId).status,'draft','editing approved content invalidates approval');
+// A campaign hero can be deleted without an orphaned database row or dangling blob.
+const key2='marketing/BL1/retail/2026-10/22222222-2222-4222-a222-222222222222.jpeg';
+const hero=Number(db.prepare("INSERT INTO marketing_photos(store,photo_type,r2_key,content_type,bytes,uploader,status,created_at) VALUES('BL1','retail',?,'image/jpeg',3,'test','new',?)").run(key2,past).lastInsertRowid);await env.MEDIA.put(key2,new Uint8Array([255,216,255]));
+const linked=await action('website-campaign-save',{...campaign,photoId:hero,status:'archived'});equal(linked.status,201,'archived campaign references photo');
+equal((await action('photo-delete',{id:hero})).status,200,'campaign-linked photo deletion succeeds');
+equal(db.prepare('SELECT photo_id FROM website_campaigns WHERE id=?').get(linked.body.id).photo_id,null,'campaign reference detaches');ok(!db.prepare('SELECT id FROM marketing_photos WHERE id=?').get(hero),'photo row deleted');ok(!await env.MEDIA.get(key2),'photo object deleted');
+// Store filtering precedes the limit even with many other stores' campaigns.
+const target=await action('website-campaign-save',{...campaign,title:'BL1 older offer',status:'approved'});
+for(let i=0;i<31;i++)await action('website-campaign-save',{...campaign,title:'Other store '+i,stores:['BL4'],startsAt:new Date(now-1000).toISOString(),status:'approved'});
+ok((await json(await publicFeed())).body.campaigns.some(c=>c.id===target.body.id),'unrelated campaigns cannot crowd out this store');
 blockNetwork();fs.unlinkSync(file);console.log(`\n${checks} passed, 0 failed`);

@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS website_campaigns (
   department TEXT NOT NULL,
   discount INTEGER NOT NULL CHECK(discount BETWEEN 1 AND 99),
   stores TEXT NOT NULL,
-  photo_id INTEGER REFERENCES marketing_photos(id),
+  photo_id INTEGER REFERENCES marketing_photos(id) ON DELETE SET NULL,
   starts_at TEXT NOT NULL,
   ends_at TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','approved','archived')),
@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS website_settings (
 CREATE TABLE IF NOT EXISTS buffer_channels (
   store TEXT NOT NULL,
   channel_id TEXT NOT NULL,
-  service TEXT NOT NULL CHECK(service IN ('facebook','instagram','googlebusiness','threads')),
+  service TEXT NOT NULL CHECK(service IN ('facebook','instagram','googlebusiness','threads','tiktok')),
   name TEXT NOT NULL,
   active INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY(store, channel_id)
@@ -61,3 +61,10 @@ CREATE TABLE IF NOT EXISTS buffer_outbox (
   UNIQUE(draft_id, channel_id, due_at)
 );
 CREATE INDEX IF NOT EXISTS idx_buffer_outbox_status ON buffer_outbox(status, created_at);
+
+-- Buffer approval is a distinct reviewed snapshot, independent of Meta status.
+CREATE TABLE IF NOT EXISTS buffer_approvals (
+  draft_id INTEGER PRIMARY KEY REFERENCES marketing_drafts(id) ON DELETE CASCADE,
+  store TEXT NOT NULL, caption TEXT NOT NULL, photo_ids TEXT NOT NULL,
+  draft_version TEXT NOT NULL, approved_by TEXT NOT NULL
+);

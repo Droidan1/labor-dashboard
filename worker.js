@@ -16257,7 +16257,7 @@ async function websitePublicContent(request, env, url) {
   if (store && !ALL_STORES.includes(store)) return websiteJson({ error: 'Unknown active store' }, 404, headers);
   try {
     const now = new Date().toISOString();
-    const campaigns = await env.DB.prepare("SELECT id, title, description, department, discount, stores, photo_id, starts_at, ends_at, revision FROM website_campaigns WHERE status='approved' AND starts_at<=? AND ends_at>? ORDER BY starts_at DESC LIMIT 30").bind(now, now).all();
+    const campaigns = await env.DB.prepare("SELECT id, title, description, department, discount, stores, photo_id, starts_at, ends_at, revision FROM website_campaigns WHERE status='approved' AND starts_at<=? AND ends_at>? AND (? IS NULL OR EXISTS (SELECT 1 FROM json_each(website_campaigns.stores) WHERE value=?)) ORDER BY starts_at DESC LIMIT 30").bind(now, now, store, store).all();
     const visibleCampaigns = [];
     for (const row of campaigns.results || []) {
       const stores = JSON.parse(row.stores);
@@ -16358,7 +16358,7 @@ async function websiteSharedAction(request, env, url, currentUser, isAdminSecret
     if (action === 'buffer-channel-save') {
       const [store] = websiteStores([body.store]);
       if (!/^[0-9a-f]{24}$/.test(body.channelId || '')) websiteError('Invalid Buffer channel ID');
-      if (!['facebook','instagram','googlebusiness','threads'].includes(body.service)) websiteError('Unsupported channel service');
+      if (!['facebook','instagram','googlebusiness','threads','tiktok'].includes(body.service)) websiteError('Unsupported channel service');
       const name = websiteString(body.name, 'channel name', 100);
       await env.DB.prepare('INSERT INTO buffer_channels(store,channel_id,service,name,active) VALUES(?,?,?,?,?) ON CONFLICT(store,channel_id) DO UPDATE SET service=excluded.service,name=excluded.name,active=excluded.active').bind(store, body.channelId, body.service, name, body.active === false ? 0 : 1).run();
       return websiteJson({ ok: true }, 200, corsJson);
@@ -16380,20 +16380,33 @@ async function websiteSharedAction(request, env, url, currentUser, isAdminSecret
       await websitePhotos(env, ids, [draft.store]);
       const result = await env.DB.prepare("UPDATE marketing_drafts SET caption=?,status='approved',updated_at=? WHERE id=? AND updated_at=? AND status IN ('draft','approved')").bind(caption, now, body.draftId, expected).run();
       if (!result.meta?.changes) websiteError('Draft changed. Reload before approving.', 409);
+      await env.DB.prepare('INSERT INTO buffer_approvals(draft_id,store,caption,photo_ids,draft_version,approved_by) VALUES(?,?,?,?,?,?) ON CONFLICT(draft_id) DO UPDATE SET store=excluded.store,caption=excluded.caption,photo_ids=excluded.photo_ids,draft_version=excluded.draft_version,approved_by=excluded.approved_by').bind(body.draftId, draft.store, caption, JSON.stringify(ids), now, actor).run();
       return websiteJson({ ok: true, updatedAt: now }, 200, corsJson);
     }
     if (action === 'buffer-queue-draft') {
       const requestKey = websiteString(body.requestId, 'request ID', 100);
       if (!Number.isInteger(body.draftId) || body.draftId < 1) websiteError('Invalid draft ID');
-      const { ends: due } = websiteWindow({ startsAt: now, endsAt: body.dueAt });
+      const expected = websiteString(body.expectedUpdatedAt, 'approved draft version', 60);
+      const channelId = websiteString(body.channelId, 'channel ID', 24);
+      const due = websiteWindow({ startsAt: '2000-01-01T00:00:00Z', endsAt: body.dueAt }).ends;
+      // Resolve a request before inspecting mutable records or the clock.
+      const previous = await env.DB.prepare('SELECT * FROM buffer_outbox WHERE request_key=?').bind(requestKey).first();
+      if (previous) {
+        if (previous.draft_id !== body.draftId || previous.channel_id !== channelId || previous.due_at !== due) websiteError('Request ID belongs to a different submission', 409);
+        return websiteJson({ ok: true, id: previous.id, status: previous.status, repeated: true }, 200, corsJson);
+      }
       if (Date.parse(due) < Date.now() + 60000) websiteError('Choose a publishing time at least one minute ahead');
-      const draft = await env.DB.prepare('SELECT id,store,caption,photo_ids,status FROM marketing_drafts WHERE id=?').bind(body.draftId).first();
+      const draft = await env.DB.prepare('SELECT id,store,caption,photo_ids,status,updated_at FROM marketing_drafts WHERE id=?').bind(body.draftId).first();
       if (!draft || draft.status !== 'approved' || !ALL_STORES.includes(draft.store)) websiteError('Approve the store draft before queueing');
-      const channel = await env.DB.prepare('SELECT channel_id FROM buffer_channels WHERE store=? AND channel_id=? AND active=1').bind(draft.store, body.channelId || '').first();
+      if (draft.updated_at !== expected) websiteError('Draft changed. Reload and approve before queueing.', 409);
+      const approval = await env.DB.prepare('SELECT * FROM buffer_approvals WHERE draft_id=?').bind(draft.id).first();
+      if (!approval || approval.store !== draft.store || approval.caption !== draft.caption || approval.photo_ids !== draft.photo_ids || approval.draft_version !== draft.updated_at) websiteError('Approve this exact draft for Buffer before queueing', 409);
+      const channel = await env.DB.prepare('SELECT channel_id, service FROM buffer_channels WHERE store=? AND channel_id=? AND active=1').bind(draft.store, body.channelId || '').first();
       if (!channel) websiteError('Channel is not mapped to this store');
       const text = websiteString(draft.caption, 'caption', 10000);
       let ids; try { ids = JSON.parse(draft.photo_ids || '[]'); } catch { websiteError('Invalid draft photos'); }
       const assets = await websitePhotos(env, ids, [draft.store]);
+      bufferPostMetadata(channel.service, assets, text);
       const prior = await env.DB.prepare('SELECT * FROM buffer_outbox WHERE request_key=? OR (draft_id=? AND channel_id=? AND due_at=?)').bind(requestKey, draft.id, channel.channel_id, due).first();
       if (prior) {
         if (prior.request_key !== requestKey || prior.draft_id !== draft.id || prior.channel_id !== channel.channel_id || prior.due_at !== due || prior.text !== text || prior.assets !== JSON.stringify(assets)) websiteError('A different submission already uses this request or slot', 409);
@@ -16401,14 +16414,27 @@ async function websiteSharedAction(request, env, url, currentUser, isAdminSecret
       }
       const id = crypto.randomUUID();
       try {
-        await env.DB.prepare("INSERT INTO buffer_outbox(id,request_key,draft_id,channel_id,store,text,assets,due_at,status,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,'queued',?,?,?)").bind(id, requestKey, draft.id, channel.channel_id, draft.store, text, JSON.stringify(assets), due, actor, now, now).run();
-      } catch (error) { if (/UNIQUE|constraint/i.test(String(error.message))) websiteError('Submission raced with another request. Reload the job list.', 409); throw error; }
+        const inserted = await env.DB.prepare("INSERT INTO buffer_outbox(id,request_key,draft_id,channel_id,store,text,assets,due_at,status,created_by,created_at,updated_at) SELECT ?,?,?,?,?,?,?,?,'queued',?,?,? WHERE EXISTS (SELECT 1 FROM marketing_drafts WHERE id=? AND updated_at=? AND status='approved')").bind(id, requestKey, draft.id, channel.channel_id, draft.store, text, JSON.stringify(assets), due, actor, now, now, draft.id, expected).run();
+        if (!inserted.meta?.changes) websiteError('Draft changed while queueing. Reload before trying again.', 409);
+      } catch (error) { if (error.status) throw error; if (/UNIQUE|constraint/i.test(String(error.message))) websiteError('Submission raced with another request. Reload the job list.', 409); throw error; }
       return websiteJson({ ok: true, id, status: 'queued', deliveryEnabled: env.BUFFER_PUBLISH_ENABLED === 'true' }, 201, corsJson);
     }
     return websiteJson({ error: 'Unknown action' }, 404, corsJson);
   } catch (error) {
     return websiteJson({ error: error.status ? error.message : 'Shared content operation unavailable' }, error.status || 503, corsJson);
   }
+}
+function bufferPostMetadata(service, assets, text) {
+  const limits = { facebook: 10, instagram: 10, googlebusiness: 1, threads: 20, tiktok: 10 };
+  if (!(service in limits)) websiteError('Unsupported Buffer service');
+  if (assets.length > limits[service]) websiteError(`${service} accepts at most ${limits[service]} images`);
+  if (['instagram','tiktok'].includes(service) && !assets.length) websiteError(`${service} requires at least one image`);
+  if (assets.some(p => !/\.(?:jpe?g|png|webp)$/i.test(new URL(p.url).pathname))) websiteError('Buffer photo posts require JPEG, PNG or WebP images');
+  if (service === 'facebook') return { facebook: { type: 'post' } };
+  if (service === 'instagram') return { instagram: { type: 'post', shouldShareToFeed: true } };
+  if (service === 'googlebusiness') return { google: { type: 'whats_new' } };
+  if (service === 'tiktok') return { tiktok: { title: text.slice(0,90) } };
+  return {};
 }
 async function processBufferOutbox(env, now = new Date()) {
   // Delivery is opt-in and credentials stay on the Worker. Queueing alone never sends.
@@ -16423,16 +16449,18 @@ async function processBufferOutbox(env, now = new Date()) {
     if (!claim.meta?.changes) continue;
     const finish = (status, message, postId = null) => env.DB.prepare('UPDATE buffer_outbox SET status=?,last_error=?,buffer_post_id=?,updated_at=? WHERE id=? AND status=\'submitting\'').bind(status, message, postId, new Date().toISOString(), job.id).run();
     if (job.due_at <= nowIso) { await finish('failed', 'Publishing time has passed. Choose a new time.'); continue; }
-    const mapped = await env.DB.prepare('SELECT channel_id FROM buffer_channels WHERE store=? AND channel_id=? AND active=1').bind(job.store, job.channel_id).first();
+    const mapped = await env.DB.prepare('SELECT channel_id, service FROM buffer_channels WHERE store=? AND channel_id=? AND active=1').bind(job.store, job.channel_id).first();
     if (!mapped) { await finish('failed', 'Channel mapping was removed.'); continue; }
     let assets;
     try { assets = await websitePhotos(env, JSON.parse(job.assets).map(p => p.id), [job.store]); }
     catch { await finish('failed', 'A selected photo was removed or rejected.'); continue; }
+    let metadata;
+    try { metadata = bufferPostMetadata(mapped.service, assets, job.text); } catch (error) { await finish('failed', error.message); continue; }
     try {
       const response = await fetch('https://api.buffer.com', {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.BUFFER_API_KEY}` },
         signal: AbortSignal.timeout(20000),
-        body: JSON.stringify({ query: 'mutation ScheduleStorePost($input: CreatePostInput!) { createPost(input: $input) { ... on PostActionSuccess { post { id dueAt } } ... on MutationError { message } } }', variables: { input: { text: job.text, channelId: job.channel_id, needsApproval: false, saveToDraft: false, schedulingType: 'automatic', mode: 'customScheduled', dueAt: job.due_at, assets: assets.map(p => ({ image: { url: p.url } })) } } }),
+        body: JSON.stringify({ query: 'mutation ScheduleStorePost($input: CreatePostInput!) { createPost(input: $input) { ... on PostActionSuccess { post { id dueAt } } ... on MutationError { message } } }', variables: { input: { metadata, text: job.text, channelId: job.channel_id, needsApproval: false, saveToDraft: false, schedulingType: 'automatic', mode: 'customScheduled', dueAt: job.due_at, assets: assets.map(p => ({ image: { url: p.url } })) } } }),
       });
       const data = await response.json().catch(() => null), result = data?.data?.createPost;
       if (response.ok && result?.post?.id) { await finish('scheduled', null, result.post.id); scheduled++; }
@@ -18108,7 +18136,7 @@ export default {
           const cur = await env.DB.prepare("SELECT status FROM marketing_drafts WHERE id=?").bind(id).first().catch(() => null);
           if (cur && cur.status === "publishing") return new Response(JSON.stringify({ error: "Post is publishing — can't edit right now" }), { status: 409, headers: corsJson });
           const res = await env.DB.prepare(
-            `UPDATE marketing_drafts SET store=?, thumbnail_id=?, photo_ids=?, caption=?, caption_source=?, topic=?, post_type=?, updated_at=? WHERE id=?`
+            `UPDATE marketing_drafts SET status=CASE WHEN status='approved' THEN 'draft' ELSE status END, store=?, thumbnail_id=?, photo_ids=?, caption=?, caption_source=?, topic=?, post_type=?, updated_at=? WHERE id=?`
           ).bind(store, thumbnailId, JSON.stringify(photoIds), caption, captionSource, topic, postType, now, id).run();
           if (!res.meta || res.meta.changes === 0) return new Response(JSON.stringify({ error: "Draft not found" }), { status: 404, headers: corsJson });
           // A scheduled post must always have an image; an edit that removes them auto-unschedules it.
