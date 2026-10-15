@@ -32,12 +32,16 @@ const SEED = Array.from({ length: 450 }, (_, i) => ({
   id: i.toString(16).padStart(32, '0'),
   store: ['BL1', 'BL2', 'BL4'][i % 3],
   status: STATUSES[i % 4],
-  priority: i % 10 === 0 ? 'urgent' : 'normal',
+  priority: i % 10 === 3 ? 'urgent' : 'normal',   // i odd: under_review or ordered, so urgent spend is real
   cost: i % 4 === 3 ? 10 + (i % 7) + 0.25 : i % 4 === 1 ? 5 : null,
   email: `user${i % 5}@bargainlane.com`,
   notes: i === 7 ? 'Please '.repeat(100) : `note ${i}`,
   submitted_at: `2026-${i < 225 ? '09' : '10'}-${String(1 + (i % 28)).padStart(2, '0')}T${String(i % 24).padStart(2, '0')}:00:00Z`,
 }));
+// 🔑 02:00 UTC on the 1st is still September in Eastern time. The budget buckets by UTC,
+// so this ordered request belongs to OCTOBER in both tools.
+SEED.push({ id: 'c'.repeat(32), store: 'BL1', status: 'ordered', priority: 'normal', cost: 7.77, email: 'user0@bargainlane.com',
+  notes: 'Edge of the month', submitted_at: '2026-10-01T02:00:00.123Z' });
 const ins = db.prepare(`INSERT INTO supply_requests (id, user_id, user_email, store, status, priority, invoice_number, cost, notes, submitted_at, updated_at)
   VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
 db.exec('BEGIN');
@@ -72,6 +76,14 @@ async function tool(name, args = {}) {
   return res.isError ? { isError: true, text: lastText } : JSON.parse(lastText);
 }
 const since = (n) => upstream.slice(n).map(u => new URL(u.url).searchParams);
+// A hook that runs just before the main worker answers a given page (to change data mid-read).
+let beforePage = null;
+const realApi = env.API.fetch;
+env.API.fetch = async (r) => {
+  const off = new URL(r.url).searchParams.get('offset');
+  if (beforePage && off !== '0' && off !== null) { const f = beforePage; beforePage = null; f(); }
+  return realApi(r);
+};
 const keyed = async (q) => (await main.fetch(new Request('https://api.retjghub.com/' + q, { headers: { 'X-API-Key': UP } }), mainEnv, ctx)).json();
 
 // ── get_supply_requests ────────────────────────────────────────────────────
@@ -82,7 +94,7 @@ const keyed = async (q) => (await main.fetch(new Request('https://api.retjghub.c
     [['supply-requests', '0', '200', null, null], ['supply-requests', '200', '200', null, null], ['supply-requests', '400', '200', null, null]],
     'reads every page: offsets 0, 200, 400, no store or status filter');
   ok(upstream.slice(n).every(u => u.method === 'GET' && u.key === UP), 'as GETs with the reporting key');
-  eq(r.requests, 450, 'all 450 requests, not the first 200 the Reports tab sees');
+  eq([r.requests, r.complete], [SEED.length, true], `all ${SEED.length} requests, not the first 200 the Reports tab sees, and complete`);
   for (const s of STATUSES) {
     eq([r.totals?.byStatus?.[s]?.requests, r.totals?.byStatus?.[s]?.cost], [count(x => x.status === s), costOf(x => x.status === s)], `${s}: count and cost over every request`);
   }
@@ -101,9 +113,17 @@ const keyed = async (q) => (await main.fetch(new Request('https://api.retjghub.c
   eq([since(n)[0].get('store'), since(n)[0].get('status')], ['BL2', 'ordered'], 'store (upper-cased) and status go to the server');
   eq([r.requests, Object.keys(r.totals?.byStore || {})], [count(x => x.store === 'BL2' && x.status === 'ordered'), ['BL2']], 'and the totals are that set');
   const long = r.rows.find(x => x.id === SEED[7].id);
-  eq([long?.notes?.length, long?.notes?.endsWith('…')], [301, true], 'a long note is cut to 300 characters in the list');
+  eq([long?.notes?.length, long?.notes?.endsWith('…')], [151, true], 'a long note is cut to 150 characters in the list');
   const u = await tool('get_supply_requests', { priority: 'urgent' });
   eq([u.requests, u.rows.every(x => x.priority === 'urgent')], [count(x => x.priority === 'urgent'), true], 'priority urgent: only urgent ones, counted over every page');
+  const urg = (x) => x.priority === 'urgent';
+  eq([u.totals?.byStore?.BL2?.requests, u.totals?.byStatus?.ordered?.cost, u.orderedSpend?.BL1?.['2026-10']],
+    [count(x => urg(x) && x.store === 'BL2'), costOf(x => urg(x) && x.status === 'ordered'), costOf(x => urg(x) && x.store === 'BL1' && x.status === 'ordered' && x.submitted_at.startsWith('2026-10'))],
+    'and the totals and spend are the urgent ones only, not every request');
+  ok(costOf(x => urg(x) && x.status === 'ordered') > 0, 'control: the seed does have urgent ordered spend to compare');
+  const edge = await tool('get_supply_requests', { storeId: 'BL1', supplyStatus: 'ordered', limit: 1 });
+  ok(edge.orderedSpend?.BL1?.['2026-10'] === spendOct('BL1') && spendOct('BL1') > costOf(x => x.store === 'BL1' && x.status === 'ordered' && x.submitted_at.startsWith('2026-10-0') && x.id !== 'c'.repeat(32)) - 1,
+    'the 02:00 UTC Oct 1 request counts in October (UTC), as the budget counts it');
   ok((await tool('get_supply_requests', { supplyStatus: 'done' })).isError, 'an unknown status is refused');
 }
 
@@ -124,6 +144,8 @@ const keyed = async (q) => (await main.fetch(new Request('https://api.retjghub.c
   const et = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: 'numeric' }).formatToParts(new Date());
   eq([now.year, now.month], [Number(et.find(p => p.type === 'year').value), Number(et.find(p => p.type === 'month').value)], 'which is the current Eastern month');
   ok((await tool('get_supply_budgets', { year: 2026 })).isError, 'year without month is refused');
+  ok((await tool('get_supply_budgets', { month: 10 })).isError, 'and month without year');
+  eq(b.chain?.remaining, r2(1100 - (spendOct('BL1') + spendOct('BL2') + spendOct('BL4'))), 'chain remaining');
 }
 
 // ── get_supply_request ─────────────────────────────────────────────────────
@@ -133,10 +155,23 @@ const keyed = async (q) => (await main.fetch(new Request('https://api.retjghub.c
   eq(r.items?.map(i => [i.category, i.item_name, i.quantity, i.unit]), [['Cleaning', 'Mop head', 6, 'units'], ['Office', 'Tape', 2, 'packs']], 'every item');
   eq(r.history?.map(h => [h.type, h.changed_by_email, h.note]), [['status_change', 'bhoward@bargainlane.com', 'Ordered'], ['comment', 'howardbrian260@gmail.com', 'Thanks!']], 'its history: status change and comment, in order, with who');
   ok(!lastText.includes('"user_id"') && !lastText.includes('changed_by_id') && !lastText.includes('request_id'), 'internal ids dropped');
+  eq((await tool('get_supply_request', { requestId: SEED[10].id.toUpperCase() })).id, SEED[10].id, 'an id in capitals still finds it (ids are stored lowercase)');
   const before = upstream.length;
   ok((await tool('get_supply_request', { requestId: 'nope' })).isError && upstream.length === before, 'a malformed id is refused before any call');
   const missing = await tool('get_supply_request', { requestId: 'f'.repeat(32) });
   ok(missing.isError && /Not found/.test(missing.text), 'an unknown id says not found');
+}
+
+// ── A request that changes while the pages are read ───────────────────────
+// 🛑 OFFSET paging: a page-1 request turned urgent → normal moves down, every row after
+// it shifts up one, and the row on the page boundary is never seen. Say so.
+{
+  const moved = SEED.find(x => x.priority === 'urgent');
+  beforePage = () => db.prepare("UPDATE supply_requests SET priority = 'normal' WHERE id = ?").run(moved.id);
+  const r = await tool('get_supply_requests');
+  db.prepare("UPDATE supply_requests SET priority = 'urgent' WHERE id = ?").run(moved.id);
+  eq(r.complete, false, 'a request moved between pages: complete false, not a silently short answer');
+  eq((await tool('get_supply_requests')).complete, true, 'and once it holds still, complete again');
 }
 
 // ── The worker's limit and offset are clamped (they were not) ─────────────

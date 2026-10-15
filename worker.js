@@ -22406,7 +22406,8 @@ export default {
            ${where}
            ORDER BY
              CASE r.priority WHEN 'urgent' THEN 0 ELSE 1 END,
-             r.submitted_at DESC
+             r.submitted_at DESC,
+             r.id                      -- a total order, so paging by OFFSET is repeatable
            LIMIT ? OFFSET ?`
         ).bind(...binds, limit, offset).all();
 

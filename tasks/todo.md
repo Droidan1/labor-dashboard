@@ -21,7 +21,13 @@ Design:
       seed; the requests tool's spend reconciles with the budget tool's); tool counts 17 → 20
 - [x] 15 mutants, all caught. One proved the offset clamp is a real fix: `offset=abc` was a D1
       "datatype mismatch" 500. `npm test` 10,120 / 115
-- [ ] Fresh-eyes review; PR
+- [x] Fresh-eyes review: no security finding (only the three `!currentUser` lines changed; `status`/`month`
+      select no other route; null user safe; no side effects). Fixed: a request changing between page
+      reads could slide past a boundary unseen → `complete` flag (every page's total equal AND unique rows
+      == total) + `r.id` tie-break in the server's sort; list notes cut to 150 (300 ran ~122k at limit
+      200); the reconcile rule says "with no filter"; ids lowercased. Its surviving mutants (totals over the
+      unfiltered set, ET-month bucketing, no dedupe) now die; 8 more mutants, all caught
+- [ ] PR
 - [ ] Deploy (Brian): worker → retjg-mcp → CLI reinstall; live checks with the key
 
 # Agents read the Inventory pages: Viewer, Schedule Sale, Bin Dump, Receiver, Mark Out of Stock (2026-10-15)
