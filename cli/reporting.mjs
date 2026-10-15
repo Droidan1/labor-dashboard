@@ -8,7 +8,7 @@
 // REPORTING_READ_THROUGH).
 //
 // 🔑 One table, two surfaces. The reading rules used to live in two copies
-// pinned together by a test; with eleven queries and their trimming, two copies
+// pinned together by a test; with seventeen queries and their trimming, two copies
 // would drift. The CLI is installed as this whole directory (ORIENT.md), which
 // is what lets it import this file.
 //
@@ -31,6 +31,9 @@ export const READING_RULES = [
   'Two labor percents exist and they differ: the Retail Summary laborPct is the source sheet\'s figure; the Labor tools compute hours x $15 / sales. Do not mix them.',
   'Labor: actualLaborPct is null until every selling day in the period has hours (see complete and hoursMissingDays). In the plan, basis "budget-only" means no trend could be computed (reason says why) and recommendedHours is the budget plus 40 ASM hours.',
   'BL12 (Wyoming) is closed; its Clover account and history continue as BL16 (Indy East) from 2026-06-14.',
+  'Inventory money is USD per unit. In get_inventory_items, cost is the POS (Clover) item cost field, which most items leave empty: null there means none in the POS (counted in noCost), never free, and gpPct needs it. Sales margins (grossMargin, category gpmPct) come from the app\'s own item and category costs instead, so an item with no POS cost can still have a known margin in the sales tools.',
+  'get_inventory_items reads the POS live (a few seconds) and lists at most limit rows, but its counts cover the whole catalog. Bin dump and truck totals cover every entry in the period even when only the newest rows are listed; complete false means the period hit the server cap and the totals are short.',
+  'Out of stock: monthly totals always cover the whole period; moreRows means only the newest limit entries are listed. shrinkCost is the cost of Stolen, Damaged and Expired; storeUseCost is Store Use. linesWithoutCost and linesWithoutPrice mean those totals are short.',
 ];
 
 // The caller can fix this: a bad or missing argument. CLI exit 2; MCP tool error.
@@ -75,6 +78,16 @@ const ARG = {
   hourBucket: { type: 'enum', flag: 'bucket', values: ['hour', 'slot'], description: 'hour = sum each hour of day across the range (default); slot = each day and hour separately.' },
   grain: { type: 'enum', flag: 'grain', values: ['d', 'w', 'm'], description: 'd = days, w = weeks ending Saturday (default), m = months.' },
   week: { type: 'date', flag: 'week', description: 'The Saturday that ends the week to plan. Default: the week after this one, as the Labor page shows.' },
+  // Inventory (2026-10-15)
+  search: { type: 'string', flag: 'search', description: 'Only items whose name, code or category contains this text (any case).' },
+  itemFilter: { type: 'enum', flag: 'filter', values: ['all', 'no-cost', 'duplicates', 'hidden'], description: 'all (default); no-cost = no cost on file; duplicates = a code or SKU used by more than one item; hidden = hidden in the POS.' },
+  // 200: measured, about the most rows of the widest of these that fit in one MCP answer.
+  limit: { type: 'integer', flag: 'limit', min: 1, max: 200, description: 'Most rows to list, newest or A-Z first. Default 100. Totals always cover everything.' },
+  scheduleFilter: { type: 'enum', flag: 'filter', values: ['all', 'upcoming', 'active', 'past'], description: 'all (default), upcoming (not started), active (on sale now) or past (completed, cancelled or failed).' },
+  dumpWeeks: { type: 'integer', flag: 'weeks', min: 1, max: 52, description: 'Weeks back from now. Default 8.' },
+  truckMonths: { type: 'integer', flag: 'months', min: 1, max: 24, description: 'Months back from now. Default 6.' },
+  mosMonths: { type: 'integer', flag: 'months', min: 1, max: 60, description: 'Months back from now. Default 3.' },
+  truckId: { type: 'integer', flag: 'truck', min: 1, max: 2147483647, description: 'A truck id, from get_trucks.' },
 };
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -262,6 +275,153 @@ function shapeCategoryHours(b, a) {
   };
 }
 
+// ── Inventory ──────────────────────────────────────────────────────────────
+const dollars = (cents) => (cents == null ? null : round2(Number(cents) / 100));
+const num = (v) => Number(v) || 0;
+// { group: { field: Σ fn(row) } } over rows grouped by row[key].
+function totalsBy(rows, key, fields) {
+  const out = {};
+  for (const r of rows) {
+    const t = out[r[key]] || (out[r[key]] = Object.fromEntries(Object.keys(fields).map(f => [f, 0])));
+    for (const [f, fn] of Object.entries(fields)) t[f] += fn(r);
+  }
+  return out;
+}
+const dropMedia = ({ content_type, r2_key, photo_url, ...rest }) => rest;
+
+// The Inventory Viewer: the Clover catalog, 1,000 items a page. Codes are matched the
+// way the page matches them (code, else SKU, trimmed, any case).
+const dupKey = (i) => String(i.code || i.sku || '').trim().toLowerCase();
+function shapeInventory(pages, a) {
+  const all = pages.flatMap(b => b.elements || []);
+  const seen = new Map();
+  for (const i of all) { const k = dupKey(i); if (k) seen.set(k, (seen.get(k) || 0) + 1); }
+  const dup = new Set([...seen].filter(([, n]) => n > 1).map(([k]) => k));
+  const q = (a.search || '').trim().toLowerCase();
+  const filter = a.itemFilter || 'all';
+  const matched = all
+    .filter(i => filter === 'all' || (filter === 'no-cost' && !i.cost) || (filter === 'hidden' && i.hidden) || (filter === 'duplicates' && dup.has(dupKey(i))))
+    .filter(i => !q || [i.name, i.code, i.category].some(v => String(v || '').toLowerCase().includes(q)))
+    .sort((x, y) => (filter === 'duplicates' ? dupKey(x).localeCompare(dupKey(y)) : 0) || String(x.name).localeCompare(String(y.name)));
+  const limit = a.limit || 100;
+  return {
+    store: upper(a.storeId), items: all.length,
+    hidden: all.filter(i => i.hidden).length,
+    noCost: all.filter(i => !i.cost).length,
+    duplicateCodes: dup.size,
+    matched: matched.length, listed: Math.min(limit, matched.length),
+    rows: matched.slice(0, limit).map(i => ({
+      name: i.name, code: i.code, ...(i.sku && i.sku !== i.code && { sku: i.sku }),
+      price: dollars(i.price), cost: i.cost ? dollars(i.cost) : null,
+      gpPct: i.price && i.cost ? Math.round((i.price - i.cost) / i.price * 1000) / 10 : null,
+      category: i.category || null,
+      ...((i.categories || []).length > 1 && { alsoIn: i.categories.filter(c => c !== i.category) }),
+      hidden: !!i.hidden, taxable: !!i.defaultTaxRates,
+      ...(dup.has(dupKey(i)) && { duplicateCode: true }),
+      modified: i.modifiedTime ? new Date(i.modifiedTime).toISOString() : null,
+    })),
+  };
+}
+
+// list-sale-schedules reads at most 200 ITEM rows, so a store with more is cut there.
+const SCHEDULE_ROWS_CAP = 200;
+function shapeSchedules(b, a) {
+  const groups = b.groups || [];
+  const itemRows = groups.reduce((n, g) => n + (g.items || []).length, 0);
+  const limit = a.limit || 100;
+  return {
+    store: upper(a.storeId), filter: a.scheduleFilter || 'all',
+    complete: itemRows < SCHEDULE_ROWS_CAP, schedulesFound: groups.length, listed: Math.min(limit, groups.length),
+    schedules: groups.slice(0, limit).map(g => ({
+      scheduleGroup: g.scheduleGroup, status: g.status,
+      ...(g.discountKind === 'percent' ? { discountPct: g.discountValue } : { discountOff: dollars(g.discountValue) }),
+      startsAt: g.startsAt, endsAt: g.endsAt, createdAt: g.createdAt,
+      items: (g.items || []).map(i => ({
+        name: i.name, itemId: i.id, originalPrice: dollars(i.originalPrice), salePrice: dollars(i.salePrice),
+        status: i.status, activatedAt: i.activatedAt, revertedAt: i.revertedAt, ...(i.errorMsg && { error: String(i.errorMsg).slice(0, 120) }),
+      })),
+    })),
+  };
+}
+
+// Totals over EVERY row the server returned; only the listing is cut to `limit`.
+function shapeBinDumps(b, a) {
+  const rows = b.rows || [];
+  return {
+    weeks: b.weeks, complete: !b.truncated,
+    totals: {
+      byStore: totalsBy(rows, 'store', { entries: () => 1, units: r => num(r.units) }),
+      byWeek: totalsBy(rows, 'week', { entries: () => 1, units: r => num(r.units) }),
+    },
+    listed: Math.min(a.limit || 100, rows.length),
+    rows: rows.slice(0, a.limit || 100).map(dropMedia),
+  };
+}
+
+// List rows carry what tells trucks apart; addresses and edit stamps stay in get_truck,
+// or a default listing of 100 uses most of one answer.
+const TRUCK_LIST_FIELDS = ['id', 'store', 'bol_no', 'ship_from', 'bol_date', 'carrier', 'trailer_no', 'seal_no', 'pro_no',
+  'pallet_count', 'received', 'units', 'opened_by', 'opened_at', 'closed_by', 'closed_at', 'close_note',
+  'dup_approved_by', 'dup_reason', 'dup_approved', 'has_photo', 'month'];
+function shapeTrucks(b, a) {
+  const rows = b.rows || [];
+  const byStore = totalsBy(rows, 'store', {
+    trucks: () => 1, onDock: r => (r.closed_at ? 0 : 1), palletsReceived: r => num(r.received),
+    units: r => num(r.units),
+    // Two different approvals: a repeated BOL let through (on the truck), and a repeated
+    // pallet tag let through (on its pallets, counted by the server as dup_approved).
+    bolDuplicatesApproved: r => (r.dup_approved_by ? 1 : 0), palletDuplicatesApproved: r => num(r.dup_approved),
+  });
+  return {
+    months: b.months, complete: !b.truncated, totals: { byStore },
+    listed: Math.min(a.limit || 100, rows.length),
+    rows: rows.slice(0, a.limit || 100).map(r => pick(r, TRUCK_LIST_FIELDS)),
+  };
+}
+
+function shapeTruck(b, a) {
+  if (!b.truck) return { store: upper(a.storeId), truck: null, note: 'No truck is open at this store.' };
+  const pallets = (b.pallets || []).map(dropMedia);
+  return {
+    truck: dropMedia(b.truck),
+    palletsReceived: pallets.length, units: pallets.reduce((s, p) => s + num(p.units), 0),
+    pallets,
+  };
+}
+
+// The server totals the whole period itself (mos-list), so only the listing is cut.
+function shapeOutOfStock(b) {
+  return {
+    range: b.range, moreRows: !!b.truncated,
+    months: (b.months || []).map(m => ({
+      month: m.month, lines: m.lines, units: m.units,
+      cost: dollars(m.cost_cents), retail: dollars(m.retail_cents),
+      shrinkCost: dollars(m.shrink_cents), storeUseCost: dollars(m.store_use_cents),
+      linesWithoutCost: m.lines_without_cost, linesWithoutPrice: m.lines_without_price,
+    })),
+    rows: (b.rows || []).map(({ unit_cost_cents, unit_price_cents, ...r }) => ({
+      ...r, unitCost: dollars(unit_cost_cents), unitPrice: dollars(unit_price_cents),
+    })),
+  };
+}
+
+// ── Running a query ────────────────────────────────────────────────────────
+// One request, or for a query with `next`, every page (its shape then gets the
+// list of page bodies). The CLI and the MCP server both run queries through here.
+const MAX_PAGES = 20;
+export async function runQuery(query, args, fetchJson) {
+  let params = query.request(args);
+  if (!query.next) return query.shape(await fetchJson(params), args);
+  const pages = [];
+  while (params) {
+    if (pages.length === MAX_PAGES) throw new QueryError(`More than ${MAX_PAGES} pages; refusing to read further.`);
+    const body = await fetchJson(params);
+    pages.push(body);
+    params = query.next(body, params);
+  }
+  return query.shape(pages, args);
+}
+
 // ── The queries ────────────────────────────────────────────────────────────
 // args: in order; `required` where the call cannot be answered without it.
 // request(args) → the worker query. shape(body, args) → what the agent gets.
@@ -368,5 +528,56 @@ export const QUERIES = [
     check: (a) => { if (a.week && dayOfWeek(a.week) !== 6) throw new UsageError('week must be a Saturday (the last day of the week)'); },
     request: (a) => ({ action: 'labor-plan', week: a.week || laborPlanWeek(), store: upper(a.storeId) }),
     shape: (b) => b,
+  },
+  // ── Inventory (2026-10-15): Viewer, Schedule Sale, Bin Dump, Receiver, Mark Out of Stock ──
+  {
+    name: 'get_inventory_items', cli: 'items', title: 'Inventory items (Viewer)',
+    description: "The Inventory Viewer: one store's POS catalog with price, POS cost (often empty; sales margins use the app's own costs), GP %, category and hidden flag, "
+      + 'plus counts of items, hidden, no-cost and duplicate codes. Search or filter it; reads the POS live, a few seconds.',
+    args: [req('storeId'), opt('search'), opt('itemFilter'), opt('limit')],
+    request: (a) => ({ action: 'inventory-items', store: upper(a.storeId), offset: 0 }),
+    next: (b, p) => (b.hasMore ? { ...p, offset: p.offset + 1000 } : null),
+    shape: shapeInventory,
+  },
+  {
+    name: 'get_sale_schedules', cli: 'sale-schedules', title: 'Sale schedules',
+    description: 'Inventory › Schedule Sale: the timed sales set up for one store, each with its discount, start and '
+      + 'end, status, and the items with their original and sale prices, newest first. complete false: the store has more than the 200 item rows the page reads.',
+    args: [req('storeId'), opt('scheduleFilter'), opt('limit')],
+    request: (a) => ({ action: 'list-sale-schedules', store: upper(a.storeId), filter: a.scheduleFilter || 'all' }),
+    shape: shapeSchedules,
+  },
+  {
+    name: 'get_bin_dumps', cli: 'bin-dumps', title: 'Bin dumps',
+    description: 'Inventory › Bin Dump: pallets dumped into the bins, newest first, with tag fields (barcode, item, '
+      + 'pallet, PO, units, truck) and who logged them, plus entries and units per store and per week.',
+    args: [opt('storeId'), opt('dumpWeeks'), opt('limit')],
+    request: (a) => ({ action: 'bin-dump-list', store: upper(a.storeId) || 'ALL', weeks: a.dumpWeeks || 8, limit: 5000 }),
+    shape: shapeBinDumps,
+  },
+  {
+    name: 'get_trucks', cli: 'trucks', title: 'Trucks received',
+    description: 'Inventory Receiver › Trucks: trucks per store, newest first (BOL, ship from, carrier, pallets the '
+      + 'BOL claims vs received, units, opened and taken down by whom, duplicate approvals), plus per-store totals.',
+    args: [opt('storeId'), opt('truckMonths'), opt('limit')],
+    request: (a) => ({ action: 'truck-list', store: upper(a.storeId) || 'ALL', months: a.truckMonths || 6, limit: 2000 }),
+    shape: shapeTrucks,
+  },
+  {
+    name: 'get_truck', cli: 'truck', title: 'One truck and its pallets',
+    description: "One truck's BOL and every pallet received off it: give truckId (from get_trucks), or storeId for "
+      + 'the truck open on that dock now.',
+    args: [opt('truckId'), opt('storeId')],
+    check: (a) => { if ((a.truckId == null) === (a.storeId == null)) throw new UsageError('give exactly one of truckId (CLI --truck) or storeId (CLI --store)'); },
+    request: (a) => (a.truckId != null ? { action: 'truck-detail', id: a.truckId } : { action: 'truck-current', store: upper(a.storeId) }),
+    shape: shapeTruck,
+  },
+  {
+    name: 'get_out_of_stock', cli: 'out-of-stock', title: 'Mark Out of Stock log',
+    description: 'Inventory › Mark Out of Stock: items marked out (Stolen, Damaged, Expired, Store Use) with qty, unit '
+      + 'cost and price and who logged them, newest first, plus monthly totals of cost, retail, shrink and store use.',
+    args: [opt('storeId'), opt('mosMonths'), opt('limit')],
+    request: (a) => ({ action: 'mos-list', store: upper(a.storeId) || 'ALL', months: a.mosMonths || 3, limit: a.limit || 100 }),
+    shape: shapeOutOfStock,
   },
 ];

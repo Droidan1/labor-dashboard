@@ -19,7 +19,7 @@ import { OAuthProvider, OAuthError, GrantType, insufficientScope } from '@cloudf
 import { authorize, agentIdentity, admitted, AGENT_ROLES, SCOPES, ALLOWED_CLIENTS } from './authorize.mjs';
 // The tools come from QUERIES in cli/reporting.mjs, the table the retjg CLI's
 // commands come from too, so the two surfaces cannot drift.
-import { QUERIES, READING_RULES, UsageError, QueryError, checkArgs, inputSchema } from '../cli/reporting.mjs';
+import { QUERIES, READING_RULES, UsageError, QueryError, checkArgs, inputSchema, runQuery } from '../cli/reporting.mjs';
 
 // Two eras of MCP. 2025 clients open with `initialize` and agree one of these
 // (newest first: an unknown requested version is answered with the newest)…
@@ -30,13 +30,13 @@ const LEGACY_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26'];
 // to `initialize` (the spec's example does; the Python SDK falls back only then).
 const MODERN_VERSIONS = ['2026-07-28'];
 const P = 'io.modelcontextprotocol/';
-const SERVER_INFO = { name: 'retjg-hub', title: 'RETJG HUB sales and labor', version: '1.2.0' };
+const SERVER_INFO = { name: 'retjg-hub', title: 'RETJG HUB sales, labor and inventory', version: '1.3.0' };
 const CAPABILITIES = { tools: { listChanged: false } };
 // How long a 2026 client may reuse server/discover and tools/list. Short, because a
 // deploy that changes QUERIES should reach clients within minutes. 'private': this caller
 // only, never a shared cache.
 const CACHE = { ttlMs: 300_000, cacheScope: 'private' };
-const INSTRUCTIONS = 'Read-only sales, Retail Summary and labor data for the Bargain Lane stores in RETJG HUB. '
+const INSTRUCTIONS = 'Read-only sales, Retail Summary, labor and inventory data for the Bargain Lane stores in RETJG HUB. '
   + 'Call list_stores for store ids. Dates are YYYY-MM-DD, Eastern time; yesterday is the latest complete day. '
   + 'Before drawing conclusions from the numbers:\n'
   + READING_RULES.map(r => '- ' + r).join('\n');
@@ -257,11 +257,11 @@ async function handle(method, params, env) {
     if (!query) throw new RpcError(-32602, `Unknown tool: ${params.name}`);
     try {
       const args = checkArgs(query, params.arguments ?? {});
-      const out = query.shape(await report(env, query.request(args)), args);
+      const out = await runQuery(query, args, (p) => report(env, p));
       const text = JSON.stringify(out);
       if (text.length > MAX_RESULT_CHARS) {
         throw new ToolError(`This answer is ${Math.round(text.length / 1000)}k characters, too large for one tool result. `
-          + 'Narrow it: give a storeId, a shorter date range or fewer weeks, level l2 instead of l3, or bucket total.');
+          + 'Narrow it: give a storeId, a shorter date range or fewer weeks, level l2 instead of l3, bucket total, or a smaller limit.');
       }
       return { content: [{ type: 'text', text }] };
     } catch (e) {

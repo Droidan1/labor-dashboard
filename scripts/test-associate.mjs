@@ -880,7 +880,8 @@ const cipherOf = (db, id) => db.prepare('SELECT pin_cipher c FROM users WHERE id
     ok(at > 0, `${action} has a handler`);
     const next = src.indexOf('url.searchParams.get("action") ===', at + 10);
     const body = src.slice(at, next > 0 ? next : at + 4000);
-    const lit = body.match(/(?:requirePage|canUsePage)\(currentUser, isAdminSecret, "([a-z0-9-]+)", "(view|edit)"/);
+    // `|| reportingReadThrough`: the Inventory reads agents get with the reporting key (2026-10-15).
+    const lit = body.match(/(?:requirePage|canUsePage)\(currentUser, isAdminSecret(?: \|\| reportingReadThrough)?, "([a-z0-9-]+)", "(view|edit)"/);
     ok(lit && lit[1] === page && lit[2] === level,
        `${action}: handler asks ${lit ? `${lit[1]}/${lit[2]}` : 'nothing'}, ACTION_PAGE says ${page}/${level}`);
   }

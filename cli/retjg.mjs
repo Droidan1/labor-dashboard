@@ -12,7 +12,7 @@
 // /opt/homebrew/bin/retjg is a symlink to …/lib/retjg/retjg.mjs.
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
-import { QUERIES, READING_RULES, UsageError, QueryError, checkArgs, argSpec } from './reporting.mjs';
+import { QUERIES, READING_RULES, UsageError, QueryError, checkArgs, argSpec, runQuery } from './reporting.mjs';
 
 const BASE = process.env.RETJG_API_URL || 'https://api.retjghub.com/';
 const KEYCHAIN_SERVICE = process.env.RETJG_KEYCHAIN_SERVICE || 'retjg-api-key';
@@ -21,7 +21,7 @@ const flagOf = (name) => argSpec(name).flag;
 const usageLine = (q) => {
   const flags = q.args.map(({ name, required }) => {
     const s = argSpec(name);
-    const v = s.type === 'enum' ? s.values.join('|') : s.type === 'date' ? 'YYYY-MM-DD' : s.type === 'integer' ? 'N' : 'BL1';
+    const v = s.type === 'enum' ? s.values.join('|') : s.type === 'date' ? 'YYYY-MM-DD' : s.type === 'integer' ? 'N' : name === 'storeId' ? 'BL1' : 'TEXT';
     return required ? `--${s.flag} ${v}` : `[--${s.flag} ${v}]`;
   });
   return `  retjg ${[q.cli, ...flags].join(' ')}\n      ${wrap(q.description, '      ')}`;
@@ -37,7 +37,7 @@ function wrap(text, indent) {
   return out.join('\n' + indent);
 }
 
-const HELP = `retjg — read-only sales and labor data for RETJG HUB (Bargain Lane stores).
+const HELP = `retjg — read-only sales, labor and inventory data for RETJG HUB (Bargain Lane stores).
 
 Usage:
 ${QUERIES.map(usageLine).join('\n')}
@@ -143,7 +143,7 @@ if (!key) {
 
 let out;
 try {
-  out = query.shape(await call(key, query.request(args)), args);
+  out = await runQuery(query, args, (params) => call(key, params));
 } catch (e) {
   if (e instanceof QueryError) fail(1, { error: e.message, ...e.extra });
   throw e;

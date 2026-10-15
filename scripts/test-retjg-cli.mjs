@@ -11,11 +11,12 @@
 // ⚠️ The CLI must run with execFile (async), never execFileSync: the server is in
 // this process, so a blocking call would wait forever on a server that cannot
 // answer.
+import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { loadWorker, makeEnv, ctx, blockNetwork } from './lib/worker-harness.mjs';
+import { loadWorker, makeEnv, ctx, blockNetwork, applyMigrationAlters } from './lib/worker-harness.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CLI = path.join(repo, 'cli', 'retjg.mjs');
@@ -38,6 +39,23 @@ db.exec('DELETE FROM daily_sales');
 db.prepare(`INSERT INTO daily_sales (store, date, total, auction, budget, order_count, snapshot_time)
             VALUES (?, ?, ?, ?, ?, ?, ?)`)
   .run('BL2', yesterdayET, 4364.39, null, 4556, 238, yesterdayET + 'T07:55:00Z');
+
+// Inventory (2026-10-15): one truck, and a 1,001-item BL2 catalog so `items` needs two
+// Clover pages. Clover is stubbed in THIS process, where the worker runs.
+db.exec(fs.readFileSync(path.join(repo, 'migration-065.sql'), 'utf8'));
+applyMigrationAlters(db, repo);
+const truckId = db.prepare(`INSERT INTO trucks (store, bol_no, opened_by, opened_at) VALUES ('BL2', 'BOL-CLI', 'Sam', ?)`)
+  .run(new Date().toISOString()).lastInsertRowid;
+env.BL2_MERCHANT_ID = 'M2';
+env.BL2_API_TOKEN = 'clover-token-bl2';
+const blockedFetch = globalThis.fetch;
+globalThis.fetch = async (u, init) => {
+  const s = String(u);
+  if (!s.startsWith('https://api.clover.com/v3/merchants/M2/items?')) return blockedFetch(u, init);
+  const offset = Number(new URL(s).searchParams.get('offset'));
+  const elements = Array.from({ length: offset === 0 ? 1000 : 1 }, (_, i) => ({ id: `I${offset + i}`, name: `Item ${offset + i}`, code: `C${offset + i}`, price: 100 }));
+  return new Response(JSON.stringify({ elements }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+};
 
 // Every request the worker sees, so the tests can assert on what the CLI SENT.
 const seen = [];
@@ -192,6 +210,23 @@ const json = (s) => { try { return JSON.parse(s); } catch { return null; } };
   eq((await run(['weeks', '--weeks', '0'])).code, 2, '--weeks 0 is refused');
   eq((await run(['labor-plan', '--week', '2026-10-16'])).code, 2, 'a --week that is not a Saturday is refused');
   eq(seen.length, n, 'no refused command reached the API');
+}
+
+// ── Inventory commands ───────────────────────────────────────────────────
+{
+  const h = await run(['--help']);
+  ok(h.stdout.includes('retjg items --store BL1 [--search TEXT]'), '--help shows items, with TEXT for a search (not a store id)');
+  const n = seen.length;
+  const r = await run(['items', '--store', 'bl2', '--limit', '2']);
+  const out = json(r.stdout);
+  eq(r.code, 0, 'retjg items exits 0');
+  eq(JSON.stringify([out?.items, out?.rows?.length]), '[1001,2]', 'and reads BOTH Clover pages (1,001 items), listing 2');
+  eq(seen.slice(n).map(s => new URL(s.url, BASE).searchParams.get('offset')).join(), '0,1000', 'as two requests, offset 0 then 1000');
+  const none = await run(['truck']);
+  eq(none.code, 2, 'retjg truck with neither flag exits 2');
+  ok(/--truck/.test(none.stderr) && /--store/.test(none.stderr), 'and names the two flags it takes');
+  const one = json((await run(['truck', '--truck', String(truckId)])).stdout);
+  eq(one?.truck?.bol_no, 'BOL-CLI', 'retjg truck --truck N reads that truck');
 }
 
 // ── The key never appears in a URL ───────────────────────────────────────
