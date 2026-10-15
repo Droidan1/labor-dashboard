@@ -81,7 +81,8 @@ const ARG = {
   // Inventory (2026-10-15)
   search: { type: 'string', flag: 'search', description: 'Only items whose name, code or category contains this text (any case).' },
   itemFilter: { type: 'enum', flag: 'filter', values: ['all', 'no-cost', 'duplicates', 'hidden'], description: 'all (default); no-cost = no cost on file; duplicates = a code or SKU used by more than one item; hidden = hidden in the POS.' },
-  limit: { type: 'integer', flag: 'limit', min: 1, max: 500, description: 'Most rows to list, newest or A-Z first. Default 100. Totals always cover everything.' },
+  // 200: measured, about the most rows of the widest of these that fit in one MCP answer.
+  limit: { type: 'integer', flag: 'limit', min: 1, max: 200, description: 'Most rows to list, newest or A-Z first. Default 100. Totals always cover everything.' },
   scheduleFilter: { type: 'enum', flag: 'filter', values: ['all', 'upcoming', 'active', 'past'], description: 'all (default), upcoming (not started), active (on sale now) or past (completed, cancelled or failed).' },
   dumpWeeks: { type: 'integer', flag: 'weeks', min: 1, max: 52, description: 'Weeks back from now. Default 8.' },
   truckMonths: { type: 'integer', flag: 'months', min: 1, max: 24, description: 'Months back from now. Default 6.' },
@@ -322,16 +323,22 @@ function shapeInventory(pages, a) {
   };
 }
 
+// list-sale-schedules reads at most 200 ITEM rows, so a store with more is cut there.
+const SCHEDULE_ROWS_CAP = 200;
 function shapeSchedules(b, a) {
+  const groups = b.groups || [];
+  const itemRows = groups.reduce((n, g) => n + (g.items || []).length, 0);
+  const limit = a.limit || 100;
   return {
     store: upper(a.storeId), filter: a.scheduleFilter || 'all',
-    schedules: (b.groups || []).map(g => ({
+    complete: itemRows < SCHEDULE_ROWS_CAP, schedulesFound: groups.length, listed: Math.min(limit, groups.length),
+    schedules: groups.slice(0, limit).map(g => ({
       scheduleGroup: g.scheduleGroup, status: g.status,
       ...(g.discountKind === 'percent' ? { discountPct: g.discountValue } : { discountOff: dollars(g.discountValue) }),
       startsAt: g.startsAt, endsAt: g.endsAt, createdAt: g.createdAt,
       items: (g.items || []).map(i => ({
         name: i.name, itemId: i.id, originalPrice: dollars(i.originalPrice), salePrice: dollars(i.salePrice),
-        status: i.status, activatedAt: i.activatedAt, revertedAt: i.revertedAt, ...(i.errorMsg && { error: i.errorMsg }),
+        status: i.status, activatedAt: i.activatedAt, revertedAt: i.revertedAt, ...(i.errorMsg && { error: String(i.errorMsg).slice(0, 120) }),
       })),
     })),
   };
@@ -351,16 +358,24 @@ function shapeBinDumps(b, a) {
   };
 }
 
+// List rows carry what tells trucks apart; addresses and edit stamps stay in get_truck,
+// or a default listing of 100 uses most of one answer.
+const TRUCK_LIST_FIELDS = ['id', 'store', 'bol_no', 'ship_from', 'bol_date', 'carrier', 'trailer_no', 'seal_no', 'pro_no',
+  'pallet_count', 'received', 'units', 'opened_by', 'opened_at', 'closed_by', 'closed_at', 'close_note',
+  'dup_approved_by', 'dup_reason', 'dup_approved', 'has_photo', 'month'];
 function shapeTrucks(b, a) {
   const rows = b.rows || [];
   const byStore = totalsBy(rows, 'store', {
     trucks: () => 1, onDock: r => (r.closed_at ? 0 : 1), palletsReceived: r => num(r.received),
-    units: r => num(r.units), duplicatesApproved: r => num(r.dup_approved),
+    units: r => num(r.units),
+    // Two different approvals: a repeated BOL let through (on the truck), and a repeated
+    // pallet tag let through (on its pallets, counted by the server as dup_approved).
+    bolDuplicatesApproved: r => (r.dup_approved_by ? 1 : 0), palletDuplicatesApproved: r => num(r.dup_approved),
   });
   return {
     months: b.months, complete: !b.truncated, totals: { byStore },
     listed: Math.min(a.limit || 100, rows.length),
-    rows: rows.slice(0, a.limit || 100).map(dropMedia),
+    rows: rows.slice(0, a.limit || 100).map(r => pick(r, TRUCK_LIST_FIELDS)),
   };
 }
 
@@ -527,8 +542,8 @@ export const QUERIES = [
   {
     name: 'get_sale_schedules', cli: 'sale-schedules', title: 'Sale schedules',
     description: 'Inventory › Schedule Sale: the timed sales set up for one store, each with its discount, start and '
-      + 'end, status, and the items with their original and sale prices. At most the 200 newest item rows.',
-    args: [req('storeId'), opt('scheduleFilter')],
+      + 'end, status, and the items with their original and sale prices, newest first. complete false: the store has more than the 200 item rows the page reads.',
+    args: [req('storeId'), opt('scheduleFilter'), opt('limit')],
     request: (a) => ({ action: 'list-sale-schedules', store: upper(a.storeId), filter: a.scheduleFilter || 'all' }),
     shape: shapeSchedules,
   },
@@ -553,7 +568,7 @@ export const QUERIES = [
     description: "One truck's BOL and every pallet received off it: give truckId (from get_trucks), or storeId for "
       + 'the truck open on that dock now.',
     args: [opt('truckId'), opt('storeId')],
-    check: (a) => { if ((a.truckId == null) === (a.storeId == null)) throw new UsageError('give truckId or storeId, not both'); },
+    check: (a) => { if ((a.truckId == null) === (a.storeId == null)) throw new UsageError('give exactly one of truckId (CLI --truck) or storeId (CLI --store)'); },
     request: (a) => (a.truckId != null ? { action: 'truck-detail', id: a.truckId } : { action: 'truck-current', store: upper(a.storeId) }),
     shape: shapeTruck,
   },

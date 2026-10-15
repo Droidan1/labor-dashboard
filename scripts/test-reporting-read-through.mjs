@@ -120,9 +120,33 @@ const bodyOf = async (r) => { const t = await r.text(); try { return JSON.parse(
 // Fields stamped at request time, which two calls cannot share.
 const stable = (o) => JSON.stringify(o, (k, v) => (['generatedAt', 'asOf', 'fetchedAt'].includes(k) ? undefined : v));
 
+// Every write a request could make: D1 rows, KV and R2 puts and deletes, and any
+// outbound call that is not a GET (a Clover price change, a paid API call).
+const writes = [];
+for (const name of ['SALES_SNAPSHOTS', 'MEDIA']) for (const m of ['put', 'delete']) {
+  const real = env[name][m].bind(env[name]);
+  env[name][m] = (key, ...a) => {
+    // The one write a read may make: Clover's item→category map, cached 24 h
+    // (fetchItemCategoryMap; category-hours fills it, as a session call does). A cache,
+    // not stored history. Anything else is a write.
+    if (!(name === 'SALES_SNAPSHOTS' && m === 'put' && String(key).startsWith('item-cats:'))) writes.push(`${name}.${m} ${key}`);
+    return real(key, ...a);
+  };
+}
+const readFetch = globalThis.fetch;
+globalThis.fetch = (u, init) => {
+  const method = (init && init.method) || (u instanceof Request ? u.method : 'GET');
+  if (method !== 'GET') writes.push(`fetch ${method} ${String(u.url || u).slice(0, 60)}`);
+  return readFetch(u, init);
+};
+const d1Changes = () => db.prepare('SELECT total_changes() n').get().n;
+
 // ── 1. The key reads each page endpoint exactly as a superuser does ────────
 for (const [action, q] of Object.entries(ACTIONS)) {
+  const before = d1Changes();
+  writes.length = 0;
   const k = await fetchW(withKey(q));
+  eq(JSON.stringify([d1Changes() - before, writes]), '[0,[]]', `${action}: a keyed read writes nothing (D1, KV, R2, outbound)`);
   const su = await fetchW(req('/' + q, { user: 'u-su' }));
   const kb = await bodyOf(k), sb = await bodyOf(su);
   eq(k.status, 200, `${action}: the key is answered 200`);
@@ -256,6 +280,30 @@ for (const [action, q] of Object.entries(ACTIONS)) {
   const lk = await fetchW(withKey('?action=mos-lookup&store=BL2&code=BL-50999-2'));
   eq((await bodyOf(lk))?.code, 'NO_SESSION', 'mos-lookup with the key still needs a session');
   eq(db.prepare('SELECT COUNT(*) n FROM sticker_codes').get().n, codesBefore, 'and it learned no sticker code');
+}
+
+// ── 3b. For every other action, the key changes nothing ───────────────────
+// 🛑 Not a hand-picked list: every action the business gate knows. Outside the
+// read-throughs and the reporting actions, a keyed GET must get exactly the answer
+// the same GET gets with no key at all, and write nothing.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const at = src.indexOf('const ACTION_BUSINESS = new Map([');
+  const known = [...src.slice(at, src.indexOf(']);', at)).matchAll(/\["([a-z0-9-]+)",/g)].map(m => m[1]);
+  ok(known.length > 100, `ACTION_BUSINESS was read (${known.length} actions)`);
+  const opened = new Set([...Object.keys(ACTIONS), 'morning-briefing', 'store-history', 'afternoon-briefing', 'agent-identity']);
+  let same = 0;
+  for (const action of known.filter(a => !opened.has(a))) {
+    const before = d1Changes();
+    writes.length = 0;
+    const k = await fetchW(withKey(`?action=${action}`));
+    const kText = stable(await bodyOf(k));
+    const n = await fetchW(new Request(`https://api.retjghub.com/?action=${action}`));
+    const nText = stable(await bodyOf(n));
+    if (k.status === n.status && kText === nText && d1Changes() === before && !writes.length) same++;
+    else ok(false, `${action}: the key changed the answer or wrote (keyed ${k.status} ${kText.slice(0, 60)} vs ${n.status} ${nText.slice(0, 60)}; writes ${writes.join()})`);
+  }
+  eq(same, known.filter(a => !opened.has(a)).length, `the key changes nothing for the other ${same} actions`);
 }
 
 // ── 4. Without the key, the pages behave exactly as before ─────────────────

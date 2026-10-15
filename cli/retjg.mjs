@@ -21,7 +21,7 @@ const flagOf = (name) => argSpec(name).flag;
 const usageLine = (q) => {
   const flags = q.args.map(({ name, required }) => {
     const s = argSpec(name);
-    const v = s.type === 'enum' ? s.values.join('|') : s.type === 'date' ? 'YYYY-MM-DD' : s.type === 'integer' ? 'N' : 'BL1';
+    const v = s.type === 'enum' ? s.values.join('|') : s.type === 'date' ? 'YYYY-MM-DD' : s.type === 'integer' ? 'N' : name === 'storeId' ? 'BL1' : 'TEXT';
     return required ? `--${s.flag} ${v}` : `[--${s.flag} ${v}]`;
   });
   return `  retjg ${[q.cli, ...flags].join(' ')}\n      ${wrap(q.description, '      ')}`;
@@ -37,7 +37,7 @@ function wrap(text, indent) {
   return out.join('\n' + indent);
 }
 
-const HELP = `retjg — read-only sales and labor data for RETJG HUB (Bargain Lane stores).
+const HELP = `retjg — read-only sales, labor and inventory data for RETJG HUB (Bargain Lane stores).
 
 Usage:
 ${QUERIES.map(usageLine).join('\n')}

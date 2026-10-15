@@ -19,11 +19,24 @@ Design:
   never from the rows shown. Money in dollars.
 - Deploy: worker first (inert until called), then retjg-mcp (🛑 mixed-rollout risk), then CLI reinstall.
 
-- [ ] Test first: test-reporting-read-through gains the 7 actions (key == superuser, params, wrong key,
-      no session, managers unchanged) + the left-out actions still need a session; fails before
-- [ ] worker.js change; test-agent-queries for the 6 shapes, paging, args; tool counts 11 → 17
-- [ ] Mutation lane; `npm test`; fresh-eyes review; PR
-- [ ] Deploy (Brian): worker → retjg-mcp → CLI reinstall; live checks with the key
+- [x] Test first: test-reporting-read-through gains the 7 actions (key == superuser, params, wrong key,
+      no session, managers unchanged, left-out actions still need a session, mos-lookup learns nothing);
+      71 failed before the worker change. A harness fix along the way: stubbing BL2's Clover account
+      whole, or category-hours (which reads any store with keys live) 500s
+- [x] worker.js change; new test-agent-inventory (MCP → real main worker, Clover stubbed); tool counts 11 → 17;
+      test-associate's handler pattern accepts `|| reportingReadThrough`
+- [x] 15 mutants, all caught (two by a crash: a dropped param 400s every call; no page cap loops forever)
+- [x] Fresh-eyes review (588 hostile keyed requests: no write, no non-GET, no 5xx). Fixed what it found:
+      sale schedules silently cut at the page's 200 rows (complete flag + limit, errors cut to 120 chars);
+      trucks' duplicate count missed repeated-BOL approvals (now bol + pallet counts); `limit` capped at 200
+      (above ~200 the widest rows cannot fit one MCP answer) and truck list rows trimmed; consent page,
+      server title, instructions and CLI help now say inventory incl. costs and staff names; Clover offset
+      clamped; CLI help placeholder + truck message. Its test gaps closed: every keyed read writes nothing
+      (D1, KV, R2, non-GET fetch; only the 24 h `item-cats:` cache category-hours fills, as sessions do);
+      EVERY other ACTION_BUSINESS action answers the key exactly as it answers no key; truncated paths;
+      CLI `items` paging + `truck`. 14 more mutants incl. the ones that survived review, all caught
+- [x] `npm test`: 10,024 / 114 (test-price-scan failed once in ~6 full runs, passes alone; unrelated)
+- [ ] PR; deploy (Brian): worker → retjg-mcp → CLI reinstall; live checks with the key
 
 # Drop phase 2b: managers do not get agent access (2026-10-14)
 

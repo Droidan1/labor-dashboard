@@ -20645,7 +20645,8 @@ export default {
       const unauth = requireInventoryAccess(currentUser, isAdminSecret || reportingReadThrough, corsJson);
       if (unauth) return unauth;
       const store = url.searchParams.get("store") || "";
-      const offset = parseInt(url.searchParams.get("offset") || "0", 10);
+      // Clamped: a negative or non-numeric offset would otherwise go to Clover as-is.
+      const offset = Math.max(0, parseInt(url.searchParams.get("offset") || "0", 10) || 0);
       if (!ALL_STORES.includes(store)) {
         return new Response(JSON.stringify({ ok: false, error: "Invalid store" }), { status: 400, headers: corsJson });
       }

@@ -263,7 +263,7 @@ async function render(env, { handle, q, authReq, state, who, email, error }, con
     'Email me a code');
   let body = `<h1>Connect ${client} to RETJG HUB</h1>`
     + `<p class="dim">${client}${d.clientDomain ? ` (${esc(d.clientDomain)})` : ''} wants read-only access to Bargain Lane sales, `
-    + `Retail Summary and Labor data, for every store. It will be sent back to <strong>${esc(d.redirectHost)}</strong>.</p>`
+    + `Retail Summary, Labor and Inventory data for every store, including item costs and the names of staff who logged entries. It will be sent back to <strong>${esc(d.redirectHost)}</strong>.</p>`
     + `<p class="dim">Only continue if you just started connecting ${client} yourself. If someone sent you this link, close this page.</p>`
     + (d.redirectIsLoopback ? `<p class="bad">This sends access to an app on this computer, not to ${client}'s website.</p>` : '');
   if (error) body += `<p class="bad">${esc(error)}</p>`;
