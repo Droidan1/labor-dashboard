@@ -11,7 +11,7 @@ mkdir -p dist
 # ⚠️ This is an explicit allowlist — a new asset that isn't listed here is
 # committed to the repo but NEVER reaches production, and 404s silently.
 # BLlogo.svg is still used by the Bargain Lane Hourly Snapshot panel.
-cp index.html sw.js manifest.json \
+cp index.html website-control.html sw.js manifest.json \
    jsqr.min.js jspdf-4.2.1.umd.min.js jspdf-autotable-5.0.8.min.js \
    retjg-logo.png retjg-logo-email.png sign-logo.png \
    BLlogo.svg icon-192.png icon-512.png apple-touch-icon.png \
@@ -55,6 +55,8 @@ cat > dist/_headers <<'EOF'
   Cache-Control: no-cache
 /index.html
   Cache-Control: no-cache
+/website-control.html
+  Cache-Control: no-store
 EOF
 
 echo "dist/ built:"
