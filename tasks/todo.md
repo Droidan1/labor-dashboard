@@ -1,3 +1,28 @@
+# Item numbers for agents before the L2/L3 rollup (2026-10-16)
+
+**Ask (Brian):** "pull inventory numbers before it goes to L2 and L3 categories". **Chose:** sales per item AND
+how items map to L2/L3; build both now. Plan: `~/.claude/plans/tingly-churning-noodle.md` (approved). Two PRs.
+
+## Part A: get_item_sales, from the receipt archive (this PR)
+- [x] Test first: `scripts/test-item-sales.mjs` (32): paid vs voided vs never-paid tickets, refunds apart,
+      null codes, coverage (banked / incomplete / missing days), range caps, manager scoping, staff refused,
+      key == superuser, the tool through MCP. Failed before (no action, no tool)
+- [x] worker.js `item-sales` (D1 only; paid orders = a kind='payment' row the same store-day); ACTION_BUSINESS
+      + REPORTING_READ_THROUGH; read-through test gains it; tool `get_item_sales` (21 tools)
+- [x] 12 mutants, all caught (one after making the sort observable); `npm test` 10,177 / 116
+- [x] Fresh-eyes review (no security finding; paid-order logic verified: payments and lines share the
+      order's day; 92 days/one store 50 ms, 31 days/chain 118 ms at realistic volume). Fixed: a return rung
+      as a NEGATIVE line counted as units sold (the Retail Summary books it as a refund) → refunded columns;
+      line refunds understate refunds → `refundPayments` (refund + manual payments) beside them; a day
+      banked with payments but no lines read as complete → `daysWithoutLines`; the 3-day lag and closed
+      stores read as gaps → `missing` (owed days only, named) vs `notYetBanked`. Its surviving mutants
+      (split tender, the 31-day boundary, rounding) now die; 9 more mutants, all caught. 37 tests
+- [ ] PR; deploy (Brian): worker → retjg-mcp → CLI; live checks
+
+## Part B: the nightly per-item record with L2/L3 mapping (next PR)
+- [ ] migration-078 item_day_lines; aggregateItemSales lineSink; saveItemSalesSnapshot writes it; item-lines +
+      get_item_mapping; tests; deploy migration → worker → retjg-mcp → CLI
+
 # Agents read the Supply Request page (2026-10-15)
 
 **Ask (Brian):** "add the Supply request page to the MCP". Names and free-text notes INCLUDED (the same call

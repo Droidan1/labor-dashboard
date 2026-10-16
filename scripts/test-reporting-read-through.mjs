@@ -6,7 +6,8 @@
 // exactly seventeen of them, read-only, chain-wide, and nothing else: seven
 // Retail Summary / Labor reads (2026-10-13), seven Inventory reads (2026-10-15:
 // Viewer, Schedule Sale, Bin Dump, Receiver, Mark Out of Stock — not Opportunity Buys)
-// and three Supply Request reads (2026-10-15: requests, one request, budgets).
+// three Supply Request reads (2026-10-15: requests, one request, budgets) and the
+// receipt archive summed per item (2026-10-16: item-sales).
 //
 // 🔑 The strongest check is a DIFFERENTIAL: for every action, the key's answer
 // must equal a superuser session's answer byte for byte. That proves the key
@@ -60,7 +61,7 @@ for (const s of STORES) for (const [j, date] of days.entries()) {
 }
 
 // The Inventory pages' tables, a few real rows each, and Clover's item list for BL2.
-for (const m of ['002', '011', '058', '062', '065']) db.exec(fs.readFileSync(path.join(repo, `migration-${m}.sql`), 'utf8'));
+for (const m of ['002', '011', '058', '062', '063', '064', '065']) db.exec(fs.readFileSync(path.join(repo, `migration-${m}.sql`), 'utf8'));
 applyMigrationAlters(db, repo);
 const ago = (h) => new Date(Date.now() - h * 3600e3).toISOString();
 db.prepare(`INSERT INTO sale_schedules (schedule_group, store, item_id, item_name, discount_kind, discount_value,
@@ -89,6 +90,11 @@ db.prepare(`INSERT INTO supply_request_items (id, request_id, category, item_nam
 db.prepare(`INSERT INTO supply_request_history (id, request_id, type, changed_by_id, changed_by_email, old_status, new_status, note, changed_at)
   VALUES ('h1', ?, 'comment', 'u-su', 'bhoward@bargainlane.com', null, null, 'Ordered from Uline', '2026-10-06T14:00:00Z')`).run(SUPPLY_ID);
 db.prepare(`INSERT INTO supply_budgets (store, year, month, budget) VALUES ('BL1', 2026, 10, 250), ('BL2', 2026, 10, 300)`).run();
+// The receipt archive: one paid BL1 order and one voided one.
+db.prepare(`INSERT INTO payment_archive (id, store, date, kind, order_id, amount, banked_at) VALUES
+  ('P1','BL1','2026-10-01','payment','O1',4.5,'x'), ('V2','BL1','2026-10-01','void','O2',9,'x')`).run();
+db.prepare(`INSERT INTO payment_archive_items (store, date, order_id, seq, name, qty, price, refunded, code, banked_at) VALUES
+  ('BL1','2026-10-01','O1',0,'Snacks',3,4.5,0,'BL-50038-1_5','x'), ('BL1','2026-10-01','O2',0,'Snacks',6,9,0,'BL-50038-1_5','x')`).run();
 
 env.BL2_MERCHANT_ID = 'M2';
 env.BL2_API_TOKEN = 'clover-token-bl2';
@@ -126,6 +132,8 @@ const ACTIONS = {
   'supply-requests':     '?action=supply-requests&limit=200&offset=0',
   'supply-request':      `?action=supply-request&id=${SUPPLY_ID}`,
   'supply-budgets':      '?action=supply-budgets&year=2026&month=10',
+  // Item sales from the receipt archive (2026-10-16)
+  'item-sales':          '?action=item-sales&from=2026-10-01&to=2026-10-03',
 };
 
 const fetchW = (r) => worker.fetch(r, env, ctx);
@@ -203,6 +211,8 @@ for (const [action, q] of Object.entries(ACTIONS)) {
   eq(JSON.stringify([one?.request?.items?.[0]?.item_name, one?.request?.history?.[0]?.note]), '["Mop head","Ordered from Uline"]', 'supply-request through the key: its items and comments');
   const sb = await bodyOf(await fetchW(withKey(ACTIONS['supply-budgets'])));
   eq(JSON.stringify(sb?.budgets?.filter(b => b.store === 'BL1').map(b => [b.budget, b.spent, b.remaining])), '[[250,84.5,165.5]]', 'supply-budgets through the key: BL1\'s October budget, spend and remainder');
+  const is = await bodyOf(await fetchW(withKey(ACTIONS['item-sales'])));
+  eq(JSON.stringify(is?.items?.map(i => [i.store, i.code, i.units, i.sales])), '[["BL1","BL-50038-1_5",3,4.5]]', 'item-sales through the key: the paid order\'s units, not the voided one\'s');
   const sum = (k) => (ml?.months || []).reduce((s, m) => s + (m[k] || 0), 0);
   eq(JSON.stringify([ml?.rows?.length, sum('shrink_cents'), sum('store_use_cents')]), '[2,120,120]',
     'mos-list ALL through the key: both entries, shrink and store use totalled by the server');
