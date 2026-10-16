@@ -16247,11 +16247,17 @@ export default {
     // admin checks honour `reportingReadThrough`. 🛑 Left out on purpose:
     // mos-lookup, a GET that WRITES (it learns sticker codes); the photo routes;
     // edit-time pre-checks; and Add Item's clover-categories, which writes a cache.
+    //
+    // The Supply Request page's three reads joined 2026-10-15 (Brian): the request
+    // list, one request with its items and comments, and a month's budgets. Their
+    // `!currentUser` checks let `reportingReadThrough` past; allowedStores(null) is every
+    // store. Left out: its seven writes, the purge preview, and supply-budgets-all.
     const REPORTING_READ_THROUGH = new Set([
       "weekly-summary", "weekly-store-detail", "weekly-t13", "category-series", "category-hours",
       "labor", "labor-plan",
       "inventory-items", "list-sale-schedules", "bin-dump-list", "truck-current", "truck-detail",
       "truck-list", "mos-list",
+      "supply-requests", "supply-request", "supply-budgets",
     ]);
     // 🛑 And only the parameters those handlers read. A read-through
     // request falls through the whole route chain to its handler, so any route
@@ -16261,7 +16267,7 @@ export default {
     // whatever is later added above them, instead of by where code happens to sit.
     const READ_THROUGH_PARAMS = new Set([
       "action", "key", "from", "to", "store", "level", "grain", "week", "year", "end", "endWeek", "weeks",
-      "offset", "filter", "months", "limit", "id",
+      "offset", "filter", "months", "limit", "id", "status", "month",
     ]);
     const reportingAction = url.searchParams.get("action");
     const reportingKeyGiven = request.headers.has("X-API-Key") || url.searchParams.has("key");
@@ -22366,12 +22372,15 @@ export default {
     // GET ?action=supply-requests[&store=BL1][&status=pending][&limit=50][&offset=0]
     // Superuser/admin: all requests. Others: own store(s) only.
     if (request.method === "GET" && url.searchParams.get("action") === "supply-requests") {
-      if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      if (!currentUser && !reportingReadThrough) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
       try {
         const filterStore  = url.searchParams.get("store") || null;
         const filterStatus = url.searchParams.get("status") || null;
-        const limit  = Math.min(parseInt(url.searchParams.get("limit")  || "100", 10), 200);
-        const offset = parseInt(url.searchParams.get("offset") || "0", 10);
+        // 🛑 Parse, check it is a number, THEN clamp. `Math.min(parseInt(…), 200)` let
+        // limit=-1 through as SQLite's "no limit" and turned "abc" into NaN.
+        const limitRaw = parseInt(url.searchParams.get("limit") || "", 10);
+        const limit  = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 100;
+        const offset = Math.max(0, parseInt(url.searchParams.get("offset") || "0", 10) || 0);
 
         const allowed = allowedStores(currentUser); // null = all stores
         const conditions = [];
@@ -22397,7 +22406,8 @@ export default {
            ${where}
            ORDER BY
              CASE r.priority WHEN 'urgent' THEN 0 ELSE 1 END,
-             r.submitted_at DESC
+             r.submitted_at DESC,
+             r.id                      -- a total order, so paging by OFFSET is repeatable
            LIMIT ? OFFSET ?`
         ).bind(...binds, limit, offset).all();
 
@@ -22414,7 +22424,7 @@ export default {
     // GET ?action=supply-request&id=xxx
     // Returns full request: items array + history array.
     if (request.method === "GET" && url.searchParams.get("action") === "supply-request") {
-      if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      if (!currentUser && !reportingReadThrough) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
       try {
         const id = url.searchParams.get("id");
         if (!id) return new Response(JSON.stringify({ error: "Missing id" }), { status: 400, headers: corsJson });
@@ -22552,7 +22562,7 @@ export default {
     // GET ?action=supply-budgets[&year=2026][&month=5]
     // Returns budget + spent for each store. Managers see only their stores.
     if (request.method === "GET" && url.searchParams.get("action") === "supply-budgets") {
-      if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      if (!currentUser && !reportingReadThrough) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
       try {
         const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
         const year  = parseInt(url.searchParams.get("year")  || String(etNow.getFullYear()), 10);

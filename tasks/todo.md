@@ -1,3 +1,39 @@
+# Agents read the Supply Request page (2026-10-15)
+
+**Ask (Brian):** "add the Supply request page to the MCP". Names and free-text notes INCLUDED (the same call
+Brian made for Inventory an hour earlier; offered to strip). CLI gets the same commands.
+
+Design:
+- worker.js: supply-requests, supply-request, supply-budgets join `REPORTING_READ_THROUGH`; their
+  `!currentUser` checks let `reportingReadThrough` past (a null user = every store, via allowedStores);
+  `READ_THROUGH_PARAMS` += status, month. supply-requests' limit/offset parsed then clamped (`-1` was
+  "no cap", `abc` NaN). Left out: the seven writes, the purge preview (exists only for the purge),
+  supply-budgets-all (budgets month by month instead).
+- cli/reporting.mjs: get_supply_requests (every request read 200 a page; totals by status and store, and
+  ordered spend by store and UTC submit month — the budget's own rule — so the two reconcile; priority
+  filter; notes cut in list rows), get_supply_request (items + history/comments), get_supply_budgets
+  (one month, chain totals).
+- Deploy: worker first, then retjg-mcp (🛑 mixed-rollout risk), then CLI reinstall.
+
+- [x] Test first: test-reporting-read-through gains the three (key == superuser, writes nothing, the sweep,
+      managers still BL1-only, staff refused); 31 failed before the worker change
+- [x] worker.js + queries; new test-agent-supply (450 seeded requests = three pages; every figure from the
+      seed; the requests tool's spend reconciles with the budget tool's); tool counts 17 → 20
+- [x] 15 mutants, all caught. One proved the offset clamp is a real fix: `offset=abc` was a D1
+      "datatype mismatch" 500. `npm test` 10,120 / 115
+- [x] Fresh-eyes review: no security finding (only the three `!currentUser` lines changed; `status`/`month`
+      select no other route; null user safe; no side effects). Fixed: a request changing between page
+      reads could slide past a boundary unseen → `complete` flag (every page's total equal AND unique rows
+      == total) + `r.id` tie-break in the server's sort; list notes cut to 150 (300 ran ~122k at limit
+      200); the reconcile rule says "with no filter"; ids lowercased. Its surviving mutants (totals over the
+      unfiltered set, ET-month bucketing, no dedupe) now die; 8 more mutants, all caught
+- [x] PR (this one); deploy (Brian) next
+- [x] Deploys by Brian, each live `content/v2` byte-identical to its dry run: main worker 3c0ba774 (3 clean
+      keyed polls: 23/23 prod requests over 5 stores, one request with items, this month's budgets; the
+      clamps hold live; supply-budgets-all and no key still refused; an Inventory read unaffected);
+      retjg-mcp b710453f (3 clean polls of all 20 tools); CLI reinstalled, `retjg supply-requests` /
+      `supply-budgets` live. Prod has NO October supply budgets set (chain budget 0): budgets read 0
+
 # Agents read the Inventory pages: Viewer, Schedule Sale, Bin Dump, Receiver, Mark Out of Stock (2026-10-15)
 
 **Ask (Brian):** "add the inventory pages to the MCP". **Decisions (Brian):** Viewer + Schedule Sale,
