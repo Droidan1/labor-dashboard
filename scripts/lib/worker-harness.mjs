@@ -30,7 +30,7 @@ export async function loadWorker(repo) {
 function d1(db) {
   return {
     prepare(sql) {
-      const mk = (params) => ({
+      const mk = (params) => { const st = {
         bind: (...p) => mk(p),
         all: async () => {
           try { return { results: db.prepare(sql).all(...params), success: true }; }
@@ -44,10 +44,13 @@ function d1(db) {
           const r = db.prepare(sql).run(...params);
           return { success: true, meta: { changes: Number(r.changes), last_row_id: Number(r.lastInsertRowid) } };
         },
-      });
+      };
+      // In a batch D1 answers a read with its rows, as .all() does, and a write with its meta.
+      st.inBatch = () => (/^\s*(WITH|SELECT)\b/i.test(sql) ? st.all() : st.run());
+      return st; };
       return mk([]);
     },
-    batch: async (stmts) => Promise.all(stmts.map(s => s.run())),
+    batch: async (stmts) => Promise.all(stmts.map(s => (s.inBatch ? s.inBatch() : s.run()))),
   };
 }
 
@@ -56,7 +59,9 @@ function d1(db) {
 // is milliseconds; on D1 it was a 1101 after ~39 s. A plan cannot hide behind small data, so
 // check the plan: recordStatements(env) before the call, nestedScans(db, recorded) after.
 // Flags a full SCAN that is not the first loop at its level (a nested loop over a whole
-// table or CTE). A json_each scan is per row, so it is allowed.
+// table or CTE), or any full SCAN inside a correlated subquery (one per outer row). A
+// json_each scan is per row, so it is allowed. A one-row CTE in a LEFT JOIN is flagged too:
+// read it into a variable first.
 export function recordStatements(env) {
   const seen = [];
   const prepare = env.DB.prepare.bind(env.DB);
@@ -66,14 +71,15 @@ export function recordStatements(env) {
 export function nestedScans(db, sqls) {
   const bad = [];
   for (const sql of new Set(sqls)) {
-    if (!/^\s*(WITH|SELECT)\b/i.test(sql)) continue;
-    const loops = new Map();
+    if (!/^\s*(?:(?:--[^\n]*\n|\/\*[\s\S]*?\*\/)\s*)*(WITH|SELECT)\b/i.test(sql)) continue;
+    const loops = new Map(), correlated = new Set();
     for (const r of db.prepare('EXPLAIN QUERY PLAN ' + sql).all()) {
+      if (/^CORRELATED /.test(r.detail)) correlated.add(r.id);
       if (!/^(SCAN|SEARCH) /.test(r.detail)) continue;
       const at = loops.get(r.parent) || []; at.push(r.detail); loops.set(r.parent, at);
     }
-    for (const at of loops.values()) at.forEach((d, i) => {
-      if (i > 0 && /^SCAN /.test(d) && !/VIRTUAL TABLE/.test(d)) bad.push(`${d} in: ${sql.replace(/\s+/g, ' ').slice(0, 100)}`);
+    for (const [parent, at] of loops) at.forEach((d, i) => {
+      if ((i > 0 || correlated.has(parent)) && /^SCAN /.test(d) && !/VIRTUAL TABLE/.test(d)) bad.push(`${d} in: ${sql.replace(/\s+/g, ' ').slice(0, 100)}`);
     });
   }
   return bad;

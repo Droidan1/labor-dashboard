@@ -29077,7 +29077,7 @@ export default {
       const { from, to, stores, days } = range;
       // grain (Brian 2026-10-16, "week to week"): one row per item AND period: d = day,
       // w = the week ending Saturday (as the category tools count weeks), m = month.
-      const grain = url.searchParams.get("grain") || null;
+      const grain = (url.searchParams.get("grain") || "").toLowerCase() || null;
       const PERIOD = { d: "i.date", w: "date(i.date, 'weekday 6')", m: "substr(i.date, 1, 7)" };
       if (grain && !PERIOD[grain]) return new Response(JSON.stringify({ error: "grain must be d, w or m" }), { status: 400, headers: corsJson });
       if (!stores.length) return new Response(JSON.stringify({ ok: true, from, to, grain, stores, items: [], excluded: { lines: 0, sales: 0 }, coverage: null }), { headers: corsJson });
@@ -29089,7 +29089,9 @@ export default {
       // 🛑 No anti-join for the excluded lines (2026-10-16). `LEFT JOIN paid … IS NULL` planned
       // on D1 as a full scan of `paid` per receipt line, and timed out (1101) at BL1 × 31 days.
       // Excluded = every line − the paid lines, both of which these queries already read.
-      const [itemRows, allLines, banked, refundPay, bareDays] = await Promise.all([
+      // One batch is one transaction: excluded is the difference of two reads, so they must see
+      // the same rows even while the nightly is banking a day of the range (in several writes).
+      const [itemRows, allLinesRes, banked, refundPay, bareDays] = await env.DB.batch([
         env.DB.prepare(`${paid}
           SELECT i.store, COALESCE(i.code, '') AS code, i.name${period},
                  COUNT(*) AS lines, COALESCE(SUM(i.price), 0) AS line_sales,
@@ -29102,22 +29104,23 @@ export default {
             JOIN paid p ON p.store = i.store AND p.date = i.date AND p.order_id = i.order_id
            WHERE i.store IN (${inList}) AND i.date BETWEEN ? AND ?
            GROUP BY i.store, COALESCE(i.code, ''), i.name${grain ? ", period" : ""}
-           ${grain ? "ORDER BY i.store, COALESCE(i.code, ''), i.name, period" : ""}`).bind(...scope, ...scope).all(),
+           ${grain ? "ORDER BY i.store, COALESCE(i.code, ''), i.name, period" : ""}`).bind(...scope, ...scope),
         env.DB.prepare(`SELECT COUNT(*) AS lines, COALESCE(SUM(price), 0) AS sales, SUM(CASE WHEN code IS NULL THEN 1 ELSE 0 END) AS without_code
-            FROM payment_archive_items WHERE store IN (${inList}) AND date BETWEEN ? AND ?`).bind(...scope).first(),
+            FROM payment_archive_items WHERE store IN (${inList}) AND date BETWEEN ? AND ?`).bind(...scope),
         env.DB.prepare(`SELECT store, date, complete, note FROM payment_archive_days
-            WHERE store IN (${inList}) AND date BETWEEN ? AND ?`).bind(...scope).all(),
+            WHERE store IN (${inList}) AND date BETWEEN ? AND ?`).bind(...scope),
         // Refunds as PAYMENTS. A line is flagged refunded only if Clover marked it by the
         // time the day was banked; amount-only refunds and later returns never are, so the
         // line columns understate refunds and this says by how much.
         env.DB.prepare(`SELECT kind, COALESCE(SUM(amount), 0) AS amount, COUNT(*) AS n FROM payment_archive
-            WHERE store IN (${inList}) AND date BETWEEN ? AND ? AND kind IN ('refund', 'manual') GROUP BY kind`).bind(...scope).all(),
+            WHERE store IN (${inList}) AND date BETWEEN ? AND ? AND kind IN ('refund', 'manual') GROUP BY kind`).bind(...scope),
         // A day can be banked with its payments but WITHOUT its lines (the item write failed
         // after the ledger row): it reads as banked, and its items are simply absent.
         env.DB.prepare(`SELECT d.store, d.date FROM payment_archive_days d
             WHERE d.store IN (${inList}) AND d.date BETWEEN ? AND ? AND d.payments > 0
-              AND NOT EXISTS (SELECT 1 FROM payment_archive_items i WHERE i.store = d.store AND i.date = d.date)`).bind(...scope).all(),
+              AND NOT EXISTS (SELECT 1 FROM payment_archive_items i WHERE i.store = d.store AND i.date = d.date)`).bind(...scope),
       ]);
+      const allLines = allLinesRes.results?.[0];
       const cents = (n) => Math.round((Number(n) || 0) * 100) / 100;
       const paidRows = itemRows.results || [];
       const items = paidRows.map(r => ({

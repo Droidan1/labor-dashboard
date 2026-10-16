@@ -61,6 +61,9 @@ pay.run('P9', 'BL1', '2026-09-30', 'payment', 'O9', 1.5);
 line.run('BL1', '2026-09-30', 'O9', 0, 'FG BL CONSUMABLES - FOOD - SNACKS', 1, 1.5, 0, SNACK);
 pay.run('P8', 'BL1', '2026-10-04', 'payment', 'O8', 4);
 line.run('BL1', '2026-10-04', 'O8', 0, 'FG BL CONSUMABLES - FOOD - SNACKS', 2, 4.0, 0, SNACK);   // marked up to $2
+// 21 different items on one ticket, for the default limit
+pay.run('P10', 'BL4', '2026-09-20', 'payment', 'O10', 21);
+for (let n = 0; n < 21; n++) line.run('BL4', '2026-09-20', 'O10', n, 'Item ' + n, 1, 1, 0, 'BL-9' + n);
 day.run('BL1', '2026-10-01', 1, null);
 day.run('BL1', '2026-10-02', 0, 'net off by 6%');
 day.run('BL1', '2026-10-03', 1, null);
@@ -116,6 +119,9 @@ const find = (b, store, code, name) => b?.items?.find(i => i.store === store && 
     SELECT COUNT(*) AS lines FROM payment_archive_items i LEFT JOIN paid p ON p.store = i.store AND p.date = i.date AND p.order_id = i.order_id
      WHERE i.store IN (?) AND i.date BETWEEN ? AND ? AND p.order_id IS NULL`;
   eq(nestedScans(db, [timedOut]).map(b => b.split(' in: ')[0]), ['SCAN p LEFT-JOIN'], 'the guard flags the anti-join that timed out on D1');
+  const perRow = `-- a comment first
+    SELECT d.store FROM payment_archive_days d WHERE NOT EXISTS (SELECT 1 FROM payment_archive_items i WHERE i.name = d.note)`;
+  eq(nestedScans(db, [perRow]).length, 1, 'and a full scan inside a correlated subquery, after a leading comment');
   eq(nestedScans(db, seen), [], 'no item-sales statement scans a whole table or CTE inside a loop');
 }
 {
@@ -142,6 +148,13 @@ const find = (b, store, code, name) => b?.items?.find(i => i.store === store && 
   }
   eq([w?.excluded?.lines, w?.excluded?.sales], [2, 35], 'excluded: the voided and never-paid tickets, whatever the grain');
   eq((await keyed(q + '&grain=x')).status, 400, 'an unknown grain → 400');
+  eq((await keyed(q + '&grain=W')).body?.grain, 'w', 'a grain in capitals is accepted, as action=labor accepts it');
+  // excluded is all lines − paid lines: two reads that must see the same rows while the
+  // nightly banks a day in several writes. One batch is one transaction on D1.
+  const batches = [], realBatch = mainEnv.DB.batch;
+  mainEnv.DB.batch = async (st) => { batches.push(st.length); return realBatch(st); };
+  try { await keyed(q + '&grain=w'); } finally { mainEnv.DB.batch = realBatch; }
+  eq(batches, [5], 'item-sales reads in ONE batch of five');
   eq((await keyed(q + '&grain=w')).body, (await asUser(q + '&grain=w', 'u-su')).body, 'by week, the key answers as a superuser does');
 }
 {
@@ -201,6 +214,11 @@ async function tool(name, args = {}) {
   const n2 = upstream.length;
   const plain = await tool('get_item_sales', { storeId: 'BL1', from: '2026-10-01', to: '2026-10-03', bucket: 'total' });
   ok(!upstream[n2].has('grain') && !plain.rows?.[0]?.periods && plain.totals?.byPeriod == null, 'bucket total = no grain, no periods');
+  const listed = async (extra) => { const t = await tool('get_item_sales', { storeId: 'BL4', from: '2026-09-20', to: '2026-09-20', ...extra }); return [t.matched, t.listed, t.rows?.length]; };
+  eq(await listed({ bucket: 'day' }), [21, 20, 20], 'with a bucket the default limit is 20 items (each carries its periods)');
+  eq(await listed({}), [21, 21, 21], 'without one it stays 100');
+  eq(await listed({ bucket: 'day', limit: 21 }), [21, 21, 21], 'a limit given wins');
+  eq((await listed({ storeId: 'BL1', from: '2026-10-01', to: '2026-10-03', bucket: 'day', limit: 2 })).slice(1), [2, 2], 'limit counts items, not periods');
   const before = upstream.length;
   ok((await tool('get_item_sales', { from: '2026-09-01', to: '2026-10-02' })).isError && upstream.length === before, 'a chain range over 31 days is refused before any call');
   ok((await tool('get_item_sales', { storeId: 'BL1', from: '2026-10-01' })).isError, 'from and to are required');
