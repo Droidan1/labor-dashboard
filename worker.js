@@ -2877,7 +2877,12 @@ function seriesRowsFromSnapshot(snap, level) {
 // failure mode this repo keeps paying for; this makes them impossible by construction.
 //
 // Banking must never cost the day its snapshot, so its failure is logged and swallowed.
-async function saveItemSalesSnapshot(env, store, dateStr, itemData, hourSlots = null) {
+//
+// itemLines (2026-10-16): the per-ITEM record aggregateItemSales fills when given a sink,
+// banked to D1 item_day_lines in ONE statement (a day is never half-written), stamped with
+// this same snapshotTime. 🛑 Never wipes a day with nothing: the clientCreatedTime sweep
+// saves even a zero-order day, so an empty record leaves the existing row alone.
+async function saveItemSalesSnapshot(env, store, dateStr, itemData, hourSlots = null, itemLines = null) {
   if (!env.SALES_SNAPSHOTS) return;
   const lc = store.toLowerCase();
   const snapshotTime = new Date().toISOString();
@@ -2885,14 +2890,26 @@ async function saveItemSalesSnapshot(env, store, dateStr, itemData, hourSlots = 
     ...itemData,
     snapshotTime,
   }));
-  if (!hourSlots) return;
-  try {
-    await env.SALES_SNAPSHOTS.put(`item-hours:${lc}:${dateStr}`, JSON.stringify({
-      store, date: dateStr, slots: hourSlots,
-      daySnapshotTime: snapshotTime, snapshotTime,
-    }));
-  } catch (e) {
-    console.warn(`[item-hours] bank failed ${store}/${dateStr}: ${e.message}`);
+  if (hourSlots) {
+    try {
+      await env.SALES_SNAPSHOTS.put(`item-hours:${lc}:${dateStr}`, JSON.stringify({
+        store, date: dateStr, slots: hourSlots,
+        daySnapshotTime: snapshotTime, snapshotTime,
+      }));
+    } catch (e) {
+      console.warn(`[item-hours] bank failed ${store}/${dateStr}: ${e.message}`);
+    }
+  }
+  if (env.DB && itemLines?.items?.length) {
+    try {
+      await env.DB.prepare(
+        `INSERT OR REPLACE INTO item_day_lines (store, date, snapshot_time, item_count, net, items_json, other_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(store, dateStr, snapshotTime, itemLines.items.length, itemData?.totals?.netSales ?? 0,
+             JSON.stringify(itemLines.items), JSON.stringify(itemLines.other || {})).run();
+    } catch (e) {
+      console.warn(`[item-lines] bank failed ${store}/${dateStr}: ${e.message}`);
+    }
   }
 }
 
@@ -2927,7 +2944,8 @@ async function rebuildItemSnapshot(env, store, dateStr, ctx) {
     ]);
     if (!elements) return { outcome: "error", date: dateStr, error: "no credentials, or Clover fetch failed" };
 
-    const itemData = aggregateItemSales(elements, ctx.catMap, store, dateStr, ctx.overrides, ctx.itemCosts, refundElements);
+    const itemLines = {};
+    const itemData = aggregateItemSales(elements, ctx.catMap, store, dateStr, ctx.overrides, ctx.itemCosts, refundElements, [], [], itemLines);
     const d1Total = ctx.d1Total || 0;
 
     // ── Zero-order guard ───────────────────────────────────────────────────
@@ -2990,7 +3008,7 @@ async function rebuildItemSnapshot(env, store, dateStr, ctx) {
       }
     }
 
-    await saveItemSalesSnapshot(env, store, dateStr, itemData);
+    await saveItemSalesSnapshot(env, store, dateStr, itemData, null, itemLines);
     return {
       outcome: "written", date: dateStr, backedUp,
       netSales: itemData?.totals?.netSales ?? 0,
@@ -3767,7 +3785,26 @@ function matchOverridePattern(rawName, imNum, patterns) {
 // undefined / EMPTY_OVERRIDES — caller threads it in for live + snapshot paths.
 // `itemCosts` is the shape returned by fetchItemCosts(); used to enrich each
 // line-item with cost so we can emit cost / extCost / grossProfit / gpmPct.
-function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, itemCosts, refundElements = [], extraOrdersForRefundLookup = [], manualRefundElements = []) {
+// How an item was filed, for the per-item record (item_day_lines). One word per rung of
+// the ladder below, splitting the two that `l2Source` lumps together ("clover-l3" covers
+// a mapped category, the sku book and an unmapped category; "custom" covers Custom Sales,
+// refund lines and unmapped sku-book items).
+function itemLineSource(l2Source, l2, l3) {
+  if (l2Source === "clover-l3") return l3 === SKU_BOOK_CATEGORY ? "sku-book" : (l2 === "Uncategorized" ? "unmapped-clover-category" : "clover-category");
+  if (l2Source === "custom") return l2 === "Refund" ? "refund-line" : (l3 === SKU_BOOK_CATEGORY ? "sku-book-unmapped" : "custom");
+  return l2Source || "custom";
+}
+
+// lineSink (optional, Brian 2026-10-16): when a caller passes {}, it is filled with the
+// per-ITEM record — { items: [...], other: {...} } — that saveItemSalesSnapshot banks to
+// D1 item_day_lines. It is filled from the same lines, discounts and refund shares as the
+// categories below, so Σ items.net + Σ other == totals.netSales. Nothing is added to the
+// returned object: that object is spread into KV and served live.
+function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, itemCosts, refundElements = [], extraOrdersForRefundLookup = [], manualRefundElements = [], lineSink = null) {
+  const _items = lineSink ? new Map() : null;
+  // Cents that reach no item: the residual, refunds against orders not fetched today, refunds
+  // that cannot be split, manual refunds. Signed as they move net.
+  const _other = { nonItem: 0, crossDayRefunds: 0, unattributedRefunds: 0, manualRefunds: 0 };
   const ov = overrides || EMPTY_OVERRIDES;
   const ovItems = ov.items || {};
   const ovPatterns = ov.patterns || [];
@@ -4182,17 +4219,31 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       // reference lineItem.id) can be attributed back to the right L2/L3.
       if (li.id) lineItemCatMap.set(li.id, { l2, l3Key });
 
+      const liCode = li.item?.code || li.item?.sku || null;
+      let _row = null;
+      if (_items) {
+        const rowKey = [itemId || "", itemId ? "" : (li.name || ""), itemId ? "" : (liCode || ""), l2, l3Key].join("\u0000");
+        _row = _items.get(rowKey);
+        if (!_row) {
+          _row = { itemId: itemId || null, name: li.name || null, code: liCode, cloverCategory: l3 || null, l2, l3: l3Key,
+                   source: itemLineSource(l2Source, l2, l3), qty: 0, gross: 0, lineDiscounts: 0, orderDiscounts: 0,
+                   refunds: 0, net: 0, cost: 0, costSource: null, orders: 0, _order: null };
+          _items.set(rowKey, _row);
+        }
+      }
+
       // Phase 2E: track positive-priced line items per order for refund
       // attribution. Refund rows (priceCents < 0) are skipped — refunds get
       // attributed BY this map, not pushed to it.
       if (order.id && priceCents > 0) {
         let arr = orderLineItemMap.get(order.id);
         if (!arr) { arr = []; orderLineItemMap.set(order.id, arr); }
-        arr.push({ l2, l3Key, grossCents: priceCents });
+        arr.push({ l2, l3Key, grossCents: priceCents, row: _row });
       }
 
       // Phase 2B: line-level discount (resolved above, handles % case)
       let discCents = liDiscCache.get(li) || 0;
+      const lineDiscOnly = discCents;
 
       // Phase 2B: allocate order-level discount proportionally to this
       // line item's contribution to the post-line-discount subtotal.
@@ -4224,14 +4275,29 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
         if (Number.isFinite(catCost) && catCost > 0) { unitCost = catCost; costSource = "category"; }
       }
 
+      // The item this line belongs to, for the per-item record. Keyed by Clover item id
+      // (or, with none, name + code) AND where it was filed, so a row has one mapping.
+      if (_row) {
+        if (!_row.code && liCode) _row.code = liCode;
+        if (_row._order !== order.id) { _row.orders++; _row._order = order.id; }
+      }
+
       if (priceCents < 0) {
         cat.refunds -= grossCents / 100;
         cat.net -= grossCents / 100;
         l3Cat.refunds -= grossCents / 100;
         l3Cat.net -= grossCents / 100;
         orderLineItemNetCents -= grossCents;
+        if (_row) { _row.refunds -= grossCents; _row.net -= grossCents; }
       } else {
         const lineCost = unitCost * qty;
+        if (_row) {
+          // Cost is booked on sold lines only, so the source is theirs; two sources = mixed.
+          _row.costSource = _row.costSource == null || _row.costSource === costSource ? costSource : "mixed";
+          _row.qty += qty; _row.gross += grossCents; _row.cost += lineCost;
+          _row.lineDiscounts -= lineDiscOnly; _row.orderDiscounts -= (discCents - lineDiscOnly);
+          _row.net += grossCents - discCents;
+        }
         cat.qty += qty;
         cat.gross += grossCents / 100;
         cat.discounts -= discCents / 100;
@@ -4263,6 +4329,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
     if (residualCents !== 0) {
       const cat = getCat("Other / Non-Item");
       cat.net += residualCents / 100;
+      _other.nonItem += residualCents;
     }
     if (_ordCh.retail.units > 0 && _ordCh.bin.units > 0) _ch.mixed++;
     for (const k of ['retail', 'bin']) {
@@ -4393,6 +4460,10 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
           cat.net       -= shareCents / 100;
           l3Cat.refunds -= shareCents / 100;
           l3Cat.net     -= shareCents / 100;
+          // A line from today's orders carries its item row; a cross-day lookup line
+          // (an earlier day's order) has none, so its share reaches no item today.
+          if (li.row) { li.row.refunds -= shareCents; li.row.net -= shareCents; }
+          else _other.crossDayRefunds -= shareCents;
         }
       } else {
         // Order has no positive-gross line items (rare — perhaps already
@@ -4403,6 +4474,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
         cat.net       -= refNetCents / 100;
         l3Cat.refunds -= refNetCents / 100;
         l3Cat.net     -= refNetCents / 100;
+        _other.unattributedRefunds -= refNetCents;
       }
     } else {
       // True cross-day refund: original order isn't in today's fetched
@@ -4414,6 +4486,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       cat.net       -= refNetCents / 100;
       l3Cat.refunds -= refNetCents / 100;
       l3Cat.net     -= refNetCents / 100;
+      _other.unattributedRefunds -= refNetCents;
     }
   }
 
@@ -4434,6 +4507,19 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
     cat.net       -= preTaxCents / 100;
     l3Cat.refunds -= preTaxCents / 100;
     l3Cat.net     -= preTaxCents / 100;
+    _other.manualRefunds -= preTaxCents;
+  }
+
+  if (lineSink) {
+    const $ = (cents) => roundCents(cents / 100);
+    lineSink.items = [..._items.values()].map(r => ({
+      itemId: r.itemId, name: r.name, code: r.code, cloverCategory: r.cloverCategory,
+      l2: r.l2, l3: r.l3, source: r.source,
+      qty: Math.round(r.qty * 1000) / 1000, gross: $(r.gross), lineDiscounts: $(r.lineDiscounts),
+      orderDiscounts: $(r.orderDiscounts), refunds: $(r.refunds), net: $(r.net),
+      cost: roundCents(r.cost), costSource: r.costSource || "none", orders: r.orders,
+    }));
+    lineSink.other = Object.fromEntries(Object.entries(_other).map(([k, v]) => [k, $(v)]));
   }
 
   // Calculate totals and format response
@@ -4853,13 +4939,14 @@ async function snapshotDayByClientTime(store, env, dateStr, lookForwardDays = 3)
   // Category-based bin/retail/total (same derivation as the nightly cron), and
   // refresh the item-sales snapshot so the Item Sales tab stays correct too.
   let binRetailOverride = null, itemData = null, hourSlots = null;
+  const itemLines = {};
   try {
     const itemCatMap = await fetchItemCategoryMap(store, env);
     const [overrides, itemCosts] = await Promise.all([fetchItemOverrides(env), fetchItemCosts(env)]);
     const refundElements = await fetchRefundElements(store, env, dayStart, dayEnd);
     const manualRefundElements = await fetchManualRefunds(store, env, dayStart, dayEnd);
     const extraOrders = await fetchCrossDayOrdersForRefunds(store, env, bucket, refundElements);
-    itemData = aggregateItemSales(bucket, itemCatMap, store, dateStr, overrides, itemCosts, refundElements, extraOrders, manualRefundElements);
+    itemData = aggregateItemSales(bucket, itemCatMap, store, dateStr, overrides, itemCosts, refundElements, extraOrders, manualRefundElements, itemLines);
     // Bank the hours from THIS bucket, not the cron's narrower one. `bucket` is the
     // wide fetch already filtered to this day by the register's own clock, so an order
     // rung offline and synced late is banked under the hour it actually happened.
@@ -4882,7 +4969,7 @@ async function snapshotDayByClientTime(store, env, dateStr, lookForwardDays = 3)
   const data = await fetchAggregateAndSnapshot(store, env, dayStart, dateStr, dayEnd, binRetailOverride, bucket);
 
   if (itemData && data && !data.skippedManualOverride) {
-    try { await saveItemSalesSnapshot(env, store, dateStr, itemData, hourSlots); } catch (e) {
+    try { await saveItemSalesSnapshot(env, store, dateStr, itemData, hourSlots, itemLines); } catch (e) {
       console.warn(`[clienttime-sweep] item snapshot save failed ${store}/${dateStr}: ${e.message}`);
     }
   }
@@ -19430,7 +19517,8 @@ export default {
               // Phase 2F: fetch original orders for cross-day refunds so they
               // attribute by category instead of falling to the Refund L2 bucket.
               const extraOrders = await fetchCrossDayOrdersForRefunds(store, env, elements, refundElements);
-              const itemAgg = aggregateItemSales(elements, itemCatMap, store, dateStr, overrides, itemCosts, refundElements, extraOrders, manualRefundElements);
+              const itemLines = {};
+              const itemAgg = aggregateItemSales(elements, itemCatMap, store, dateStr, overrides, itemCosts, refundElements, extraOrders, manualRefundElements, itemLines);
               let binNet = 0, retailNet = 0;
               for (const c of (itemAgg.categories || [])) {
                 if (c.category === "Bin Products") binNet += c.netSales;
@@ -19447,7 +19535,7 @@ export default {
               // Previously the admin re-snapshot path skipped this write and only
               // updated D1, so item-tab refunds never reflected admin re-runs.
               try {
-                await saveItemSalesSnapshot(env, store, dateStr, itemAgg);
+                await saveItemSalesSnapshot(env, store, dateStr, itemAgg, null, itemLines);
               } catch (saveErr) {
                 console.warn(`Admin item-snapshot save failed for ${store}: ${saveErr.message}`);
               }
@@ -19658,7 +19746,8 @@ export default {
           if (!elements) { results[store] = "skipped (no credentials)"; continue; }
           const itemCatMap = await fetchItemCategoryMap(store, env);
           const extraOrders = await fetchCrossDayOrdersForRefunds(store, env, elements, refundElements);
-          const itemData = aggregateItemSales(elements, itemCatMap, store, dateParam, overrides, itemCosts, refundElements, extraOrders, manualRefundElements);
+          const itemLines = {};
+          const itemData = aggregateItemSales(elements, itemCatMap, store, dateParam, overrides, itemCosts, refundElements, extraOrders, manualRefundElements, itemLines);
 
           // Zero-order guard: if Clover returned no orders and we already have
           // a non-empty item snapshot for this date, don't overwrite it.
@@ -19674,7 +19763,7 @@ export default {
             }
           }
 
-          await saveItemSalesSnapshot(env, store, dateParam, itemData);
+          await saveItemSalesSnapshot(env, store, dateParam, itemData, null, itemLines);
           results[store] = { ok: true, orders: itemData.orderCount, netSales: itemData.totals.netSales };
         } catch (e) {
           results[store] = { error: e.message };
@@ -29461,6 +29550,7 @@ export default {
         // block throws before assigning, they stay null and it fetches its own
         // (the original behaviour).
         let preOrders = null, preRefunds = null, preManual = null;
+        const itemLines = {};
         try {
           const [elements, refundElements, manualRefundElements] = await Promise.all([
             fetchItemOrders(store, env, startOfDay),
@@ -29471,7 +29561,7 @@ export default {
           if (elements && elements.length > 0) {
             const itemCatMap = await fetchItemCategoryMap(store, env);
             const extraOrders = await fetchCrossDayOrdersForRefunds(store, env, elements, refundElements);
-            itemData = aggregateItemSales(elements, itemCatMap, store, todayStr, overrides, itemCosts, refundElements, extraOrders, manualRefundElements);
+            itemData = aggregateItemSales(elements, itemCatMap, store, todayStr, overrides, itemCosts, refundElements, extraOrders, manualRefundElements, itemLines);
             let binNet = 0, retailNet = 0;
             for (const c of (itemData.categories || [])) {
               if (c.category === "Bin Products") binNet += c.netSales;
@@ -29498,7 +29588,7 @@ export default {
         // Persist the item snapshot we already computed above.
         if (itemData) {
           try {
-            await saveItemSalesSnapshot(env, store, todayStr, itemData);
+            await saveItemSalesSnapshot(env, store, todayStr, itemData, null, itemLines);
             results[store].items = "ok";
           } catch (saveErr) {
             results[store].items = `error: ${saveErr.message}`;
