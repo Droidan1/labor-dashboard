@@ -20,7 +20,14 @@ receipt line is compared with every paid order. The items query itself is fine (
       transaction); bucketed answers could pass the MCP's 100k-char cap → default limit 20 with a bucket;
       the guard missed a scan in a correlated subquery and SQL after a comment; the rule now says empty
       periods are left out; `grain` lowercased like action=labor
-- [ ] PR; deploy (Brian): worker → retjg-mcp → CLI; live timing on BL1 × 92 days and chain × 31 days
+- [x] PR #347. Brian: main worker 1bc628a7, live `content/v2` byte-identical to the dry run (1,119,187 bytes);
+      3 clean keyed passes: BL1 × 92 days by week 1.1-1.7 s, chain × 31 days by week 1.3-1.9 s and total
+      1.0-1.5 s (all were 1101), bad grain 400. retjg-mcp b90c48a1 byte-identical (318,384 bytes), 3 clean
+      passes of all 22 tools incl. a bucketed call; CLI reinstalled; Varsity Jackets chain × 31 days by
+      week in one call, 1.6 s
+- [ ] ⚠️ An item can be several rows per store (no code before ~09-21; hand-keyed spellings at BL16). My first
+      Varsity table kept one row per store and under-counted the weeks ending 09-19 and 10-03; corrected
+      for Brian the same session. Offered: per-store totals by period in the tool, plus a reading rule
 
 # Item numbers for agents before the L2/L3 rollup (2026-10-16)
 
