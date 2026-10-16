@@ -12,8 +12,10 @@ can be several rows per store: no code before ~2026-09-21, and BL16 keys in its 
 - [x] Mutants (10, all caught); `npm test` 10,309 / 117; fresh-eyes review (no blocker; sums and the cap
       verified; rule now says search by NAME and check the listed rows; items counts rows). Production data:
       BL1 × 92 days by day 116,844 → 45,850 characters; byStore reproduces the corrected Varsity table
-- [ ] PR; deploy (Brian): retjg-mcp only (no worker change) → CLI; live check: compact size of the
-      largest default call, Varsity by store by week in one call
+- [x] PR #348 (merged before the deploy, so the branch guard stopped it; redeployed from main 0230aa9, whose
+      mcp/ + cli/ equal the tested 9680419). retjg-mcp 7ae61180 byte-identical (319,261 bytes); 3 clean passes
+      of all 22 tools; BL1 × 92 days by day through MCP answers (45,850 characters, 977 periods; refused
+      before); Varsity byStore by week matches the corrected table; CLI reinstalled
 
 # get_item_sales: fix the production timeout, add week-by-week (2026-10-16)
 
