@@ -64,6 +64,24 @@ line.run('BL1', '2026-10-04', 'O8', 0, 'FG BL CONSUMABLES - FOOD - SNACKS', 2, 4
 // 21 different items on one ticket, for the default limit
 pay.run('P10', 'BL4', '2026-09-20', 'payment', 'O10', 21);
 for (let n = 0; n < 21; n++) line.run('BL4', '2026-09-20', 'O10', n, 'Item ' + n, 1, 1, 0, 'BL-9' + n);
+// One product as two rows at BL14, as the archive really holds it: a line from before codes were
+// captured, and a hand-keyed spelling
+pay.run('P11', 'BL14', '2026-09-21', 'payment', 'O11', 45);
+line.run('BL14', '2026-09-21', 'O11', 0, 'Varsity Jackets', 2, 30, 0, null);
+line.run('BL14', '2026-09-21', 'O11', 1, 'Varsity Jackets', 1, 15, 0, 'Varsity jackets');
+pay.run('P12', 'BL14', '2026-09-27', 'payment', 'O12', 15);
+line.run('BL14', '2026-09-27', 'O12', 0, 'Varsity jacket', 1, 15, 0, null);
+// A heavy default call: one store × 92 days by day, 25 items sold every day (BL16, April to June,
+// out of every other test's way). Not the ceiling: four-figure daily sales per item and long names
+// can still pass the cap, and the MCP then refuses with how to narrow.
+{
+  const NAMES = ['FG BL CONSUMABLES - FOOD - SNACKS', 'FG BL HOME - KITCHEN - COOKWARE', 'Adult Apparel', 'FG BL HBA - PERSONAL CARE'];
+  for (let d = 0; d < 92; d++) {
+    const date = new Date(Date.UTC(2026, 3, 1 + d)).toISOString().slice(0, 10);
+    pay.run('PB' + d, 'BL16', date, 'payment', 'OB' + d, 100);
+    for (let n = 0; n < 25; n++) line.run('BL16', date, 'OB' + d, n, NAMES[n % 4] + ' ' + n, 1 + (n + d) % 9, 1.37 * (1 + (n + d) % 9) + n, (n + d) % 13 === 0 ? 1 : 0, `BL-5${String(n).padStart(4, '0')}-${1 + n % 9}_99`);
+  }
+}
 day.run('BL1', '2026-10-01', 1, null);
 day.run('BL1', '2026-10-02', 0, 'net off by 6%');
 day.run('BL1', '2026-10-03', 1, null);
@@ -172,7 +190,7 @@ const find = (b, store, code, name) => b?.items?.find(i => i.store === store && 
 
 // ── The tool, through the MCP worker ───────────────────────────────────────
 await stubWorkersRuntime();
-const { default: mcp } = await import(pathToFileURL(path.join(repo, 'mcp', 'worker.mjs')).href);
+const { default: mcp, MAX_RESULT_CHARS } = await import(pathToFileURL(path.join(repo, 'mcp', 'worker.mjs')).href);
 const upstream = [];
 const env = { MCP_KEY: MCP, REPORTING_API_KEY: UP,
   API: { fetch: async (r) => { upstream.push(new URL(r.url).searchParams); return main.fetch(r, mainEnv, ctx); } } };
@@ -203,7 +221,8 @@ async function tool(name, args = {}) {
   const wk = await tool('get_item_sales', { storeId: 'BL1', from: '2026-09-30', to: '2026-10-04', bucket: 'week', search: 'snack' });
   eq(upstream[m].get('grain'), 'w', 'bucket week asks for grain=w');
   eq([wk.bucket, wk.matched, wk.rows?.length], ['week', 1, 1], 'one row for the item, not one per week');
-  eq(wk.rows?.[0]?.periods?.map(p => [p.period, p.units, p.sales, p.orders, p.avgPrice]), [['2026-10-03', 6, 9, 4, 1.5], ['2026-10-10', 2, 4, 1, 2]], 'its weeks, oldest first, each with its average price');
+  eq(wk.periodColumns, ['period', 'units', 'sales', 'refundedUnits', 'refundedSales', 'orders', 'avgPrice'], 'periods are rows under periodColumns');
+  eq(wk.rows?.[0]?.periods, [['2026-10-03', 6, 9, 2, 3, 4, 1.5], ['2026-10-10', 2, 4, 0, 0, 1, 2]], 'its weeks, oldest first, each with its average price');
   eq([wk.rows?.[0]?.units, wk.rows?.[0]?.sales, wk.rows?.[0]?.orders, wk.rows?.[0]?.firstDate, wk.rows?.[0]?.lastDate, wk.rows?.[0]?.avgPrice], [8, 13, 5, '2026-09-30', '2026-10-04', 1.63], 'and its totals over the range');
   eq(wk.totals?.byPeriod, { '2026-10-03': { units: 6, sales: 9 }, '2026-10-10': { units: 2, sales: 4 } }, 'totals per week over what matched');
   const chain = await tool('get_item_sales', { from: '2026-10-01', to: '2026-10-03', bucket: 'day', search: 'snack' });
@@ -213,7 +232,22 @@ async function tool(name, args = {}) {
   eq(Object.keys(days.totals?.byPeriod || {}), ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04'], 'totals by period run oldest first, though the first item listed sold only on 10-03');
   const n2 = upstream.length;
   const plain = await tool('get_item_sales', { storeId: 'BL1', from: '2026-10-01', to: '2026-10-03', bucket: 'total' });
-  ok(!upstream[n2].has('grain') && !plain.rows?.[0]?.periods && plain.totals?.byPeriod == null, 'bucket total = no grain, no periods');
+  ok(!upstream[n2].has('grain') && !plain.rows?.[0]?.periods && plain.totals?.byPeriod == null && plain.periodColumns == null, 'bucket total = no grain, no periods');
+  // Per store: every matched row of a store added up. One product is often several rows.
+  eq(plain.totals?.byStore, { BL1: { items: 3, units: 7, sales: 28.84, refundedUnits: 2, refundedSales: 3 } }, 'totals by store, over every matched row');
+  const vj = await tool('get_item_sales', { from: '2026-09-20', to: '2026-10-03', bucket: 'week', search: 'varsity jacket' });
+  eq(vj.rows?.length, 3, 'one jacket, three rows at BL14 (no code, a code, another spelling)');
+  eq(vj.totals?.byStore, { BL14: { items: 3, units: 4, sales: 60, refundedUnits: 0, refundedSales: 0, byPeriod: { '2026-09-26': { units: 3, sales: 45 }, '2026-10-03': { units: 1, sales: 15 } } } },
+    'byStore adds them, week by week');
+  const both = await tool('get_item_sales', { from: '2026-10-01', to: '2026-10-03', bucket: 'day', search: 'snack' });
+  eq(Object.keys(both.totals?.byStore || {}), ['BL1', 'BL2'], 'every store: one entry per store with a match, in store order');
+  eq(both.totals?.byStore?.BL2, { items: 1, units: 4, sales: 6, refundedUnits: 0, refundedSales: 0, byPeriod: { '2026-10-01': { units: 4, sales: 6 } } }, 'BL2 on its own');
+  // 🛑 The largest default answer must fit the MCP's cap: as objects, one store × 92 days by day was 116,844
+  // characters on production data, and the call was refused.
+  const big = await tool('get_item_sales', { storeId: 'BL16', from: '2026-04-01', to: '2026-07-01', bucket: 'day' });
+  ok(!big.isError, 'one store × 92 days by day answers: ' + (big.isError ? big.text.slice(0, 120) : 'ok'));
+  eq([big.matched, big.rows?.length, big.rows?.[0]?.periods?.length], [25, 20, 92], 'its 20 largest items, 92 days each');
+  ok(lastText.length < MAX_RESULT_CHARS, `under the cap even when all 20 sold every day: ${lastText.length} of ${MAX_RESULT_CHARS} characters`);
   const listed = async (extra) => { const t = await tool('get_item_sales', { storeId: 'BL4', from: '2026-09-20', to: '2026-09-20', ...extra }); return [t.matched, t.listed, t.rows?.length]; };
   eq(await listed({ bucket: 'day' }), [21, 20, 20], 'with a bucket the default limit is 20 items (each carries its periods)');
   eq(await listed({}), [21, 21, 21], 'without one it stays 100');

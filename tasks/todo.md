@@ -1,3 +1,20 @@
+# get_item_sales: per-store totals; periods fit the MCP cap (2026-10-16)
+
+**Ask (Brian):** "yes, add the per-store totals", after my first Varsity table under-counted two weeks. One product
+can be several rows per store: no code before ~2026-09-21, and BL16 keys in its own spellings.
+**Found while measuring:** BL1 × 92 days by day at the default 20 items is 116,844 characters, over the MCP's
+100,000 cap, so it is refused. 977 periods at ~105 characters each as objects.
+
+- [x] Test first: `totals.byStore` (items, units, sales, refunds; byPeriod with a bucket) sums every matched row
+      of a store, including two spellings of one product; periods as rows under `periodColumns`; the largest
+      default call (one store × 92 days by day) fits under MAX_RESULT_CHARS. Fails before
+- [x] cli/reporting.mjs: byStore, compact periods, reading rule (several rows per product; use byStore)
+- [x] Mutants (10, all caught); `npm test` 10,309 / 117; fresh-eyes review (no blocker; sums and the cap
+      verified; rule now says search by NAME and check the listed rows; items counts rows). Production data:
+      BL1 × 92 days by day 116,844 → 45,850 characters; byStore reproduces the corrected Varsity table
+- [ ] PR; deploy (Brian): retjg-mcp only (no worker change) → CLI; live check: compact size of the
+      largest default call, Varsity by store by week in one call
+
 # get_item_sales: fix the production timeout, add week-by-week (2026-10-16)
 
 **Ask (Brian):** "How can I get POS item sales in the MCP? … Varsity Jackets sales per store with week to week
