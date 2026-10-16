@@ -195,7 +195,7 @@ let chat;
   ok(t.body?.access_token && t.body?.refresh_token, 'an access token and a refresh token');
   chat = t.body;
   const tl = await rpc(chat.access_token, 'tools/list');
-  eq(tl.body?.result?.tools?.length, 21, 'the token reads the 21 tools');
+  eq(tl.body?.result?.tools?.length, 22, 'the token reads the 22 tools');
   ok(tl.body?.result?.tools?.every(x => x.annotations?.readOnlyHint === true), 'all read-only (ChatGPT asks to confirm anything else)');
   const before = upstream.length;
   const ls = await rpc(chat.access_token, 'tools/call', { name: 'list_stores', arguments: {} });
@@ -259,7 +259,7 @@ let claude;
   const t = await token(CLAUDE, { grant_type: 'authorization_code', code: loc.searchParams.get('code'), redirect_uri: CLAUDE_CB, code_verifier: verifier });
   eq(t.status, 200, 'public client + PKCE → tokens');
   claude = t.body;
-  eq((await rpc(claude.access_token, 'tools/list')).body?.result?.tools?.length, 21, 'and they work');
+  eq((await rpc(claude.access_token, 'tools/list')).body?.result?.tools?.length, 22, 'and they work');
 }
 
 // Both grants exist now; once section 6 revokes them, their records are gone, so the
@@ -460,7 +460,7 @@ let claude;
 
 // ════ 8. Claude's static key still works, and an unset key never opens ═════
 {
-  eq((await rpc(MCP_KEY, 'tools/list')).body?.result?.tools?.length, 21, 'Bearer MCP_KEY still reads the tools');
+  eq((await rpc(MCP_KEY, 'tools/list')).body?.result?.tools?.length, 22, 'Bearer MCP_KEY still reads the tools');
   eq((await rpc('Bearer ' + MCP_KEY, 'tools/list')).status, 200, '"Bearer Bearer key" still works');
   const saved = env.MCP_KEY;
   env.MCP_KEY = '';

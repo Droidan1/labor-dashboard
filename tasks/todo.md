@@ -19,9 +19,28 @@ how items map to L2/L3; build both now. Plan: `~/.claude/plans/tingly-churning-n
       (split tender, the 31-day boundary, rounding) now die; 9 more mutants, all caught. 37 tests
 - [ ] PR; deploy (Brian): worker → retjg-mcp → CLI; live checks
 
-## Part B: the nightly per-item record with L2/L3 mapping (next PR)
-- [ ] migration-078 item_day_lines; aggregateItemSales lineSink; saveItemSalesSnapshot writes it; item-lines +
-      get_item_mapping; tests; deploy migration → worker → retjg-mcp → CLI
+## Part B: the nightly per-item record with L2/L3 mapping (PR after #344)
+- [x] Test first: `scripts/test-item-lines.mjs` (56): one store-day built to hit every way an item is filed
+      (override, Clover category, sku book, name, bin heuristic, Custom Sales, unmapped category, refund line),
+      line + order discounts, a split refund, a cross-day refund, a service charge, a manual refund. Σ items +
+      other == the snapshot's netSales; same snapshotTime; re-run replaces; a failing write never costs the
+      snapshot; the nightly sweep writes it and never wipes a day with nothing; the live items answer and
+      the items: snapshot carry no item rows; item-lines over a range (re-filed item = its own row, missing
+      days, firstRecord), key == superuser, manager/staff scoping; get_item_mapping through MCP. Failed before
+- [x] migration-078; aggregateItemSales `lineSink`; saveItemSalesSnapshot writes item_day_lines; five
+      callers pass it; item-lines (shares `itemRangeScope` with item-sales); get_item_mapping (22 tools)
+- [x] 12 mutants, all caught; `npm test` 10,255 / 117
+- [x] Fresh-eyes review: NO regression to the existing pipeline (old vs new aggregator byte-identical on 1,600
+      fuzzed store-days, with and without the sink; +0.4 ms CPU/day; ~240 KB JSON/day, inside D1 limits).
+      Fixed: a Repair rebuild overwrote the record under a KV-only backup (rule 2) → rebuilds (and the
+      redundant nightly first pass) no longer write it, and item-lines flags `stale` days whose items:
+      snapshot moved since; coverage anchored to the first ON-TIME record (a late re-snapshot no longer pulls
+      it back) and counts only days with sales; weighed goods' rounding carried in other.rounding (the record
+      always adds up); `l3Rule` when an admin L3 rule named the L3; 503 JSON before migration-078; the
+      reading rule (sku-book-unmapped, byL2 vs the Retail Summary). Test gaps closed: cross-day refunds now
+      really attributed, an unrecoverable refund, an item twice in one order, mixed cost, an unmapped
+      sku-book item, a weighed line, a later line's code. 66 tests; 24 more mutants, all caught
+- [ ] PR; deploy (Brian): migration-078 → worker → retjg-mcp → CLI; next-morning check
 
 # Agents read the Supply Request page (2026-10-15)
 

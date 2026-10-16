@@ -288,7 +288,8 @@ head('13. The writer and the reader agree on the banked shape');
   ok(/b\.daySnapshotTime === day\.snapshotTime/.test(src), 'and the reader compares exactly that pair');
   ok(/hourSlots = buildItemHourBuckets\(bucket,/.test(src),
     'the clientCreatedTime sweep banks from its own day-filtered bucket');
-  ok(/saveItemSalesSnapshot\(env, store, dateStr, itemData, hourSlots\)/.test(src),
+  // (itemLines, the per-item record banked beside both, rides along since 2026-10-16.)
+  ok(/saveItemSalesSnapshot\(env, store, dateStr, itemData, hourSlots, itemLines\)/.test(src),
     'and hands it to the one writer, so the two keys cannot be written apart');
   // A bank must never cost the day its snapshot.
   ok(/\[item-hours\] bank failed/.test(src), 'a failed bank is logged and swallowed, not thrown');
