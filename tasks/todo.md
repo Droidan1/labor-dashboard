@@ -40,7 +40,11 @@ how items map to L2/L3; build both now. Plan: `~/.claude/plans/tingly-churning-n
       reading rule (sku-book-unmapped, byL2 vs the Retail Summary). Test gaps closed: cross-day refunds now
       really attributed, an unrecoverable refund, an item twice in one order, mixed cost, an unmapped
       sku-book item, a weighed line, a later line's code. 66 tests; 24 more mutants, all caught
-- [ ] PR; deploy (Brian): migration-078 → worker → retjg-mcp → CLI; next-morning check
+- [x] PR #345 (stacked on #344). Brian: migration-078 (1 query, 5.6 ms); main worker 059f3ed9 (includes #344),
+      live `content/v2` byte-identical to the dry run (1,118,630 bytes); item-sales live (BL1 Oct 1-7: 454 items);
+      item-lines 503 before the table, 200 after; retjg-mcp d57b19b0 byte-identical (316,335 bytes), 3 clean
+      polls of all 22 tools; CLI reinstalled, `retjg item-sales` live
+- [ ] The morning after the first nightly run: rows for today/−1/−2 per store; Σ items + other == items: net
 
 # Agents read the Supply Request page (2026-10-15)
 
