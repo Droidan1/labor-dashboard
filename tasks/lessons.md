@@ -1550,6 +1550,21 @@ orphans proves only that nobody has deleted yet, not that cascade fires.)
 **Also:** D1/SQLite rejects a long `UNION ALL` probe with
 `too many terms in compound SELECT` — split diagnostic queries into batches of ~4.
 
+### Its limit (2026-10-16, item-sales): right answers, wrong speed
+
+`node:sqlite` runs the real SQL, so the answers were right, and a review timed the new
+`item-sales` at 118 ms for chain × 31 days. On D1 it returned Cloudflare 1101 after ~39 s.
+D1's `EXPLAIN QUERY PLAN` showed `SCAN p LEFT-JOIN`: an anti-join against a DISTINCT CTE,
+with every receipt line compared with every paid order. Local SQLite picked **the same
+plan**. It was only fast because the test volume was small. Timing it at test volume
+proved nothing; the plan was visible all along.
+
+**Rule:** for any read over a large table, check the plan, not the clock. Wrap `env.DB`
+with `recordStatements(env)`, run the handler, and assert `nestedScans(db, seen)` is `[]`
+(scripts/lib/worker-harness.mjs). For a number you will quote, run `EXPLAIN QUERY PLAN`
+and the query itself on production D1. These are read-only, through the Cloudflare MCP
+`d1_database_query`, which reports `sql_duration_ms` and `rows_read`.
+
 ## The zero-order guard does NOT catch a PARTIAL Clover fetch (2026-08-03)
 
 **What happened:** re-snapshotting BL4 over 2026-05-05→08-02, the oldest date came

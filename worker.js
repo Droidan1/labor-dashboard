@@ -29075,14 +29075,26 @@ export default {
       const range = itemRangeScope(url, currentUser, corsJson);
       if (range.response) return range.response;
       const { from, to, stores, days } = range;
-      if (!stores.length) return new Response(JSON.stringify({ ok: true, from, to, stores, items: [], excluded: { lines: 0, sales: 0 }, coverage: null }), { headers: corsJson });
+      // grain (Brian 2026-10-16, "week to week"): one row per item AND period: d = day,
+      // w = the week ending Saturday (as the category tools count weeks), m = month.
+      const grain = (url.searchParams.get("grain") || "").toLowerCase() || null;
+      const PERIOD = { d: "i.date", w: "date(i.date, 'weekday 6')", m: "substr(i.date, 1, 7)" };
+      if (grain && !PERIOD[grain]) return new Response(JSON.stringify({ error: "grain must be d, w or m" }), { status: 400, headers: corsJson });
+      if (!stores.length) return new Response(JSON.stringify({ ok: true, from, to, grain, stores, items: [], excluded: { lines: 0, sales: 0 }, coverage: null }), { headers: corsJson });
       const inList = stores.map(() => "?").join(",");
       const scope = [...stores, from, to];
       const paid = `WITH paid AS (SELECT DISTINCT store, date, order_id FROM payment_archive
                      WHERE store IN (${inList}) AND date BETWEEN ? AND ? AND kind = 'payment')`;
-      const [itemRows, excludedRow, lineCodes, banked, refundPay, bareDays] = await Promise.all([
+      const period = grain ? `, ${PERIOD[grain]} AS period` : "";
+      // 🛑 No anti-join for the excluded lines (2026-10-16). `LEFT JOIN paid … IS NULL` planned
+      // on D1 as a full scan of `paid` per receipt line, and timed out (1101) at BL1 × 31 days.
+      // Excluded = every line − the paid lines, both of which these queries already read.
+      // One batch is one transaction: excluded is the difference of two reads, so they must see
+      // the same rows even while the nightly is banking a day of the range (in several writes).
+      const [itemRows, allLinesRes, banked, refundPay, bareDays] = await env.DB.batch([
         env.DB.prepare(`${paid}
-          SELECT i.store, COALESCE(i.code, '') AS code, i.name,
+          SELECT i.store, COALESCE(i.code, '') AS code, i.name${period},
+                 COUNT(*) AS lines, COALESCE(SUM(i.price), 0) AS line_sales,
                  SUM(CASE WHEN i.refunded = 0 AND i.price >= 0 THEN i.qty   ELSE 0 END) AS units,
                  SUM(CASE WHEN i.refunded = 0 AND i.price >= 0 THEN i.price ELSE 0 END) AS sales,
                  SUM(CASE WHEN i.refunded = 1 OR i.price < 0 THEN i.qty ELSE 0 END) AS refunded_units,
@@ -29091,30 +29103,28 @@ export default {
             FROM payment_archive_items i
             JOIN paid p ON p.store = i.store AND p.date = i.date AND p.order_id = i.order_id
            WHERE i.store IN (${inList}) AND i.date BETWEEN ? AND ?
-           GROUP BY i.store, COALESCE(i.code, ''), i.name`).bind(...scope, ...scope).all(),
-        env.DB.prepare(`${paid}
-          SELECT COUNT(*) AS lines, COALESCE(SUM(i.price), 0) AS sales
-            FROM payment_archive_items i
-            LEFT JOIN paid p ON p.store = i.store AND p.date = i.date AND p.order_id = i.order_id
-           WHERE i.store IN (${inList}) AND i.date BETWEEN ? AND ? AND p.order_id IS NULL`).bind(...scope, ...scope).first(),
-        env.DB.prepare(`SELECT COUNT(*) AS lines, SUM(CASE WHEN code IS NULL THEN 1 ELSE 0 END) AS without_code
-            FROM payment_archive_items WHERE store IN (${inList}) AND date BETWEEN ? AND ?`).bind(...scope).first(),
+           GROUP BY i.store, COALESCE(i.code, ''), i.name${grain ? ", period" : ""}
+           ${grain ? "ORDER BY i.store, COALESCE(i.code, ''), i.name, period" : ""}`).bind(...scope, ...scope),
+        env.DB.prepare(`SELECT COUNT(*) AS lines, COALESCE(SUM(price), 0) AS sales, SUM(CASE WHEN code IS NULL THEN 1 ELSE 0 END) AS without_code
+            FROM payment_archive_items WHERE store IN (${inList}) AND date BETWEEN ? AND ?`).bind(...scope),
         env.DB.prepare(`SELECT store, date, complete, note FROM payment_archive_days
-            WHERE store IN (${inList}) AND date BETWEEN ? AND ?`).bind(...scope).all(),
+            WHERE store IN (${inList}) AND date BETWEEN ? AND ?`).bind(...scope),
         // Refunds as PAYMENTS. A line is flagged refunded only if Clover marked it by the
         // time the day was banked; amount-only refunds and later returns never are, so the
         // line columns understate refunds and this says by how much.
         env.DB.prepare(`SELECT kind, COALESCE(SUM(amount), 0) AS amount, COUNT(*) AS n FROM payment_archive
-            WHERE store IN (${inList}) AND date BETWEEN ? AND ? AND kind IN ('refund', 'manual') GROUP BY kind`).bind(...scope).all(),
+            WHERE store IN (${inList}) AND date BETWEEN ? AND ? AND kind IN ('refund', 'manual') GROUP BY kind`).bind(...scope),
         // A day can be banked with its payments but WITHOUT its lines (the item write failed
         // after the ledger row): it reads as banked, and its items are simply absent.
         env.DB.prepare(`SELECT d.store, d.date FROM payment_archive_days d
             WHERE d.store IN (${inList}) AND d.date BETWEEN ? AND ? AND d.payments > 0
-              AND NOT EXISTS (SELECT 1 FROM payment_archive_items i WHERE i.store = d.store AND i.date = d.date)`).bind(...scope).all(),
+              AND NOT EXISTS (SELECT 1 FROM payment_archive_items i WHERE i.store = d.store AND i.date = d.date)`).bind(...scope),
       ]);
+      const allLines = allLinesRes.results?.[0];
       const cents = (n) => Math.round((Number(n) || 0) * 100) / 100;
-      const items = (itemRows.results || []).map(r => ({
-        store: r.store, code: r.code, name: r.name,
+      const paidRows = itemRows.results || [];
+      const items = paidRows.map(r => ({
+        store: r.store, code: r.code, name: r.name, ...(grain && { period: r.period }),
         units: cents(r.units), sales: cents(r.sales),
         refundedUnits: cents(r.refunded_units), refundedSales: cents(r.refunded_sales),
         orders: r.orders, firstDate: r.first_date, lastDate: r.last_date,
@@ -29142,12 +29152,14 @@ export default {
         incomplete: bankedRows.filter(d => !d.complete).map(d => ({ store: d.store, date: d.date, note: d.note })),
         missing, notYetBanked,
         daysWithoutLines: (bareDays.results || []).map(d => ({ store: d.store, date: d.date })),
-        linesWithoutCode: Number(lineCodes?.without_code) || 0,
+        linesWithoutCode: Number(allLines?.without_code) || 0,
       };
       const refundByKind = Object.fromEntries((refundPay.results || []).map(r => [r.kind, { amount: cents(r.amount), count: r.n }]));
+      const paidLines = paidRows.reduce((n, r) => n + (Number(r.lines) || 0), 0);
+      const paidSales = paidRows.reduce((n, r) => n + (Number(r.line_sales) || 0), 0);
       return new Response(JSON.stringify({
-        ok: true, from, to, stores, items,
-        excluded: { lines: Number(excludedRow?.lines) || 0, sales: cents(excludedRow?.sales) },
+        ok: true, from, to, grain, stores, items,
+        excluded: { lines: (Number(allLines?.lines) || 0) - paidLines, sales: cents((Number(allLines?.sales) || 0) - paidSales) },
         refundPayments: { refunds: refundByKind.refund || { amount: 0, count: 0 }, manual: refundByKind.manual || { amount: 0, count: 0 } },
         coverage,
       }), { headers: corsJson });
