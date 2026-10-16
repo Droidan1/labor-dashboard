@@ -2944,8 +2944,10 @@ async function rebuildItemSnapshot(env, store, dateStr, ctx) {
     ]);
     if (!elements) return { outcome: "error", date: dateStr, error: "no credentials, or Clover fetch failed" };
 
-    const itemLines = {};
-    const itemData = aggregateItemSales(elements, ctx.catMap, store, dateStr, ctx.overrides, ctx.itemCosts, refundElements, [], [], itemLines);
+    // No per-item record here: a rebuild overwrites history under the Repair console's
+    // KV backup, which does not cover item_day_lines, so it must not overwrite that either.
+    // item-lines flags the day as stale instead (its stamp no longer matches items:).
+    const itemData = aggregateItemSales(elements, ctx.catMap, store, dateStr, ctx.overrides, ctx.itemCosts, refundElements);
     const d1Total = ctx.d1Total || 0;
 
     // ── Zero-order guard ───────────────────────────────────────────────────
@@ -3008,7 +3010,7 @@ async function rebuildItemSnapshot(env, store, dateStr, ctx) {
       }
     }
 
-    await saveItemSalesSnapshot(env, store, dateStr, itemData, null, itemLines);
+    await saveItemSalesSnapshot(env, store, dateStr, itemData);
     return {
       outcome: "written", date: dateStr, backedUp,
       netSales: itemData?.totals?.netSales ?? 0,
@@ -3824,7 +3826,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
   const _items = lineSink ? new Map() : null;
   // Cents that reach no item: the residual, refunds against orders not fetched today, refunds
   // that cannot be split, manual refunds. Signed as they move net.
-  const _other = { nonItem: 0, crossDayRefunds: 0, unattributedRefunds: 0, manualRefunds: 0 };
+  const _other = { nonItem: 0, crossDayRefunds: 0, unattributedRefunds: 0, manualRefunds: 0 };   // + rounding, at the end
   const ov = overrides || EMPTY_OVERRIDES;
   const ovItems = ov.items || {};
   const ovPatterns = ov.patterns || [];
@@ -4246,7 +4248,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
         _row = _items.get(rowKey);
         if (!_row) {
           _row = { itemId: itemId || null, name: li.name || null, code: liCode, cloverCategory: l3 || null, l2, l3: l3Key,
-                   source: itemLineSource(l2Source, l2, l3), qty: 0, gross: 0, lineDiscounts: 0, orderDiscounts: 0,
+                   source: itemLineSource(l2Source, l2, l3), l3Rule: !!ruleL3, qty: 0, gross: 0, lineDiscounts: 0, orderDiscounts: 0,
                    refunds: 0, net: 0, cost: 0, costSource: null, orders: 0, _order: null };
           _items.set(rowKey, _row);
         }
@@ -4530,18 +4532,6 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
     _other.manualRefunds -= preTaxCents;
   }
 
-  if (lineSink) {
-    const $ = (cents) => roundCents(cents / 100);
-    lineSink.items = [..._items.values()].map(r => ({
-      itemId: r.itemId, name: r.name, code: r.code, cloverCategory: r.cloverCategory,
-      l2: r.l2, l3: r.l3, source: r.source,
-      qty: Math.round(r.qty * 1000) / 1000, gross: $(r.gross), lineDiscounts: $(r.lineDiscounts),
-      orderDiscounts: $(r.orderDiscounts), refunds: $(r.refunds), net: $(r.net),
-      cost: roundCents(r.cost), costSource: r.costSource || "none", orders: r.orders,
-    }));
-    lineSink.other = Object.fromEntries(Object.entries(_other).map(([k, v]) => [k, $(v)]));
-  }
-
   // Calculate totals and format response
   let totalQty = 0, totalGross = 0, totalDisc = 0, totalRef = 0, totalNet = 0, totalCost = 0;
   let totCovItem = 0, totCovCat = 0, totCovNone = 0;
@@ -4639,6 +4629,24 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
     avgItems: orders > 0 ? Math.round(units / orders * 10) / 10 : 0,
     asp: units > 0 ? roundCents(net / units) : 0,
   });
+
+  if (lineSink) {
+    const $ = (cents) => roundCents(cents / 100);
+    lineSink.items = [..._items.values()].map(r => ({
+      itemId: r.itemId, name: r.name, code: r.code, cloverCategory: r.cloverCategory,
+      l2: r.l2, l3: r.l3, source: r.source, ...(r.l3Rule && { l3Rule: true }),
+      qty: Math.round(r.qty * 1000) / 1000, gross: $(r.gross), lineDiscounts: $(r.lineDiscounts),
+      orderDiscounts: $(r.orderDiscounts), refunds: $(r.refunds), net: $(r.net),
+      cost: roundCents(r.cost), costSource: r.costSource || "none", orders: r.orders,
+    }));
+    const other = Object.fromEntries(Object.entries(_other).map(([k, v]) => [k, $(v)]));
+    // Items are rounded to the cent one by one and netSales once, so weighed goods
+    // (fractional cents) leave a cent or two over; it is carried here, so the record always
+    // adds up exactly and a range never drifts out of balance.
+    const itemsNet = lineSink.items.reduce((s, i) => s + i.net, 0) + Object.values(other).reduce((s, v) => s + v, 0);
+    other.rounding = roundCents(roundCents(totalNet) - itemsNet);
+    lineSink.other = other;
+  }
 
   const totalGp = totalNet - totalCost;
   return {
@@ -28970,7 +28978,8 @@ export default {
       const inList = stores.map(() => "?").join(",");
       const scope = [...stores, from, to];
       const f = (k) => `json_extract(j.value, '$.${k}')`;
-      const [itemRows, dayRows, firstRows] = await Promise.all([
+      let itemRows, dayRows, firstRows, salesRows;
+      try { [itemRows, dayRows, firstRows, salesRows] = await Promise.all([
         env.DB.prepare(`
           SELECT d.store AS store, ${f("itemId")} AS item_id, MAX(${f("name")}) AS name, MAX(${f("code")}) AS code,
                  ${f("cloverCategory")} AS clover_category, ${f("l2")} AS l2, ${f("l3")} AS l3, ${f("source")} AS source,
@@ -28984,10 +28993,21 @@ export default {
            GROUP BY d.store, item_id,
                     CASE WHEN item_id IS NULL THEN ${f("name")} END, CASE WHEN item_id IS NULL THEN ${f("code")} END,
                     l2, l3, source, clover_category`).bind(...scope).all(),
-        env.DB.prepare(`SELECT store, date, net, other_json FROM item_day_lines
+        env.DB.prepare(`SELECT store, date, net, snapshot_time, other_json FROM item_day_lines
             WHERE store IN (${inList}) AND date BETWEEN ? AND ?`).bind(...scope).all(),
-        env.DB.prepare(`SELECT store, MIN(date) AS first FROM item_day_lines WHERE store IN (${inList}) GROUP BY store`).bind(...stores).all(),
-      ]);
+        // Where the record BEGINS for a store: its first day recorded in the normal course
+        // (the nightly writes a day within ~3 days of it). An admin re-snapshot of an old
+        // date writes a record months late and must not pull the start back, or every day
+        // since would read as missing.
+        env.DB.prepare(`SELECT store, MIN(date) AS first FROM item_day_lines
+            WHERE store IN (${inList}) AND julianday(snapshot_time) - julianday(date) <= 4 GROUP BY store`).bind(...stores).all(),
+        // A day with no sales has no items, so no record; it is not missing.
+        env.DB.prepare(`SELECT store, date, order_count FROM daily_sales
+            WHERE store IN (${inList}) AND date BETWEEN ? AND ?`).bind(...scope).all(),
+      ]); } catch (e) {
+        // Before migration-078 the table does not exist: say so, as JSON, not as an exception.
+        return new Response(JSON.stringify({ error: "item_day_lines is not available", detail: String(e?.message || e) }), { status: 503, headers: corsJson });
+      }
       const cents = (n) => Math.round((Number(n) || 0) * 100) / 100;
       const items = (itemRows.results || []).map(r => ({
         store: r.store, itemId: r.item_id, name: r.name, code: r.code, cloverCategory: r.clover_category,
@@ -28998,7 +29018,7 @@ export default {
         orders: Number(r.orders) || 0, days: r.days, firstDate: r.first_date, lastDate: r.last_date,
       }));
       const days = dayRows.results || [];
-      const other = { nonItem: 0, crossDayRefunds: 0, unattributedRefunds: 0, manualRefunds: 0 };
+      const other = { nonItem: 0, crossDayRefunds: 0, unattributedRefunds: 0, manualRefunds: 0, rounding: 0 };
       let net = 0;
       for (const d of days) {
         net += Number(d.net) || 0;
@@ -29011,20 +29031,29 @@ export default {
       const { dateStr: todayET } = getETToday();
       const shift = (d, n) => { const x = new Date(d + "T12:00:00Z"); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
       const firstBy = Object.fromEntries((firstRows.results || []).map(r => [r.store, r.first]));
+      const sold = new Set((salesRows.results || []).filter(r => Number(r.order_count) > 0).map(r => r.store + "|" + r.date));
       const have = new Set(days.map(d => d.store + "|" + d.date));
       const missing = [];
       for (const s of stores) {
         const closed = STORE_CLOSED_FROM[s] || null;
         const owed = [];
         for (let d = from; d <= to; d = shift(d, 1)) {
-          if (d >= todayET || (closed && d >= closed) || !firstBy[s] || d < firstBy[s]) continue;
+          if (d >= todayET || (closed && d >= closed) || !firstBy[s] || d < firstBy[s] || !sold.has(s + "|" + d)) continue;
           if (!have.has(s + "|" + d)) owed.push(d);
         }
         if (owed.length) missing.push({ store: s, days: owed.length, dates: owed.slice(0, 31) });
       }
+      // 🛑 STALE: the day's items: snapshot was rewritten after this record — a Repair
+      // rebuild or restore (neither touches the record), or a record write that failed. Its
+      // items may then disagree with the Retail Summary for that day, so say which days.
+      const stale = [];
+      if (env.SALES_SNAPSHOTS) {
+        const snaps = await Promise.all(days.map(d => env.SALES_SNAPSHOTS.get(`items:${d.store.toLowerCase()}:${d.date}`, "json").catch(() => null)));
+        days.forEach((d, i) => { if (snaps[i]?.snapshotTime && snaps[i].snapshotTime !== d.snapshot_time) stale.push({ store: d.store, date: d.date }); });
+      }
       return new Response(JSON.stringify({
         ok: true, from, to, stores, items, other, net: cents(net),
-        coverage: { days: days.length, firstRecord: firstBy, missing },
+        coverage: { days: days.length, firstRecord: firstBy, missing, stale },
       }), { headers: corsJson });
     }
 
@@ -29663,7 +29692,6 @@ export default {
         // block throws before assigning, they stay null and it fetches its own
         // (the original behaviour).
         let preOrders = null, preRefunds = null, preManual = null;
-        const itemLines = {};
         try {
           const [elements, refundElements, manualRefundElements] = await Promise.all([
             fetchItemOrders(store, env, startOfDay),
@@ -29674,7 +29702,7 @@ export default {
           if (elements && elements.length > 0) {
             const itemCatMap = await fetchItemCategoryMap(store, env);
             const extraOrders = await fetchCrossDayOrdersForRefunds(store, env, elements, refundElements);
-            itemData = aggregateItemSales(elements, itemCatMap, store, todayStr, overrides, itemCosts, refundElements, extraOrders, manualRefundElements, itemLines);
+            itemData = aggregateItemSales(elements, itemCatMap, store, todayStr, overrides, itemCosts, refundElements, extraOrders, manualRefundElements);
             let binNet = 0, retailNet = 0;
             for (const c of (itemData.categories || [])) {
               if (c.category === "Bin Products") binNet += c.netSales;
@@ -29701,7 +29729,7 @@ export default {
         // Persist the item snapshot we already computed above.
         if (itemData) {
           try {
-            await saveItemSalesSnapshot(env, store, todayStr, itemData, null, itemLines);
+            await saveItemSalesSnapshot(env, store, todayStr, itemData);
             results[store].items = "ok";
           } catch (saveErr) {
             results[store].items = `error: ${saveErr.message}`;

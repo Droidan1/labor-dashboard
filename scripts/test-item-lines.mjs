@@ -35,8 +35,13 @@ await env.SALES_SNAPSHOTS.put('item-cats:bl1', JSON.stringify({
   'I-CAT': 'FG BL CONSUMABLES - FOOD - CANDY',   // a mapped Clover category
   'I-SKU': 'Sku Book Items',                      // the POS convenience page
   'I-UNM': 'SOME NEW CLOVER CATEGORY',            // a Clover category nobody mapped
+  'I-SKU2': 'Sku Book Items',                     // on the sku-book page under a name nobody mapped
+  'I-WGT': 'FG BL CONSUMABLES - FOOD - CANDY',    // sold by weight
 }));
-await env.SALES_SNAPSHOTS.put('item-overrides:global', JSON.stringify({ items: { 'id:I-OVR': { l2: 'Furniture' } } }));
+await env.SALES_SNAPSHOTS.put('item-costs:global', JSON.stringify({ items: { '50020': { cost: 0.5 } } }));   // IM# 50020's own cost
+// The override files I-OVR under Furniture with no L3; an admin L3 rule then names the L3.
+await env.SALES_SNAPSHOTS.put('item-overrides:global', JSON.stringify({ items: { 'id:I-OVR': { l2: 'Furniture' } },
+  l3Rules: [{ type: 'id', value: 'I-OVR', l3: 'FG BL FURNITURE - RTA - TABLES/STANDS' }] }));
 await env.SALES_SNAPSHOTS.put('category-costs:global', JSON.stringify({ costs: { 'FG BL CONSUMABLES - FOOD - CANDY': 0.4 } }));
 
 // ── One store-day of orders, every way an item gets filed ──────────────────
@@ -58,19 +63,27 @@ const ORDERS = [
     li('l4', '$3 Bin', 300, { id: 'I-BIN' }, { discounts: { elements: [{ amount: -100 }] } }),
     li('l5', 'Big table', 250, { id: 'I-OVR' }),
     li('l6', 'Mystery thing', 400, null),
-  ], 925),
-  // The candy again, a refund line, and an unmapped Clover category.
+    li('l10', 'Big table', 250, { id: 'I-OVR' }),   // the same item twice in one order
+  ], 1175),
+  // The candy again (named with its IM#, so this line costs from the item cost), a refund
+  // line, an unmapped Clover category, an unmapped sku-book item, and candy sold by weight.
   order('O3', [
-    li('l7', 'FG BL CONSUMABLES - FOOD - CANDY', 2000, { id: 'I-CAT', code: 'BL-50020-10' }),
+    li('l7', 'CANDY BL-50020', 2000, { id: 'I-CAT', code: 'BL-50020-10' }),
     li('l8', 'Refund', -500, null),
     li('l9', 'Thing', 300, { id: 'I-UNM' }),
-  ], 1800),
+    li('l13', 'Thing', 0, { id: 'I-UNM', code: 'BL-77777-0' }),   // a free one, carrying the code the line before lacked
+    li('l11', 'Not on the page', 100, { id: 'I-SKU2' }),
+    li('l12', 'Loose candy', 999, { id: 'I-WGT' }, { unitQty: 333 }),   // 0.333 lb at $9.99 = 332.667¢
+  ], 2233),
 ];
-// $3.30 back on O1 (split over its lines), $2 back on an order from another day, $1 manual.
+// $3.30 back on O1 (split over its lines), $2 back on an order from another day (fetched to
+// attribute it), 50¢ back on an order Clover no longer has, $1 manual.
 const REFUNDS = [
   { id: 'R1', amount: 330, taxAmount: 0, createdTime: T + 3600e3, orderRef: { id: 'O1' } },
   { id: 'R2', amount: 200, taxAmount: 0, createdTime: T + 3600e3, orderRef: { id: 'O-OLD' } },
+  { id: 'R3', amount: 50, taxAmount: 0, createdTime: T + 3600e3, orderRef: { id: 'O-GONE' } },
 ];
+const OLD = order('O-OLD', [li('lo', 'FG BL CONSUMABLES - FOOD - CANDY', 1000, { id: 'I-CAT' })], 1000, { createdTime: T - 3 * 864e5 });
 const CREDITS = [{ id: 'M1', amount: 100, taxAmount: 0, result: 'SUCCESS', createdTime: T + 7200e3 }];
 
 let orders = ORDERS;
@@ -85,7 +98,8 @@ globalThis.fetch = async (u) => {
   const since = Number((filters.find(f => f.startsWith('createdTime>=')) || '').split('>=')[1] || 0);
   const until = Number((filters.find(f => f.startsWith('createdTime<')) || '').split('<')[1] || Infinity);
   const inWindow = (x) => x.createdTime >= since && x.createdTime < until;
-  if (/\/orders\/[^/?]+$/.test(url.pathname)) return J({ message: 'not found' }, 404);   // O-OLD: aged out
+  if (url.pathname.endsWith('/orders/O-OLD')) return J(OLD);                              // another day's order
+  if (/\/orders\/[^/?]+$/.test(url.pathname)) return J({ message: 'not found' }, 404);   // O-GONE: aged out
   if (url.pathname.endsWith('/orders')) return J({ elements: first ? orders.filter(inWindow) : [] });
   if (url.pathname.endsWith('/refunds')) return J({ elements: first ? REFUNDS.filter(inWindow) : [] });
   if (url.pathname.endsWith('/credits')) return J({ elements: first ? CREDITS.filter(inWindow) : [] });
@@ -106,31 +120,43 @@ const r2 = (n) => Math.round(n * 100) / 100;
   ok(!!row, 'and an item_day_lines row exists for the store-day');
   eq(row?.snapshot_time, snap.snapshotTime, 'stamped with the SAME snapshotTime as items:');
   const items = JSON.parse(row?.items_json || '[]'), other = JSON.parse(row?.other_json || '{}');
-  eq([row?.item_count, items.length], [8, 8], 'eight items');
+  eq([row?.item_count, items.length], [10, 10], 'ten items');
   const by = (pred) => items.find(pred);
   const pick = (x) => x && [x.source, x.l2, x.l3, x.cloverCategory];
   eq(pick(by(i => i.itemId === 'I-CAT')), ['clover-category', 'Consumable Food', 'FG BL CONSUMABLES - FOOD - CANDY', 'FG BL CONSUMABLES - FOOD - CANDY'], 'filed by its Clover category');
   eq(pick(by(i => i.itemId === 'I-SKU')), ['sku-book', 'Softline - Shoes', 'Sku Book Items', 'Sku Book Items'], 'a sku-book item, by its sku-book name');
   eq(pick(by(i => i.itemId === 'I-NAME')), ['name', 'Consumable Food', 'FG BL CONSUMABLES - FOOD - SNACKS', null], 'no Clover category: matched by its NAME');
   eq(pick(by(i => i.itemId === 'I-BIN')), ['heuristic', 'Bin Products', '[Heuristic] Bin Products', null], 'a name rule (bins)');
-  eq(pick(by(i => i.itemId === 'I-OVR')), ['override', 'Furniture', '[Override] Furniture', null], 'an admin override');
+  eq(pick(by(i => i.itemId === 'I-OVR')), ['override', 'Furniture', 'FG BL FURNITURE - RTA - TABLES/STANDS', null], 'an admin override, its L3 named by an admin L3 rule');
+  eq([by(i => i.itemId === 'I-OVR')?.l3Rule, by(i => i.itemId === 'I-CAT')?.l3Rule], [true, undefined], 'and it says the L3 came from a rule (only where one did)');
   eq(pick(by(i => i.name === 'Mystery thing')), ['custom', 'Custom Sales', 'Mystery thing', null], 'nothing matched: Custom Sales');
   eq(pick(by(i => i.itemId === 'I-UNM')), ['unmapped-clover-category', 'Uncategorized', 'SOME NEW CLOVER CATEGORY', 'SOME NEW CLOVER CATEGORY'], 'a Clover category nobody mapped');
   eq(pick(by(i => i.name === 'Refund')), ['refund-line', 'Refund', 'Refund', null], 'a refund line on a ticket');
+  eq(pick(by(i => i.itemId === 'I-SKU2')), ['sku-book-unmapped', 'Custom Sales', 'Not on the page', 'Sku Book Items'], 'a sku-book item under a name nobody mapped');
+  eq(pick(by(i => i.itemId === 'I-WGT')), ['clover-category', 'Consumable Food', 'FG BL CONSUMABLES - FOOD - CANDY', 'FG BL CONSUMABLES - FOOD - CANDY'], 'a second item filed under the same L3 keeps its own row');
   const money = (x) => x && [x.qty, x.gross, x.lineDiscounts, x.orderDiscounts, x.refunds, x.net];
   eq(money(by(i => i.itemId === 'I-CAT')), [2, 30, 0, -1, -2.44, 26.56], 'candy: 2 sold, $1 of the order discount, $2.44 of the O1 refund');
-  eq([by(i => i.itemId === 'I-CAT')?.cost, by(i => i.itemId === 'I-CAT')?.costSource, by(i => i.itemId === 'I-CAT')?.orders], [0.8, 'category', 2], 'its cost from the category cost, in 2 orders');
+  eq([by(i => i.itemId === 'I-CAT')?.cost, by(i => i.itemId === 'I-CAT')?.costSource, by(i => i.itemId === 'I-CAT')?.orders], [0.9, 'mixed', 2],
+    'its cost: 40¢ from the category on one line, 50¢ from its IM# on the other (mixed), in 2 orders');
+  eq([by(i => i.itemId === 'I-OVR')?.qty, by(i => i.itemId === 'I-OVR')?.net, by(i => i.itemId === 'I-OVR')?.orders], [2, 5, 1], 'two of the same item in ONE order: 2 units, 1 order');
+  eq([by(i => i.itemId === 'I-WGT')?.qty, by(i => i.itemId === 'I-WGT')?.net], [0.333, 3.33], 'by weight: 0.333 units, $3.33');
+  eq(by(i => i.itemId === 'I-UNM')?.code, 'BL-77777-0', 'a code missing on an item\'s first line is taken from a later one');
   eq(money(by(i => i.itemId === 'I-SKU')), [1, 2, 0, -0.2, -0.49, 1.31], 'boots: their share of the order discount and refund');
   eq(money(by(i => i.itemId === 'I-NAME')), [1, 1.5, 0, -0.15, -0.37, 0.98], 'snacks: the last line takes the refund\'s rounding');
   eq(money(by(i => i.itemId === 'I-BIN')), [1, 3, -1, 0, 0, 2], 'the bin: its own $1 line discount');
   eq(money(by(i => i.name === 'Refund')), [0, 0, 0, 0, -5, -5], 'the refund line: no units, -$5');
   eq(by(i => i.name === 'Mystery thing')?.itemId, null, 'a line with no Clover item keeps no id');
-  eq(other, { nonItem: 0.75, crossDayRefunds: 0, unattributedRefunds: -2, manualRefunds: -1 }, 'what reached no item: the service charge, the refund on another day\'s order, the manual refund');
+  const { rounding, ...rest } = other;
+  eq(rest, { nonItem: 0.75, crossDayRefunds: -2, unattributedRefunds: -0.5, manualRefunds: -1 },
+    'what reached no item: the service charge, the refund on another day\'s (fetched) order, the one on an order Clover lost, the manual refund');
+  ok(typeof rounding === 'number' && Math.abs(rounding) <= 0.02, `and the cent or two of rounding the weighed line leaves (${rounding})`);
   const sumItems = r2(items.reduce((s, i) => s + i.net, 0));
   const sumOther = r2(Object.values(other).reduce((s, v) => s + v, 0));
   eq(r2(sumItems + sumOther), snap.totals.netSales, 'Σ items + what reached no item == the snapshot\'s netSales');
   eq(row?.net, snap.totals.netSales, 'and the row carries that net');
-  eq(snap.totals.netSales, 33.1, 'control: the day really is $33.10');
+  eq(snap.totals.netSales, 39.43, 'control: the day really is $39.43');
+  const cross = snap.categories.find(c => c.category === 'Consumable Food')?.l3Rows?.find(r => /Cross-day refund source/.test(r.l3));
+  eq(cross?.netSales, -2, 'control: the cross-day refund really was attributed through the fetched order');
   ok(!JSON.stringify(snap).includes('orderDiscounts') && !('itemLines' in snap), 'the items: snapshot itself is unchanged: no item rows in it');
 }
 
@@ -180,7 +206,7 @@ const r2 = (n) => Math.round(n * 100) / 100;
   } finally { globalThis.Date = RealDate; console.error = err; console.warn = warn; }
   const swept = lineRow(D);
   ok(!!swept, 'the nightly clientCreatedTime sweep wrote the 14th\'s record');
-  eq(swept && JSON.parse(swept.items_json).length, 8, 'with its eight items');
+  eq(swept && JSON.parse(swept.items_json).length, 10, 'with its ten items');
   eq(swept?.snapshot_time, JSON.parse(await env.SALES_SNAPSHOTS.get(`items:bl1:${D}`)).snapshotTime, 'stamped like the sweep\'s items: snapshot');
   eq(lineRow('2026-10-13')?.items_json, '[{"name":"kept"}]', 'a swept day with no orders did NOT replace the 13th\'s record with nothing');
   ok(!lineRow('2026-10-15'), 'and wrote no empty record for the 15th');
@@ -196,19 +222,34 @@ const keyed = async (q) => { const r = await worker.fetch(new Request('https://a
     { itemId: 'I-CAT', name: 'FG BL CONSUMABLES - FOOD - CANDY', code: 'BL-50020-10', cloverCategory: 'FG BL CONSUMABLES - FOOD - CANDY', l2: 'Consumable Food', l3: 'FG BL CONSUMABLES - FOOD - CANDY', source: 'clover-category', qty: 3, gross: 30, lineDiscounts: 0, orderDiscounts: 0, refunds: 0, net: 30, cost: 1.2, costSource: 'category', orders: 3 },
     { itemId: 'I-CAT', name: 'FG BL CONSUMABLES - FOOD - CANDY', code: 'BL-50020-10', cloverCategory: 'FG BL CONSUMABLES - FOOD - CANDY', l2: 'Hardlines', l3: '[Override] Hardlines', source: 'override', qty: 1, gross: 10, lineDiscounts: 0, orderDiscounts: 0, refunds: 0, net: 10, cost: 0, costSource: 'none', orders: 1 },
   ];
-  db.prepare(`INSERT OR REPLACE INTO item_day_lines (store, date, snapshot_time, item_count, net, items_json, other_json) VALUES ('BL1','2026-10-12','t12',2,40,?,?)`)
-    .run(JSON.stringify(day12), JSON.stringify({ nonItem: 0, crossDayRefunds: 0, unattributedRefunds: 0, manualRefunds: 0 }));
+  const zero = JSON.stringify({ nonItem: 0, crossDayRefunds: 0, unattributedRefunds: 0, manualRefunds: 0, rounding: 0 });
+  const putRow = db.prepare(`INSERT OR REPLACE INTO item_day_lines (store, date, snapshot_time, item_count, net, items_json, other_json) VALUES (?,?,?,?,?,?,?)`);
+  putRow.run('BL1', '2026-10-12', '2026-10-13T03:56:00.000Z', 2, 40, JSON.stringify(day12), zero);              // the nightly, on time
+  putRow.run('BL1', '2026-09-01', '2026-10-16T12:00:00.000Z', 1, 1, JSON.stringify([day12[0]]), zero);           // an admin re-snapshot of an OLD date
+  await env.SALES_SNAPSHOTS.put('items:bl1:2026-10-12', JSON.stringify({ totals: { netSales: 41 }, snapshotTime: '2026-10-15T09:00:00.000Z' }));   // repaired since
   db.exec("DELETE FROM item_day_lines WHERE date = '2026-10-13'");   // a recorded store-day that went missing
-  const { status, body: b } = await keyed('?action=item-lines&store=BL1&from=2026-10-10&to=2026-10-14');
+  const etToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+  const ds = db.prepare(`INSERT OR REPLACE INTO daily_sales (store, date, total, order_count) VALUES ('BL1', ?, ?, ?)`);
+  for (const [d, n] of [['2026-10-12', 30], ['2026-10-13', 25], ['2026-10-14', 3], ['2026-10-15', 0], [etToday, 9]]) ds.run(d, n ? 100 : 0, n);
+  const { status, body: b } = await keyed(`?action=item-lines&store=BL1&from=2026-10-10&to=${etToday}`);
   eq(status, 200, 'the key reads item-lines');
   const candy = b?.items?.find(i => i.itemId === 'I-CAT' && i.source === 'clover-category');
   eq([candy?.qty, candy?.net, candy?.days, candy?.orders, candy?.firstDate, candy?.lastDate], [5, 56.56, 2, 5, '2026-10-12', '2026-10-14'], 'the candy as filed by its category: both days summed');
   eq(b?.items?.find(i => i.itemId === 'I-CAT' && i.source === 'override')?.l2, 'Hardlines', 'and the day it was filed elsewhere is its own row');
-  eq([b?.net, b?.other?.nonItem, b?.other?.manualRefunds], [73.1, 0.75, -1], 'the days\' net and what reached no item, summed');
-  eq(b?.coverage?.firstRecord?.BL1, '2026-10-12', 'coverage: when this store\'s record begins');
-  eq(b?.coverage?.missing, [{ store: 'BL1', days: 1, dates: ['2026-10-13'] }], 'and the recorded store-day that is missing — not the days before the record began');
+  eq([b?.net, b?.other?.nonItem, b?.other?.manualRefunds], [79.43, 0.75, -1], 'the days\' net and what reached no item, summed');
+  eq(b?.coverage?.firstRecord?.BL1, '2026-10-12', 'coverage: the record begins with its first ON-TIME day, not a late re-snapshot of 09-01');
+  eq(b?.coverage?.missing, [{ store: 'BL1', days: 1, dates: ['2026-10-13'] }],
+    'missing: only the sold day with no record — not days before the record, a day with no sales (10-15), or today');
+  eq(b?.coverage?.stale, [{ store: 'BL1', date: '2026-10-12' }], 'stale: the day whose category snapshot was rewritten after its record');
   eq((await keyed('?action=item-lines&store=BL1&from=2026-07-01&to=2026-10-14')).status, 400, 'one store, over 92 days → 400');
-  const su = await worker.fetch(req('/?action=item-lines&store=BL1&from=2026-10-10&to=2026-10-14', { user: 'u-su' }), env, ctx);
+  {
+    // Before migration-078 is applied: a JSON 503, not an exception page.
+    const bare = makeEnv(repo).env;
+    bare.MORNING_BRIEFING_KEY = UP;
+    const r = await worker.fetch(new Request('https://api.retjghub.com/?action=item-lines&store=BL1&from=2026-10-14&to=2026-10-14', { headers: { 'X-API-Key': UP } }), bare, ctx);
+    eq([r.status, (await r.json()).error], [503, 'item_day_lines is not available'], 'without its table: 503 and says why');
+  }
+  const su = await worker.fetch(req(`/?action=item-lines&store=BL1&from=2026-10-10&to=${etToday}`, { user: 'u-su' }), env, ctx);
   eq(await su.json(), b, 'the key answers exactly as a superuser does');
   const mgr = await worker.fetch(req('/?action=item-lines&from=2026-10-10&to=2026-10-14', { user: 'u-mgr1' }), env, ctx);
   eq((await mgr.json())?.stores, ['BL1'], 'a BL1 manager reads BL1 only');
@@ -229,16 +270,17 @@ const tool = async (name, args) => {
 };
 {
   const day = await tool('get_item_mapping', { storeId: 'bl1', from: D, to: D });
-  eq([day.totals?.items, day.totals?.net, day.net, day.reconciles], [8, 35.35, 33.1, true], 'one day: 8 items, $35.35 on items, $33.10 the day — and they reconcile');
-  eq(day.totals?.bySource?.['clover-category'], { items: 1, net: 26.56 }, 'totals by how items were filed');
+  const rec = JSON.parse(lineRow(D).items_json);
+  eq([day.totals?.items, day.totals?.net, day.net, day.reconciles], [10, r2(rec.reduce((s, i) => s + i.net, 0)), 39.43, true], 'one day: 10 items; their net, the day\'s $39.43, and they reconcile');
+  eq(day.totals?.bySource?.['clover-category'], { items: 2, net: 29.89 }, 'totals by how items were filed');
   eq(day.rows?.[0]?.name, 'FG BL CONSUMABLES - FOOD - CANDY', 'rows by net, highest first');
   const guessed = await tool('get_item_mapping', { storeId: 'BL1', from: D, to: D, mappingSource: 'guessed' });
-  eq(guessed.rows?.map(r => r.source).sort(), ['custom', 'heuristic', 'name', 'unmapped-clover-category'], 'source guessed: the items a rule guessed, where mis-filing hides');
+  eq(guessed.rows?.map(r => r.source).sort(), ['custom', 'heuristic', 'name', 'sku-book-unmapped', 'unmapped-clover-category'], 'source guessed: the items a rule guessed, where mis-filing hides');
   ok(guessed.rows?.every(r => r.guessed === true), 'each marked guessed');
-  eq((await tool('get_item_mapping', { storeId: 'BL1', from: D, to: D, l2: 'consumable food' })).matched, 2, 'l2 filter, any case');
+  eq((await tool('get_item_mapping', { storeId: 'BL1', from: D, to: D, l2: 'consumable food' })).matched, 3, 'l2 filter, any case');
   eq((await tool('get_item_mapping', { storeId: 'BL1', from: D, to: D, search: 'sku book' })).rows?.[0]?.itemId, 'I-SKU', 'search reaches the L3 and Clover category too');
   const filtered = await tool('get_item_mapping', { storeId: 'BL1', from: D, to: D, l2: 'Furniture' });
-  eq([filtered.totals?.net, filtered.reconciles], [2.5, true], 'a filter narrows the totals, never the reconciliation');
+  eq([filtered.totals?.net, filtered.reconciles], [5, true], 'a filter narrows the totals, never the reconciliation');
   ok((await tool('get_item_mapping', { from: '2026-09-01', to: '2026-10-14' })).isError, 'a chain range over 31 days is refused');
 }
 
