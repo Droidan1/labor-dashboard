@@ -4,43 +4,62 @@ _Direction and progress. Refreshed each session. Durable knowledge lives in [MEM
 
 ---
 
-## Current State — 2026-10-15 (agent access)
+## Current State — 2026-10-16 (agent access)
 
 _Scoped to the agent-access workstream. Other workstreams were not re-verified this session: the
 2026-08-05 state below is the last full refresh, and `tasks/todo.md` (newest first) has everything since._
 
-**Agents can read the business, read-only, and it is all in production** (PRs #325–#341):
+**Agents can read the business, read-only, and it is all in production** (PRs #325–#345):
 - **CLI `retjg`** for agents with a shell (Claude Code, Codex, Muse) and **MCP server `retjg-mcp`** at
-  `mcp.retjghub.com/mcp` for agents without one. Both offer the same 17 queries, generated from one table
+  `mcp.retjghub.com/mcp` for agents without one. Both offer the same 22 queries, generated from one table
   (`cli/reporting.mjs`):
   - sales, and the Retail Summary and Labor pages (11);
-  - since 2026-10-15, the Inventory pages (6): Viewer, Schedule Sale, Bin Dump, Receiver, Mark Out of
-    Stock. Names of who logged entries are included; Opportunity Buys is not.
+  - the Inventory pages (6, 2026-10-15): Viewer, Schedule Sale, Bin Dump, Receiver, Mark Out of Stock. Names
+    of who logged entries are included; Opportunity Buys is not;
+  - the Supply Request page (3, 2026-10-15): requests, one request, budgets. Names and notes are included;
+  - item numbers from before the L2/L3 rollup (2, 2026-10-16):
+    - `get_item_sales`: the receipt archive, with history from 2026-06-18;
+    - `get_item_mapping`: the app's own per-item record, showing each item's Clover category, the L2/L3 it
+      was filed under, and how it was matched. It lives in D1 `item_day_lines` (migration-078), recorded
+      nightly from 2026-10-16.
 - **How agents connect:** Claude uses a static key. ChatGPT (Pro, developer mode) and Codex use OAuth,
   signing in with RETJG HUB, owners and admins only.
-- **Protocol:** MCP 2026-07-28 natively, confirmed on Claude's real traffic; the 2025 versions still work.
-- **Sign-in hardening:** a crypto-random emailed code with 5 attempts (#332), and a send throttle with one
-  live code per email (#334).
-- **Catch-all route fix** (#335): a stray `?action=` no longer reaches live sales.
-- **Live as of 2026-10-15:** main worker `f48eb392` and retjg-mcp `55aae1a7`. Both are byte-identical to
-  builds of main `ab08e8c`. The CLI copy matches main.
+- **Protocol:** MCP 2026-07-28 natively; the 2025 versions still work.
+- **Sign-in hardening** (#332, #334) and the **catch-all route fix** (#335) are live.
+- **Live as of 2026-10-16:**
+  - migration-078 is applied;
+  - main worker `059f3ed9` and retjg-mcp `d57b19b0` are byte-identical to builds of main `b50a21e`;
+  - the CLI copy matches main.
 
 **Decided (Brian):**
 - Managers do not get agent access, so phase 2b is dropped (2026-10-14).
 - The `/mcp` Origin check is skipped for now (2026-10-14).
-- Inventory scope as above (2026-10-15).
+- The Inventory and Supply scopes above, with names included (2026-10-15).
+- Item numbers (2026-10-16): build sales per item AND how items map, both now.
+  - The per-item record is forward-only.
+  - Repair rebuilds don't write it; their backup covers KV only. item-lines flags those days `stale`.
 
 See MEMORY.md.
 
-**Open, none blocking:**
-1. **The Chief of Staff integration holds the same reporting key, so it now reads Inventory too**, including
-   costs and staff names. Brian's call whether it needs a key of its own.
-2. **No in-repo test drives a real MCP SDK client.** The reviews did it twice from a scratch folder.
-3. **A Python agent on Python's default User-Agent is refused at the edge** (Cloudflare 1010). Change the zone
-   setting only if one ever needs MCP.
-4. **BL1's catalog has 135 duplicate codes**, by the Viewer's own matching (code, else SKU). Found in passing.
-5. **`test-price-scan` fails intermittently**: about one full run in six. It passes on its own, and the
-   cause has not been looked for.
+**Open:**
+1. **Owed 2026-10-17: the morning-after check.** The first nightly `item_day_lines` rows should exist for
+   today, −1 and −2 for every store, and Σ items + other should equal the `items:` net. It's a read-only check.
+2. **The Chief of Staff integration holds the same reporting key**, so it now reads Inventory, Supply and the
+   item numbers too, including costs, staff names and notes. Brian's call whether it needs a key of its own.
+3. **The test harness's temp copy of the worker is shared across processes.** It's named only by length, so
+   two concurrent runs can load each other's code. A fix task has been raised; until it lands, run suites with
+   a private `TMPDIR` when anything else is testing.
+4. **The Supply Request page's own numbers:**
+   - the Reports tab totals only the first 200 requests, in the browser;
+   - the budget widget asks for an Eastern month but buckets spend by UTC month;
+   - requests from before migration-029 may have lost their items and history.
+
+   The agent tools are correct. These are page bugs.
+5. **No in-repo test drives a real MCP SDK client.**
+6. **The edge refuses Python's default User-Agent** (Cloudflare 1010). Change it only if a Python agent ever
+   needs MCP.
+7. **BL1's catalog has 135 duplicate codes.**
+8. **`test-price-scan` fails intermittently**, about one full run in six.
 
 ---
 
