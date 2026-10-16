@@ -71,8 +71,9 @@ line.run('BL14', '2026-09-21', 'O11', 0, 'Varsity Jackets', 2, 30, 0, null);
 line.run('BL14', '2026-09-21', 'O11', 1, 'Varsity Jackets', 1, 15, 0, 'Varsity jackets');
 pay.run('P12', 'BL14', '2026-09-27', 'payment', 'O12', 15);
 line.run('BL14', '2026-09-27', 'O12', 0, 'Varsity jacket', 1, 15, 0, null);
-// The biggest answer a default call can give: one store × 92 days by day, 25 items sold every day
-// (BL16, April to June, out of every other test's way)
+// A heavy default call: one store × 92 days by day, 25 items sold every day (BL16, April to June,
+// out of every other test's way). Not the ceiling: four-figure daily sales per item and long names
+// can still pass the cap, and the MCP then refuses with how to narrow.
 {
   const NAMES = ['FG BL CONSUMABLES - FOOD - SNACKS', 'FG BL HOME - KITCHEN - COOKWARE', 'Adult Apparel', 'FG BL HBA - PERSONAL CARE'];
   for (let d = 0; d < 92; d++) {
