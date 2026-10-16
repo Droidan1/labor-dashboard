@@ -51,6 +51,34 @@ function d1(db) {
   };
 }
 
+// 🛑 Production found this, not the tests (2026-10-16): item-sales' anti-join planned as
+// `SCAN p LEFT-JOIN`, every receipt line compared with every paid order. At test volume that
+// is milliseconds; on D1 it was a 1101 after ~39 s. A plan cannot hide behind small data, so
+// check the plan: recordStatements(env) before the call, nestedScans(db, recorded) after.
+// Flags a full SCAN that is not the first loop at its level (a nested loop over a whole
+// table or CTE). A json_each scan is per row, so it is allowed.
+export function recordStatements(env) {
+  const seen = [];
+  const prepare = env.DB.prepare.bind(env.DB);
+  env.DB.prepare = (sql) => { seen.push(sql); return prepare(sql); };
+  return seen;
+}
+export function nestedScans(db, sqls) {
+  const bad = [];
+  for (const sql of new Set(sqls)) {
+    if (!/^\s*(WITH|SELECT)\b/i.test(sql)) continue;
+    const loops = new Map();
+    for (const r of db.prepare('EXPLAIN QUERY PLAN ' + sql).all()) {
+      if (!/^(SCAN|SEARCH) /.test(r.detail)) continue;
+      const at = loops.get(r.parent) || []; at.push(r.detail); loops.set(r.parent, at);
+    }
+    for (const at of loops.values()) at.forEach((d, i) => {
+      if (i > 0 && /^SCAN /.test(d) && !/VIRTUAL TABLE/.test(d)) bad.push(`${d} in: ${sql.replace(/\s+/g, ' ').slice(0, 100)}`);
+    });
+  }
+  return bad;
+}
+
 function kv() {
   const m = new Map();
   return {

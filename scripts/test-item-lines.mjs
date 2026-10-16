@@ -15,7 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { loadWorker, makeEnv, ctx, req, stubWorkersRuntime } from './lib/worker-harness.mjs';
+import { loadWorker, makeEnv, ctx, req, stubWorkersRuntime, recordStatements, nestedScans } from './lib/worker-harness.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -231,8 +231,11 @@ const keyed = async (q) => { const r = await worker.fetch(new Request('https://a
   const etToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
   const ds = db.prepare(`INSERT OR REPLACE INTO daily_sales (store, date, total, order_count) VALUES ('BL1', ?, ?, ?)`);
   for (const [d, n] of [['2026-10-12', 30], ['2026-10-13', 25], ['2026-10-14', 3], ['2026-10-15', 0], [etToday, 9]]) ds.run(d, n ? 100 : 0, n);
+  const seen = recordStatements(env);
   const { status, body: b } = await keyed(`?action=item-lines&store=BL1&from=2026-10-10&to=${etToday}`);
   eq(status, 200, 'the key reads item-lines');
+  ok(seen.some(q => /json_each/.test(q)), 'the item-lines statements were recorded');
+  eq(nestedScans(db, seen), [], 'no item-lines statement scans a whole table inside a loop (see the harness: item-sales timed out on D1)');
   const candy = b?.items?.find(i => i.itemId === 'I-CAT' && i.source === 'clover-category');
   eq([candy?.qty, candy?.net, candy?.days, candy?.orders, candy?.firstDate, candy?.lastDate], [5, 56.56, 2, 5, '2026-10-12', '2026-10-14'], 'the candy as filed by its category: both days summed');
   eq(b?.items?.find(i => i.itemId === 'I-CAT' && i.source === 'override')?.l2, 'Hardlines', 'and the day it was filed elsewhere is its own row');

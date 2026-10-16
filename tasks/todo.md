@@ -1,3 +1,21 @@
+# get_item_sales: fix the production timeout, add week-by-week (2026-10-16)
+
+**Ask (Brian):** "How can I get POS item sales in the MCP? … Varsity Jackets sales per store with week to week
+sales", then "yes, do both": fix the slow query and add a weekly bucket.
+**Found:** `item-sales` returns Cloudflare 1101 after ~39 s for BL1 × 31 days and chain × 15 days; chain × 7 days
+takes ~20 s. Production `EXPLAIN QUERY PLAN`: the `excluded` anti-join plans as `SCAN p LEFT-JOIN`, so every
+receipt line is compared with every paid order. The items query itself is fine (BL1 × 31 days 198 ms; chain ×
+31 days by week 1.04 s, measured on D1). Local SQLite picks the same plan; it was only fast at test volume.
+
+- [ ] Test first: a query-plan guard in the harness (no full SCAN as an inner loop) on every item-sales
+      statement; `grain=d|w|m` per-period rows; bad grain 400; excluded unchanged under a grain; the tool's
+      `bucket` → periods per item + totals by period. Fails before
+- [ ] worker.js: drop the anti-join (excluded = all lines − paid lines); `grain` groups by day / week ending
+      Saturday / month (`grain` is already on the key's parameter list)
+- [ ] cli/reporting.mjs: `bucket` on get_item_sales; reading rule for partial edge weeks
+- [ ] The plan guard on item-lines too; mutants; `npm test`; fresh-eyes review
+- [ ] PR; deploy (Brian): worker → retjg-mcp → CLI; live timing on BL1 × 92 days and chain × 31 days
+
 # Item numbers for agents before the L2/L3 rollup (2026-10-16)
 
 **Ask (Brian):** "pull inventory numbers before it goes to L2 and L3 categories". **Chose:** sales per item AND
