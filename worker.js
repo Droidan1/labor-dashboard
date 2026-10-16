@@ -28942,8 +28942,11 @@ export default {
     // 🛑 ONLY PAID ORDERS. The archive banks every order Clover returns: a voided ticket
     // and one never paid keep their lines (bankTransactionsDay does not filter on state).
     // An order counts only if it has a kind='payment' row the same store-day.
-    // Refunded lines are counted apart, never netted (as Opportunity Buys counts them).
-    // The line price is after LINE discounts only: order-level discounts are not banked.
+    // Refunded lines are counted apart, never netted (as Opportunity Buys counts them),
+    // and so are NEGATIVE lines (a return rung on a ticket): the category pipeline books
+    // those as refunds with no units, so counting them as units sold would disagree with
+    // the Retail Summary. The line price is after LINE discounts only: order-level
+    // discounts are not banked.
     if (url.searchParams.get("action") === "item-sales" && request.method === "GET") {
       const bad = (error) => new Response(JSON.stringify({ error }), { status: 400, headers: corsJson });
       const from = url.searchParams.get("from") || "", to = url.searchParams.get("to") || "";
@@ -28966,13 +28969,13 @@ export default {
       const scope = [...stores, from, to];
       const paid = `WITH paid AS (SELECT DISTINCT store, date, order_id FROM payment_archive
                      WHERE store IN (${inList}) AND date BETWEEN ? AND ? AND kind = 'payment')`;
-      const [itemRows, excludedRow, lineCodes, banked] = await Promise.all([
+      const [itemRows, excludedRow, lineCodes, banked, refundPay, bareDays] = await Promise.all([
         env.DB.prepare(`${paid}
           SELECT i.store, COALESCE(i.code, '') AS code, i.name,
-                 SUM(CASE WHEN i.refunded = 0 THEN i.qty   ELSE 0 END) AS units,
-                 SUM(CASE WHEN i.refunded = 0 THEN i.price ELSE 0 END) AS sales,
-                 SUM(CASE WHEN i.refunded = 1 THEN i.qty   ELSE 0 END) AS refunded_units,
-                 SUM(CASE WHEN i.refunded = 1 THEN i.price ELSE 0 END) AS refunded_sales,
+                 SUM(CASE WHEN i.refunded = 0 AND i.price >= 0 THEN i.qty   ELSE 0 END) AS units,
+                 SUM(CASE WHEN i.refunded = 0 AND i.price >= 0 THEN i.price ELSE 0 END) AS sales,
+                 SUM(CASE WHEN i.refunded = 1 OR i.price < 0 THEN i.qty ELSE 0 END) AS refunded_units,
+                 SUM(CASE WHEN i.price < 0 THEN -i.price WHEN i.refunded = 1 THEN i.price ELSE 0 END) AS refunded_sales,
                  COUNT(DISTINCT i.order_id) AS orders, MIN(i.date) AS first_date, MAX(i.date) AS last_date
             FROM payment_archive_items i
             JOIN paid p ON p.store = i.store AND p.date = i.date AND p.order_id = i.order_id
@@ -28987,6 +28990,16 @@ export default {
             FROM payment_archive_items WHERE store IN (${inList}) AND date BETWEEN ? AND ?`).bind(...scope).first(),
         env.DB.prepare(`SELECT store, date, complete, note FROM payment_archive_days
             WHERE store IN (${inList}) AND date BETWEEN ? AND ?`).bind(...scope).all(),
+        // Refunds as PAYMENTS. A line is flagged refunded only if Clover marked it by the
+        // time the day was banked; amount-only refunds and later returns never are, so the
+        // line columns understate refunds and this says by how much.
+        env.DB.prepare(`SELECT kind, COALESCE(SUM(amount), 0) AS amount, COUNT(*) AS n FROM payment_archive
+            WHERE store IN (${inList}) AND date BETWEEN ? AND ? AND kind IN ('refund', 'manual') GROUP BY kind`).bind(...scope).all(),
+        // A day can be banked with its payments but WITHOUT its lines (the item write failed
+        // after the ledger row): it reads as banked, and its items are simply absent.
+        env.DB.prepare(`SELECT d.store, d.date FROM payment_archive_days d
+            WHERE d.store IN (${inList}) AND d.date BETWEEN ? AND ? AND d.payments > 0
+              AND NOT EXISTS (SELECT 1 FROM payment_archive_items i WHERE i.store = d.store AND i.date = d.date)`).bind(...scope).all(),
       ]);
       const cents = (n) => Math.round((Number(n) || 0) * 100) / 100;
       const items = (itemRows.results || []).map(r => ({
@@ -28996,17 +29009,35 @@ export default {
         orders: r.orders, firstDate: r.first_date, lastDate: r.last_date,
       }));
       const bankedRows = banked.results || [];
+      // The nightly banks today−3 at 23:55 ET, so only days up to today−4 are owed for sure.
+      // A day after that, or after a store closed, is not a gap; a failed fetch the cron
+      // never retried is, and is what `missing` is for.
+      const { dateStr: todayET } = getETToday();
+      const shift = (d, n) => { const x = new Date(d + "T12:00:00Z"); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+      const owedUntil = shift(todayET, -4);
+      const span = [];
+      for (let d = from; d <= to; d = shift(d, 1)) span.push(d);
+      const bankedSet = new Set(bankedRows.map(d => d.store + "|" + d.date));
+      const missing = [], notYetBanked = [];
+      for (const s of stores) {
+        const closed = STORE_CLOSED_FROM[s] || null;
+        const absent = span.filter(d => !bankedSet.has(s + "|" + d) && !(closed && d >= closed));
+        const owed = absent.filter(d => d <= owedUntil);
+        if (owed.length) missing.push({ store: s, days: owed.length, dates: owed.slice(0, 31) });
+        if (absent.length > owed.length) notYetBanked.push({ store: s, days: absent.length - owed.length });
+      }
       const coverage = {
         daysBanked: bankedRows.length,
         incomplete: bankedRows.filter(d => !d.complete).map(d => ({ store: d.store, date: d.date, note: d.note })),
-        // Days with no banked row at all: not banked yet (the nightly runs 3 days behind),
-        // a closed store, or a failed fetch the cron never retried.
-        missing: stores.map(s => ({ store: s, days: days - bankedRows.filter(d => d.store === s).length })).filter(m => m.days > 0),
+        missing, notYetBanked,
+        daysWithoutLines: (bareDays.results || []).map(d => ({ store: d.store, date: d.date })),
         linesWithoutCode: Number(lineCodes?.without_code) || 0,
       };
+      const refundByKind = Object.fromEntries((refundPay.results || []).map(r => [r.kind, { amount: cents(r.amount), count: r.n }]));
       return new Response(JSON.stringify({
         ok: true, from, to, stores, items,
         excluded: { lines: Number(excludedRow?.lines) || 0, sales: cents(excludedRow?.sales) },
+        refundPayments: { refunds: refundByKind.refund || { amount: 0, count: 0 }, manual: refundByKind.manual || { amount: 0, count: 0 } },
         coverage,
       }), { headers: corsJson });
     }
