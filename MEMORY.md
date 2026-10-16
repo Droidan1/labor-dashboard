@@ -76,6 +76,8 @@ _Deeper per-topic notes are in Claude's auto-memory at `~/.claude/projects/-User
 - **A dry-run bundle built in a different checkout differs from live by one line**: esbuild's `// ../node_modules/…` module-path marker (comments themselves are stripped). Diff before calling a byte-compare a failure.
 - **`Referrer-Policy: no-referrer` makes browsers send `Origin: null` on a form POST**, which an Origin check refuses — it broke every real Allow on the OAuth consent page until it became `same-origin`.
 - 🛑 **A GET can write.** `mos-lookup` learns sticker codes into D1 on a GET, so "GET only" does not make an action safe to open to a key. Check each handler for writes, including KV cache writes, before adding it to `REPORTING_READ_THROUGH`.
+- 🛑 **`wrangler d1 execute --remote --file` stops at an "Ok to proceed? (Y/n)" prompt and waits.** On 2026-10-16 the worker that needed migration-078 was deployed while that prompt was still unanswered in another tab. It was harmless only because `item-lines` answers a JSON 503 without its table. Before deploying anything that needs a migration, confirm the migration printed "Executed N queries", or check that the table exists.
+- 🛑 **The test harness writes the worker under test to `$TMPDIR/worker-under-test-<length>.mjs`, shared across processes.** Two concurrent runs whose worker.js happen to be the same length load each other's code. A reviewer's mutant once overwrote the real copy. Run mutation lanes and parallel suites with their own `TMPDIR` until the harness names the file per process.
 
 ## Verification standards this project has settled on
 
