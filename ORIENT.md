@@ -44,7 +44,7 @@ An installable **PWA sales + labor dashboard** for the Bargain Lane / RETJG reta
 🛑 **Do not reach for a date range.** Re-pulling an *already healthy* old date **loses refunds** that have aged out of Clover's ~90-day window — every unnecessary date is a small permanent loss. That's why `repair-run` refuses `start`/`end` outright.
 
 **Give an agent sales, labor, inventory and supply data** — every question an agent can ask is defined once, in
-`cli/reporting.mjs` (`QUERIES`: twenty-one read-only queries, the reading rules, and how each answer is
+`cli/reporting.mjs` (`QUERIES`: twenty-two read-only queries, the reading rules, and how each answer is
 trimmed; a query with `next` reads every page, run once in `runQuery`). Two surfaces are generated from it, so they cannot drift:
 
 - **CLI** `retjg` (`cli/retjg.mjs`) for agents with a shell (Claude Code, Codex, Muse): `retjg --help`
@@ -76,11 +76,13 @@ trimmed; a query with `next` reads every page, run once in `runQuery`). Two surf
   as `mcp_oauth_call` / `mcp_oauth_granted` (user id, client). 🔑 `npm test` now needs `npm ci` first (the
   MCP suites import the library), in every worktree too.
 
-Both use `MORNING_BRIEFING_KEY`, which opens the three reporting endpoints plus eighteen reads
+Both use `MORNING_BRIEFING_KEY`, which opens the three reporting endpoints plus nineteen reads
 (`REPORTING_READ_THROUGH` in `worker.js`): the Retail Summary and Labor pages' seven (2026-10-13), the
 Inventory pages' seven (2026-10-15: Viewer, Schedule Sale, Bin Dump, Receiver, Mark Out of Stock; not
 Opportunity Buys), the Supply Request page's three (2026-10-15: requests, one request, budgets) and
-`item-sales` (2026-10-16: the receipt archive summed per item, before any L2/L3 grouping). GET only, every store, nothing that writes; their page and admin checks honour
+`item-sales` and `item-lines` (2026-10-16: the receipt archive summed per item, and the app's own
+per-item record — D1 `item_day_lines`, written beside every `items:` snapshot — with each item's Clover
+category, the L2/L3 it was filed under and how). GET only, every store, nothing that writes; their page and admin checks honour
 `reportingReadThrough`. Adding a query that needs another endpoint means adding that action there
 too, and `scripts/test-reporting-read-through.mjs` pins each one to a superuser session's answer.
 🔑 The Viewer's (and `get_inventory_items`') "cost" is Clover's own item field, which most items leave empty;

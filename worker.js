@@ -3785,6 +3785,26 @@ function matchOverridePattern(rawName, imNum, patterns) {
 // undefined / EMPTY_OVERRIDES — caller threads it in for live + snapshot paths.
 // `itemCosts` is the shape returned by fetchItemCosts(); used to enrich each
 // line-item with cost so we can emit cost / extCost / grossProfit / gpmPct.
+// The date range and stores an item-level read covers (item-sales, item-lines), or the
+// refusal. One store up to 92 days; every store up to 31 — a store-day is ~500 receipt
+// lines or ~800 items, so a call stays a bounded read, never the whole table. Stores are
+// what this caller holds (allowedStores; null = the key or a superuser = every store).
+function itemRangeScope(url, currentUser, corsJson) {
+  const refuse = (status, error) => ({ response: new Response(JSON.stringify({ error }), { status, headers: corsJson }) });
+  const from = url.searchParams.get("from") || "", to = url.searchParams.get("to") || "";
+  const realDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && new Date(s + "T12:00:00Z").toISOString().slice(0, 10) === s;
+  if (!realDate(from) || !realDate(to)) return refuse(400, "from and to are required (YYYY-MM-DD)");
+  if (to < from) return refuse(400, "to is before from");
+  const storeParam = (url.searchParams.get("store") || "").trim().toUpperCase();
+  if (storeParam && !ALL_STORES.includes(storeParam)) return refuse(400, "Invalid store");
+  if (storeParam && !canAccessStore(currentUser, storeParam)) return refuse(403, "Forbidden");
+  const allowed = allowedStores(currentUser);
+  const stores = storeParam ? [storeParam] : (allowed === null ? ALL_STORES : ALL_STORES.filter(s => allowed.includes(s)));
+  const days = Math.round((Date.parse(to + "T12:00:00Z") - Date.parse(from + "T12:00:00Z")) / 864e5) + 1;
+  if (days > (storeParam ? 92 : 31)) return refuse(400, storeParam ? "At most 92 days for one store" : "At most 31 days for every store; give a store for longer");
+  return { from, to, stores, days };
+}
+
 // How an item was filed, for the per-item record (item_day_lines). One word per rung of
 // the ladder below, splitting the two that `l2Source` lumps together ("clover-l3" covers
 // a mapped category, the sku book and an unmapped category; "custom" covers Custom Sales,
@@ -5257,6 +5277,7 @@ const ACTION_BUSINESS = new Map([
   ["bank-transactions", "bl"],
   ["transactions", "bl"],
   ["item-sales", "bl"],
+  ["item-lines", "bl"],
   ["update-clover-item", "bl"],
   ["update-user", "bl"],
   ["weekly-store-detail", "bl"],
@@ -16341,8 +16362,9 @@ export default {
     // `!currentUser` checks let `reportingReadThrough` past; allowedStores(null) is every
     // store. Left out: its seven writes, the purge preview, and supply-budgets-all.
     //
-    // item-sales joined 2026-10-16 (Brian: item numbers before the L2/L3 rollup):
-    // the receipt archive summed per item. D1 reads only; the financial gate and
+    // item-sales and item-lines joined 2026-10-16 (Brian: item numbers before the
+    // L2/L3 rollup): the receipt archive summed per item, and the app's own per-item
+    // record with how each item was filed. D1 reads only; the financial gate and
     // allowedStores() still apply to sessions.
     const REPORTING_READ_THROUGH = new Set([
       "weekly-summary", "weekly-store-detail", "weekly-t13", "category-series", "category-hours",
@@ -16350,7 +16372,7 @@ export default {
       "inventory-items", "list-sale-schedules", "bin-dump-list", "truck-current", "truck-detail",
       "truck-list", "mos-list",
       "supply-requests", "supply-request", "supply-budgets",
-      "item-sales",
+      "item-sales", "item-lines",
     ]);
     // 🛑 And only the parameters those handlers read. A read-through
     // request falls through the whole route chain to its handler, so any route
@@ -28933,6 +28955,79 @@ export default {
       }), { headers: corsJson });
     }
 
+    // ─── Item lines: the app's own per-ITEM record, with how each item was filed ──
+    //    GET ?action=item-lines&from=YYYY-MM-DD&to=YYYY-MM-DD[&store=BL1]
+    // item_day_lines (migration-078, banked beside every items: snapshot from 2026-10-16)
+    // summed over the range per store and item AS FILED: an item re-filed mid-range shows
+    // as two rows. Its net is the Retail Summary's (line and order discounts, refunds
+    // allocated). Read-only; D1 only. Brian, 2026-10-16, for agents.
+    if (url.searchParams.get("action") === "item-lines" && request.method === "GET") {
+      const range = itemRangeScope(url, currentUser, corsJson);
+      if (range.response) return range.response;
+      const { from, to, stores } = range;
+      const empty = { ok: true, from, to, stores, items: [], other: null, coverage: null };
+      if (!stores.length) return new Response(JSON.stringify(empty), { headers: corsJson });
+      const inList = stores.map(() => "?").join(",");
+      const scope = [...stores, from, to];
+      const f = (k) => `json_extract(j.value, '$.${k}')`;
+      const [itemRows, dayRows, firstRows] = await Promise.all([
+        env.DB.prepare(`
+          SELECT d.store AS store, ${f("itemId")} AS item_id, MAX(${f("name")}) AS name, MAX(${f("code")}) AS code,
+                 ${f("cloverCategory")} AS clover_category, ${f("l2")} AS l2, ${f("l3")} AS l3, ${f("source")} AS source,
+                 SUM(${f("qty")}) AS qty, SUM(${f("gross")}) AS gross, SUM(${f("lineDiscounts")}) AS line_discounts,
+                 SUM(${f("orderDiscounts")}) AS order_discounts, SUM(${f("refunds")}) AS refunds, SUM(${f("net")}) AS net,
+                 SUM(${f("cost")}) AS cost,
+                 CASE WHEN COUNT(DISTINCT ${f("costSource")}) > 1 THEN 'mixed' ELSE MAX(${f("costSource")}) END AS cost_source,
+                 SUM(${f("orders")}) AS orders, COUNT(*) AS days, MIN(d.date) AS first_date, MAX(d.date) AS last_date
+            FROM item_day_lines d, json_each(d.items_json) j
+           WHERE d.store IN (${inList}) AND d.date BETWEEN ? AND ?
+           GROUP BY d.store, item_id,
+                    CASE WHEN item_id IS NULL THEN ${f("name")} END, CASE WHEN item_id IS NULL THEN ${f("code")} END,
+                    l2, l3, source, clover_category`).bind(...scope).all(),
+        env.DB.prepare(`SELECT store, date, net, other_json FROM item_day_lines
+            WHERE store IN (${inList}) AND date BETWEEN ? AND ?`).bind(...scope).all(),
+        env.DB.prepare(`SELECT store, MIN(date) AS first FROM item_day_lines WHERE store IN (${inList}) GROUP BY store`).bind(...stores).all(),
+      ]);
+      const cents = (n) => Math.round((Number(n) || 0) * 100) / 100;
+      const items = (itemRows.results || []).map(r => ({
+        store: r.store, itemId: r.item_id, name: r.name, code: r.code, cloverCategory: r.clover_category,
+        l2: r.l2, l3: r.l3, source: r.source,
+        qty: Math.round((Number(r.qty) || 0) * 1000) / 1000, gross: cents(r.gross),
+        lineDiscounts: cents(r.line_discounts), orderDiscounts: cents(r.order_discounts),
+        refunds: cents(r.refunds), net: cents(r.net), cost: cents(r.cost), costSource: r.cost_source,
+        orders: Number(r.orders) || 0, days: r.days, firstDate: r.first_date, lastDate: r.last_date,
+      }));
+      const days = dayRows.results || [];
+      const other = { nonItem: 0, crossDayRefunds: 0, unattributedRefunds: 0, manualRefunds: 0 };
+      let net = 0;
+      for (const d of days) {
+        net += Number(d.net) || 0;
+        let o = {}; try { o = JSON.parse(d.other_json || "{}"); } catch {}
+        for (const k of Object.keys(other)) other[k] += Number(o[k]) || 0;
+      }
+      for (const k of Object.keys(other)) other[k] = cents(other[k]);
+      // Days with no record: before the record began for that store (firstRecord), after a
+      // store closed, today (written tonight), or a snapshot that failed to bank one.
+      const { dateStr: todayET } = getETToday();
+      const shift = (d, n) => { const x = new Date(d + "T12:00:00Z"); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+      const firstBy = Object.fromEntries((firstRows.results || []).map(r => [r.store, r.first]));
+      const have = new Set(days.map(d => d.store + "|" + d.date));
+      const missing = [];
+      for (const s of stores) {
+        const closed = STORE_CLOSED_FROM[s] || null;
+        const owed = [];
+        for (let d = from; d <= to; d = shift(d, 1)) {
+          if (d >= todayET || (closed && d >= closed) || !firstBy[s] || d < firstBy[s]) continue;
+          if (!have.has(s + "|" + d)) owed.push(d);
+        }
+        if (owed.length) missing.push({ store: s, days: owed.length, dates: owed.slice(0, 31) });
+      }
+      return new Response(JSON.stringify({
+        ok: true, from, to, stores, items, other, net: cents(net),
+        coverage: { days: days.length, firstRecord: firstBy, missing },
+      }), { headers: corsJson });
+    }
+
     // ─── Item sales: units and sales per ITEM, from the receipt archive ──
     //    GET ?action=item-sales&from=YYYY-MM-DD&to=YYYY-MM-DD[&store=BL1]
     // The one per-line record with history (payment_archive_items, banked nightly with
@@ -28948,22 +29043,9 @@ export default {
     // the Retail Summary. The line price is after LINE discounts only: order-level
     // discounts are not banked.
     if (url.searchParams.get("action") === "item-sales" && request.method === "GET") {
-      const bad = (error) => new Response(JSON.stringify({ error }), { status: 400, headers: corsJson });
-      const from = url.searchParams.get("from") || "", to = url.searchParams.get("to") || "";
-      const realDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && new Date(s + "T12:00:00Z").toISOString().slice(0, 10) === s;
-      if (!realDate(from) || !realDate(to)) return bad("from and to are required (YYYY-MM-DD)");
-      if (to < from) return bad("to is before from");
-      const storeParam = (url.searchParams.get("store") || "").trim().toUpperCase();
-      if (storeParam && !ALL_STORES.includes(storeParam)) return bad("Invalid store");
-      if (storeParam && !canAccessStore(currentUser, storeParam)) {
-        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
-      }
-      const allowed = allowedStores(currentUser); // null = every store
-      const stores = storeParam ? [storeParam] : (allowed === null ? ALL_STORES : ALL_STORES.filter(s => allowed.includes(s)));
-      const days = Math.round((Date.parse(to + "T12:00:00Z") - Date.parse(from + "T12:00:00Z")) / 864e5) + 1;
-      // One store reads ~500 lines a day; the chain six times that. Bounded so a call
-      // stays a bounded read, never the whole table.
-      if (days > (storeParam ? 92 : 31)) return bad(storeParam ? "At most 92 days for one store" : "At most 31 days for every store; give a store for longer");
+      const range = itemRangeScope(url, currentUser, corsJson);
+      if (range.response) return range.response;
+      const { from, to, stores, days } = range;
       if (!stores.length) return new Response(JSON.stringify({ ok: true, from, to, stores, items: [], excluded: { lines: 0, sales: 0 }, coverage: null }), { headers: corsJson });
       const inList = stores.map(() => "?").join(",");
       const scope = [...stores, from, to];

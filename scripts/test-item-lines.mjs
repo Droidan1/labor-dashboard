@@ -14,8 +14,8 @@
 //      leak into the items: snapshot or the live items answer.
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { loadWorker, makeEnv, ctx, req } from './lib/worker-harness.mjs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { loadWorker, makeEnv, ctx, req, stubWorkersRuntime } from './lib/worker-harness.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -184,6 +184,62 @@ const r2 = (n) => Math.round(n * 100) / 100;
   eq(swept?.snapshot_time, JSON.parse(await env.SALES_SNAPSHOTS.get(`items:bl1:${D}`)).snapshotTime, 'stamped like the sweep\'s items: snapshot');
   eq(lineRow('2026-10-13')?.items_json, '[{"name":"kept"}]', 'a swept day with no orders did NOT replace the 13th\'s record with nothing');
   ok(!lineRow('2026-10-15'), 'and wrote no empty record for the 15th');
+}
+
+// ── 5. ?action=item-lines sums the record over a range ─────────────────────
+const UP = 'test-briefing-key';
+env.MORNING_BRIEFING_KEY = UP;
+const keyed = async (q) => { const r = await worker.fetch(new Request('https://api.retjghub.com/' + q, { headers: { 'X-API-Key': UP } }), env, ctx); return { status: r.status, body: await r.json().catch(() => null) }; };
+{
+  // A second recorded day, where the candy was filed somewhere else (re-filed since).
+  const day12 = [
+    { itemId: 'I-CAT', name: 'FG BL CONSUMABLES - FOOD - CANDY', code: 'BL-50020-10', cloverCategory: 'FG BL CONSUMABLES - FOOD - CANDY', l2: 'Consumable Food', l3: 'FG BL CONSUMABLES - FOOD - CANDY', source: 'clover-category', qty: 3, gross: 30, lineDiscounts: 0, orderDiscounts: 0, refunds: 0, net: 30, cost: 1.2, costSource: 'category', orders: 3 },
+    { itemId: 'I-CAT', name: 'FG BL CONSUMABLES - FOOD - CANDY', code: 'BL-50020-10', cloverCategory: 'FG BL CONSUMABLES - FOOD - CANDY', l2: 'Hardlines', l3: '[Override] Hardlines', source: 'override', qty: 1, gross: 10, lineDiscounts: 0, orderDiscounts: 0, refunds: 0, net: 10, cost: 0, costSource: 'none', orders: 1 },
+  ];
+  db.prepare(`INSERT OR REPLACE INTO item_day_lines (store, date, snapshot_time, item_count, net, items_json, other_json) VALUES ('BL1','2026-10-12','t12',2,40,?,?)`)
+    .run(JSON.stringify(day12), JSON.stringify({ nonItem: 0, crossDayRefunds: 0, unattributedRefunds: 0, manualRefunds: 0 }));
+  db.exec("DELETE FROM item_day_lines WHERE date = '2026-10-13'");   // a recorded store-day that went missing
+  const { status, body: b } = await keyed('?action=item-lines&store=BL1&from=2026-10-10&to=2026-10-14');
+  eq(status, 200, 'the key reads item-lines');
+  const candy = b?.items?.find(i => i.itemId === 'I-CAT' && i.source === 'clover-category');
+  eq([candy?.qty, candy?.net, candy?.days, candy?.orders, candy?.firstDate, candy?.lastDate], [5, 56.56, 2, 5, '2026-10-12', '2026-10-14'], 'the candy as filed by its category: both days summed');
+  eq(b?.items?.find(i => i.itemId === 'I-CAT' && i.source === 'override')?.l2, 'Hardlines', 'and the day it was filed elsewhere is its own row');
+  eq([b?.net, b?.other?.nonItem, b?.other?.manualRefunds], [73.1, 0.75, -1], 'the days\' net and what reached no item, summed');
+  eq(b?.coverage?.firstRecord?.BL1, '2026-10-12', 'coverage: when this store\'s record begins');
+  eq(b?.coverage?.missing, [{ store: 'BL1', days: 1, dates: ['2026-10-13'] }], 'and the recorded store-day that is missing — not the days before the record began');
+  eq((await keyed('?action=item-lines&store=BL1&from=2026-07-01&to=2026-10-14')).status, 400, 'one store, over 92 days → 400');
+  const su = await worker.fetch(req('/?action=item-lines&store=BL1&from=2026-10-10&to=2026-10-14', { user: 'u-su' }), env, ctx);
+  eq(await su.json(), b, 'the key answers exactly as a superuser does');
+  const mgr = await worker.fetch(req('/?action=item-lines&from=2026-10-10&to=2026-10-14', { user: 'u-mgr1' }), env, ctx);
+  eq((await mgr.json())?.stores, ['BL1'], 'a BL1 manager reads BL1 only');
+  eq((await worker.fetch(req('/?action=item-lines&store=BL2&from=2026-10-10&to=2026-10-14', { user: 'u-mgr1' }), env, ctx)).status, 403, 'and cannot ask for BL2');
+  eq((await worker.fetch(req('/?action=item-lines&store=BL1&from=2026-10-10&to=2026-10-14', { user: 'u-staff' }), env, ctx)).status, 403, 'staff are refused');
+}
+
+// ── 6. get_item_mapping, through the MCP worker ────────────────────────────
+await stubWorkersRuntime();
+const { default: mcp } = await import(pathToFileURL(path.join(repo, 'mcp', 'worker.mjs')).href);
+const mcpEnv = { MCP_KEY: 'mk', REPORTING_API_KEY: UP, API: { fetch: (r) => worker.fetch(r, env, ctx) } };
+let rid = 1;
+const tool = async (name, args) => {
+  const r = await mcp.fetch(new Request('https://mcp.retjghub.com/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer mk' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: rid++, method: 'tools/call', params: { name, arguments: args } }) }), mcpEnv, ctx);
+  const res = (await r.json()).result;
+  return res.isError ? { isError: true, text: res.content[0].text } : JSON.parse(res.content[0].text);
+};
+{
+  const day = await tool('get_item_mapping', { storeId: 'bl1', from: D, to: D });
+  eq([day.totals?.items, day.totals?.net, day.net, day.reconciles], [8, 35.35, 33.1, true], 'one day: 8 items, $35.35 on items, $33.10 the day — and they reconcile');
+  eq(day.totals?.bySource?.['clover-category'], { items: 1, net: 26.56 }, 'totals by how items were filed');
+  eq(day.rows?.[0]?.name, 'FG BL CONSUMABLES - FOOD - CANDY', 'rows by net, highest first');
+  const guessed = await tool('get_item_mapping', { storeId: 'BL1', from: D, to: D, mappingSource: 'guessed' });
+  eq(guessed.rows?.map(r => r.source).sort(), ['custom', 'heuristic', 'name', 'unmapped-clover-category'], 'source guessed: the items a rule guessed, where mis-filing hides');
+  ok(guessed.rows?.every(r => r.guessed === true), 'each marked guessed');
+  eq((await tool('get_item_mapping', { storeId: 'BL1', from: D, to: D, l2: 'consumable food' })).matched, 2, 'l2 filter, any case');
+  eq((await tool('get_item_mapping', { storeId: 'BL1', from: D, to: D, search: 'sku book' })).rows?.[0]?.itemId, 'I-SKU', 'search reaches the L3 and Clover category too');
+  const filtered = await tool('get_item_mapping', { storeId: 'BL1', from: D, to: D, l2: 'Furniture' });
+  eq([filtered.totals?.net, filtered.reconciles], [2.5, true], 'a filter narrows the totals, never the reconciliation');
+  ok((await tool('get_item_mapping', { from: '2026-09-01', to: '2026-10-14' })).isError, 'a chain range over 31 days is refused');
 }
 
 console.log(`${pass} passed, ${fail} failed`);
