@@ -4510,7 +4510,7 @@
               </div>
             </div>
 
-            <div>
+            <div id="ct-cover-section">
               <div class="flex items-center justify-between mb-1.5">
                 <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim">Cover thumbnail</label>
                 <label for="ct-thumb-file" class="cursor-pointer text-[12px] font-semibold text-accent-green hover:opacity-80">＋ Upload new</label>
@@ -4518,12 +4518,21 @@
               <div id="ct-thumb-pick" class="flex flex-wrap gap-2.5"></div>
             </div>
 
-            <div>
+            <div id="ct-photos-section">
               <div class="flex items-center justify-between gap-2 mb-1.5">
                 <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim">Bin photos <span class="text-opl-inkDimmer dark:text-op-inkDimmer normal-case font-normal tracking-normal">· by week</span></label>
                 <span id="ct-photo-count" class="text-[12px] text-opl-inkDim dark:text-op-inkDim"></span>
               </div>
               <div id="ct-photo-pick"></div>
+            </div>
+
+            <div>
+              <div class="flex items-center justify-between gap-2 mb-1.5">
+                <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim">Videos <span class="text-opl-inkDim dark:text-op-inkDim normal-case font-normal tracking-normal">· pick one for a video post</span></label>
+                <span id="ct-video-status" class="text-[12px] text-opl-inkDim dark:text-op-inkDim"></span>
+              </div>
+              <div id="ct-video-pick" class="flex flex-wrap gap-2.5"></div>
+              <p id="ct-video-mode-note" class="hidden mt-2 text-xs text-opl-inkDim dark:text-op-inkDim">A video post carries no cover or photos. Unselect the video to build a photo post.</p>
             </div>
 
             <div>
@@ -19990,6 +19999,8 @@
   // (2026-10-19) to have the admin pick the 9 rather than the app dropping any, so the
   // picker stops at 9 and a draft that already has more says how many to remove.
   const CT_MAX_PHOTOS = 9;
+  let ctVideos = [];           // this store's finished videos (?action=marketing-videos)
+  let ctSelVideo = null;       // a video post is ONE video, no cover, no photos
   let ctFlowWeeks = null;      // cached retail-week ranges (marketing_flow) for foldering photos
   let ctPhotoDelMode = false;  // "select to delete" mode in the Bin photos picker
   let ctPhotoDel = new Set();
@@ -20050,7 +20061,7 @@
   function ctSaveLocal() {
     try {
       localStorage.setItem(CT_LS, JSON.stringify({
-        store: el('ct-store') ? el('ct-store').value : '', thumb: ctSelThumb, photos: [...ctSelPhotos],
+        store: el('ct-store') ? el('ct-store').value : '', thumb: ctSelThumb, photos: [...ctSelPhotos], video: ctSelVideo,
         topic: el('ct-topic') ? el('ct-topic').value : '', caption: el('ct-caption') ? el('ct-caption').value : '',
         type: ctPostType, captionSource: ctCaptionSource, editing: ctEditingId,
       }));
@@ -20064,9 +20075,11 @@
   async function ctPersistDraft() {
     const store = el('ct-store').value;
     if (!store) throw new Error('Pick a store.');
-    if (!ctSelThumb) throw new Error('Pick a cover thumbnail.');
-    if (!ctSelPhotos.size) throw new Error('Select at least one photo.');
-    const body = { store, thumbnail_id: ctSelThumb, photo_ids: [...ctSelPhotos], caption: el('ct-caption').value.trim(), caption_source: ctCaptionSource, topic: (el('ct-topic') ? el('ct-topic').value.trim() : ''), post_type: ctPostType };
+    const video = ctSelVideo != null;
+    if (!video && !ctSelThumb) throw new Error('Pick a cover thumbnail, or a video.');
+    if (!video && !ctSelPhotos.size) throw new Error('Select at least one photo.');
+    const body = { store, thumbnail_id: video ? null : ctSelThumb, photo_ids: video ? [] : [...ctSelPhotos], video_id: video ? ctSelVideo : null,
+                   caption: el('ct-caption').value.trim(), caption_source: ctCaptionSource, topic: (el('ct-topic') ? el('ct-topic').value.trim() : ''), post_type: ctPostType };
     if (ctEditingId) body.id = ctEditingId;
     const r = await fetch(`${WORKER_BASE}?action=draft-save`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const d = await r.json().catch(() => ({}));
@@ -20326,8 +20339,20 @@
     // re-fetch/re-decode the slides.
     const car = el('ct-pv-carousel'), empty = el('ct-pv-cover-empty'), dots = el('ct-pv-dots');
     const order = [...ctSelPhotos];
-    const sig = (ctSelThumb ? 't' + ctSelThumb : '') + '|' + order.join(',');
-    if (car && car.dataset.sig !== sig) {
+    const sv = ctSelVideo != null ? ctVideos.find(x => x.id === ctSelVideo) : null;
+    const sig = sv ? 'v' + sv.id + (sv.has_poster ? 'p' + (sv.posterBust || '') : '')
+      : (ctSelThumb ? 't' + ctSelThumb : '') + '|' + order.join(',');
+    if (car && sv && car.dataset.sig !== sig) {
+      // A video post: its poster frame (or a plain tile) with a play mark.
+      car.dataset.sig = sig;
+      car.innerHTML = `<div class="ct-pv-slide relative flex-none w-full h-full snap-center bg-black">
+        ${sv.has_poster ? `<img src="${ctVideoPosterUrl(sv)}" alt="" class="absolute inset-0 w-full h-full object-contain">` : ''}
+        <span class="absolute inset-0 grid place-items-center"><span class="w-14 h-14 rounded-full bg-black/55 text-white text-2xl grid place-items-center">▶</span></span>
+        <span class="absolute bottom-3 left-3 text-[11px] font-semibold text-white bg-black/60 rounded px-1.5 py-0.5">${escapeHtml(ctMmss(sv.duration_ms || 0))}</span></div>`;
+      car.scrollLeft = 0;
+      if (empty) empty.classList.add('hidden');
+      if (dots) dots.innerHTML = '';
+    } else if (car && car.dataset.sig !== sig) {
       car.dataset.sig = sig;
       const slide = (src) => `<div class="ct-pv-slide relative flex-none w-full h-full snap-center"><img src="${src}" alt="" loading="lazy" decoding="async" class="absolute inset-0 w-full h-full object-cover"></div>`;
       const slides = [];
@@ -20341,7 +20366,9 @@
     }
     const nPhotos = ctSelPhotos.size;
     const foot = el('ct-preview-foot');
-    if (foot) {
+    if (foot && sv) {
+      foot.textContent = `${ctVideoLabel(sv)} · posts as a ${ctVideoKind(sv)}`;
+    } else if (foot) {
       const bits = [];
       if (ctSelThumb) bits.push('Cover');
       if (nPhotos) bits.push(nPhotos + ' bin photo' + (nPhotos === 1 ? '' : 's'));
@@ -20385,7 +20412,7 @@
       ctResetComposer();   // baseline (also clears storage) — then overlay any autosaved draft
       if (window.__ctDeepLink) {
         // A notification deep-link drives store/week/type below — skip the default load.
-      } else if (saved && (saved.caption || saved.topic || saved.thumb || (saved.photos && saved.photos.length))) {
+      } else if (saved && (saved.caption || saved.topic || saved.thumb || saved.video || (saved.photos && saved.photos.length))) {
         await ctRehydrateFrom(saved);
       } else {
         ctLoadPhotos();
@@ -20437,6 +20464,7 @@
     await ctLoadPhotos();                         // loads this store's photos (clears selection)
     ctSelThumb = s.thumb || null;
     ctSelPhotos = new Set((s.photos || []).map(Number));
+    ctSelVideo = ctVideos.some(v => v.id === s.video) ? s.video : null;
     ctPostType = s.type || 'bin_preview';
     ctCaptionSource = s.captionSource || 'manual';
     if (el('ct-topic')) el('ct-topic').value = s.topic || '';
@@ -20445,7 +20473,7 @@
       if (el('ct-clear')) el('ct-clear').classList.remove('hidden');
       if (el('ct-save-draft')) el('ct-save-draft').textContent = 'Update draft';
     }
-    ctRenderTypeChips(); ctRenderThumbPicker(); ctRenderPhotoPicker(); ctRenderPreview();
+    ctRenderTypeChips(); ctRenderThumbPicker(); ctRenderPhotoPicker(); ctRenderVideoPicker(); ctRenderPreview();
     ctSaveLocal();                                // persist the restored state (reset cleared it)
   }
 
@@ -20570,10 +20598,11 @@
   async function ctLoadPhotos() {
     const store = el('ct-store') ? el('ct-store').value : '';
     ctSelPhotos = new Set();
+    ctSelVideo = null;
     ctOpenFolder = null; ctOpenType = null; ctPhotoDelMode = false; ctPhotoDel = new Set();
     const pick = el('ct-photo-pick');
     if (!pick) return;
-    if (!store) { pick.innerHTML = ''; ctRenderPhotoPicker(); return; }
+    if (!store) { pick.innerHTML = ''; ctVideos = []; ctRenderVideoPicker(); ctRenderPhotoPicker(); return; }
     pick.innerHTML = '<div class="text-[12px] text-opl-inkDim dark:text-op-inkDim py-2">Loading…</div>';
     // Flow weeks + photos are independent — fetch in parallel (grouping still
     // needs the weeks, so we render after both settle, but save one round-trip).
@@ -20581,6 +20610,7 @@
       ctEnsureFlowWeeks(),
       fetch(`${WORKER_BASE}?action=marketing-photos&store=${store}&status=new`, { credentials: 'include' })
         .then(r => r.json()).catch(() => ({})),
+      ctLoadVideos(store),
     ]);
     ctPhotos = (d && d.photos) || [];
     ctRenderPhotoPicker();
@@ -20588,6 +20618,107 @@
   window.ctLoadPhotos = ctLoadPhotos;
 
   // ── Bin photos: clickable week folders (current week open) + delete mode ──
+  // ── Videos: a video post is one video, posted as a Facebook video (store walk)
+  //    or a Reel (short clip) through Buffer ─────────────────────────────────
+  function ctMmss(ms) { return `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, '0')}`; }
+  function ctVideoLabel(v) { return (v.video_type === 'clip' ? 'Clip' : 'Store walk') + ' · ' + ctMmss(v.duration_ms || 0); }
+  function ctVideoKind(v) { return v && v.video_type === 'clip' ? 'Reel' : 'Facebook video'; }
+  function ctVideoPosterUrl(v) { return `${WORKER_BASE}?action=video&id=${v.id}&size=thumb${v.posterBust ? '&v=' + v.posterBust : ''}`; }
+
+  async function ctLoadVideos(store) {
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=marketing-videos&store=${store}`, { credentials: 'include' });
+      const d = await r.json().catch(() => ({}));
+      ctVideos = (r.ok && d.ok && d.videos) || [];
+    } catch (_) { ctVideos = []; }
+    ctRenderVideoPicker();
+  }
+
+  function ctRenderVideoPicker() {
+    const wrap = el('ct-video-pick'); if (!wrap) return;
+    if (!ctVideos.length) {
+      wrap.innerHTML = '<div class="text-[12px] text-opl-inkDim dark:text-op-inkDim py-1">No videos from this store yet.</div>';
+    } else {
+      wrap.innerHTML = ctVideos.map(v => {
+        const on = ctSelVideo === v.id;
+        const pic = v.has_poster
+          ? `<img src="${ctVideoPosterUrl(v)}" alt="" loading="lazy" class="absolute inset-0 w-full h-full object-cover">`
+          : `<div class="absolute inset-0 grid place-items-center bg-opl-panelHi dark:bg-op-panelHi text-opl-inkDim dark:text-op-inkDim"><svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="15" height="14" rx="2"/><path d="m17 10 5-3v10l-5-3"/></svg></div>`;
+        return `<button type="button" data-vid="${v.id}" onclick="ctPickVideo(${v.id})" class="ct-vtile flex flex-col gap-1 w-[96px] text-left focus:outline-none">
+          <span class="relative w-[96px] h-[72px] rounded-xl overflow-hidden border-2 ${on ? 'border-accent-green' : 'border-transparent opacity-80 hover:opacity-100'}">${pic}
+            <span class="absolute bottom-1 left-1 text-[10px] font-semibold text-white bg-black/60 rounded px-1">▶ ${escapeHtml(ctMmss(v.duration_ms || 0))}</span></span>
+          <span class="text-[11px] font-semibold text-opl-ink dark:text-op-ink truncate">${escapeHtml(v.video_type === 'clip' ? 'Clip' : 'Store walk')}</span>
+          <span class="text-[10.5px] text-opl-inkDim dark:text-op-inkDim truncate">${escapeHtml(new Date(v.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))}${v.note ? ' · ' + escapeHtml(v.note) : ''}</span>
+        </button>`;
+      }).join('');
+    }
+    ctApplyVideoMode();
+  }
+
+  // In video mode the cover and photo pickers are off: Buffer takes no images beside a video.
+  function ctApplyVideoMode() {
+    const on = ctSelVideo != null;
+    el('ct-cover-section')?.classList.toggle('hidden', on);
+    el('ct-photos-section')?.classList.toggle('hidden', on);
+    el('ct-video-mode-note')?.classList.toggle('hidden', !on);
+  }
+
+  async function ctPickVideo(id) {
+    if (ctSelVideo === id) { ctSelVideo = null; }
+    else {
+      if (ctSelThumb || ctSelPhotos.size) {
+        ctSelThumb = null; ctSelPhotos = new Set();
+        ctPhotoCapNotice('A video post carries no cover or photos, so they were cleared.');
+        ctRenderThumbPicker(); ctRenderPhotoPicker();
+      }
+      ctSelVideo = id;
+    }
+    ctRenderVideoPicker(); ctRenderPreview(); ctMarkDirty();
+    const v = ctVideos.find(x => x.id === id);
+    if (ctSelVideo === id && v && !v.has_poster) await ctCapturePoster(v);
+  }
+  window.ctPickVideo = ctPickVideo;
+
+  // The phone could not grab a frame (iOS often won't for a video it isn't playing), so
+  // take one here: the picker tile, the preview, and what the caption writer looks at.
+  // crossorigin=use-credentials: the worker answers with this origin + credentials, which
+  // is what keeps the canvas readable.
+  async function ctCapturePoster(v) {
+    const st = el('ct-video-status');
+    const say = t => { if (st) st.textContent = t; };
+    say('Making a preview frame…');
+    const video = document.createElement('video');
+    video.crossOrigin = 'use-credentials'; video.muted = true; video.playsInline = true; video.preload = 'auto';
+    try {
+      const ready = await new Promise(res => {
+        const t = setTimeout(() => res(false), 20000);
+        video.onloadeddata = () => { clearTimeout(t); res(true); };
+        video.onerror = () => { clearTimeout(t); res(false); };
+        video.src = `${WORKER_BASE}?action=video&id=${v.id}`;
+      });
+      if (!ready) throw new Error('could not load the video');
+      const seeked = await new Promise(res => { const t = setTimeout(() => res(false), 10000); video.onseeked = () => { clearTimeout(t); res(true); }; video.currentTime = Math.min(1, (video.duration || 2) / 2); });
+      if (!seeked || video.readyState < 2) throw new Error('no frame');
+      const scale = Math.min(1, 640 / Math.max(video.videoWidth, video.videoHeight));
+      const cv = document.createElement('canvas');
+      cv.width = Math.round(video.videoWidth * scale); cv.height = Math.round(video.videoHeight * scale);
+      cv.getContext('2d').drawImage(video, 0, 0, cv.width, cv.height);
+      const blob = await new Promise(res => cv.toBlob(b => res(b), 'image/jpeg', 0.72));
+      if (!blob) throw new Error('no frame');
+      const fd = new FormData(); fd.append('id', String(v.id)); fd.append('poster', blob, 'poster.jpg');
+      const r = await fetch(`${WORKER_BASE}?action=video-poster`, { method: 'POST', credentials: 'include', body: fd });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) throw new Error(d.error || 'save failed');
+      v.has_poster = true; v.posterBust = Date.now();
+      say('');
+      ctRenderVideoPicker(); ctRenderPreview();
+    } catch (_) {
+      say("No preview frame (this browser can't play it). Type the caption yourself.");
+    } finally {
+      video.removeAttribute('src'); video.load();
+    }
+  }
+
   async function ctEnsureFlowWeeks() {
     if (ctFlowWeeks) return ctFlowWeeks;
     try {
@@ -20914,7 +21045,7 @@
   window.ctDeleteSelectedPhotos = ctDeleteSelectedPhotos;
 
   function ctResetComposer() {
-    ctEditingId = null; ctSelThumb = null; ctSelPhotos = new Set(); ctCaptionSource = 'manual'; ctPostType = 'bin_preview'; ctDirty = false;
+    ctEditingId = null; ctSelThumb = null; ctSelPhotos = new Set(); ctSelVideo = null; ctCaptionSource = 'manual'; ctPostType = 'bin_preview'; ctDirty = false;
     ctOpenFolder = null; ctPhotoDelMode = false; ctPhotoDel = new Set();
     ctClearLocal();
     if (el('ct-caption')) el('ct-caption').value = '';
@@ -20923,7 +21054,7 @@
     if (el('ct-compose-status')) el('ct-compose-status').classList.add('hidden');
     if (el('ct-clear')) el('ct-clear').classList.add('hidden');
     if (el('ct-save-draft')) el('ct-save-draft').textContent = 'Save draft';
-    ctRenderTypeChips(); ctRenderThumbPicker(); ctRenderPhotoPicker(); ctRenderPreview();
+    ctRenderTypeChips(); ctRenderThumbPicker(); ctRenderPhotoPicker(); ctRenderVideoPicker(); ctRenderPreview();
   }
   window.ctResetComposer = ctResetComposer;
 
@@ -21160,7 +21291,7 @@
     const topic = el('ct-topic') ? el('ct-topic').value.trim() : '';
     const btn = el('ct-ai-btn'); const orig = btn.textContent; btn.disabled = true; btn.textContent = 'Writing…';
     try {
-      const r = await fetch(`${WORKER_BASE}?action=draft-generate-caption`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ store, topic, thumbnail_id: ctSelThumb, post_type: ctPostType }) });
+      const r = await fetch(`${WORKER_BASE}?action=draft-generate-caption`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ store, topic, thumbnail_id: ctSelVideo != null ? null : ctSelThumb, video_id: ctSelVideo, post_type: ctPostType }) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.ok) throw new Error(d.error || 'AI failed');
       el('ct-caption').value = d.caption || '';
@@ -21192,7 +21323,9 @@
 
   // Compact pipeline card. Actions vary by lane; every existing action is preserved.
   function ctPipelineCard(dr, kind) {
-    const cover = dr.thumbnail_id
+    const cover = dr.video_id
+      ? `<span class="relative w-10 h-10 rounded-lg overflow-hidden shrink-0 bg-black"><img src="${WORKER_BASE}?action=video&id=${dr.video_id}&size=thumb" class="absolute inset-0 w-full h-full object-cover" alt="" loading="lazy" onerror="this.remove()"><span class="absolute inset-0 grid place-items-center text-white text-xs">▶</span></span>`
+      : dr.thumbnail_id
       ? `<img src="${WORKER_BASE}?action=thumbnail&id=${dr.thumbnail_id}" class="w-10 h-10 rounded-lg object-cover shrink-0" alt="" loading="lazy">`
       : '<div class="w-10 h-10 rounded-lg bg-black/20 dark:bg-white/5 shrink-0"></div>';
     const title = escapeHtml(dr.caption || dr.topic || (ctStoreLabel(dr.store) + ' post'));
@@ -21232,8 +21365,11 @@
           + `<button onclick="ctUnschedule(${dr.id})" class="shrink-0 text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim px-1">Unschedule</button>`;
       }
     } else {
-      const nPhotos = (dr.photo_ids || []).length, over = nPhotos - ctPhotoRoom(dr);
-      meta = escapeHtml(ctStoreLabel(dr.store)) + ' · ' + nPhotos + ' photo' + (nPhotos === 1 ? '' : 's') + (dr.origin === 'flow' ? ' · from Flow' : '')
+      const nPhotos = (dr.photo_ids || []).length, over = dr.video_id ? 0 : nPhotos - ctPhotoRoom(dr);
+      const what = dr.video_id
+        ? `${dr.video_type === 'clip' ? 'Clip' : 'Store walk'}${dr.video_duration_ms ? ' ' + ctMmss(dr.video_duration_ms) : ''} · ${dr.video_type === 'clip' ? 'Reel' : 'video'}`
+        : nPhotos + ' photo' + (nPhotos === 1 ? '' : 's');
+      meta = escapeHtml(ctStoreLabel(dr.store)) + ' · ' + escapeHtml(what) + (dr.origin === 'flow' ? ' · from Flow' : '')
         + (over > 0 ? ` · remove ${over} to post` : '');
       metaClass = over > 0 ? 'font-semibold text-opl-bad dark:text-[#f87171]' : 'text-opl-inkDim dark:text-op-inkDim';
       actions = `<button onclick="ctPublishDraft(${dr.id})" class="shrink-0 text-[11px] font-semibold text-white bg-accent-blue rounded-md px-2 py-0.5">Publish</button>`
@@ -21380,6 +21516,7 @@
     await ctLoadPhotos();
     ctSelThumb = d.thumbnail_id || null;
     ctSelPhotos = new Set((d.photo_ids || []).map(Number));
+    ctSelVideo = d.video_id || null;
     el('ct-caption').value = d.caption || '';
     if (el('ct-topic')) el('ct-topic').value = d.topic || '';
     ctPostType = (CT_POST_TYPES.some(t => t.key === d.post_type) ? d.post_type : 'other');
@@ -21387,7 +21524,7 @@
     ctSetAiNote(false);   // provenance isn't stored on the draft — don't claim Flow
     el('ct-ai-note').classList.toggle('hidden', ctCaptionSource !== 'ai');
     ctDirty = false;
-    ctRenderTypeChips(); ctRenderThumbPicker(); ctRenderPhotoPicker(); ctRenderPreview();
+    ctRenderTypeChips(); ctRenderThumbPicker(); ctRenderPhotoPicker(); ctRenderVideoPicker(); ctRenderPreview();
     el('ct-save-draft').textContent = 'Update draft';
     el('ct-clear').classList.remove('hidden');
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -21413,7 +21550,9 @@
       await uiAlert(`This post has ${n0} photos, and a Facebook post takes ${ctPhotoRoom(d0)}${d0.thumbnail_id ? ' plus the cover' : ''}. Open Edit and keep your best ${ctPhotoRoom(d0)}.`, { title: 'Too many photos' });
       return;
     }
-    const ok = await uiConfirm('Post this to the store’s Facebook Page? The cover and photos go out LIVE with your caption.', { okText: 'Publish live', title: 'Publish to Facebook' });
+    const ok = await uiConfirm(d0 && d0.video_id
+      ? `Post this ${d0.video_type === 'clip' ? 'clip as a Reel' : 'video'} to the store’s Facebook Page? It goes out LIVE with your caption.`
+      : 'Post this to the store’s Facebook Page? The cover and photos go out LIVE with your caption.', { okText: 'Publish live', title: 'Publish to Facebook' });
     if (!ok) return;
 
     // Optimistically move the card into the Scheduled lane as "Posting…" the

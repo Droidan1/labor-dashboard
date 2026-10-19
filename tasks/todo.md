@@ -27,10 +27,29 @@ PR A — upload (this one):
       `npm test` 10693 / 121; browser-submit-video 88/88
 - [ ] Push + PR (Brian's go-ahead) → migration-080 → worker → merge
 
-PR B — post a video to Facebook through Buffer:
-- [ ] Content Studio video post (one video, no photos): store walk → `facebook.type: post`, clip → `reel`
-- [ ] Public `/v/` link with Range/206 for Buffer's fetcher
-- [ ] One test post from Brian to settle: an iPhone HEVC .mov by URL, and what a sideways walk becomes
+PR A shipped 2026-10-19: #352 merged (`fbbe951`); migration-080 applied by Brian (first try 7403 after a token
+refresh, fixed by `wrangler login`), verified read-only; worker `b2bf1acc` byte-identical to the branch bundle;
+frontend v283 on 3 consecutive passes. First real upload (Brian, South Bend): a 4.2 s upright CLIP, 12,270,766 B
+iPhone .mov (H.264, 3840×2160 + 90° matrix, read as 2160×3840 upright), stored intact — but NO poster: the phone
+gave no frame in 4 s. So PR B takes the poster frame in Content Studio, on the admin's computer.
+
+PR B — post a video to Facebook through Buffer (branch `claude/video-posts`):
+- [x] migration-081 `marketing_drafts.video_id` (MUST precede the worker: ?action=drafts joins on it)
+- [x] Worker: public `/v/` (finished videos only, allowlisted type, nosniff + sandbox, Range → 206/416, HEAD);
+      `?action=video` (signed-in, store-scoped, Range, CORS credentials) + `size=thumb`; `video-poster` (admin);
+      `marketing-videos` (admin, no storage keys); a video draft is ONE video, same store, no cover/photos;
+      Buffer: `assets:[{video:{url:/v/…}}]`, store walk → `facebook.type: post`, clip → `reel`; the duplicate
+      guard keys on the video URL; Graph path refuses video; the caption writer is told it is a video and sees
+      the poster; part 1 of an upload must open with an `ftyp` box
+- [x] Content Studio: Videos picker; picking one clears + hides cover/photos; no poster → a frame is grabbed in
+      the browser from the playing video and saved; preview says "posts as a Facebook video / Reel"; save, edit,
+      autosave, AI caption and the board's cards all carry the video
+- [x] Tests: test-video-posts 66 (caught draft-schedule not loading the store — every video schedule would have
+      been refused), test-video-upload 67 (ftyp), browser-content-video 35/35 both themes incl. a REAL frame grab
+      from a recorded WebM; `npm test` 10765 / 122
+- [ ] Fresh-eyes review
+- [ ] Push + PR → migration-081 → worker → merge → one test video post from Brian (settles what Facebook does
+      with a sideways walk and an upright clip sent by URL)
 
 # Hub → Buffer: Content Studio publishes through Buffer, Facebook first (2026-10-19)
 
