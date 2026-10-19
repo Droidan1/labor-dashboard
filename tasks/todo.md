@@ -20,7 +20,13 @@ both. A late recap never holds the email: it goes at 8 AM without the PDF.
       fetch, not an HTTP error, aborted the loop and left later days' sales unposted) and 4 nits (400/413 not
       retried, Content-Length precheck, PDF matched by date like the parser, mirror pin deduped). `npm test`
       10,405 / 118
-- [ ] PR; Brian: deploy the worker (inert until a PDF is uploaded), then paste the new .gs into "Whatnot sales"
+- [x] PR #349. Brian deployed the worker from a fresh clone of the branch: version 0467642d, 100% on 3 checks
+      a minute apart (12:03–12:05Z). The live bundle from `content/v2` is byte-identical to a dry-run build of
+      38eed1b, with MEDIA and all 6 crons
+- [x] Brian pasted the new .gs. The first run (12:16:51Z) uploaded live-recap/2026-10-14..18.pdf (4.3–4.7 KB,
+      application/pdf). 10-18's object is a 1-page PDF-1.4 containing "2026-10-18". Today's 12:00Z email
+      went out before the upload; the first email with the PDF is Tue 10/20
+- [ ] Brian: merge #349 so main matches the deployed worker
 
 ## Review
 Left alone, noted in the PR: re-running the day's send by hand after a late PDF reuses each copy's Resend
