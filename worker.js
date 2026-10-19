@@ -7691,21 +7691,28 @@ const SAFE_IMAGE_TYPE = /^image\/(jpeg|jpg|png|webp|gif|heic|heif|avif)$/i;
 const PUBLIC_PHOTO_PATH = /^\/p\/([1-9][0-9]{0,9})-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.([a-z0-9]{2,5})$/;
 // What a store would post. Team photos (staff) and "other" stay sign-in only.
 const PUBLIC_PHOTO_TYPES = ["retail", "bins", "event"];
+// A post's cover, on the same rules: /t/<marketing_thumbnails.id>-<UUID>.<ext>.
+// Covers are the branded graphics a post leads with, so any cover row qualifies,
+// retired or not: a retired cover can still be on a post waiting to go out.
+const PUBLIC_COVER_PATH = /^\/t\/([1-9][0-9]{0,9})-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.([a-z0-9]{2,5})$/;
 async function servePublicPhoto(request, env, url) {
   const notFound = () => new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain" } });
   if (request.method !== "GET" && request.method !== "HEAD") {
     return new Response("Method not allowed", { status: 405, headers: { Allow: "GET, HEAD" } });
   }
-  const m = url.pathname.match(PUBLIC_PHOTO_PATH);
+  const cover = url.pathname.startsWith("/t/");
+  const m = url.pathname.match(cover ? PUBLIC_COVER_PATH : PUBLIC_PHOTO_PATH);
   if (!m || !env.DB || !env.MEDIA) return notFound();
   const [, id, uuid, ext] = m;
-  // The row is what makes it servable: only marketing_photos keys qualify, so a
-  // bin-dump or truck photo (also UUID-named, same bucket) can never be reached.
-  const row = await env.DB.prepare(
-    "SELECT r2_key, content_type, photo_type, status FROM marketing_photos WHERE id = ?"
-  ).bind(Number(id)).first().catch(() => null);
-  if (!row || !String(row.r2_key).startsWith("marketing/") || !String(row.r2_key).endsWith(`/${uuid}.${ext}`)) return notFound();
-  if (row.status === "rejected" || !PUBLIC_PHOTO_TYPES.includes(row.photo_type)) return notFound();
+  // The row is what makes it servable: only marketing_photos / marketing_thumbnails
+  // keys qualify, so a bin-dump or truck photo (also UUID-named, same bucket) can
+  // never be reached.
+  const row = cover
+    ? await env.DB.prepare("SELECT r2_key, content_type FROM marketing_thumbnails WHERE id = ?").bind(Number(id)).first().catch(() => null)
+    : await env.DB.prepare("SELECT r2_key, content_type, photo_type, status FROM marketing_photos WHERE id = ?").bind(Number(id)).first().catch(() => null);
+  const prefix = cover ? "marketing/_thumbnails/" : "marketing/";
+  if (!row || !String(row.r2_key).startsWith(prefix) || !String(row.r2_key).endsWith(`/${uuid}.${ext}`)) return notFound();
+  if (!cover && (row.status === "rejected" || !PUBLIC_PHOTO_TYPES.includes(row.photo_type))) return notFound();
   const ct = String(row.content_type || "").toLowerCase();
   if (!SAFE_IMAGE_TYPE.test(ct)) return notFound();
   const obj = await (request.method === "HEAD" && env.MEDIA.head ? env.MEDIA.head(row.r2_key) : env.MEDIA.get(row.r2_key)).catch(() => null);
@@ -8220,7 +8227,8 @@ async function ensureAutoDraftForPhotos(env, store, now) {
   }
 
   // Recompute the photo list from source, so a burst converges. Only while the
-  // draft is still a draft — a scheduled or published post is off-limits. The
+  // draft is still a draft — a scheduled or published post is off-limits — and
+  // nobody has picked its photos yet (photos_curated, set by draft-save). The
   // week's photos run from midnight Eastern on its Sunday to midnight Eastern on
   // the next, the same week autoWeekOf named.
   await env.DB.prepare(
@@ -8229,7 +8237,7 @@ async function ensureAutoDraftForPhotos(env, store, now) {
                                    WHERE store = ? AND photo_type = 'bins'
                                      AND created_at >= ? AND created_at < ?), '[]'),
             updated_at = ?
-      WHERE store = ? AND origin = 'photos' AND auto_week = ? AND status = 'draft'`
+      WHERE store = ? AND origin = 'photos' AND auto_week = ? AND status = 'draft' AND photos_curated = 0`
   ).bind(store, etDayStartIso(week), etDayStartIso(weekEnd), nowIso, store, week).run();
 
   return { store, week, cover_id: coverId, created: createdNow };
@@ -15744,7 +15752,320 @@ async function resolvePageToken(env, pageId, token) {
   return { ok: true, pageToken: pgInfo.access_token, pageName: pgInfo.name || null };
 }
 
+// ── Buffer (2026-10-19) ─────────────────────────────────────────────────────
+// With BUFFER_API_KEY set, posts go out through Buffer instead of our own Meta app,
+// whose posts reached ~5 people in July (Development mode) where Buffer's test
+// post reached 476. Unset the secret and publishDraft falls back to the Graph path.
+// The Hub keeps the schedule: at the time, the post is handed to Buffer with
+// shareNow, so Edit and Unschedule never have to reach into Buffer.
+const BUFFER_API = "https://api.buffer.com";
+const BUFFER_ORG_ID = "6ac7d9ef5b8598803aae883d";
+// Store → the Buffer channel for its Facebook Page (listed 2026-10-13,
+// tasks/weekly-marketing-intake.md). Coliseum and Dupont share one Page.
+const BUFFER_FACEBOOK_CHANNELS = {
+  BL1: "6ac7dd7f6a5c39ccb654853c", BL4: "6ac7dd7f6a5c39ccb654853c",
+  BL2: "6ac7dd7f6a5c39ccb6548539", BL14: "6ac7dd7f6a5c39ccb654853a", BL16: "6ac7dd7f6a5c39ccb6548536",
+};
+// Buffer takes 10 images on a Facebook post. Brian chose (2026-10-19) to have the
+// admin pick which, so an over-limit post is refused, never trimmed here.
+const BUFFER_MAX_IMAGES = 10;
+const BUFFER_FB_TEXT_MAX = 5000;
+const BUFFER_IMAGE_TYPE = /^image\/(jpeg|jpg|png|webp)$/i;
+
+function bufferImageCount(draft) {
+  let pids = []; try { pids = JSON.parse(draft.photo_ids || "[]"); } catch (_) {}
+  return (draft.thumbnail_id ? 1 : 0) + pids.length;
+}
+function bufferTooManyImages(n, hasCover) {
+  const max = hasCover ? BUFFER_MAX_IMAGES - 1 : BUFFER_MAX_IMAGES;
+  return `Facebook through Buffer takes ${BUFFER_MAX_IMAGES} images, ${hasCover ? "the cover plus " : ""}${max} photos. ` +
+    `This post has ${n - (hasCover ? 1 : 0)} photos: open Edit and keep your best ${max}.`;
+}
+
+// One GraphQL call. Errors carry an HTTP-like status so the scheduler can tell a
+// retryable failure (429/5xx/unreachable) from one that will never succeed.
+async function bufferGql(env, query, variables) {
+  let res;
+  try {
+    res = await fetch(BUFFER_API, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${env.BUFFER_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ query, variables }),
+    });
+  } catch (e) {
+    return { ok: false, status: 503, error: `Couldn't reach Buffer (network): ${(e && e.message) || e}` };
+  }
+  const j = await res.json().catch(() => null);
+  const err = j && Array.isArray(j.errors) && j.errors[0];
+  if (res.ok && j && j.data && !err) return { ok: true, data: j.data };
+  const code = err && err.extensions && err.extensions.code;
+  const status = code === "RATE_LIMIT_EXCEEDED" ? 429
+    : (code === "UNAUTHENTICATED" || code === "UNAUTHORIZED" || code === "FORBIDDEN") ? 401
+    : code === "NOT_FOUND" ? 404
+    : res.ok ? 502 : res.status;
+  return { ok: false, status, code: code || null, error: `Buffer: ${(err && err.message) || ("HTTP " + res.status)}` };
+}
+
+// A public link Buffer can fetch: /p/ for a photo, /t/ for a cover. Both carry the
+// UUID already in the row's R2 key, which is what the public route checks.
+function bufferImageUrl(env, kind, row) {
+  const file = String(row.r2_key || "").split("/").pop();
+  return `${apiOrigin(env)}/${kind}/${row.id}-${file}`;
+}
+
+// Everything Buffer would refuse or fail on later, checked up front: by draft-schedule
+// (so a post is refused while someone is watching, not at 9 pm) and by the publisher.
+// Returns { error } or { text, images: [{ kind, row }] } in posting order, cover first.
+async function bufferDraftCheck(env, draft) {
+  const n = bufferImageCount(draft);
+  if (!n) return { error: "Draft has no cover or photos to post" };
+  if (n > BUFFER_MAX_IMAGES) return { error: bufferTooManyImages(n, !!draft.thumbnail_id) };
+  const text = String(draft.caption || "");
+  if (text.length > BUFFER_FB_TEXT_MAX) return { error: `Caption is ${text.length} characters; Facebook takes ${BUFFER_FB_TEXT_MAX}` };
+  const images = [];
+  if (draft.thumbnail_id) {
+    const th = await env.DB.prepare("SELECT id, r2_key, content_type FROM marketing_thumbnails WHERE id = ?").bind(draft.thumbnail_id).first();
+    if (!th) return { error: `Image missing: cover #${draft.thumbnail_id}` };
+    images.push({ kind: "t", row: th });
+  }
+  let photoIds = []; try { photoIds = JSON.parse(draft.photo_ids || "[]"); } catch (_) {}
+  for (const pid of photoIds) {
+    const ph = await env.DB.prepare("SELECT id, r2_key, content_type, photo_type, status FROM marketing_photos WHERE id = ?").bind(pid).first();
+    if (!ph) return { error: `Image missing: photo #${pid}` };
+    // The public route refuses these, so Buffer could never fetch them.
+    if (ph.status === "rejected" || !PUBLIC_PHOTO_TYPES.includes(ph.photo_type)) {
+      return { error: `Photo #${pid} is a ${ph.photo_type} photo, which is not posted publicly. Remove it in Edit` };
+    }
+    images.push({ kind: "p", row: ph });
+  }
+  for (const { row } of images) {
+    if (!BUFFER_IMAGE_TYPE.test(String(row.content_type || ""))) {
+      return { error: `Facebook through Buffer takes JPEG, PNG or WebP; image #${row.id} is ${row.content_type}` };
+    }
+  }
+  return { text, images };
+}
+
+const BUFFER_LIVE = ["scheduled", "sending", "sent"];   // a post Buffer has, and will send or has sent
+const BUFFER_SETTLE_MS = 5 * 60 * 1000;                 // how long a fresh post may stay out of Buffer's listings
+
+// Did an earlier attempt already give Buffer this post? Asked only when one may have:
+//   'handing'     the attempt reached Buffer and its answer was lost;
+//   'unconfirmed' Buffer took it but never reported it sent in 48 h.
+// Buffer has no idempotency key, so this is the only thing between a lost answer and a
+// second post. Each 'handing' row records exactly what it sent (channel, image URLs,
+// text), because the draft may have been edited since; a match is a LIVE post on that
+// channel with those images in that order and that text. Our image URLs carry the photo
+// ids and Buffer keeps them on the post (checked on a sent post, 2026-10-19), so another
+// draft — or a staged Buffer draft, or a story — never matches.
+// Each lost attempt is searched from 2 minutes before it, oldest first: if Buffer made
+// it, it is within the first few posts listed. A listing that runs past 10 minutes after
+// the attempt without a match proves it never arrived, so that attempt is RESOLVED and
+// the caller closes it — an open one would pin every later search to its date.
+// Anything that stops it ruling a post out (a failed call, a full page all inside those
+// 10 minutes, no match for an attempt too fresh to be listed yet) is a refusal: try again
+// later.
+// Returns { ok, post|null } or an error.
+async function bufferFindEarlierPost(env, priors, sentNow) {
+  for (const p of priors.filter(x => x.buffer_post_id)) {
+    const r = await bufferGql(env, "query PostStatus($id: PostId!) { post(input: { id: $id }) { id status } }", { id: String(p.buffer_post_id) });
+    if (r.ok && r.data.post && BUFFER_LIVE.includes(r.data.post.status)) return { ok: true, post: r.data.post };
+    if (!r.ok && r.code !== "NOT_FOUND") return r;
+  }
+  const key = s => `${s.ch}|${(s.assets || []).join("\n")}|${String(s.text || "").trim()}`;
+  for (const x of priors.filter(p => !p.buffer_post_id)) {
+    let sent = null; try { sent = JSON.parse(x.response || "null"); } catch (_) {}
+    if (!sent || !sent.ch) sent = sentNow;
+    const at = new Date(x.created_at).getTime();
+    const r = await bufferGql(env,
+      "query Recent($org: OrganizationId!, $ch: [ChannelId!], $since: DateTime!) { posts(first: 100, input: { organizationId: $org, filter: { channelIds: $ch, status: [scheduled, sending, sent], createdAt: { start: $since } }, sort: [{ field: createdAt, direction: asc }] }) { pageInfo { hasNextPage } edges { node { id status text createdAt assets { source } } } } }",
+      { org: BUFFER_ORG_ID, ch: [sent.ch], since: new Date(at - 120000).toISOString() });
+    if (!r.ok) return r;
+    const posts = r.data.posts || {};
+    const nodes = (posts.edges || []).map(e => e && e.node).filter(Boolean);
+    const want = key(sent);
+    const hit = nodes.find(p => BUFFER_LIVE.includes(p.status) && key({ ch: sent.ch, assets: (p.assets || []).map(a => a && a.source), text: p.text }) === want);
+    if (hit) return { ok: true, post: hit };
+    // Not listed yet is not the same as never made, for an attempt only seconds old.
+    if (Date.now() - at < BUFFER_SETTLE_MS) {
+      return { ok: false, status: 503, error: "The last attempt may still be reaching Buffer. Try again in a few minutes." };
+    }
+    const last = nodes.length ? new Date(nodes[nodes.length - 1].createdAt).getTime() : 0;
+    if (posts.pageInfo && posts.pageInfo.hasNextPage && !(last > at + 10 * 60 * 1000)) {
+      return { ok: false, status: 503, error: "Couldn't rule out an earlier copy of this post in Buffer. Try again later." };
+    }
+  }
+  return { ok: true, post: null };
+}
+
+async function publishDraftViaBuffer(env, { draftId, published }) {
+  if (!env.DB) return { ok: false, error: "Storage not configured (DB)", status: 500 };
+  const draft = await env.DB.prepare("SELECT * FROM marketing_drafts WHERE id = ?").bind(draftId).first();
+  if (!draft) return { ok: false, error: "Draft not found", status: 404 };
+  const store = String(draft.store || "").toUpperCase();
+  const channelId = BUFFER_FACEBOOK_CHANNELS[store];
+  if (!channelId) return { ok: false, error: `No Buffer Facebook channel mapped for store ${store}`, status: 400 };
+  const target = await env.DB.prepare("SELECT page_id, page_name FROM facebook_page_targets WHERE store = ?").bind(store).first().catch(() => null);
+  const pageId = target ? String(target.page_id) : null;
+
+  const chk = await bufferDraftCheck(env, draft);
+  if (chk.error) return { ok: false, error: chk.error, status: 400 };
+  const assets = chk.images.map(({ kind, row }) => ({ image: { url: bufferImageUrl(env, kind, row) } }));
+  const sentNow = { ch: channelId, assets: assets.map(a => a.image.url), text: chk.text };
+
+  // 1. An earlier attempt with an unknown outcome may already have made this post.
+  const priors = (await env.DB.prepare(
+    "SELECT id, buffer_post_id, created_at, response FROM marketing_publish_log WHERE draft_id = ? AND status IN ('handing','unconfirmed') ORDER BY id"
+  ).bind(draftId).all()).results || [];
+  let post = null;
+  if (priors.length) {
+    const found = await bufferFindEarlierPost(env, priors, sentNow);
+    // Cannot rule out a duplicate: try again later. Nothing was attempted, so the
+    // scheduler does not count it against the post's tries.
+    if (!found.ok) return { ...found, noAttempt: true };
+    post = found.post;
+    // None of them reached Buffer: close them now, or an open one would pin every
+    // later search to its date.
+    if (!post) for (const p of priors) await env.DB.prepare("UPDATE marketing_publish_log SET status='superseded' WHERE id=?").bind(p.id).run();
+  }
+  // A post found in Buffer is live (only live posts match), whatever this attempt asked
+  // for: recording it as staged would let a later live publish make a second one.
+  const adopted = !!post;
+  const live = published || adopted;
+
+  // 2. Record the hand-off, and exactly what it sends, BEFORE making it. If this write
+  //    fails, nothing is sent: a hand-off with no record is the one a retry can't find.
+  const mark = await env.DB.prepare(
+    "INSERT INTO marketing_publish_log (draft_id, store, page_id, status, created_at, response) VALUES (?,?,?,'handing',?,?)"
+  ).bind(draftId, store, pageId, new Date().toISOString(), JSON.stringify(sentNow)).run();
+  const markId = mark.meta && mark.meta.last_row_id;
+  const settle = (status, fields = {}) => env.DB.prepare(
+    "UPDATE marketing_publish_log SET status=?, buffer_post_id=COALESCE(?, buffer_post_id), response=? WHERE id=?"
+  ).bind(status, fields.buffer_post_id || null, String(fields.response || "").slice(0, 2000), markId).run();
+
+  // 3. Hand it over (or adopt the one Buffer already has).
+  if (!post) {
+    const input = { channelId, text: chk.text, schedulingType: "automatic", mode: published ? "shareNow" : "addToQueue", metadata: { facebook: { type: "post" } }, assets };
+    if (!published) input.saveToDraft = true;   // staged: lands as a Buffer draft for marketing (never adopted: see `live`)
+    const r = await bufferGql(env,
+      "mutation CreatePost($input: CreatePostInput!) { createPost(input: $input) { __typename ... on PostActionSuccess { post { id status } } ... on MutationError { message } } }",
+      { input });
+    if (!r.ok) {
+      // Unreachable or a 5xx: Buffer may have made it, so the marker stays 'handing' and
+      // the next attempt looks first. Anything else is a definite refusal.
+      if (!(r.status >= 500)) await settle("error", { response: r.error }).catch(() => {});
+      return r;
+    }
+    const cp = r.data.createPost || {};
+    if (cp.__typename !== "PostActionSuccess" || !cp.post || !cp.post.id) {
+      await settle("error", { response: cp.message || cp.__typename }).catch(() => {});
+      return { ok: false, error: `Buffer refused the post: ${cp.message || cp.__typename || "no answer"}`, status: 400 };
+    }
+    post = cp.post;
+  }
+
+  // 4. 'queued' until syncBufferPosts sees Buffer send it; post_id/post_url arrive then.
+  //    Only once Buffer's id is recorded are the earlier attempts resolved: until then
+  //    they keep their earlier window open for a retry's look-up. Buffer already has the
+  //    post, so a failed write must not report failure: retry once, then carry on.
+  const done = { buffer_post_id: String(post.id), response: JSON.stringify(post) };
+  let settled = false;
+  try { await settle(live ? "queued" : "staged", done); settled = true; }
+  catch (_) { try { await settle(live ? "queued" : "staged", done); settled = true; } catch (e) { console.error("buffer publish log failed:", (e && e.message) || e); } }
+  if (settled && adopted) {
+    for (const p of priors) await env.DB.prepare("UPDATE marketing_publish_log SET status='superseded' WHERE id=?").bind(p.id).run().catch(() => {});
+  }
+  const now = new Date().toISOString();
+  const next = live ? "published" : "approved";
+  try { await env.DB.prepare("UPDATE marketing_drafts SET status=?, updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=?").bind(next, now, live ? now : null, draftId).run(); }
+  catch (_) { try { await env.DB.prepare("UPDATE marketing_drafts SET status=?, updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=?").bind(next, now, live ? now : null, draftId).run(); } catch (_) {} }
+  return {
+    ok: true, published: live, page: { id: pageId, name: target ? target.page_name : null },
+    postId: null, postUrl: null, photos: chk.images.length, bufferPostId: String(post.id),
+    note: adopted ? "Buffer already had this post from an earlier attempt, so no second copy was made."
+      : live ? "Sent to Buffer. It posts to the store's Facebook Page within a minute."
+      : "Saved as a Buffer draft. Schedule it in Buffer to post it.",
+  };
+}
+
+// Follow handed-off posts until Buffer sends them: one list call per pass covers every
+// queued post (Buffer allows 100 calls per 15 minutes and 500 a day, shared with anyone
+// else using the key). `recent` runs every minute over the first 30 minutes, when
+// nearly all of them resolve; `older` runs hourly over the rest of 48 hours, after
+// which a post Buffer never confirmed is called failed. A post missing from the list is
+// asked for by id, and only a NOT_FOUND seen twice 5 minutes apart counts as deleted:
+// a fresh post can be briefly invisible, and one stale read must not fail a real post.
+async function syncBufferPosts(env, now, window) {
+  if (!env.DB || !env.BUFFER_API_KEY) return { skipped: "no DB or BUFFER_API_KEY" };
+  const nowMs = now.getTime(), nowIso = now.toISOString();
+  const MIN30 = 30 * 60 * 1000, H48 = 48 * 3600 * 1000, RECHECK = 5 * 60 * 1000;
+  const [from, to] = window === "older" ? [nowMs - H48, nowMs - MIN30] : [nowMs - MIN30, nowMs + 60000];
+  const out = { checked: 0, sent: 0, failed: 0, expired: 0, waiting: 0, errors: 0 };
+  const failDraft = async (row, status, reason) => {
+    await env.DB.prepare("UPDATE marketing_publish_log SET status=?, response=? WHERE id=? AND status='queued'")
+      .bind(status, String(reason).slice(0, 2000), row.id).run().catch(() => {});
+    await failSchedule(env, row.draft_id, reason, nowIso, true);
+  };
+
+  if (window === "older") {
+    // 'unconfirmed', not 'error': Buffer may still send it, so a Retry looks first.
+    const stale = await env.DB.prepare(
+      "SELECT id, draft_id FROM marketing_publish_log WHERE status='queued' AND buffer_post_id IS NOT NULL AND created_at < ? LIMIT 20"
+    ).bind(new Date(nowMs - H48).toISOString()).all().catch(() => ({ results: [] }));
+    for (const row of (stale.results || [])) { await failDraft(row, "unconfirmed", "Buffer never confirmed it posted (48 h)"); out.expired++; }
+  }
+
+  const due = (await env.DB.prepare(
+    "SELECT id, draft_id, buffer_post_id, created_at, response FROM marketing_publish_log WHERE status='queued' AND buffer_post_id IS NOT NULL AND created_at >= ? AND created_at < ? ORDER BY id LIMIT 50"
+  ).bind(new Date(from).toISOString(), new Date(to).toISOString()).all().catch(() => ({ results: [] }))).results || [];
+  if (!due.length) return out;
+
+  const since = new Date(Math.min(...due.map(r => new Date(r.created_at).getTime())) - 120000).toISOString();
+  const list = await bufferGql(env,
+    "query Recent($org: OrganizationId!, $ch: [ChannelId!], $since: DateTime!) { posts(first: 100, input: { organizationId: $org, filter: { channelIds: $ch, createdAt: { start: $since } } }) { edges { node { id status externalLink error { message } } } } }",
+    { org: BUFFER_ORG_ID, ch: [...new Set(Object.values(BUFFER_FACEBOOK_CHANNELS))], since });
+  if (!list.ok) { out.errors++; return out; }   // try again next pass (and never hammer a 429)
+  const byId = new Map(((list.data.posts && list.data.posts.edges) || []).map(e => e && e.node).filter(Boolean).map(p => [String(p.id), p]));
+
+  let lookups = 0;
+  for (const row of due) {
+    out.checked++;
+    let p = byId.get(String(row.buffer_post_id));
+    if (!p) {
+      if (lookups++ >= 3) { out.waiting++; continue; }   // bounded; the rest wait for the next pass
+      const r = await bufferGql(env,
+        "query PostStatus($id: PostId!) { post(input: { id: $id }) { id status externalLink error { message } } }",
+        { id: String(row.buffer_post_id) });
+      if (!r.ok && r.code === "NOT_FOUND") {
+        const seen = /^not_found_at:(.+)$/.exec(String(row.response || ""));
+        if (seen && nowMs - new Date(seen[1]).getTime() >= RECHECK) { await failDraft(row, "error", "Deleted in Buffer before it posted"); out.failed++; }
+        else if (!seen) {
+          await env.DB.prepare("UPDATE marketing_publish_log SET response=? WHERE id=? AND status='queued'").bind(`not_found_at:${nowIso}`, row.id).run().catch(() => {});
+          out.waiting++;
+        } else out.waiting++;
+        continue;
+      }
+      if (!r.ok) { out.errors++; if (r.status === 429) break; continue; }
+      p = r.data.post || {};
+    }
+    if (p.status === "sent") {
+      const link = p.externalLink ? String(p.externalLink) : null;
+      const m = link && /\/(\d+_\d+)\/?$/.exec(link);
+      await env.DB.prepare("UPDATE marketing_publish_log SET status='published', post_id=?, post_url=?, response=? WHERE id=? AND status='queued'")
+        .bind(m ? m[1] : null, link, JSON.stringify(p).slice(0, 2000), row.id).run().catch(() => {});
+      out.sent++;
+    } else if (p.status === "error") {
+      await failDraft(row, "error", `Buffer couldn't post it: ${(p.error && p.error.message) || "unknown error"}`);
+      out.failed++;
+    } else {
+      out.waiting++;
+    }
+  }
+  return out;
+}
+
 async function publishDraft(env, { draftId, published, token }) {
+  if (env.BUFFER_API_KEY) return publishDraftViaBuffer(env, { draftId, published });
   if (!env.DB || !env.MEDIA) return { ok: false, error: "Storage not configured (DB/MEDIA)", status: 500 };
   const ver = env.META_API_VERSION || META_API_VERSION;
   const draft = await env.DB.prepare("SELECT * FROM marketing_drafts WHERE id = ?").bind(draftId).first();
@@ -15898,19 +16219,32 @@ async function processScheduledPosts(env, now) {
   const nowMs = now.getTime(), nowIso = now.toISOString();
   const out = { published: 0, failed: 0, reaped: 0, skipped: 0 };
 
-  // Has this draft already been posted? (successful log row with a post_id.)
-  const alreadyPosted = async (draftId) =>
-    env.DB.prepare("SELECT post_id FROM marketing_publish_log WHERE draft_id=? AND post_id IS NOT NULL AND status IN ('published','staged') ORDER BY id DESC LIMIT 1")
-      .bind(draftId).first().catch(() => null);
+  // Has this draft already been posted? (successful log row with a post_id, or one
+  // handed to Buffer: 'queued' until Buffer sends it, and its post_id comes later.)
+  // A STAGED copy only answers for a staged attempt: a post staged once and then
+  // rescheduled live has not gone out live, and must not be marked as if it had.
+  const alreadyPosted = async (draftId, live) =>
+    env.DB.prepare(`SELECT status, COALESCE(post_id, buffer_post_id) AS post_id FROM marketing_publish_log WHERE draft_id=? AND (post_id IS NOT NULL OR buffer_post_id IS NOT NULL) AND status IN (${live ? "'published','queued'" : "'published','staged','queued'"}) ORDER BY id DESC LIMIT 1`)
+      .bind(draftId).first();   // no catch: a log it cannot read must stop a publish, never allow a second one
 
   // 1. Reaper: rescue rows a prior tick left stuck in 'publishing'.
   const staleIso = new Date(nowMs - CLAIM_STALE_MS).toISOString();
   const stale = await env.DB.prepare(
-    "SELECT id, publish_attempts FROM marketing_drafts WHERE status='publishing' AND (claimed_at IS NULL OR claimed_at < ?) LIMIT 10"
+    "SELECT id, publish_attempts, publish_live, claimed_at FROM marketing_drafts WHERE status='publishing' AND (claimed_at IS NULL OR claimed_at < ?) LIMIT 10"
   ).bind(staleIso).all().catch(() => ({ results: [] }));
   for (const row of (stale.results || [])) {
-    const done = await alreadyPosted(row.id);
-    if (done && done.post_id) {
+    // What did the interrupted attempt itself leave? Judged by the rows it wrote (since
+    // its claim), not by the schedule's live/staged setting: a manual Stage can be the
+    // attempt that was interrupted, and finishing it as live would post it publicly.
+    let done;
+    try {
+      done = row.claimed_at
+        ? await env.DB.prepare("SELECT status FROM marketing_publish_log WHERE draft_id=? AND created_at >= ? AND (post_id IS NOT NULL OR buffer_post_id IS NOT NULL) AND status IN ('published','staged','queued') ORDER BY id DESC LIMIT 1").bind(row.id, row.claimed_at).first()
+        : await alreadyPosted(row.id, row.publish_live !== 0);
+    } catch (e) { out.skipped++; continue; }   // leave it stuck, never re-post blind
+    if (done && done.status === 'staged') {
+      await env.DB.prepare("UPDATE marketing_drafts SET status='approved', updated_at=? WHERE id=? AND status='publishing'").bind(nowIso, row.id).run().catch(() => {});
+    } else if (done) {
       await env.DB.prepare("UPDATE marketing_drafts SET status='published', updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=? AND status='publishing'").bind(nowIso, nowIso, row.id).run().catch(() => {});
     } else if ((row.publish_attempts || 0) >= MAX_ATTEMPTS) {
       await failSchedule(env, row.id, 'Gave up after repeated interruptions', nowIso, true);
@@ -15937,7 +16271,14 @@ async function processScheduledPosts(env, now) {
     ).bind(nowIso, row.id).run();
     if (!claim.meta || claim.meta.changes !== 1) { out.skipped++; continue; }
     // 5. Reconcile-before-publish — the only guard against an ambiguous-outcome duplicate.
-    const prior = await alreadyPosted(row.id);
+    let prior;
+    try { prior = await alreadyPosted(row.id, row.publish_live !== 0); }
+    catch (e) {
+      // Cannot tell whether it already went out: put it back and say why, rather than risk a second post.
+      await env.DB.prepare("UPDATE marketing_drafts SET status='scheduled', claimed_at=NULL, next_attempt_at=?, schedule_error=? WHERE id=?")
+        .bind(new Date(nowMs + 10 * 60 * 1000).toISOString(), `Publish log unreadable: ${String((e && e.message) || e)}`.slice(0, 300), row.id).run().catch(() => {});
+      out.skipped++; continue;
+    }
     if (prior && prior.post_id) {
       await env.DB.prepare("UPDATE marketing_drafts SET status='published', updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=?").bind(nowIso, nowIso, row.id).run().catch(() => {});
       out.published++; continue;
@@ -15947,6 +16288,13 @@ async function processScheduledPosts(env, now) {
     try { r = await publishDraft(env, { draftId: row.id, published: row.publish_live !== 0 }); }
     catch (e) { r = { ok: false, error: String((e && e.message) || e) }; }
     if (r.ok) { out.published++; continue; }  // publishDraft advanced status to published/approved
+    // 7a. Refused before anything was sent (Buffer could not yet rule out an earlier copy):
+    //     not a try, so it does not count toward MAX_ATTEMPTS. MAX_LATE_MS still bounds it.
+    if (r.noAttempt) {
+      await env.DB.prepare("UPDATE marketing_drafts SET status='scheduled', claimed_at=NULL, publish_attempts=MAX(publish_attempts-1, 0), next_attempt_at=?, schedule_error=? WHERE id=?")
+        .bind(new Date(nowMs + 3 * 60 * 1000).toISOString(), String(r.error || 'waiting on Buffer').slice(0, 300), row.id).run().catch(() => {});
+      out.skipped++; continue;
+    }
     // 7. Failure: transient -> backoff & requeue; terminal / attempts exhausted -> schedule_error + notify.
     const attempts = (row.publish_attempts || 0) + 1;
     const errText = String(r.error || "") + " " + JSON.stringify(r.detail || "");
@@ -16374,7 +16722,8 @@ export default {
     // a store would post. The UUID in the URL is the random one already in that
     // row's R2 key — 122 bits, and returned by no endpoint except the upload's own
     // response — so the link is the capability.
-    if (url.pathname.startsWith("/p/")) return servePublicPhoto(request, env, url);
+    // Covers get the same treatment at /t/, from marketing_thumbnails.
+    if (url.pathname.startsWith("/p/") || url.pathname.startsWith("/t/")) return servePublicPhoto(request, env, url);
 
     // ── Reporting API (external, static-key auth) ─────────────────
     // A small family of read-only endpoints for the external Chief of Staff
@@ -18031,9 +18380,14 @@ export default {
           const id = parseInt(b.id, 10);
           const cur = await env.DB.prepare("SELECT status FROM marketing_drafts WHERE id=?").bind(id).first().catch(() => null);
           if (cur && cur.status === "publishing") return new Response(JSON.stringify({ error: "Post is publishing — can't edit right now" }), { status: 409, headers: corsJson });
+          // photos_curated: once a person changes the photo list, the bin auto-draft
+          // stops refilling it from the week's uploads (that would undo a trim to
+          // Buffer's 10-image limit with the next upload). A caption-only save leaves
+          // the flag alone, so later uploads keep landing. (SET reads the OLD row.)
           const res = await env.DB.prepare(
-            `UPDATE marketing_drafts SET store=?, thumbnail_id=?, photo_ids=?, caption=?, caption_source=?, topic=?, post_type=?, updated_at=? WHERE id=?`
-          ).bind(store, thumbnailId, JSON.stringify(photoIds), caption, captionSource, topic, postType, now, id).run();
+            `UPDATE marketing_drafts SET store=?, thumbnail_id=?, photo_ids=?, caption=?, caption_source=?, topic=?, post_type=?,
+                    photos_curated = CASE WHEN COALESCE(photo_ids, '[]') = ? THEN photos_curated ELSE 1 END, updated_at=? WHERE id=?`
+          ).bind(store, thumbnailId, JSON.stringify(photoIds), caption, captionSource, topic, postType, JSON.stringify(photoIds), now, id).run();
           if (!res.meta || res.meta.changes === 0) return new Response(JSON.stringify({ error: "Draft not found" }), { status: 404, headers: corsJson });
           // A scheduled post must always have an image; an edit that removes them auto-unschedules it.
           if (cur && cur.status === "scheduled" && !thumbnailId && !photoIds.length) {
@@ -18315,11 +18669,16 @@ export default {
         const b = await request.json();
         const id = parseInt(b.id, 10);
         if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
-        const draft = await env.DB.prepare("SELECT status, thumbnail_id, photo_ids FROM marketing_drafts WHERE id=?").bind(id).first();
+        const draft = await env.DB.prepare("SELECT status, thumbnail_id, photo_ids, caption FROM marketing_drafts WHERE id=?").bind(id).first();
         if (!draft) return new Response(JSON.stringify({ error: "Draft not found" }), { status: 404, headers: corsJson });
         if (draft.status === "published" || draft.status === "publishing") return new Response(JSON.stringify({ error: "That post is already publishing or published" }), { status: 409, headers: corsJson });
         let pids = []; try { pids = JSON.parse(draft.photo_ids || "[]"); } catch (_) {}
         if (!draft.thumbnail_id && !pids.length) return new Response(JSON.stringify({ error: "Add a cover or a photo before scheduling" }), { status: 400, headers: corsJson });
+        // Refuse now, not at the scheduled time when nobody is watching.
+        if (env.BUFFER_API_KEY) {
+          const chk = await bufferDraftCheck(env, draft);
+          if (chk.error) return new Response(JSON.stringify({ error: chk.error }), { status: 400, headers: corsJson });
+        }
         const when = etWallClockToUtc(b.et_wall_clock, b.tz);
         if (!when) return new Response(JSON.stringify({ error: "Invalid date/time" }), { status: 400, headers: corsJson });
         if (when.getTime() <= Date.now()) return new Response(JSON.stringify({ error: "Pick a time in the future" }), { status: 400, headers: corsJson });
@@ -18411,7 +18770,10 @@ export default {
           if (!cur) return new Response(JSON.stringify({ error: "Draft not found" }), { status: 404, headers: corsJson });
           return new Response(JSON.stringify({ error: cur.status === "published" ? "Already published" : "Post is publishing — try again in a moment" }), { status: 409, headers: corsJson });
         }
-        const r = await publishDraft(env, { draftId, published: b.published === true, token: b.token });
+        // A throw must still release the claim, or the card sits in "publishing" until the reaper.
+        let r;
+        try { r = await publishDraft(env, { draftId, published: b.published === true, token: b.token }); }
+        catch (e) { r = { ok: false, error: String((e && e.message) || e), status: 500 }; }
         if (!r.ok) {
           // Release the claim (publishDraft leaves status='publishing' on failure) so it returns to Drafts.
           await env.DB.prepare("UPDATE marketing_drafts SET status='draft', claimed_at=NULL WHERE id=? AND status='publishing'").bind(draftId).run().catch(() => {});
@@ -29744,6 +30106,7 @@ export default {
     if (event.cron === "0 * * * *") {
       ctx.waitUntil(superviseCronJob(env, "interval-summary", dispatchIntervalSummary(env)));
       ctx.waitUntil(ingestFacebookComments(env, {}).then(r => console.log("fb-comment-ingest:", JSON.stringify(r))).catch(e => console.error("fb-comment-ingest threw:", (e && e.stack) || e)));
+      ctx.waitUntil(syncBufferPosts(env, new Date(), "older").then(r => console.log("buffer-sync older:", JSON.stringify(r))).catch(e => console.error("buffer-sync threw:", (e && e.stack) || e)));
       return;
     }
 
@@ -29752,6 +30115,9 @@ export default {
     if (event.cron === "* * * * *") {
       ctx.waitUntil(processSaleSchedules(env, new Date()));
       ctx.waitUntil(processScheduledPosts(env, new Date()).then(r => console.log("Scheduled posts:", JSON.stringify(r))));
+      ctx.waitUntil(syncBufferPosts(env, new Date(), "recent")
+        .then(r => { if (r.checked || r.expired) console.log("buffer-sync:", JSON.stringify(r)); })
+        .catch(e => console.error("buffer-sync threw:", (e && e.stack) || e)));
       // Its own waitUntil, like the two above: a retail lookup that throws must not take
       // the sale scheduler down with it.
       ctx.waitUntil(retailDrainQueue(env)

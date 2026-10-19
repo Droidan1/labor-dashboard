@@ -1,3 +1,17 @@
+## "No HUB login" meant never signed in, not no account, and I told Brian to invite him (2026-10-18)
+
+Asked to add ryan@retjg.com to the Executive Summary, I couldn't read prod `users`, so I asked
+Brian. He said Ryan had "no HUB login", and I recommended an admin invite. Ryan was already on the
+Users page with the amber INVITED pill. That pill is derived from `last_login IS NULL` alone: there
+is no invited status in the schema, so the row is `status='active'`, and the cron recipient
+builders filter on `status` only. Someone who has never signed in still gets every cron email.
+
+### The rule
+- Before recommending a new account, have the person find the address on the Users page. "No
+  login" and "never accepted" describe `last_login`, not whether a row exists.
+- When you can't read the data, ask what the screen shows (role, status pill, stores), not
+  for a yes/no summary of it.
+
 ## Fixing the escape at the source moved the injection one page along (2026-09-24)
 
 The Inventory Viewer's row built attributes with `escapeHtml`, which leaves quotes alone. So an

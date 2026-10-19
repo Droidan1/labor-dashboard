@@ -105,3 +105,7 @@ Each network carries its own required metadata, so the Hub's payload builder nee
 Still to prove: an image post (needs public, non-expiring photo URLs from the worker), a scheduled
 (non-draft) post, and Google / TikTok payloads. Buffer also lists posts that went out on the page
 outside Buffer (empty text, e.g. stories), so a post list is not "posts we made".
+
+Photo draft `6ace90001044e5796a68f4d2` (same payload plus `assets: [{ image: { url } }]`, the url being
+`https://api.retjghub.com/p/<id>-<uuid>.<ext>`): accepted, and Buffer recorded the image as 1536 × 2048
+image/jpeg, the photo's real size, so it fetched our public link itself.

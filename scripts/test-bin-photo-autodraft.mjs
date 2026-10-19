@@ -46,7 +46,8 @@ function makeEnv({ apiKey = null, caption = 'A generated caption 🔥 #BargainLa
     CREATE TABLE marketing_drafts (id INTEGER PRIMARY KEY AUTOINCREMENT, store TEXT,
       thumbnail_id INTEGER, photo_ids TEXT, caption TEXT, caption_source TEXT, topic TEXT,
       post_type TEXT, status TEXT, origin TEXT, auto_week TEXT, flow_fiscal_year TEXT,
-      flow_retail_week INTEGER, created_by TEXT, created_at TEXT, updated_at TEXT, published_at TEXT);
+      flow_retail_week INTEGER, created_by TEXT, created_at TEXT, updated_at TEXT, published_at TEXT,
+      photos_curated INTEGER NOT NULL DEFAULT 0);   -- migration-079
     CREATE UNIQUE INDEX uq_drafts_auto_week ON marketing_drafts(store, auto_week) WHERE origin = 'photos';
     CREATE TABLE marketing_flow (fiscal_year TEXT, retail_week INTEGER, week_start TEXT, week_end TEXT,
       special_event TEXT, weekly_theme TEXT, product_focus TEXT, dd_loyalty TEXT);
@@ -395,6 +396,50 @@ console.log('bin-photo auto-draft (upload-triggered)');
   const { text } = askedFor(sent);
   ok(!text.includes('STORE NOTES'), 'no notes, no notes section');
   ok(text.includes('No price, day, discount, or offer is printed on a bin photo, so do not state one.'), 'and the no-price rule is unchanged');
+}
+
+// 21 — 🛑 a person's photo pick sticks. Buffer takes 10 images on a Facebook post, so the
+// admin trims the week's draft to 9 (Brian, 2026-10-19); the next bins upload must not
+// refill it from the week's photos, or the trim is undone before anyone publishes.
+{
+  const { env, db } = makeEnv();
+  for (let i = 0; i < 12; i++) await upload(env, 'BL1', 'bins');
+  const d = drafts(db)[0];
+  const all = JSON.parse(d.photo_ids);
+  eq(all.length, 12, 'the week draft holds all 12 before anyone picks');
+  const res = await worker.fetch(new Request('https://x/?action=draft-save', {
+    method: 'POST', headers: { 'X-Snapshot-Secret': SECRET, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: d.id, store: 'BL1', thumbnail_id: d.thumbnail_id, photo_ids: all.slice(0, 9), caption: d.caption }),
+  }), env, { waitUntil: () => {} });
+  eq(res.status, 200, 'the admin saves a 9-photo pick');
+  await upload(env, 'BL1', 'bins');
+  const after = drafts(db);
+  eq(after.length, 1, 'still one draft for the week');
+  eq(after[0].photo_ids, JSON.stringify(all.slice(0, 9)), '🛑 a later upload leaves the picked 9 alone');
+  eq(after[0].photos_curated, 1, 'the draft is marked as picked by a person');
+
+  // Another store's untouched draft still fills itself, so the flag is per draft.
+  await upload(env, 'BL2', 'bins');
+  await upload(env, 'BL2', 'bins');
+  eq(JSON.parse(drafts(db).find(r => r.store === 'BL2').photo_ids).length, 2, 'an unpicked draft keeps refilling');
+}
+
+// 22 — a caption-only save is not a photo pick: the week's later uploads keep landing.
+// (Only a change to the photo list stops the refill; otherwise Thursday's batch would
+// silently miss the post because someone fixed a typo on Tuesday.)
+{
+  const { env, db } = makeEnv();
+  for (let i = 0; i < 3; i++) await upload(env, 'BL1', 'bins');
+  const d = drafts(db)[0];
+  const res = await worker.fetch(new Request('https://x/?action=draft-save', {
+    method: 'POST', headers: { 'X-Snapshot-Secret': SECRET, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: d.id, store: 'BL1', thumbnail_id: d.thumbnail_id, photo_ids: JSON.parse(d.photo_ids), caption: 'Typo fixed' }),
+  }), env, { waitUntil: () => {} });
+  eq(res.status, 200, 'the caption is saved');
+  eq(drafts(db)[0].photos_curated, 0, 'with the same photos, the draft is not marked as picked');
+  await upload(env, 'BL1', 'bins');
+  eq(JSON.parse(drafts(db)[0].photo_ids).length, 4, 'and the next upload still lands in it');
+  eq(drafts(db)[0].caption, 'Typo fixed', 'without touching the caption');
 }
 
 // Tally in the shape scripts/test.sh counts: "<n> passed, <m> failed".
