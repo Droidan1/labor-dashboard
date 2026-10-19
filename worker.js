@@ -5290,6 +5290,10 @@ const ACTION_BUSINESS = new Map([
   ["item-lines", "bl"],
   ["update-clover-item", "bl"],
   ["update-user", "bl"],
+  ["video-upload-abort", "bl"],
+  ["video-upload-complete", "bl"],
+  ["video-upload-part", "bl"],
+  ["video-upload-start", "bl"],
   ["weekly-store-detail", "bl"],
   ["weekly-summary", "bl"],
   ["weekly-t13", "bl"],
@@ -7734,7 +7738,7 @@ async function servePublicPhoto(request, env, url) {
 // bars on Submit Photos. The week is the bin auto-draft's: Sunday–Saturday,
 // Eastern. It is DUE on Thursday because bins post Thursday and retail Friday —
 // Friday and Saturday uploads still count, they just land after that week's posts.
-const UPLOAD_TARGET_DEFAULTS = { retail: 20, bins: 20 };
+const UPLOAD_TARGET_DEFAULTS = { retail: 20, bins: 20, store_walk: 1 };
 const UPLOAD_TARGET_MAX = 500;
 
 function uploadWeekOf(iso) {
@@ -7762,12 +7766,17 @@ async function readUploadTargets(env) {
 
 // The admin's edit, validated whole: every key present, every value a whole
 // number in range. Returns the JSON to store, or null to refuse the write.
-function parseUploadTargets(raw) {
+// `current` (readUploadTargets) fills a key an older editor doesn't send.
+function parseUploadTargets(raw, current = UPLOAD_TARGET_DEFAULTS) {
   let v;
   try { v = typeof raw === "string" ? JSON.parse(raw) : raw; } catch (_) { return null; }
   if (!v || typeof v !== "object" || Array.isArray(v)) return null;
   const out = {};
   for (const k of Object.keys(UPLOAD_TARGET_DEFAULTS)) {
+    // store_walk arrived after the editor did (2026-10-19): a page still running the
+    // old editor sends only retail and bins. That save must not be refused, nor reset
+    // the store-walk target someone set on a newer page.
+    if (k === "store_walk" && (v[k] == null || v[k] === "")) { out[k] = current[k] != null ? current[k] : UPLOAD_TARGET_DEFAULTS[k]; continue; }
     const n = v[k] != null && v[k] !== "" ? Number(v[k]) : NaN;
     if (!Number.isInteger(n) || n < 0 || n > UPLOAD_TARGET_MAX) return null;
     out[k] = n;
@@ -7775,6 +7784,54 @@ function parseUploadTargets(raw) {
   return JSON.stringify(out);
 }
 
+
+// ── Store videos (2026-10-19) ───────────────────────────────────────────────
+// Two kinds, both for Facebook through Buffer (Brian, 2026-10-19):
+//   store_walk  SIDEWAYS, at least 3:00, posted as a normal Facebook video;
+//   clip        UPRIGHT, 3–90 s, posted as a Reel. Buffer posts any 9:16 video as a
+//               Reel and Reels stop at 90 s, so an upright 3-minute walk could not post.
+// 1080p, and nothing over Buffer's 1 GB. The phone reads length and orientation and
+// refuses before sending a byte; these rules are checked again here because the phone's
+// word is all the worker has until the file is in R2.
+// Uploaded in parts straight into R2 (multipart): the worker's request body stops at
+// 100 MB, and a 3-minute walk is 200–400 MB. Every part but the last is VIDEO_PART_BYTES.
+const VIDEO_RULES = {
+  store_walk: { minMs: 180000, maxMs: 30 * 60000, landscape: true,  label: "Store walk" },
+  clip:       { minMs: 3000,   maxMs: 90000,      landscape: false, label: "Short clip" },
+};
+const VIDEO_MAX_BYTES = 1000 * 1000 * 1000;          // Buffer's 1 GB
+const VIDEO_PART_BYTES = 10 * 1024 * 1024;           // R2 wants >= 5 MiB; small parts retry cheaply on a phone
+const VIDEO_TYPES = { "video/mp4": "mp4", "video/quicktime": "mov", "video/x-m4v": "m4v" };
+
+// Why a video may not be uploaded, or null. The same words the phone shows.
+function videoRuleError(type, { bytes, duration_ms, width, height }) {
+  const rule = VIDEO_RULES[type];
+  if (!rule) return "Choose Store walk or Short clip";
+  const b = Number(bytes), ms = Number(duration_ms), w = Number(width), h = Number(height);
+  if (!(b > 0) || !(ms > 0) || !(w > 0) || !(h > 0)) return "Couldn't read this video's length or size. Try recording it again.";
+  if (b > VIDEO_MAX_BYTES) return `This video is ${Math.round(b / 1e6)} MB; the limit is 1,000 MB. Record at 1080p (Settings › Camera › Record Video) and try again.`;
+  const mmss = t => `${Math.floor(t / 60000)}:${String(Math.floor((t % 60000) / 1000)).padStart(2, "0")}`;
+  if (ms < rule.minMs) return `${rule.label}s need at least ${mmss(rule.minMs)}; this one is ${mmss(ms)}.`;
+  if (ms > rule.maxMs) return `${rule.label}s can be at most ${mmss(rule.maxMs)}; this one is ${mmss(ms)}.`;
+  if (rule.landscape && !(w > h)) return "Film the store walk sideways (landscape), then upload it.";
+  if (!rule.landscape && !(h > w)) return "Film short clips upright (portrait), then upload them.";
+  return null;
+}
+
+// An upload left 'uploading' for a day was abandoned (a closed tab, a dead signal):
+// free its parts now rather than leaving them to R2's 7-day default. Hourly.
+async function abortStaleVideoUploads(env, now) {
+  if (!env.DB || !env.MEDIA) return { skipped: true };
+  const cutoff = new Date(now.getTime() - 24 * 3600 * 1000).toISOString();
+  const { results } = await env.DB.prepare(
+    "SELECT id, r2_key, upload_id FROM marketing_videos WHERE status = 'uploading' AND created_at < ? LIMIT 100"
+  ).bind(cutoff).all().catch(() => ({ results: [] }));
+  for (const r of results || []) {
+    if (r.upload_id) await env.MEDIA.resumeMultipartUpload(r.r2_key, r.upload_id).abort().catch(() => {});
+    await env.DB.prepare("UPDATE marketing_videos SET status='aborted', upload_id=NULL WHERE id=? AND status='uploading'").bind(r.id).run().catch(() => {});
+  }
+  return { aborted: (results || []).length };
+}
 
 // ── Bin Dump: reading a pallet tag ──────────────────────────────────────────
 // The seven fields Brian asked for, in the order they read on the tag.
@@ -9550,7 +9607,8 @@ async function notifyPhotoUpload(env, { store, count, photoType, uploaderEmail }
   if (!env.DB) return;
   const storeLabel = STORE_LABELS[store] || store;
   const n = Math.max(1, parseInt(count, 10) || 1);
-  const typeLabel = { retail: 'Retail floor', bins: 'Bins', event: 'Event', team: 'Team', other: 'Other' }[photoType] || null;
+  const typeLabel = { retail: 'Retail floor', bins: 'Bins', event: 'Event', team: 'Team', other: 'Other', store_walk: 'Store walk', clip: 'Short clip' }[photoType] || null;
+  const isVideo = photoType === 'store_walk' || photoType === 'clip';
   const who = uploaderEmail || 'A store';
   // Deep-link straight to the Content page's folder for this store/week/type.
   // cf_date (upload day) lets the client resolve the retail-week folder even
@@ -9558,7 +9616,7 @@ async function notifyPhotoUpload(env, { store, count, photoType, uploaderEmail }
   const params = new URLSearchParams({ cf_store: store, cf_date: new Date().toISOString().slice(0, 10) });
   if (photoType) params.set('cf_type', photoType);
   const payload = JSON.stringify({
-    title: `📸 ${n} new photo${n === 1 ? '' : 's'} — ${storeLabel}`,
+    title: isVideo ? `🎬 New ${typeLabel.toLowerCase()} video — ${storeLabel}` : `📸 ${n} new photo${n === 1 ? '' : 's'} — ${storeLabel}`,
     body: `${who}${typeLabel ? ` · ${typeLabel}` : ''}`,
     tag: `photo-upload-${store}`,
     url: `/index.html?${params.toString()}#content`,
@@ -15090,6 +15148,8 @@ const NON_FINANCIAL_ACTIONS = new Set([
   // photo submission is open to every authenticated user
   'photo', 'photo-upload', 'thumbnail', 'thumbnails', 'notify-photo-upload',
   'photo-targets',
+  // …and so is the weekly store-walk / short-clip video (2026-10-19)
+  'video-upload-start', 'video-upload-part', 'video-upload-complete', 'video-upload-abort',
 ]);
 
 // ── Associates: page grants ─────────────────────────────────────────────────
@@ -18005,6 +18065,172 @@ export default {
       }
     }
 
+    // ── Store videos: upload in parts, straight into R2 (see VIDEO_RULES) ──
+    // start → part × N → complete (or abort). The row exists from `start`, as
+    // 'uploading', so an abandoned upload is findable; only `complete` makes it count.
+    // Every call after `start` is the uploader's own (or the admin secret's).
+    const videoRowFor = async (id) => {
+      const row = await env.DB.prepare("SELECT * FROM marketing_videos WHERE id = ?").bind(id).first();
+      if (!row) return { error: "Video not found", status: 404 };
+      if (!isAdminSecret && !(currentUser && row.uploader === currentUser.email)) return { error: "Forbidden", status: 403 };
+      if (row.status !== "uploading") return { error: `This upload is ${row.status}`, status: 409 };
+      return { row };
+    };
+
+    // POST ?action=video-upload-start { store, video_type, content_type, bytes, duration_ms, width, height, note? }
+    if (request.method === "POST" && url.searchParams.get("action") === "video-upload-start") {
+      if (!currentUser && !isAdminSecret) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      if (!env.DB || !env.MEDIA) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
+      try {
+        const b = await request.json();
+        const store = String(b.store || "").trim().toUpperCase();
+        if (!ALL_STORES.includes(store)) return new Response(JSON.stringify({ error: "Invalid store" }), { status: 400, headers: corsJson });
+        const allow = currentUser ? allowedStores(currentUser) : null;
+        if (allow && !allow.includes(store)) return new Response(JSON.stringify({ error: "Forbidden for this store" }), { status: 403, headers: corsJson });
+        const type = String(b.video_type || "");
+        const ct = String(b.content_type || "").toLowerCase();
+        const ext = VIDEO_TYPES[ct];
+        if (!ext) return new Response(JSON.stringify({ error: "Upload an MP4 or MOV video" }), { status: 400, headers: corsJson });
+        const ruleErr = videoRuleError(type, b);
+        if (ruleErr) return new Response(JSON.stringify({ error: ruleErr }), { status: 400, headers: corsJson });
+        const note = String(b.note || "").trim().slice(0, 500) || null;
+        const now = new Date();
+        const uploader = (currentUser && currentUser.email) || null;
+        // Each open upload can hold up to 1 GB of parts, so one person gets two at a time.
+        // Theirs from over two hours ago were abandoned (a closed tab): clear those first,
+        // so a crash never locks a manager out until the hourly sweep.
+        if (uploader) {
+          const stale = await env.DB.prepare("SELECT id, r2_key, upload_id FROM marketing_videos WHERE uploader = ? AND status = 'uploading' AND created_at < ?")
+            .bind(uploader, new Date(now.getTime() - 2 * 3600 * 1000).toISOString()).all();
+          for (const r of stale.results || []) {
+            if (r.upload_id) await env.MEDIA.resumeMultipartUpload(r.r2_key, r.upload_id).abort().catch(() => {});
+            await env.DB.prepare("UPDATE marketing_videos SET status='aborted', upload_id=NULL WHERE id=? AND status='uploading'").bind(r.id).run();
+          }
+          const open = await env.DB.prepare("SELECT COUNT(*) AS n FROM marketing_videos WHERE uploader = ? AND status = 'uploading'").bind(uploader).first();
+          if (open && open.n >= 2) return new Response(JSON.stringify({ error: "You already have two videos uploading. Let them finish, or try again in a couple of hours." }), { status: 429, headers: corsJson });
+        }
+        const ym = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+        const key = `marketing/${store}/video/${ym}/${crypto.randomUUID()}.${ext}`;
+        const mpu = await env.MEDIA.createMultipartUpload(key, { httpMetadata: { contentType: ct } });
+        let res;
+        try {
+          res = await env.DB.prepare(
+            `INSERT INTO marketing_videos (store, video_type, r2_key, content_type, bytes, duration_ms, width, height, uploader, note, status, upload_id, created_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?, 'uploading', ?, ?)`
+          ).bind(store, type, key, ct, Number(b.bytes), Math.round(Number(b.duration_ms)), Math.round(Number(b.width)), Math.round(Number(b.height)),
+                 uploader, note, mpu.uploadId, now.toISOString()).run();
+        } catch (e) {
+          // No row means nothing would ever find this upload to abort it: abort it now.
+          await mpu.abort().catch(() => {});
+          throw e;
+        }
+        const id = res.meta && res.meta.last_row_id;
+        return new Response(JSON.stringify({ ok: true, id, part_bytes: VIDEO_PART_BYTES, parts: Math.ceil(Number(b.bytes) / VIDEO_PART_BYTES) }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
+    // POST ?action=video-upload-part&id=&part=  body: the part's bytes. Every part is
+    // exactly VIDEO_PART_BYTES except the last, which is the rest of the declared size:
+    // R2 needs equal parts, and this is also what holds the file to its declared size.
+    // 🛑 POST, not PUT: the page is on another origin, and resolveCors allows
+    // GET/POST/PATCH/DELETE — a PUT dies at the browser's preflight (review, 2026-10-19).
+    if (request.method === "POST" && url.searchParams.get("action") === "video-upload-part") {
+      if (!currentUser && !isAdminSecret) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      if (!env.DB || !env.MEDIA) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
+      try {
+        const id = parseInt(url.searchParams.get("id") || "", 10);
+        const part = parseInt(url.searchParams.get("part") || "", 10);
+        if (!Number.isInteger(id) || !Number.isInteger(part)) return new Response(JSON.stringify({ error: "Invalid id or part" }), { status: 400, headers: corsJson });
+        const v = await videoRowFor(id);
+        if (v.error) return new Response(JSON.stringify({ error: v.error }), { status: v.status, headers: corsJson });
+        const total = Math.ceil(v.row.bytes / VIDEO_PART_BYTES);
+        if (part < 1 || part > total) return new Response(JSON.stringify({ error: `Part ${part} is outside 1–${total}` }), { status: 400, headers: corsJson });
+        const want = part < total ? VIDEO_PART_BYTES : v.row.bytes - (total - 1) * VIDEO_PART_BYTES;
+        // Refuse a wrong size before reading it: up to 100 MB would otherwise land in a
+        // 128 MB isolate just to be thrown away.
+        const declared = request.headers.get("content-length");
+        if (declared != null && Number(declared) !== want) return new Response(JSON.stringify({ error: `Part ${part} is ${declared} bytes; expected ${want}` }), { status: 400, headers: corsJson });
+        const buf = await request.arrayBuffer();
+        if (buf.byteLength !== want) return new Response(JSON.stringify({ error: `Part ${part} is ${buf.byteLength} bytes; expected ${want}` }), { status: 400, headers: corsJson });
+        const up = await env.MEDIA.resumeMultipartUpload(v.row.r2_key, v.row.upload_id).uploadPart(part, buf);
+        return new Response(JSON.stringify({ ok: true, part: up.partNumber, etag: up.etag }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=video-upload-complete  form: id, parts (JSON [{part, etag}]), poster? (JPEG ≤ 512 KB)
+    if (request.method === "POST" && url.searchParams.get("action") === "video-upload-complete") {
+      if (!currentUser && !isAdminSecret) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      if (!env.DB || !env.MEDIA) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
+      try {
+        const form = await request.formData();
+        const id = parseInt(String(form.get("id") || ""), 10);
+        if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
+        // Already finished — its answer was lost and the phone is asking again: say so, so
+        // the manager isn't told it failed and doesn't upload the same walk twice.
+        const prev = await env.DB.prepare("SELECT status, uploader, store, video_type, bytes FROM marketing_videos WHERE id = ?").bind(id).first();
+        if (prev && prev.status === "new" && (isAdminSecret || (currentUser && prev.uploader === currentUser.email))) {
+          return new Response(JSON.stringify({ ok: true, id, store: prev.store, video_type: prev.video_type, bytes: prev.bytes, already: true }), { headers: corsJson });
+        }
+        const v = await videoRowFor(id);
+        if (v.error) return new Response(JSON.stringify({ error: v.error }), { status: v.status, headers: corsJson });
+        const total = Math.ceil(v.row.bytes / VIDEO_PART_BYTES);
+        let parts = []; try { parts = JSON.parse(String(form.get("parts") || "[]")); } catch (_) {}
+        parts = (Array.isArray(parts) ? parts : []).map(p => ({ partNumber: Number(p.part), etag: String(p.etag || "") }))
+          .sort((a, b) => a.partNumber - b.partNumber);
+        if (parts.length !== total || parts.some((p, i) => p.partNumber !== i + 1 || !p.etag)) {
+          return new Response(JSON.stringify({ error: `Expected parts 1–${total}, each with its etag` }), { status: 400, headers: corsJson });
+        }
+        const obj = await env.MEDIA.resumeMultipartUpload(v.row.r2_key, v.row.upload_id).complete(parts);
+        if (!obj || obj.size !== v.row.bytes) {
+          await env.MEDIA.delete(v.row.r2_key).catch(() => {});
+          await env.DB.prepare("UPDATE marketing_videos SET status='aborted', upload_id=NULL WHERE id=?").bind(id).run();
+          return new Response(JSON.stringify({ error: "The uploaded video did not match its size. Please upload it again." }), { status: 400, headers: corsJson });
+        }
+        // The poster frame the phone grabbed: the tile in the picker, and what the caption
+        // model will look at. Optional — a video with none still counts and posts.
+        const poster = form.get("poster");
+        if (poster && typeof poster.arrayBuffer === "function" && poster.type === "image/jpeg") {
+          const pb = await poster.arrayBuffer().catch(() => null);
+          if (pb && pb.byteLength && pb.byteLength <= 512 * 1024) await env.MEDIA.put(thumbKeyOf(v.row.r2_key), pb, { httpMetadata: { contentType: "image/jpeg" } }).catch(() => {});
+        }
+        const now = new Date().toISOString();
+        await env.DB.prepare("UPDATE marketing_videos SET status='new', upload_id=NULL, completed_at=? WHERE id=? AND status='uploading'").bind(now, id).run();
+        // One alert per video, from the real row; admins uploading their own don't alert each other.
+        const isAdminUser = currentUser && (currentUser.role === "superuser" || currentUser.role === "admin");
+        if (currentUser && !isAdminUser) {
+          ctx.waitUntil(notifyPhotoUpload(env, {
+            store: v.row.store, count: 1, photoType: v.row.video_type,
+            uploaderEmail: isAssociate(currentUser) ? actorLabel(currentUser) : currentUser.email,
+          }).catch(e => console.error("video upload alert failed:", (e && e.message) || e)));
+        }
+        return new Response(JSON.stringify({ ok: true, id, store: v.row.store, video_type: v.row.video_type, bytes: obj.size }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=video-upload-abort { id } — the phone gave up; free the parts.
+    if (request.method === "POST" && url.searchParams.get("action") === "video-upload-abort") {
+      if (!currentUser && !isAdminSecret) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      if (!env.DB || !env.MEDIA) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
+      try {
+        const b = await request.json().catch(() => ({}));
+        const id = parseInt(b.id, 10);
+        if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
+        const v = await videoRowFor(id);
+        if (v.error) return new Response(JSON.stringify({ error: v.error }), { status: v.status, headers: corsJson });
+        await env.MEDIA.resumeMultipartUpload(v.row.r2_key, v.row.upload_id).abort().catch(() => {});
+        await env.DB.prepare("UPDATE marketing_videos SET status='aborted', upload_id=NULL WHERE id=? AND status='uploading'").bind(id).run();
+        return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 500, headers: corsJson });
+      }
+    }
+
     // POST ?action=notify-photo-upload { store, count, photo_type } — batched
     // push to admins/superusers after a Submit-Photos upload. Only notifies
     // when the caller is a non-admin (manager/DM/store user); the uploader
@@ -18056,7 +18282,7 @@ export default {
         const stores = EXEC_SUMMARY_STORES.filter(s => !allow || allow.includes(s));
         const week = uploadWeekOf(new Date().toISOString());
         const targets = await readUploadTargets(env);
-        const byStore = new Map(stores.map(s => [s, { store: s, label: STORE_LABELS[s] || s, retail: 0, bins: 0, people: 0 }]));
+        const byStore = new Map(stores.map(s => [s, { store: s, label: STORE_LABELS[s] || s, retail: 0, bins: 0, store_walk: 0, people: 0 }]));
         if (stores.length) {
           const ph = stores.map(() => "?").join(",");
           // A rejected photo is not one the marketing team can use, so it does not count.
@@ -18074,6 +18300,14 @@ export default {
             const s = byStore.get(r.store);
             if (s) Object.assign(s, { retail: r.retail || 0, bins: r.bins || 0, people: r.people || 0 });
           }
+          // Finished store walks only: an upload still in flight, or abandoned, is not one.
+          // Tolerates a missing table, so this worker can run before migration-080.
+          const walks = await env.DB.prepare(
+            `SELECT store, COUNT(*) AS n FROM marketing_videos
+              WHERE store IN (${ph}) AND video_type = 'store_walk' AND status = 'new'
+                AND created_at >= ? AND created_at < ? GROUP BY store`
+          ).bind(...stores, week.from, week.to).all().catch(() => ({ results: [] }));
+          for (const r of walks.results || []) { const s = byStore.get(r.store); if (s) s.store_walk = r.n || 0; }
         }
         return new Response(JSON.stringify({
           ok: true, week: { start: week.start, end: week.end, due: week.due }, targets, stores: [...byStore.values()],
@@ -18230,7 +18464,7 @@ export default {
             value = String(coverId);
           }
           if (key === "upload_targets") {
-            value = parseUploadTargets(b.value);
+            value = parseUploadTargets(b.value, await readUploadTargets(env));
             if (value === null) {
               return new Response(JSON.stringify({ error: `Targets must be whole numbers from 0 to ${UPLOAD_TARGET_MAX}` }), { status: 400, headers: corsJson });
             }
@@ -30107,6 +30341,7 @@ export default {
       ctx.waitUntil(superviseCronJob(env, "interval-summary", dispatchIntervalSummary(env)));
       ctx.waitUntil(ingestFacebookComments(env, {}).then(r => console.log("fb-comment-ingest:", JSON.stringify(r))).catch(e => console.error("fb-comment-ingest threw:", (e && e.stack) || e)));
       ctx.waitUntil(syncBufferPosts(env, new Date(), "older").then(r => console.log("buffer-sync older:", JSON.stringify(r))).catch(e => console.error("buffer-sync threw:", (e && e.stack) || e)));
+      ctx.waitUntil(abortStaleVideoUploads(env, new Date()).catch(e => console.error("video-upload cleanup threw:", (e && e.stack) || e)));
       return;
     }
 
