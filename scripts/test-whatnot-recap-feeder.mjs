@@ -11,6 +11,8 @@
 //   • a reply is not a recap, and a recap whose subject no longer parses must
 //     ALERT, not vanish silently;
 //   • preview() posts nothing.
+// And the recap's PDF upload for the Executive Summary (2026-10-19): sent once per
+// copy, retried on the next run when it fails, never re-posting the day's sales.
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -29,7 +31,8 @@ function msg({ subject, body, sent, from = SENDER, pdf = [] }) {
   const id = 'm' + nextId++;
   return {
     getId: () => id, getSubject: () => subject, getPlainBody: () => body, getFrom: () => from,
-    getDate: () => new Date(sent), getAttachments: () => pdf.map(n => ({ getName: () => n })),
+    getDate: () => new Date(sent),
+    getAttachments: () => pdf.map(n => ({ getName: () => n, getBytes: () => Array.from(Buffer.from('%PDF-' + n)) })),
   };
 }
 const recap = (md, total, lines, sent, extra = {}) => msg({
@@ -38,8 +41,8 @@ const recap = (md, total, lines, sent, extra = {}) => msg({
   sent, ...extra,
 });
 
-function rig(inbox, props = {}) {
-  const posts = [], mails = [], logs = [];
+function rig(inbox, props = {}, { pdfCode = () => 200, pdfThrows = () => false } = {}) {
+  const posts = [], pdfs = [], mails = [], logs = [];
   const store = { SNAPSHOT_SECRET: 's3cret', ...props };
   const sb = {
     GmailApp: { search: (q, start) => (start === 0 ? inbox.map(m => ({ getMessages: () => [m] })) : []) },
@@ -47,14 +50,22 @@ function rig(inbox, props = {}) {
       getProperty: k => (k in store ? store[k] : null),
       setProperty: (k, v) => { if (String(v).length > 9000) throw new Error('property too large'); store[k] = String(v); },
     }) },
-    UrlFetchApp: { fetch: (u, o) => { posts.push(JSON.parse(o.payload)); return { getResponseCode: () => 200, getContentText: () => '{"ok":true}' }; } },
+    UrlFetchApp: { fetch: (u, o) => {
+      if (u.includes('action=live-recap-pdf')) {
+        if (pdfThrows(pdfs.length)) { pdfs.push({ url: u, code: 'threw' }); throw new Error('Address unavailable: ' + u); }
+        const code = pdfCode(pdfs.length);
+        pdfs.push({ url: u, type: o.contentType, secret: o.headers['X-Snapshot-Secret'], body: Buffer.from(o.payload).toString(), code });
+        return { getResponseCode: () => code, getContentText: () => (code === 200 ? '{"ok":true}' : '{"error":"x"}') };
+      }
+      posts.push(JSON.parse(o.payload)); return { getResponseCode: () => 200, getContentText: () => '{"ok":true}' };
+    } },
     MailApp: { sendEmail: (to, subject) => mails.push(subject) },
     Session: { getEffectiveUser: () => ({ getEmail: () => 'me@example.com' }) },
     Logger: { log: s => logs.push(String(s)) },
   };
   vm.createContext(sb);
   vm.runInContext(src, sb);
-  return { sb, posts, mails, logs, store };
+  return { sb, posts, pdfs, mails, logs, store };
 }
 const totalsOf = (posts) => posts.map(p => [p.rows[0].date, p.rows.map(r => r.total)]);
 
@@ -138,6 +149,77 @@ const totalsOf = (posts) => posts.map(p => [p.rows[0].date, p.rows.map(r => r.to
   vm.runInContext('installTrigger()', r.sb);
   eq(deleted, ['old6', 'old7'], 'replaces every old runDaily trigger, and only those');
   eq(made.map(t => [t.fn, t.minutes, t.hour]), [['runDaily', 10, undefined]], 'one trigger: runDaily every 10 minutes, no fixed hour');
+}
+
+// ── 6. The PDF goes to the worker for the Executive Summary ─────────────────
+const withPdf = (md, date, total, lines, sent, extra = {}) =>
+  recap(md, total, lines, sent, { pdf: [`BL-Live-Recap-${date}.pdf`], ...extra });
+{
+  const r = rig([withPdf('10/9', '2026-10-09', '3,000', [['Fort Wayne', '9:30 AM', '3000']], '2026-10-10T09:00:00Z')]);
+  vm.runInContext('runDaily()', r.sb);
+  eq(r.posts.length, 1, 'the day\'s sales are posted');
+  eq(r.pdfs.map(p => [p.url, p.type, p.secret, p.body]),
+     [['https://api.retjghub.com/?action=live-recap-pdf&date=2026-10-09', 'application/pdf', 's3cret', '%PDF-BL-Live-Recap-2026-10-09.pdf']],
+     'its PDF is uploaded for that date, as a PDF, with the secret');
+  vm.runInContext('runDaily()', r.sb);
+  eq([r.posts.length, r.pdfs.length], [1, 1], 'a second run uploads nothing again');
+}
+{
+  // The upload fails once. The sales must not be re-posted, and the PDF must be retried.
+  const r = rig([withPdf('10/9', '2026-10-09', '3,000', [['Fort Wayne', '9:30 AM', '3000']], '2026-10-10T09:00:00Z')], {}, { pdfCode: n => (n === 0 ? 500 : 200) });
+  let threw = null;
+  try { vm.runInContext('runDaily()', r.sb); } catch (e) { threw = e.message; }
+  ok(threw && /PDF/.test(threw), `a failed upload fails the run, so Apps Script reports it (${threw})`);
+  eq(r.posts.length, 1, '...after the sales were posted and recorded');
+  vm.runInContext('runDaily()', r.sb);
+  eq([r.posts.length, r.pdfs.length, r.pdfs[1] && r.pdfs[1].code], [1, 2, 200], 'the next run retries the PDF only');
+}
+{
+  // A network error (not an HTTP status) on one day's PDF must not stop the next day's sales.
+  const r = rig([
+    withPdf('10/8', '2026-10-08', '1,000', [['Battle Creek', '4:00 PM', '1000']], '2026-10-09T09:00:00Z'),
+    withPdf('10/9', '2026-10-09', '3,000', [['Fort Wayne', '9:30 AM', '3000']], '2026-10-10T09:00:00Z'),
+  ], {}, { pdfThrows: n => n === 0 });
+  let threw = null;
+  try { vm.runInContext('runDaily()', r.sb); } catch (e) { threw = e.message; }
+  eq(totalsOf(r.posts).map(p => p[0]), ['2026-10-08', '2026-10-09'], 'a PDF fetch that throws does not stop the next day\'s sales');
+  ok(threw && threw.includes('2026-10-08') && !threw.includes('2026-10-09'), `the run reports only the failed day (${threw})`);
+  vm.runInContext('runDaily()', r.sb);
+  eq([r.posts.length, r.pdfs.filter(p => p.code === 200).map(p => p.url.slice(-10))], [2, ['2026-10-09', '2026-10-08']], 'the next run retries that PDF only');
+}
+{
+  // 413 (too large) can never succeed: reported once, not retried every 10 minutes.
+  const r = rig([withPdf('10/9', '2026-10-09', '3,000', [['Fort Wayne', '9:30 AM', '3000']], '2026-10-10T09:00:00Z')], {}, { pdfCode: () => 413 });
+  let threw = null;
+  try { vm.runInContext('runDaily()', r.sb); } catch (e) { threw = e.message; }
+  ok(threw && threw.includes('413'), 'a 413 is reported');
+  vm.runInContext('runDaily()', r.sb);
+  eq(r.pdfs.length, 1, '...once: the next run does not retry it');
+}
+{
+  const r = rig([recap('10/9', '3,000', [['Fort Wayne', '9:30 AM', '3000']], '2026-10-10T09:00:00Z', { pdf: ['Fwd BL-Live-Recap-2026-10-09.pdf', 'BL-Live-Recap-2026-10-08.pdf'] })]);
+  vm.runInContext('runDaily()', r.sb);
+  eq(r.pdfs.map(p => p.url.slice(-10)), ['2026-10-09'], 'the PDF is matched by its date as the parser reads it, not its exact name');
+}
+{
+  // A corrected re-send carries its own PDF: the newer copy replaces the stored one.
+  const inbox = [withPdf('10/9', '2026-10-09', '3,000', [['Fort Wayne', '9:30 AM', '3000']], '2026-10-10T09:00:00Z')];
+  const r = rig(inbox);
+  vm.runInContext('runDaily()', r.sb);
+  inbox.push(withPdf('10/9', '2026-10-09', '3,100', [['Fort Wayne', '9:30 AM', '3100']], '2026-10-10T15:00:00Z'));
+  vm.runInContext('runDaily()', r.sb);
+  eq(r.pdfs.length, 2, 'a corrected re-send uploads its PDF too');
+}
+{
+  const r = rig([recap('10/9', '3,000', [['Fort Wayne', '9:30 AM', '3000']], '2026-10-10T09:00:00Z', { pdf: ['notes.txt'] })]);
+  vm.runInContext('runDaily()', r.sb);
+  eq([r.posts.length, r.pdfs.length], [1, 0], 'a recap with no BL-Live-Recap PDF posts its sales and uploads nothing');
+}
+{
+  const r = rig([withPdf('10/9', '2026-10-09', '3,000', [['Fort Wayne', '9:30 AM', '3000']], '2026-10-10T09:00:00Z')]);
+  vm.runInContext('preview()', r.sb);
+  eq([r.pdfs.length, r.store.uploadedPdfs], [0, undefined], 'preview uploads and records nothing');
+  ok(r.logs.some(l => l.startsWith('2026-10-09') && l.includes('PDF: BL-Live-Recap-2026-10-09.pdf')), 'preview names each day\'s PDF');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -5235,6 +5235,7 @@ const ACTION_BUSINESS = new Map([
   ["labor-plan", "bl"],
   ["list-sale-schedules", "bl"],
   ["list-users", "bl"],
+  ["live-recap-pdf", "bl"],
   ["ly-sales", "bl"],
   ["manual-override", "bl"],
   ["marketing-insights", "bl"],
@@ -6938,12 +6939,45 @@ async function storeScopedRecipients(env) {
   return out;
 }
 
+// ── The BL-Live-Recap PDF on the Executive Summary ─────────────────────────
+// The "Bargain Lane Live recap" email carries a PDF (BL-Live-Recap-<date>.pdf)
+// that only the Apps Script feeder sees. It uploads it to ?action=live-recap-pdf,
+// which keeps it privately in R2 under live-recap/ (no route serves that prefix),
+// and the 8 AM send attaches the one for the day the email covers.
+//
+// 🔑 The PDF lists Fort Wayne's and Battle Creek's shows side by side, so it goes
+// only to a copy entitled to BOTH stores: every chain-wide copy, and a scoped
+// copy whose stores include all of LIVE_RECAP_STORES. A BL1-only manager does
+// not get it. On the cron the recipient list IS the access control.
+//
+// These are the feeder's LOCATION_TO_STORE stores (scripts/whatnot-recap-ingest.gs).
+// Two encodings of one fact: test-live-recap-attachment.mjs pins them equal.
+const LIVE_RECAP_STORES = ["BL1", "BL14"];
+const LIVE_RECAP_MAX_BYTES = 10 * 1024 * 1024;
+const liveRecapKey = (date) => `live-recap/${date}.pdf`;
+
+// The recap PDF for `through` as a Resend attachment, or null. Never throws: a
+// recap that is late, missing or unreadable must not hold the email back, and
+// the email already says when that day's recap has not arrived.
+async function liveRecapAttachment(env, through) {
+  if (!env.MEDIA || !through) return null;
+  try {
+    const obj = await env.MEDIA.get(liveRecapKey(through));
+    if (!obj) return null;
+    const bytes = new Uint8Array(await obj.arrayBuffer());
+    return { filename: `BL-Live-Recap-${through}.pdf`, content: b64FromBytes(bytes), content_type: "application/pdf" };
+  } catch (e) {
+    console.error(`Live recap PDF read failed for ${through}: ${e.message}`);
+    return null;
+  }
+}
+
 // Send the store-scoped daily summary to everyone chainWideRecipients() leaves
 // out. Bodies are built ONCE PER DISTINCT STORE SET, not once per recipient:
 // eight managers in prod share six store sets, and each body costs a D1 read
 // plus one KV read per store. Grouping keeps this a fixed small cost as the
 // team grows rather than something that scales with headcount inside a cron.
-async function dispatchScopedDailySummaries(env, date, prefMapAll) {
+async function dispatchScopedDailySummaries(env, date, prefMapAll, recapPdf = null) {
   const recipients = await storeScopedRecipients(env);
   if (!recipients.length) return { recipients: 0 };
 
@@ -7001,6 +7035,8 @@ async function dispatchScopedDailySummaries(env, date, prefMapAll) {
     const scopeSuffix = shown.length <= 2 ? ` (${labels.join(' + ')})` : '';
     const emailHtml = buildExecSummaryEmailHtml(exec, totalsLabel, scopeLabel);
     const reportDay = new Date(exec.reportDate + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+    // Entitlement, not what the body shows: the PDF shows both live stores.
+    const attach = recapPdf && LIVE_RECAP_STORES.every(s => stores.includes(s)) ? { attachments: [recapPdf] } : {};
 
     const tb = data.totals.budget, ts = data.totals.sales;
     const budgetLine = tb > 0 ? ` • Budget: ${_fmtVsBudget(ts, tb)}` : '';
@@ -7025,6 +7061,7 @@ async function dispatchScopedDailySummaries(env, date, prefMapAll) {
         to: user.email,
         subject: `Executive Summary${scopeSuffix} — ${reportDay}`,
         html: emailHtml,
+        ...attach,
       }, `daily-scoped-${date}-${user.id}`);
       if (!r.skipped) {
         if (r.ok) summary.email.sent++;
@@ -7077,6 +7114,8 @@ async function dispatchDailySummary(env, date) {
   const [data, exec] = await Promise.all([buildDailySummaryData(env, date), buildExecSummaryData(env, date)]);
   const { sales: ts, budget: tb } = data.totals;
   const emailHtml = buildExecSummaryEmailHtml(exec);
+  // Read once here and handed to the scoped pass: one R2 read per send, not per body.
+  const recapPdf = await liveRecapAttachment(env, exec && exec.through);
 
   // Short push body
   const budgetLine = tb > 0 ? ` • Budget: ${_fmtVsBudget(ts, tb)}` : '';
@@ -7102,7 +7141,7 @@ async function dispatchDailySummary(env, date) {
   // construction (allowedStores() null vs non-null), so this cannot double-send.
   // Run it even when the chain-wide list is empty — those are different people,
   // and an empty chain-wide list must not silence the managers too.
-  const scoped = await dispatchScopedDailySummaries(env, date, prefMap)
+  const scoped = await dispatchScopedDailySummaries(env, date, prefMap, recapPdf)
     .catch(e => { console.error('Scoped daily summary failed:', e.message); return { error: e.message }; });
 
   // All active users (notification_preferences controls per-user opt-in)
@@ -7146,6 +7185,7 @@ async function dispatchDailySummary(env, date) {
         to: user.email,
         subject: `Executive Summary — ${reportDay}`,
         html: emailHtml,
+        ...(recapPdf ? { attachments: [recapPdf] } : {}),
       }, `daily-chain-${date}-${user.id}`);
       if (!emailResult.skipped) {
         if (emailResult.ok) summary.email.sent++;
@@ -19375,6 +19415,33 @@ export default {
         }
       }
       return new Response(JSON.stringify({ ok: true, results }, null, 2), { headers: corsJson });
+    }
+
+    // ── Live recap PDF: the BL-Live-Recap attachment for the Executive Summary.
+    //    POST /?action=live-recap-pdf&date=YYYY-MM-DD   body: the PDF's bytes
+    //    Header: X-Snapshot-Secret. The Whatnot recap feeder is the only writer
+    //    (scripts/whatnot-recap-ingest.gs). A re-send replaces that day's file.
+    //    See liveRecapAttachment for who receives it.
+    if (request.method === "POST" && url.searchParams.get("action") === "live-recap-pdf") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
+      const bad = (status, error) => new Response(JSON.stringify({ error }), { status, headers: corsJson });
+
+      // A real calendar date, and nothing else: it becomes part of the R2 key.
+      const date = url.searchParams.get("date") || "";
+      const t = Date.parse(date + "T12:00:00Z");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || isNaN(t) || new Date(t).toISOString().slice(0, 10) !== date) {
+        return bad(400, "date must be YYYY-MM-DD");
+      }
+      if (Number(request.headers.get("content-length") || 0) > LIVE_RECAP_MAX_BYTES) return bad(413, "PDF is over 10 MB");
+      const bytes = new Uint8Array(await request.arrayBuffer());
+      if (bytes.length > LIVE_RECAP_MAX_BYTES) return bad(413, "PDF is over 10 MB");
+      if (new TextDecoder().decode(bytes.subarray(0, 5)) !== "%PDF-") return bad(400, "body is not a PDF");
+      if (!env.MEDIA) return bad(500, "MEDIA bucket is not configured");
+
+      await env.MEDIA.put(liveRecapKey(date), bytes, { httpMetadata: { contentType: "application/pdf" } });
+      return new Response(JSON.stringify({ ok: true, date, bytes: bytes.length }), { headers: corsJson });
     }
 
     // ── Ingest: generic channel-sales sink (auction today; eon, labor next).

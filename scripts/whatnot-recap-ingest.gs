@@ -10,6 +10,10 @@
  * The recap's own month-to-date line rides along as `reconcile`, so the worker
  * pushes an alert the morning after a day goes missing.
  *
+ * The recap's PDF (BL-Live-Recap-YYYY-MM-DD.pdf) is uploaded after the day's
+ * sales, to /?action=live-recap-pdf, and the 8 AM Executive Summary attaches it.
+ * A failed upload is retried on the next run without re-posting the sales.
+ *
  * A recap is posted only if its show lines add up to the total and show count
  * in its subject line. Anything else (a format change, a location it does not
  * know) posts NOTHING and emails you instead: a wrong number in the Executive
@@ -29,6 +33,8 @@
 const CONFIG = {
   // Prod. (Staging: https://api-staging.retjghub.com/?action=ingest)
   INGEST_URL: 'https://api.retjghub.com/?action=ingest',
+  // (Staging: https://api-staging.retjghub.com/?action=live-recap-pdf)
+  PDF_URL: 'https://api.retjghub.com/?action=live-recap-pdf',
   CHANNEL: 'whatnot',
 
   // The recap tool sends from this address; forwards of it come from it too.
@@ -84,11 +90,12 @@ function _query() { return 'from:' + CONFIG.SENDER + ' subject:"' + CONFIG.SUBJE
 
 // ─── WORK ────────────────────────────────────────────────────────────────────
 
-// Bookkeeping lives in two small script properties (Apps Script caps one at
+// Bookkeeping lives in small script properties (Apps Script caps one at
 // 9 KB). postedRecaps: recap date -> sent time of the copy posted for it, so a
 // corrected re-send (newer) is posted and a late copy of the original (older)
-// is not. alertedMessages: message id -> when we emailed about it. Both keep
-// only the last RETAIN_DAYS.
+// is not. uploadedPdfs: the same, for that copy's PDF, kept apart so a failed
+// upload is retried alone. alertedMessages: message id -> when we emailed about
+// it. All keep only the last RETAIN_DAYS.
 const RETAIN_DAYS = 60;
 
 function _process(query, mode) {
@@ -96,6 +103,8 @@ function _process(query, mode) {
   const secret = props.getProperty('SNAPSHOT_SECRET');
   if (mode !== 'preview' && !secret) throw new Error('Set the SNAPSHOT_SECRET script property first (Project Settings → Script Properties).');
   const posted = JSON.parse(props.getProperty('postedRecaps') || '{}');
+  const uploaded = JSON.parse(props.getProperty('uploadedPdfs') || '{}');
+  const pdfFailures = [];
   const alerted = JSON.parse(props.getProperty('alertedMessages') || '{}');
 
   // Newest copy per recap date (an original and its forward say the same thing).
@@ -116,34 +125,73 @@ function _process(query, mode) {
         return;
       }
       const sent = m.getDate().getTime();
-      if (!byDate[recap.date] || sent > byDate[recap.date].sent) byDate[recap.date] = { recap, sent };
+      if (!byDate[recap.date] || sent > byDate[recap.date].sent) byDate[recap.date] = { recap, sent, message: m };
     }));
     if (threads.length < 100) break;
   }
 
   // Oldest first, so each recap's month-to-date check sees every earlier day.
   Object.keys(byDate).sort().forEach(date => {
-    const { recap, sent } = byDate[date];
+    const { recap, sent, message } = byDate[date];
     const payload = buildPayload_(recap);
+    const pdf = recapPdf_(message, date);
     if (mode === 'preview') {
-      Logger.log(date + '  ' + payload.rows.map(r => r.store + ' $' + r.total + ' (' + r.count + ' shows)').join('  '));
+      Logger.log(date + '  ' + payload.rows.map(r => r.store + ' $' + r.total + ' (' + r.count + ' shows)').join('  ') +
+        '  PDF: ' + (pdf ? pdf.getName() : 'none'));
       return;
     }
-    if (mode === 'daily' && posted[date] >= sent) return;
-    const res = UrlFetchApp.fetch(CONFIG.INGEST_URL, {
-      method: 'post',
-      contentType: 'application/json',
-      headers: { 'X-Snapshot-Secret': secret },
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true,
-    });
-    const code = res.getResponseCode();
-    Logger.log(date + ': HTTP ' + code + ' ' + res.getContentText().slice(0, 300));
-    if (code !== 200) throw new Error('Ingest failed for ' + date + ': HTTP ' + code);
-    posted[date] = sent;
-    props.setProperty('postedRecaps', JSON.stringify(_recent(posted, k => k)));
+    if (!(mode === 'daily' && posted[date] >= sent)) {
+      const res = UrlFetchApp.fetch(CONFIG.INGEST_URL, {
+        method: 'post',
+        contentType: 'application/json',
+        headers: { 'X-Snapshot-Secret': secret },
+        payload: JSON.stringify(payload),
+        muteHttpExceptions: true,
+      });
+      const code = res.getResponseCode();
+      Logger.log(date + ': HTTP ' + code + ' ' + res.getContentText().slice(0, 300));
+      if (code !== 200) throw new Error('Ingest failed for ' + date + ': HTTP ' + code);
+      posted[date] = sent;
+      props.setProperty('postedRecaps', JSON.stringify(_recent(posted, k => k)));
+    }
+
+    // The PDF for the Executive Summary. Never blocks the sales above, nor any
+    // later day's: muteHttpExceptions does not cover a timeout or DNS failure.
+    if (!pdf || (mode === 'daily' && uploaded[date] >= sent)) return;
+    let upCode, upText;
+    try {
+      const up = UrlFetchApp.fetch(CONFIG.PDF_URL + '&date=' + date, {
+        method: 'post',
+        contentType: 'application/pdf',
+        headers: { 'X-Snapshot-Secret': secret },
+        payload: pdf.getBytes(),
+        muteHttpExceptions: true,
+      });
+      upCode = up.getResponseCode(); upText = up.getContentText();
+    } catch (e) {
+      upCode = 0; upText = e.message;
+    }
+    Logger.log(date + ' PDF: HTTP ' + upCode + ' ' + String(upText).slice(0, 300));
+    if (upCode !== 200) {
+      pdfFailures.push(date + ' (' + (upCode ? 'HTTP ' + upCode : upText) + ')');
+      // 400 (not a PDF) and 413 (too large) will never succeed: report once, do not retry.
+      if (upCode !== 400 && upCode !== 413) return;
+    }
+    uploaded[date] = sent;
+    props.setProperty('uploadedPdfs', JSON.stringify(_recent(uploaded, k => k)));
   });
   if (mode !== 'preview') props.setProperty('alertedMessages', JSON.stringify(_recent(alerted, (k, v) => new Date(v).toISOString())));
+  // Thrown last, so every other day still posted; Apps Script reports the failed run.
+  if (pdfFailures.length) throw new Error('Recap PDF upload failed for ' + pdfFailures.join(', ') + '. The sales were posted; the PDF is retried on the next run.');
+}
+
+/** The recap's own PDF, named for its date as parseRecap_ reads it; null when
+ *  the email has none. */
+function recapPdf_(message, date) {
+  return message.getAttachments().filter(a => {
+    const m = /BL-Live-Recap-(\d{4}-\d{2}-\d{2})\.pdf/i.exec(a.getName());
+    return m && m[1] === date;
+  })[0] || null;
 }
 
 // Keep the entries within RETAIN_DAYS of the newest one (deterministic: never
