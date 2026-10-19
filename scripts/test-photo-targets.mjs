@@ -66,7 +66,7 @@ console.log('photo targets');
   eq(r.status, 200, 'a manager can read their targets');
   const j = await json(r);
   eq(j.week, { start: '2026-10-11', end: '2026-10-17', due: '2026-10-15' }, 'Sunday–Saturday week, due Thursday');
-  eq(j.targets, { retail: 20, bins: 20 }, 'targets default to 20 retail, 20 bins');
+  eq(j.targets, { retail: 20, bins: 20, store_walk: 1 }, 'targets default to 20 retail, 20 bins, 1 store walk');
   eq(j.stores.map(s => s.store), ['BL1'], '🛑 a one-store manager sees only their store');
   const bl1 = j.stores[0];
   eq(bl1.retail, 5, 'retail counts this week only, from midnight Sunday to midnight Saturday Eastern, rejected excluded');
@@ -80,7 +80,7 @@ console.log('photo targets');
 
   const adm = await json(await call('/?action=photo-targets', { user: 'u-admin', env }));
   eq(adm.stores.map(s => s.store), ['BL1', 'BL4', 'BL2', 'BL14', 'BL16'], 'an admin sees every open store, Holland left out');
-  eq(adm.stores.find(s => s.store === 'BL2'), { store: 'BL2', label: 'South Bend', retail: 0, bins: 0, people: 0 },
+  eq(adm.stores.find(s => s.store === 'BL2'), { store: 'BL2', label: 'South Bend', retail: 0, bins: 0, store_walk: 0, people: 0 },
      'a store with no uploads is listed at zero, not missing');
 
   const staff = await call('/?action=photo-targets', { user: 'u-staff', env });
@@ -97,27 +97,27 @@ console.log('photo targets');
   const targets = async () => (await json(await call('/?action=photo-targets', { user: 'u-mgr1', env }))).targets;
 
   eq((await set('u-admin', { retail: 25, bins: 10 })).status, 200, 'an admin can set the targets');
-  eq(await targets(), { retail: 25, bins: 10 }, 'and every store reads them');
+  eq(await targets(), { retail: 25, bins: 10, store_walk: 1 }, 'and every store reads them');
   eq((await set('u-admin', '{"retail":"30","bins":"12"}')).status, 200, 'a JSON string of numerals is accepted');
-  eq(await targets(), { retail: 30, bins: 12 }, 'and stored as numbers');
+  eq(await targets(), { retail: 30, bins: 12, store_walk: 1 }, 'and stored as numbers');
 
   for (const [bad, why] of [
     [{ retail: -1, bins: 10 }, 'a negative target'], [{ retail: 2.5, bins: 10 }, 'a fraction'],
     [{ retail: 'abc', bins: 10 }, 'text'], [{ retail: 10 }, 'a missing key'], [{ retail: null, bins: 10 }, 'a null'],
     [{ retail: 501, bins: 10 }, 'over the 500 ceiling'], [[20, 20], 'an array'], ['not json', 'unparseable text'], [null, 'nothing'],
   ]) eq((await set('u-admin', bad)).status, 400, `refuses ${why}`);
-  eq(await targets(), { retail: 30, bins: 12 }, 'and a refused write changes nothing');
+  eq(await targets(), { retail: 30, bins: 12, store_walk: 1 }, 'and a refused write changes nothing');
 
   eq((await set('u-mgr1', { retail: 1, bins: 1 })).status, 403, '🛑 a manager cannot change the targets');
   eq((await set('u-staff', { retail: 1, bins: 1 })).status, 403, '🛑 nor can staff');
-  eq(await targets(), { retail: 30, bins: 12 }, 'unchanged after both refusals');
+  eq(await targets(), { retail: 30, bins: 12, store_walk: 1 }, 'unchanged after both refusals');
 
   // 🔑 Number(null) is 0. A stored null must fall back to the default, not to a
   // target of zero that would paint every store green.
   db.prepare("UPDATE content_settings SET value = ? WHERE key = 'upload_targets'").run('{"retail":null,"bins":7}');
-  eq(await targets(), { retail: 20, bins: 7 }, 'a stored null falls back to its default, key by key');
+  eq(await targets(), { retail: 20, bins: 7, store_walk: 1 }, 'a stored null falls back to its default, key by key');
   db.prepare("UPDATE content_settings SET value = ? WHERE key = 'upload_targets'").run('{garbage');
-  eq(await targets(), { retail: 20, bins: 20 }, 'unparseable storage falls back to the defaults');
+  eq(await targets(), { retail: 20, bins: 20, store_walk: 1 }, 'unparseable storage falls back to the defaults');
 }
 
 // ── 3. Associates upload, and the alert names them ───────────────────────────

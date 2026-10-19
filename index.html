@@ -4450,10 +4450,11 @@
         <div>
           <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">What are you uploading?</label>
           <div id="sp-type-chips" class="flex flex-wrap gap-2"></div>
+          <p id="sp-video-hint" class="hidden mt-2 text-xs text-opl-inkDim dark:text-op-inkDim"></p>
         </div>
 
         <div>
-          <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Photos</label>
+          <label id="sp-files-label" class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Photos</label>
           <label id="sp-drop" for="sp-files" class="flex flex-col items-center justify-center gap-2 w-full py-8 rounded-2xl border-2 border-dashed border-[rgba(20,16,8,0.15)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim cursor-pointer hover:border-accent-green/50 transition-colors">
             <svg class="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
             <span id="sp-drop-text" class="text-sm font-medium text-center px-4">Tap to upload photos</span>
@@ -19388,6 +19389,24 @@
   let spType = null;
   let spFiles = [];
   let spTargets = null;        // last ?action=photo-targets answer
+  let spVideo = null;          // the one video picked for a video type: { file, meta, poster, posterUrl, error, reading }
+
+  // Store videos (Brian, 2026-10-19). The worker checks the same rules again
+  // (VIDEO_RULES / videoRuleError in worker.js); these are here so a manager hears
+  // "film it sideways" BEFORE a 300 MB upload, not after it.
+  //   store_walk: SIDEWAYS, at least 3:00 — posts as a normal Facebook video
+  //   clip:       UPRIGHT, 3–90 s — posts as a Reel (Buffer makes every 9:16 video a
+  //               Reel, and Reels stop at 90 s)
+  // 1080p, and nothing over Buffer's 1 GB.
+  const SP_VIDEO = {
+    store_walk: { minMs: 180000, maxMs: 30 * 60000, landscape: true, label: 'Store walk',
+                  hint: 'Film it sideways (landscape), at least 3 minutes, at 1080p. Walk the floor slowly.' },
+    clip:       { minMs: 3000, maxMs: 90000, landscape: false, label: 'Short clip',
+                  hint: 'Film it upright (portrait), up to 90 seconds, at 1080p.' },
+  };
+  const SP_VIDEO_MAX_BYTES = 1000 * 1000 * 1000;
+  const SP_VIDEO_EXT = { mp4: 'video/mp4', mov: 'video/quicktime', m4v: 'video/x-m4v' };
+  function spIsVideoType(t) { return !!SP_VIDEO[t]; }
 
   // Release every preview URL. Any path that empties spFiles must go through
   // this — dropping the entries alone leaks the blobs they pin.
@@ -19430,7 +19449,8 @@
   window.initSubmitPhotos = initSubmitPhotos;
 
   function renderSpTypes() {
-    const types = [['retail', 'Retail floor'], ['bins', 'Bins'], ['event', 'Event'], ['other', 'Other']];
+    const types = [['retail', 'Retail floor'], ['bins', 'Bins'], ['event', 'Event'], ['other', 'Other'],
+                   ['store_walk', 'Store walk (video)'], ['clip', 'Short clip (video)']];
     el('sp-type-chips').innerHTML = types.map(([v, l]) => {
       const on = v === spType;
       return `<button type="button" onclick="spSetType('${v}')" class="px-3 py-1.5 rounded-full text-xs font-semibold border transition ${on ? 'bg-accent-green text-[#06210f] border-accent-green' : 'border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim'}">${l}</button>`;
@@ -19441,14 +19461,33 @@
       drop.classList.toggle('opacity-50', !spType);
       drop.classList.toggle('pointer-events-none', !spType);
     }
-    if (el('sp-drop-text')) el('sp-drop-text').textContent = spType ? 'Tap to upload photos' : 'Choose what you are uploading first';
+    const vid = spIsVideoType(spType);
+    if (el('sp-drop-text')) el('sp-drop-text').textContent = !spType ? 'Choose what you are uploading first'
+      : vid ? `Tap to choose the ${SP_VIDEO[spType].label.toLowerCase()} video` : 'Tap to upload photos';
+    if (el('sp-files-label')) el('sp-files-label').textContent = vid ? 'Video' : 'Photos';
+    const hint = el('sp-video-hint');
+    if (hint) { hint.textContent = vid ? SP_VIDEO[spType].hint : ''; hint.classList.toggle('hidden', !vid); }
+    const input = el('sp-files');
+    if (input) { input.accept = vid ? 'video/*' : 'image/*'; input.multiple = !vid; }
     const btn = el('sp-submit');
     if (btn && !btn.textContent.startsWith('Uploading')) {
-      btn.disabled = !spType;
-      btn.textContent = spType ? 'Submit photos' : 'Choose a type to continue';
+      const v = spVideo;
+      btn.disabled = !spType || (vid && !!v && (v.reading || !!v.error));
+      btn.textContent = !spType ? 'Choose a type to continue' : vid ? 'Upload video' : 'Submit photos';
     }
   }
-  function spSetType(v) { spType = v; renderSpTypes(); }
+  function spSetType(v) {
+    // Photos and a video never share a submission: switching between the two kinds
+    // clears what was picked for the other.
+    if (spIsVideoType(v) !== spIsVideoType(spType)) {
+      spClearFiles(); spClearVideo();
+      if (el('sp-thumbs')) el('sp-thumbs').innerHTML = '';
+    } else if (spVideo && v !== spType) {
+      spVideo.error = spVideoRuleError(v, spVideo);   // the same file, judged by the other type's rules
+    }
+    spType = v; renderSpTypes();
+    if (spVideo) spRenderVideo();
+  }
   window.spSetType = spSetType;
 
   // ── Weekly targets ───────────────────────────────────────────────────
@@ -19492,9 +19531,9 @@
       html = head('All stores · this week') + `
         <table class="mt-3 w-full text-sm">
           <thead><tr class="text-[11px] uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim">
-            <th class="text-left font-semibold pb-2">Store</th><th class="text-right font-semibold pb-2">Retail</th><th class="text-right font-semibold pb-2">Bins</th></tr></thead>
+            <th class="text-left font-semibold pb-2">Store</th><th class="text-right font-semibold pb-2">Retail</th><th class="text-right font-semibold pb-2">Bins</th><th class="text-right font-semibold pb-2">Walk</th></tr></thead>
           <tbody>${d.stores.map(s => `<tr class="border-t border-[rgba(20,16,8,0.07)] dark:border-[rgba(255,255,255,0.06)]">
-            <td class="py-2 text-opl-ink dark:text-op-ink">${escapeHtml(s.label)}</td>${cell(s.retail, t.retail)}${cell(s.bins, t.bins)}</tr>`).join('')}</tbody>
+            <td class="py-2 text-opl-ink dark:text-op-ink">${escapeHtml(s.label)}</td>${cell(s.retail, t.retail)}${cell(s.bins, t.bins)}${cell(s.store_walk || 0, t.store_walk != null ? t.store_walk : 1)}</tr>`).join('')}</tbody>
         </table>
         <button type="button" onclick="spToggleTargetEdit()" class="mt-3 text-sm font-semibold text-[#15803d] dark:text-accent-green">Edit weekly targets</button>
         <div id="sp-target-edit" class="hidden mt-3 rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-opl-panelHi dark:bg-[rgba(255,255,255,0.02)] p-3 space-y-2.5">
@@ -19503,6 +19542,8 @@
             <input id="sp-tgt-retail" type="number" min="0" max="500" step="1" inputmode="numeric" value="${t.retail}" class="${inp}"></label>
           <label class="flex items-center justify-between text-sm text-opl-ink dark:text-op-ink">Bin photos
             <input id="sp-tgt-bins" type="number" min="0" max="500" step="1" inputmode="numeric" value="${t.bins}" class="${inp}"></label>
+          <label class="flex items-center justify-between text-sm text-opl-ink dark:text-op-ink">Store-walk videos
+            <input id="sp-tgt-walk" type="number" min="0" max="500" step="1" inputmode="numeric" value="${t.store_walk != null ? t.store_walk : 1}" class="${inp}"></label>
           <button id="sp-tgt-save" type="button" onclick="spSaveTargets()" class="w-full bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] font-semibold text-sm py-2.5 rounded-xl transition-colors disabled:opacity-50">Save targets</button>
           <p id="sp-tgt-msg" class="hidden text-xs text-center"></p>
         </div>`;
@@ -19519,18 +19560,18 @@
       };
       const who = s.people === 1 ? '1 person' : `${s.people} people`;
       html = head(`${s.label} · this week`) + `
-        <div class="mt-3 space-y-3">${bar('Retail photos', s.retail, t.retail)}${bar('Bin photos', s.bins, t.bins)}</div>
+        <div class="mt-3 space-y-3">${bar('Retail photos', s.retail, t.retail)}${bar('Bin photos', s.bins, t.bins)}${bar('Store walk video', s.store_walk || 0, t.store_walk != null ? t.store_walk : 1)}</div>
         <p class="mt-3 text-xs text-opl-inkDim dark:text-op-inkDim">Counts uploads from everyone at ${escapeHtml(s.label)} (${who} so far). Resets Sunday.</p>`;
     }
     // An admin halfway through editing keeps the form open and what they typed:
     // an upload landing mid-edit re-reads the counts and re-draws this card.
     const wasOpen = el('sp-target-edit') && !el('sp-target-edit').classList.contains('hidden');
-    const typed = wasOpen ? { retail: el('sp-tgt-retail').value, bins: el('sp-tgt-bins').value } : null;
+    const typed = wasOpen ? { retail: el('sp-tgt-retail').value, bins: el('sp-tgt-bins').value, walk: el('sp-tgt-walk').value } : null;
     box.innerHTML = html;
     box.classList.remove('hidden');
     if (typed) {
       el('sp-target-edit').classList.remove('hidden');
-      el('sp-tgt-retail').value = typed.retail; el('sp-tgt-bins').value = typed.bins;
+      el('sp-tgt-retail').value = typed.retail; el('sp-tgt-bins').value = typed.bins; el('sp-tgt-walk').value = typed.walk;
     }
   }
   window.spRenderTargets = spRenderTargets;
@@ -19544,7 +19585,7 @@
   async function spSaveTargets() {
     const msg = el('sp-tgt-msg'), btn = el('sp-tgt-save');
     const show = (text, cls) => { msg.textContent = text; msg.className = 'text-xs text-center ' + cls; };
-    const value = { retail: el('sp-tgt-retail').value.trim(), bins: el('sp-tgt-bins').value.trim() };
+    const value = { retail: el('sp-tgt-retail').value.trim(), bins: el('sp-tgt-bins').value.trim(), store_walk: el('sp-tgt-walk').value.trim() };
     btn.disabled = true;
     try {
       const r = await fetch(`${WORKER_BASE}?action=content-setting`, {
@@ -19587,6 +19628,7 @@
     const picked = Array.from(el('sp-files').files || []);
     el('sp-files').value = '';
     if (!picked.length) return;
+    if (spIsVideoType(spType)) return spPickVideo(picked[0]);   // one video per submission
     const entries = picked.map(file => ({ file, thumb: null, url: null }));
     spFiles = spFiles.concat(entries);
     spRenderThumbs();                       // placeholders paint immediately
@@ -19607,6 +19649,203 @@
     spRenderThumbs();
   }
   window.spRemoveFile = spRemoveFile;
+
+  // ── Store videos: pick, check on the phone, upload in parts ─────────────
+  function spClearVideo() {
+    if (spVideo && spVideo.posterUrl) URL.revokeObjectURL(spVideo.posterUrl);
+    spVideo = null;
+  }
+  function spMmss(ms) { return `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, '0')}`; }
+  // The worker's videoRuleError, word for word where it can be.
+  function spVideoRuleError(type, v) {
+    const rule = SP_VIDEO[type];
+    if (!rule || !v) return 'Choose Store walk or Short clip';
+    if (!spVideoContentType(v.file)) return 'Upload an MP4 or MOV video';
+    if (!v.meta) return "Couldn't read this video's length or size. Try recording it again.";
+    const bytes = v.file.size, { duration_ms: ms, width: w, height: h } = v.meta;
+    if (bytes > SP_VIDEO_MAX_BYTES) return `This video is ${Math.round(bytes / 1e6)} MB; the limit is 1,000 MB. Record at 1080p (Settings › Camera › Record Video) and try again.`;
+    if (ms < rule.minMs) return `${rule.label}s need at least ${spMmss(rule.minMs)}; this one is ${spMmss(ms)}.`;
+    if (ms > rule.maxMs) return `${rule.label}s can be at most ${spMmss(rule.maxMs)}; this one is ${spMmss(ms)}.`;
+    if (rule.landscape && !(w > h)) return 'Film the store walk sideways (landscape), then upload it.';
+    if (!rule.landscape && !(h > w)) return 'Film short clips upright (portrait), then upload them.';
+    return null;
+  }
+  // Some Android pickers hand over a video with no type; the extension settles it.
+  function spVideoContentType(file) {
+    const t = String(file.type || '').toLowerCase();
+    if (Object.values(SP_VIDEO_EXT).includes(t)) return t;
+    const ext = String(file.name || '').toLowerCase().split('.').pop();
+    return !t || t === 'application/octet-stream' ? (SP_VIDEO_EXT[ext] || null) : null;
+  }
+
+  // Length and display size from the file's own header (the MP4/MOV `moov` box), for
+  // when the browser cannot decode the video — Chrome on many Androids cannot play an
+  // iPhone's HEVC .mov, and then `loadedmetadata` never fires. Reads only box headers
+  // and the moov box itself, never the video data. Returns null if it cannot tell.
+  async function spParseMp4Meta(file) {
+    try {
+      const u32 = (dv, o) => dv.getUint32(o);
+      const u64 = (dv, o) => dv.getUint32(o) * 4294967296 + dv.getUint32(o + 4);
+      const type = (dv, o) => String.fromCharCode(dv.getUint8(o), dv.getUint8(o + 1), dv.getUint8(o + 2), dv.getUint8(o + 3));
+      let off = 0, moov = null;
+      for (let guard = 0; off + 8 <= file.size && guard < 64; guard++) {
+        const hdr = new DataView(await file.slice(off, off + 16).arrayBuffer());
+        let size = u32(hdr, 0); const t = type(hdr, 4); let head = 8;
+        if (size === 1) { size = u64(hdr, 8); head = 16; } else if (size === 0) size = file.size - off;
+        if (size < head) return null;
+        if (t === 'moov') {
+          if (size > 16 * 1024 * 1024) return null;
+          moov = new DataView(await file.slice(off + head, off + size).arrayBuffer()); break;
+        }
+        off += size;
+      }
+      if (!moov) return null;
+      let duration_ms = 0, width = 0, height = 0;
+      // Walk boxes inside [start, end) of dv, descending into containers.
+      const walk = (dv, start, end) => {
+        for (let o = start; o + 8 <= end;) {
+          let size = u32(dv, o); const t = type(dv, o + 4); let head = 8;
+          if (size === 1) { size = u64(dv, o + 8); head = 16; } else if (size === 0) size = end - o;
+          if (size < head || o + size > end) return;
+          const c = o + head, ver = dv.getUint8(c);
+          if (t === 'mvhd') {
+            const scale = ver === 1 ? u32(dv, c + 20) : u32(dv, c + 12);
+            const dur = ver === 1 ? u64(dv, c + 24) : u32(dv, c + 16);
+            if (scale) duration_ms = Math.round(dur / scale * 1000);
+          } else if (t === 'tkhd') {
+            const m = c + (ver === 1 ? 4 + 8 + 8 + 4 + 4 + 8 : 4 + 4 + 4 + 4 + 4 + 4) + 8 + 2 + 2 + 2 + 2;   // to the matrix
+            const a = dv.getInt32(m), d = dv.getInt32(m + 16);
+            const w = dv.getUint32(m + 36) / 65536, h = dv.getUint32(m + 40) / 65536;
+            if (w > 0 && h > 0 && !width) {
+              // A rotation of 90° or 270° (a = d = 0) shows the frame turned on its side.
+              const turned = a === 0 && d === 0;
+              width = Math.round(turned ? h : w); height = Math.round(turned ? w : h);
+            }
+          } else if (t === 'trak' || t === 'moov') {
+            walk(dv, c, o + size);
+          }
+          o += size;
+        }
+      };
+      walk(moov, 0, moov.byteLength);
+      return duration_ms && width && height ? { duration_ms, width, height } : null;
+    } catch (_) { return null; }
+  }
+
+  // Length and display size as the browser plays it, plus a poster frame for the
+  // marketing team's picker. Falls back to the header when the browser can't decode it.
+  async function spReadVideoMeta(file) {
+    const url = URL.createObjectURL(file);
+    try {
+      const video = document.createElement('video');
+      video.preload = 'metadata'; video.muted = true; video.playsInline = true;
+      const loaded = await new Promise(res => {
+        const t = setTimeout(() => res(false), 8000);
+        video.onloadedmetadata = () => { clearTimeout(t); res(true); };
+        video.onerror = () => { clearTimeout(t); res(false); };
+        video.src = url;
+      });
+      let meta = null, poster = null;
+      if (loaded && isFinite(video.duration) && video.duration > 0 && video.videoWidth && video.videoHeight) {
+        meta = { duration_ms: Math.round(video.duration * 1000), width: video.videoWidth, height: video.videoHeight };
+        try {
+          await new Promise(res => { const t = setTimeout(res, 4000); video.onseeked = () => { clearTimeout(t); res(); }; video.currentTime = Math.min(1, video.duration / 2); });
+          const scale = Math.min(1, 640 / Math.max(video.videoWidth, video.videoHeight));
+          const cv = document.createElement('canvas');
+          cv.width = Math.round(video.videoWidth * scale); cv.height = Math.round(video.videoHeight * scale);
+          cv.getContext('2d').drawImage(video, 0, 0, cv.width, cv.height);
+          poster = await new Promise(res => cv.toBlob(b => res(b), 'image/jpeg', 0.72));
+        } catch (_) { poster = null; }
+      }
+      video.removeAttribute('src'); video.load();
+      if (!meta) meta = await spParseMp4Meta(file);
+      return meta ? { meta, poster } : null;
+    } finally { URL.revokeObjectURL(url); }
+  }
+
+  async function spPickVideo(file) {
+    spClearVideo();
+    const v = { file, meta: null, poster: null, posterUrl: null, error: null, reading: true };
+    spVideo = v; spRenderVideo(); renderSpTypes();
+    const got = await spReadVideoMeta(file).catch(() => null);
+    if (spVideo !== v) return;                 // replaced or removed while reading
+    v.reading = false;
+    if (got) { v.meta = got.meta; v.poster = got.poster; if (got.poster) v.posterUrl = URL.createObjectURL(got.poster); }
+    v.error = spVideoRuleError(spType, v);
+    spRenderVideo(); renderSpTypes();
+  }
+
+  function spRenderVideo() {
+    const wrap = el('sp-thumbs'); if (!wrap) return;
+    const v = spVideo;
+    if (!v) { wrap.innerHTML = ''; return; }
+    const facts = v.meta
+      ? [spMmss(v.meta.duration_ms), v.meta.width > v.meta.height ? 'sideways' : 'upright', `${Math.max(1, Math.round(v.file.size / 1e6))} MB`].join(' · ')
+      : (v.reading ? 'Reading the video…' : '');
+    const pic = v.posterUrl
+      ? `<img src="${v.posterUrl}" alt="" class="w-24 h-24 rounded-lg object-cover shrink-0">`
+      : `<div class="w-24 h-24 rounded-lg shrink-0 flex items-center justify-center bg-opl-panelHi dark:bg-op-panelHi text-opl-inkDim dark:text-op-inkDim">
+           <svg class="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="15" height="14" rx="2"/><path d="m17 10 5-3v10l-5-3"/></svg></div>`;
+    wrap.innerHTML = `<div id="sp-video-card" class="col-span-3 flex items-center gap-3 p-2.5 rounded-xl border border-[rgba(20,16,8,0.1)] dark:border-op-border">
+      ${pic}
+      <div class="min-w-0 flex-1">
+        <div class="text-sm font-medium text-opl-ink dark:text-op-ink truncate">${escapeHtml(v.file.name || 'Video')}</div>
+        <div class="text-xs text-opl-inkDim dark:text-op-inkDim mt-0.5">${escapeHtml(facts)}</div>
+        ${v.error ? `<div id="sp-video-error" class="text-xs font-semibold text-opl-bad dark:text-[#f87171] mt-1">${escapeHtml(v.error)}</div>` : ''}
+      </div>
+      <button type="button" onclick="spRemoveVideo()" aria-label="Remove video" class="w-7 h-7 shrink-0 rounded-full bg-black/60 text-white text-base leading-none flex items-center justify-center">&times;</button>
+    </div>`;
+  }
+  function spRemoveVideo() { spClearVideo(); spRenderVideo(); renderSpTypes(); }
+  window.spRemoveVideo = spRemoveVideo;
+
+  // Upload in parts straight into storage: start → each part (retried) → complete.
+  // Returns null on success or the message to show.
+  async function spUploadVideo(store, note, onProgress) {
+    const v = spVideo, file = v.file;
+    const post = (action, body) => fetch(`${WORKER_BASE}?action=${action}`, { method: 'POST', credentials: 'include', ...body });
+    let id = null;
+    const fail = async (msg) => {
+      if (id != null) post('video-upload-abort', { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).catch(() => {});
+      return msg;
+    };
+    try {
+      const r = await post('video-upload-start', { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        store, video_type: spType, content_type: spVideoContentType(file), bytes: file.size,
+        duration_ms: v.meta.duration_ms, width: v.meta.width, height: v.meta.height, note,
+      }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) return d.error || 'Could not start the upload.';
+      id = d.id;
+      const parts = [];
+      for (let p = 1; p <= d.parts; p++) {
+        const blob = file.slice((p - 1) * d.part_bytes, Math.min(file.size, p * d.part_bytes));
+        for (let tries = 1; ; tries++) {
+          let res = null, j = {};
+          try {
+            res = await fetch(`${WORKER_BASE}?action=video-upload-part&id=${id}&part=${p}`, { method: 'PUT', credentials: 'include', body: blob });
+            j = await res.json().catch(() => ({}));
+          } catch (_) { res = null; }
+          if (res && res.ok && j.ok) { parts.push({ part: p, etag: j.etag }); break; }
+          // A refusal (4xx) will not change on a retry; a dropped signal or a 5xx might.
+          if (res && res.status >= 400 && res.status < 500 && res.status !== 429) return await fail(j.error || 'The upload was refused.');
+          if (tries >= 4) return await fail('The upload kept failing. Check your signal and try again.');
+          await new Promise(ok => setTimeout(ok, 1500 * tries));
+        }
+        onProgress(Math.round(p / d.parts * 100));
+      }
+      const fd = new FormData();
+      fd.append('id', String(id));
+      fd.append('parts', JSON.stringify(parts));
+      if (v.poster) fd.append('poster', v.poster, 'poster.jpg');
+      const c = await post('video-upload-complete', { body: fd });
+      const cd = await c.json().catch(() => ({}));
+      if (!c.ok || !cd.ok) return await fail(cd.error || 'Could not finish the upload.');
+      return null;
+    } catch (_) {
+      return await fail('Could not reach the server. Check your connection and try again.');
+    }
+  }
 
   // Downscale a photo File to a JPEG Blob whose long edge is at most `max`.
   // Used twice: at ~320px for the preview tile + the thumbnail stored in R2 (so
@@ -19652,6 +19891,7 @@
     const show = (msg, cls) => { status.textContent = msg; status.className = 'text-sm text-center ' + cls; status.classList.remove('hidden'); };
     if (!store) return show('Pick a store.', 'text-op-bad');
     if (!spType) return show('Choose what you are uploading.', 'text-op-bad');
+    if (spIsVideoType(spType)) return spSubmitVideo(store, note, show);
     if (!spFiles.length) return show('Add at least one photo.', 'text-op-bad');
     const btn = el('sp-submit'); btn.disabled = true;
     let ok = 0, fail = 0;
@@ -19706,6 +19946,29 @@
     }
   }
   window.spSubmit = spSubmit;
+
+  async function spSubmitVideo(store, note, show) {
+    const v = spVideo;
+    if (!v) return show(`Add the ${SP_VIDEO[spType].label.toLowerCase()} video.`, 'text-op-bad');
+    if (v.reading) return show('Still reading the video…', 'text-op-bad');
+    v.error = spVideoRuleError(spType, v);
+    if (v.error) { spRenderVideo(); return show(v.error, 'text-op-bad'); }
+    const btn = el('sp-submit'); btn.disabled = true;
+    btn.textContent = 'Uploading video… 0%';
+    show('Keep this screen open until the upload finishes.', 'text-opl-inkDim dark:text-op-inkDim');
+    // A phone that sleeps mid-upload drops it; ask it not to, where the browser lets us.
+    let lock = null;
+    try { if (navigator.wakeLock) lock = await navigator.wakeLock.request('screen'); } catch (_) {}
+    const label = SP_VIDEO[spType].label;
+    const err = await spUploadVideo(store, note, pct => { btn.textContent = `Uploading video… ${pct}%`; });
+    try { if (lock) await lock.release(); } catch (_) {}
+    btn.textContent = '';
+    if (err) { renderSpTypes(); return show(err, 'text-op-bad'); }
+    spClearVideo(); spRenderVideo(); el('sp-note').value = '';
+    renderSpTypes();
+    spLoadTargets();
+    show(`✓ ${label} sent to marketing. Thank you!`, 'text-accent-green');
+  }
 
   // ── Content (Slice 1b): thumbnails + bin-post composer (admin) ──────
   let ctThumbs = [];
