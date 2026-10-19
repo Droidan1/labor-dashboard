@@ -5262,6 +5262,7 @@ const ACTION_BUSINESS = new Map([
   ["sales-diag", "bl"],
   ["schedule-sale", "bl"],
   ["send-daily-summary", "bl"],
+  ["send-test-summary", "bl"],
   ["send-weekly-digest", "bl"],
   ["snapshot", "bl"],
   ["store-history", "bl"],
@@ -6955,6 +6956,11 @@ async function storeScopedRecipients(env) {
 const LIVE_RECAP_STORES = ["BL1", "BL14"];
 const LIVE_RECAP_MAX_BYTES = 10 * 1024 * 1024;
 const liveRecapKey = (date) => `live-recap/${date}.pdf`;
+// A real calendar date in YYYY-MM-DD, nothing else (2026-02-30 is refused).
+const isYmdDate = (s) => {
+  const t = Date.parse(s + "T12:00:00Z");
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(t) && new Date(t).toISOString().slice(0, 10) === s;
+};
 
 // The recap PDF for `through` as a Resend attachment, or null. Never throws: a
 // recap that is late, missing or unreadable must not hold the email back, and
@@ -19430,10 +19436,7 @@ export default {
 
       // A real calendar date, and nothing else: it becomes part of the R2 key.
       const date = url.searchParams.get("date") || "";
-      const t = Date.parse(date + "T12:00:00Z");
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || isNaN(t) || new Date(t).toISOString().slice(0, 10) !== date) {
-        return bad(400, "date must be YYYY-MM-DD");
-      }
+      if (!isYmdDate(date)) return bad(400, "date must be YYYY-MM-DD");
       if (Number(request.headers.get("content-length") || 0) > LIVE_RECAP_MAX_BYTES) return bad(413, "PDF is over 10 MB");
       const bytes = new Uint8Array(await request.arrayBuffer());
       if (bytes.length > LIVE_RECAP_MAX_BYTES) return bad(413, "PDF is over 10 MB");
@@ -22430,6 +22433,44 @@ export default {
       try {
         const result = await dispatchDailySummary(env, dateParam);
         return new Response(JSON.stringify(result), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=send-test-summary[&date=YYYY-MM-DD]   (date = the data-through day)
+    // ONE copy of the chain-wide Executive Summary, recap PDF included, to the
+    // signed-in superuser and nobody else. No push, and a fresh idempotency key
+    // per call. send-daily-summary cannot do this: it re-runs the whole list, and
+    // Resend refuses a same-day re-send whose body changed (409), because each
+    // copy reuses its per-day key. Session only: the admin secret has no "me".
+    if (request.method === "POST" && url.searchParams.get("action") === "send-test-summary") {
+      if (!currentUser || currentUser.role !== 'superuser') {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      }
+      const date = url.searchParams.get("date") || (() => {
+        const y = new Date(); y.setUTCDate(y.getUTCDate() - 1);
+        return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(y);
+      })();
+      if (!isYmdDate(date)) {
+        return new Response(JSON.stringify({ error: "date must be YYYY-MM-DD" }), { status: 400, headers: corsJson });
+      }
+      try {
+        const exec = await buildExecSummaryData(env, date);
+        const recapPdf = await liveRecapAttachment(env, exec.through);
+        const reportDay = new Date(exec.reportDate + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+        const r = await resendSend(env, {
+          from: 'RETJG HUB <noreply@retjghub.com>',
+          to: currentUser.email,
+          subject: `[Test] Executive Summary — ${reportDay}`,
+          html: buildExecSummaryEmailHtml(exec),
+          ...(recapPdf ? { attachments: [recapPdf] } : {}),
+        }, `daily-test-${date}-${currentUser.id}-${randomHex(8)}`);
+        await logEmailAttempt(env, { userId: currentUser.id, eventType: 'daily-summary-test', result: r });
+        return new Response(JSON.stringify({
+          ok: !!r.ok, to: currentUser.email, date, attached: recapPdf ? recapPdf.filename : null,
+          ...(r.ok ? {} : { error: r.error || 'not sent' }),
+        }), { status: r.ok ? 200 : 502, headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }

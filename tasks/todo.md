@@ -1,3 +1,19 @@
+# Executive Summary: a test send to just me (2026-10-19)
+
+**Ask (Brian):** "Build the test send to just me (superuser only, one copy, no push)", to check the recap PDF
+today instead of waiting for tomorrow's 8 AM send.
+**Found:** the only manual send, `send-daily-summary`, re-runs the whole job: every recipient plus their phone
+pushes. A same-day re-run is also refused by Resend (409), because each copy reuses its per-day idempotency key
+and the body has changed (it now carries the PDF). No screen in the app calls it.
+
+- [x] Test first (17 of 23 failed): superuser session → exactly one email, to them, chain-wide body, recap PDF
+      attached, nothing else leaves the worker, logged as `daily-summary-test`; a second send gets a new key;
+      admin, manager, executive, secret-only → 403 and no email; no session → 401; GET sends nothing; bad
+      dates 400; no PDF → sent with `attached: null`; an explicit date uses that day's PDF
+- [x] worker.js: `POST ?action=send-test-summary[&date=]` (ACTION_BUSINESS `bl`); `isYmdDate` shared with the
+      PDF upload's check. Mutants: admin allowed, the real send's key, the whole list sent; all caught
+- [ ] `npm test`; PR; Brian deploys; Brian runs it from the browser console signed in as superuser
+
 # Executive Summary: attach the BL-Live-Recap PDF (2026-10-19)
 
 **Ask (Brian):** "add the BL-Live-Recap attachment that's in the Bargain Lane Live recap email to our executive
