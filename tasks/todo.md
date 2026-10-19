@@ -47,9 +47,20 @@ PR B — post a video to Facebook through Buffer (branch `claude/video-posts`):
 - [x] Tests: test-video-posts 66 (caught draft-schedule not loading the store — every video schedule would have
       been refused), test-video-upload 67 (ftyp), browser-content-video 35/35 both themes incl. a REAL frame grab
       from a recorded WebM; `npm test` 10765 / 122
-- [ ] Fresh-eyes review
-- [ ] Push + PR → migration-081 → worker → merge → one test video post from Brian (settles what Facebook does
-      with a sideways walk and an upright clip sent by URL)
+- [x] Fresh-eyes review of b382443. Fixed, each failing on b382443 (10 assertions):
+      🛑 (1) the duplicate guard matched a video only by OUR URL, but Buffer transcodes and may re-host it: a lost
+      answer + retry could post the video twice, unattended. Now a video post also matches as the one live video on
+      the channel with this exact caption (video posts now REQUIRE a caption), within 10 min of the attempt, not
+      claimed by another draft (`assets { type }` checked live, read-only); (2) unparseable Range (several ranges,
+      end<start, "Bytes=") got 416: now ignored → 200, per RFC 9110; (3) editing a draft whose video isn't among the
+      50 listed hid the pickers around nothing: the video is shown, selected; (4) a video draft could be scheduled
+      with no BUFFER_API_KEY and refused at 9 pm: refused at schedule; (5) the bin auto-draft could refill a video
+      post: `AND video_id IS NULL`; CORS Allow-Headers gains Range.
+      Deploy note (review): worker before migration-081 breaks EVERY draft save and schedule, not just the board.
+      `npm test` 10778 / 122; browser checks 41 + 46 + 88
+- [ ] Push + PR → migration-081 → confirm column read-only → worker → merge → one test video post from Brian
+      (settles what Facebook does with a sideways walk and an upright clip sent by URL, and whether Buffer keeps
+      our video URL)
 
 # Hub → Buffer: Content Studio publishes through Buffer, Facebook first (2026-10-19)
 

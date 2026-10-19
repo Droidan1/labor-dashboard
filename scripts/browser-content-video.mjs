@@ -51,6 +51,8 @@ const VIDEOS = [
 ];
 const DRAFTS = [
   { id: 5, store: 'BL2', thumbnail_id: null, photo_ids: [], video_id: 12, video_type: 'clip', video_duration_ms: 45000, caption: 'New today', caption_source: 'manual', status: 'draft', created_at: NOW, updated_at: NOW },
+  // Its video is older than the 50 the picker lists.
+  { id: 6, store: 'BL2', thumbnail_id: null, photo_ids: [], video_id: 3, video_type: 'store_walk', video_duration_ms: 200000, caption: 'Old walk', caption_source: 'manual', status: 'draft', created_at: NOW, updated_at: NOW },
 ];
 const PHOTOS = Array.from({ length: 3 }, (_, i) => ({ id: 101 + i, store: 'BL2', photo_type: 'bins', note: null, uploader: 'm@x.com', status: 'new', created_at: NOW }));
 
@@ -197,6 +199,13 @@ for (const dark of [true, false]) {
     await page.waitForTimeout(300);
     const card = await text(page, '#ct-drafts');
     check(/South Bend · Clip 0:45 · Reel/.test(card), `[${t}] the board's card says Clip 0:45 · Reel (${card.slice(0, 100)})`);
+    // Editing a draft whose video the picker doesn't list: shown, selected, removable.
+    await page.evaluate(() => window.ctEditDraft(6));
+    await page.waitForTimeout(500);
+    check(await page.evaluate(() => !!document.querySelector('#ct-video-pick [data-vid="3"] .border-accent-green')), `[${t}] an unlisted video on an edited draft is shown, selected`);
+    check(/Store walk · 3:20 · posts as a Facebook video/.test(await text(page, '#ct-preview-foot')), `[${t}] and previewed`);
+    await page.evaluate(() => window.ctPickVideo(3));
+    check(!(await hidden(page, '#ct-cover-section')), `[${t}] and it can be unselected (the photo pickers come back)`);
     check(errs.length === 0, `[${t}] no page errors (${errs.join(' | ').slice(0, 200)})`);
   });
 }

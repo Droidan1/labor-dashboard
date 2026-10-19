@@ -20642,7 +20642,7 @@
       wrap.innerHTML = ctVideos.map(v => {
         const on = ctSelVideo === v.id;
         const pic = v.has_poster
-          ? `<img src="${ctVideoPosterUrl(v)}" alt="" loading="lazy" class="absolute inset-0 w-full h-full object-cover">`
+          ? `<img src="${ctVideoPosterUrl(v)}" alt="" loading="lazy" onerror="this.remove()" class="absolute inset-0 w-full h-full object-cover">`
           : `<div class="absolute inset-0 grid place-items-center bg-opl-panelHi dark:bg-op-panelHi text-opl-inkDim dark:text-op-inkDim"><svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="15" height="14" rx="2"/><path d="m17 10 5-3v10l-5-3"/></svg></div>`;
         return `<button type="button" data-vid="${v.id}" onclick="ctPickVideo(${v.id})" class="ct-vtile flex flex-col gap-1 w-[96px] text-left focus:outline-none">
           <span class="relative w-[96px] h-[72px] rounded-xl overflow-hidden border-2 ${on ? 'border-accent-green' : 'border-transparent opacity-80 hover:opacity-100'}">${pic}
@@ -21517,6 +21517,11 @@
     ctSelThumb = d.thumbnail_id || null;
     ctSelPhotos = new Set((d.photo_ids || []).map(Number));
     ctSelVideo = d.video_id || null;
+    // Its video may be older than the 50 the picker lists: show it anyway, selected, so
+    // it can be seen and unselected rather than leaving the pickers hidden around nothing.
+    if (ctSelVideo != null && !ctVideos.some(v => v.id === ctSelVideo)) {
+      ctVideos.push({ id: ctSelVideo, video_type: d.video_type || 'store_walk', duration_ms: d.video_duration_ms || 0, created_at: d.created_at, note: null, has_poster: true });
+    }
     el('ct-caption').value = d.caption || '';
     if (el('ct-topic')) el('ct-topic').value = d.topic || '';
     ctPostType = (CT_POST_TYPES.some(t => t.key === d.post_type) ? d.post_type : 'other');

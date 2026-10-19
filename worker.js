@@ -5055,7 +5055,7 @@ function resolveCors(request, env) {
     || (!isProd && LOCALHOST_RE.test(origin));
   const headers = {
     "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, X-Snapshot-Secret",
+    "Access-Control-Allow-Headers": "Content-Type, X-Snapshot-Secret, Range",
     "Vary": "Origin",
   };
   if (allowed) {
@@ -7750,14 +7750,17 @@ async function servePublicPhoto(request, env, url) {
 // "bytes=a-b" against an object of `size` bytes → { offset, length }, null for no
 // Range (serve it whole), or "invalid" (416). One range only: browsers and fetchers
 // asking for video send one.
+// A Range it can't read (several ranges, end before start, junk) is IGNORED and the
+// whole file served, as RFC 9110 says; 416 only for a range that starts past the end.
 function byteRangeOf(header, size) {
   if (!header) return null;
-  const m = /^bytes=(\d*)-(\d*)$/.exec(String(header).trim());
-  if (!m || (m[1] === "" && m[2] === "")) return "invalid";
+  const m = /^bytes=(\d*)-(\d*)$/i.exec(String(header).trim());
+  if (!m || (m[1] === "" && m[2] === "")) return null;
   let start, end;
   if (m[1] === "") { const n = Number(m[2]); if (!(n > 0)) return "invalid"; start = Math.max(0, size - n); end = size - 1; }
   else { start = Number(m[1]); end = m[2] === "" ? size - 1 : Math.min(Number(m[2]), size - 1); }
-  if (!(start <= end) || start >= size) return "invalid";
+  if (start >= size) return "invalid";
+  if (!(start <= end)) return null;
   return { offset: start, length: end - start + 1 };
 }
 
@@ -8371,7 +8374,7 @@ async function ensureAutoDraftForPhotos(env, store, now) {
                                    WHERE store = ? AND photo_type = 'bins'
                                      AND created_at >= ? AND created_at < ?), '[]'),
             updated_at = ?
-      WHERE store = ? AND origin = 'photos' AND auto_week = ? AND status = 'draft' AND photos_curated = 0`
+      WHERE store = ? AND origin = 'photos' AND auto_week = ? AND status = 'draft' AND photos_curated = 0 AND video_id IS NULL`
   ).bind(store, etDayStartIso(week), etDayStartIso(weekEnd), nowIso, store, week).run();
 
   return { store, week, cover_id: coverId, created: createdNow };
@@ -15960,6 +15963,8 @@ async function bufferDraftCheck(env, draft) {
     if (bufferImageCount(draft)) return { error: "A video post carries no cover or photos. Remove them, or the video." };
     const text = String(draft.caption || "");
     if (text.length > BUFFER_FB_TEXT_MAX) return { error: `Caption is ${text.length} characters; Facebook takes ${BUFFER_FB_TEXT_MAX}` };
+    // Required: if Buffer re-hosts the video, the caption is what a retry knows it by.
+    if (!text.trim()) return { error: "Add a caption to a video post before posting it" };
     const v = await env.DB.prepare("SELECT id, store, video_type, r2_key, content_type, bytes, duration_ms, width, height, status FROM marketing_videos WHERE id = ?").bind(draft.video_id).first();
     if (!v || v.status !== "new") return { error: `Video missing: #${draft.video_id}` };
     if (String(v.store) !== String(draft.store || "").toUpperCase()) return { error: "That video is from another store" };
@@ -16017,7 +16022,13 @@ const BUFFER_SETTLE_MS = 5 * 60 * 1000;                 // how long a fresh post
 // 10 minutes, no match for an attempt too fresh to be listed yet) is a refusal: try again
 // later.
 // Returns { ok, post|null } or an error.
-async function bufferFindEarlierPost(env, priors, sentNow) {
+//
+// A VIDEO is matched on more than its URL: Buffer converts video and may re-host it, so
+// its `source` may not be ours any more (unverified; review 2026-10-19). A video post
+// also matches as the one live video on that channel, with this exact caption (a video
+// post must have one), made within 10 minutes of the attempt, that no other draft has
+// already claimed.
+async function bufferFindEarlierPost(env, priors, sentNow, draftId) {
   for (const p of priors.filter(x => x.buffer_post_id)) {
     const r = await bufferGql(env, "query PostStatus($id: PostId!) { post(input: { id: $id }) { id status } }", { id: String(p.buffer_post_id) });
     if (r.ok && r.data.post && BUFFER_LIVE.includes(r.data.post.status)) return { ok: true, post: r.data.post };
@@ -16029,13 +16040,25 @@ async function bufferFindEarlierPost(env, priors, sentNow) {
     if (!sent || !sent.ch) sent = sentNow;
     const at = new Date(x.created_at).getTime();
     const r = await bufferGql(env,
-      "query Recent($org: OrganizationId!, $ch: [ChannelId!], $since: DateTime!) { posts(first: 100, input: { organizationId: $org, filter: { channelIds: $ch, status: [scheduled, sending, sent], createdAt: { start: $since } }, sort: [{ field: createdAt, direction: asc }] }) { pageInfo { hasNextPage } edges { node { id status text createdAt assets { source } } } } }",
+      "query Recent($org: OrganizationId!, $ch: [ChannelId!], $since: DateTime!) { posts(first: 100, input: { organizationId: $org, filter: { channelIds: $ch, status: [scheduled, sending, sent], createdAt: { start: $since } }, sort: [{ field: createdAt, direction: asc }] }) { pageInfo { hasNextPage } edges { node { id status text createdAt assets { type source } } } } }",
       { org: BUFFER_ORG_ID, ch: [sent.ch], since: new Date(at - 120000).toISOString() });
     if (!r.ok) return r;
     const posts = r.data.posts || {};
     const nodes = (posts.edges || []).map(e => e && e.node).filter(Boolean);
     const want = key(sent);
-    const hit = nodes.find(p => BUFFER_LIVE.includes(p.status) && key({ ch: sent.ch, assets: (p.assets || []).map(a => a && a.source), text: p.text }) === want);
+    let hit = nodes.find(p => BUFFER_LIVE.includes(p.status) && key({ ch: sent.ch, assets: (p.assets || []).map(a => a && a.source), text: p.text }) === want);
+    const caption = String(sent.text || "").trim();
+    if (!hit && sent.video && caption) {
+      for (const p of nodes) {
+        const as = p.assets || [];
+        if (!BUFFER_LIVE.includes(p.status) || as.length !== 1 || !as[0] || as[0].type !== "video") continue;
+        if (String(p.text || "").trim() !== caption) continue;
+        if (!(new Date(p.createdAt).getTime() <= at + 10 * 60 * 1000)) continue;
+        const claimed = await env.DB.prepare("SELECT 1 FROM marketing_publish_log WHERE buffer_post_id = ? AND draft_id <> ? LIMIT 1").bind(String(p.id), draftId).first();
+        if (claimed) continue;
+        hit = p; break;
+      }
+    }
     if (hit) return { ok: true, post: hit };
     // Not listed yet is not the same as never made, for an attempt only seconds old.
     if (Date.now() - at < BUFFER_SETTLE_MS) {
@@ -16065,7 +16088,7 @@ async function publishDraftViaBuffer(env, { draftId, published }) {
   const assets = chk.video ? [{ video: { url: bufferVideoUrl(env, chk.video) } }]
     : chk.images.map(({ kind, row }) => ({ image: { url: bufferImageUrl(env, kind, row) } }));
   const fbType = chk.video && chk.video.video_type === "clip" ? "reel" : "post";
-  const sentNow = { ch: channelId, assets: assets.map(a => (a.image || a.video).url), text: chk.text };
+  const sentNow = { ch: channelId, assets: assets.map(a => (a.image || a.video).url), text: chk.text, video: !!chk.video };
 
   // 1. An earlier attempt with an unknown outcome may already have made this post.
   const priors = (await env.DB.prepare(
@@ -16073,7 +16096,7 @@ async function publishDraftViaBuffer(env, { draftId, published }) {
   ).bind(draftId).all()).results || [];
   let post = null;
   if (priors.length) {
-    const found = await bufferFindEarlierPost(env, priors, sentNow);
+    const found = await bufferFindEarlierPost(env, priors, sentNow, draftId);
     // Cannot rule out a duplicate: try again later. Nothing was attempted, so the
     // scheduler does not count it against the post's tries.
     if (!found.ok) return { ...found, noAttempt: true };
@@ -19087,6 +19110,7 @@ export default {
         let pids = []; try { pids = JSON.parse(draft.photo_ids || "[]"); } catch (_) {}
         if (!draft.thumbnail_id && !pids.length && !draft.video_id) return new Response(JSON.stringify({ error: "Add a cover or a photo before scheduling" }), { status: 400, headers: corsJson });
         // Refuse now, not at the scheduled time when nobody is watching.
+        if (draft.video_id && !env.BUFFER_API_KEY) return new Response(JSON.stringify({ error: "Video posts go out through Buffer, and BUFFER_API_KEY is not set" }), { status: 400, headers: corsJson });
         if (env.BUFFER_API_KEY) {
           const chk = await bufferDraftCheck(env, draft);
           if (chk.error) return new Response(JSON.stringify({ error: chk.error }), { status: 400, headers: corsJson });

@@ -443,6 +443,16 @@ console.log('bin-photo auto-draft (upload-triggered)');
   eq(drafts(db)[0].caption, 'Typo fixed', 'without touching the caption');
 }
 
+// 23 — a draft turned into a video post is never refilled with bin photos, even if
+// its photo list was already empty (photos_curated never flipped).
+{
+  const { env, db } = makeEnv();
+  await upload(env, 'BL1', 'bins');
+  db.prepare("UPDATE marketing_drafts SET photo_ids='[]', video_id=7, photos_curated=0").run();
+  await upload(env, 'BL1', 'bins');
+  eq(drafts(db)[0].photo_ids, '[]', '🛑 a video post gets no bin photos added behind its back');
+}
+
 // Tally in the shape scripts/test.sh counts: "<n> passed, <m> failed".
 console.log(`\n${assertions - failures} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

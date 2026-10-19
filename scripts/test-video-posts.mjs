@@ -24,14 +24,16 @@ const worker = await loadWorker(repo);
 const ctx = { waitUntil: () => {}, passThroughOnException() {} };
 
 // Outbound: a fake Buffer (createPost stores the post) and a fake Anthropic (records the ask).
-let calls = [], buffer = new Map(), seq = 0, asked = [];
+let calls = [], buffer = new Map(), seq = 0, asked = [], rehost = false;
 globalThis.fetch = async (url, init = {}) => {
   const u = String(url);
   if (u === 'https://api.buffer.com') {
     const body = JSON.parse(init.body); calls.push(body);
     if (/createPost/.test(body.query)) {
       const id = 'v' + String(++seq).padStart(23, '0'), inp = body.variables.input;
-      buffer.set(id, { id, status: 'sending', text: inp.text, channelId: inp.channelId, assets: inp.assets.map(a => ({ source: (a.image || a.video).url })), createdAt: new Date().toISOString() });
+      // rehost: Buffer keeps the video under ITS OWN URL, as a transcoder may.
+      buffer.set(id, { id, status: 'sending', text: inp.text, channelId: inp.channelId, createdAt: new Date().toISOString(),
+        assets: inp.assets.map(a => a.video ? { type: 'video', source: rehost ? `https://buffer-media.example/${id}.mp4` : a.video.url } : { type: 'image', source: a.image.url }) });
       return new Response(JSON.stringify({ data: { createPost: { __typename: 'PostActionSuccess', post: { id, status: 'sending' } } } }));
     }
     if (/posts\(/.test(body.query)) return new Response(JSON.stringify({ data: { posts: { pageInfo: { hasNextPage: false }, edges: [...buffer.values()].map(node => ({ node })) } } }));
@@ -48,7 +50,7 @@ const uuid = n => `${String(n).repeat(8)}-${String(n).repeat(4)}-4${String(n).re
 const BYTES = new Uint8Array(Array.from({ length: 100 }, (_, i) => i));   // 0..99, so ranges are checkable
 
 async function setup({ key = 'buffer-test-key' } = {}) {
-  calls = []; buffer = new Map(); asked = [];
+  calls = []; buffer = new Map(); asked = []; rehost = false;
   const { db, env } = makeEnv(repo);
   for (const m of ['020', '021', '025', '080']) db.exec(fs.readFileSync(path.join(repo, `migration-${m}.sql`), 'utf8'));
   applyMigrationAlters(db, repo);
@@ -106,6 +108,9 @@ console.log('video posts');
   const over = await pub(s.env, v.path, { Range: 'bytes=90-500' });
   eq(over.headers.get('content-range'), 'bytes 90-99/100', 'a range past the end is clipped');
   eq((await pub(s.env, v.path, { Range: 'bytes=200-300' })).status, 416, 'a range wholly past the end is 416');
+  eq((await pub(s.env, v.path, { Range: 'bytes=0-1,5-6' })).status, 200, 'several ranges: ignored, the whole file (RFC 9110), not a refusal');
+  eq((await pub(s.env, v.path, { Range: 'bytes=5-2' })).status, 200, 'an end before its start: ignored, the whole file');
+  eq((await pub(s.env, v.path, { Range: 'Bytes=0-0' })).headers.get('content-range'), 'bytes 0-0/100', "the unit is case-insensitive, and bytes=0-0 is one byte");
   const head = await pub(s.env, v.path, {}, 'HEAD');
   ok(head.status === 200 && head.headers.get('content-length') === '100' && (await head.arrayBuffer()).byteLength === 0, 'HEAD answers with the length and no body');
 
@@ -135,6 +140,8 @@ console.log('video posts');
   eq([cors.headers.get('access-control-allow-origin'), cors.headers.get('access-control-allow-credentials')], ['https://www.retjghub.com', 'true'],
      '🔑 CORS with credentials, so Content Studio can draw a frame of it onto a canvas');
   eq((await call(s.env, `/?action=video&id=${v.id}&size=thumb`, { user: 'u-admin' })).status, 404, 'no poster yet');
+  const pre = await worker.fetch(new Request(`https://api.retjghub.com/?action=video&id=${v.id}`, { method: 'OPTIONS', headers: { Origin: 'https://www.retjghub.com', 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'range' } }), s.env, ctx);
+  ok(/\bRange\b/i.test(pre.headers.get('access-control-allow-headers') || ''), 'the preflight allows a Range header (Safari, fetch())');
 
   const fd = (type = 'image/jpeg', n = 6) => { const f = new FormData(); f.append('id', String(v.id)); f.append('poster', new Blob([new Uint8Array(n)], { type }), 'poster.jpg'); return f; };
   const post = (user, body) => worker.fetch(new Request('https://api.retjghub.com/?action=video-poster', { method: 'POST', headers: { Cookie: `session=sess-${user}` }, body }), s.env, ctx);
@@ -210,6 +217,19 @@ console.log('video posts');
   const j = await json(await call(s.env, '/?action=publish-draft', { user: 'u-admin', method: 'POST', body: { draft_id: id, published: true } }));
   ok(/through Buffer/.test(j.error || ''), 'without BUFFER_API_KEY a video post is refused with the reason');
   eq(s.row(id).status, 'draft', 'and stays a draft');
+  const sch = await call(s.env, '/?action=draft-schedule', { user: 'u-admin', method: 'POST', body: { id, et_wall_clock: '2099-01-01T09:00' } });
+  ok(sch.status === 400 && /through Buffer/.test((await json(sch)).error || ''), '🛑 and it cannot be scheduled either (refused now, not at 9 pm)');
+}
+
+// ── 5b. A video post needs a caption (a retry recognises a re-hosted video by it) ──
+{
+  const s = await setup();
+  const v = await s.video();
+  const id = s.draft({ video_id: v.id, caption: '   ' });
+  const r = await call(s.env, '/?action=publish-draft', { user: 'u-admin', method: 'POST', body: { draft_id: id, published: true } });
+  ok(r.status === 400 && /caption/.test((await json(r)).error || ''), 'a video post with no caption is refused at publish');
+  eq((await call(s.env, '/?action=draft-schedule', { user: 'u-admin', method: 'POST', body: { id, et_wall_clock: '2099-01-01T09:00' } })).status, 400, 'and at schedule');
+  eq(buffer.size, 0, 'nothing reached Buffer');
 }
 
 // ── 6. 🛑 A lost answer on a video post: the retry adopts it, never posts twice ──
@@ -227,6 +247,43 @@ console.log('video posts');
   globalThis.fetch = realFetch;
   eq((await call(s.env, '/?action=publish-draft', { user: 'u-admin', method: 'POST', body: { draft_id: id, published: true } })).status, 200, 'the retry succeeds');
   eq(buffer.size, 1, '🛑 by adopting the video post Buffer already has (matched on its video URL)');
+}
+
+// ── 6b. 🛑 …even when Buffer re-hosts the video under its own URL ──────────
+{
+  const s = await setup();
+  rehost = true;
+  const v = await s.video();
+  const id = s.draft({ video_id: v.id, caption: 'Walk the South Bend floor' });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => {
+    const res = await realFetch(u, init);
+    if (String(u) === 'https://api.buffer.com' && /createPost/.test(JSON.parse(init.body).query)) throw new Error('socket hang up');
+    return res;
+  };
+  await call(s.env, '/?action=publish-draft', { user: 'u-admin', method: 'POST', body: { draft_id: id, published: true } });
+  globalThis.fetch = realFetch;
+  ok([...buffer.values()][0].assets[0].source.startsWith('https://buffer-media.example/'), '(Buffer holds the video under its own URL)');
+  s.db.prepare("UPDATE marketing_publish_log SET created_at=? WHERE draft_id=? AND status='handing'").run(new Date(Date.now() - 6 * 60e3).toISOString(), id);
+  eq((await call(s.env, '/?action=publish-draft', { user: 'u-admin', method: 'POST', body: { draft_id: id, published: true } })).status, 200, 'the retry, 6 minutes on, succeeds');
+  eq(buffer.size, 1, '🛑 by adopting the one live video with this caption — not by posting it again');
+
+  // The same caption on a video another draft already owns is not this one.
+  const s2 = await setup();
+  rehost = true;
+  const v2 = await s2.video(), v3 = await s2.video();
+  const theirs = s2.draft({ video_id: v2.id, caption: 'Same words' }), mine = s2.draft({ video_id: v3.id, caption: 'Same words' });
+  await call(s2.env, '/?action=publish-draft', { user: 'u-admin', method: 'POST', body: { draft_id: theirs, published: true } });
+  globalThis.fetch = async (u, init) => {
+    if (String(u) === 'https://api.buffer.com' && /createPost/.test(JSON.parse(init.body).query)) throw new Error('timeout');   // never arrived
+    return realFetch(u, init);
+  };
+  await call(s2.env, '/?action=publish-draft', { user: 'u-admin', method: 'POST', body: { draft_id: mine, published: true } });
+  globalThis.fetch = realFetch;
+  s2.db.prepare("UPDATE marketing_publish_log SET created_at=? WHERE draft_id=? AND status='handing'").run(new Date(Date.now() - 6 * 60e3).toISOString(), mine);
+  await call(s2.env, '/?action=publish-draft', { user: 'u-admin', method: 'POST', body: { draft_id: mine, published: true } });
+  eq(buffer.size, 2, "🛑 a video another draft already claimed is not adopted: this draft's own video is posted");
+  rehost = false;
 }
 
 // ── 7. The caption writer is told it is a video, and sees its frame ────────
