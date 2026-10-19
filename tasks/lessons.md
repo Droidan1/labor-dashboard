@@ -317,6 +317,13 @@ own attention around the merge, which is the one moment I do not control.
        `main` wrongly, and the stranded commit was never deployed.
      - **The guard must be a test that FAILS:** use the `merge-base --is-ancestor` form above, or
        `[ "$(gh pr view N --json state -q .state)" = OPEN ] && git push`. Never a bare read.
+   - **Fourth time (#349, 2026-10-19): no guard at all, because it was "only todo.md."** Brian
+     merged #349 at 12:00:45Z, two minutes before he deployed from the branch. Twenty minutes
+     later I pushed ccbd32a (the verification note) to the merged branch with a plain `git push`.
+     Recovered by cherry-picking it straight onto `main` (22a7bda, todo only). The code itself
+     was safe: 38eed1b was on `main` and identical to the deployed worker.
+     - **A housekeeping commit is still a push to a PR branch.** Every push after the turn that
+       opened the PR uses the guard. "It's only the log" is when the guard gets skipped.
 7. **Push a change only once the check that could change its diff has finished (2026-09-28).**
    - **What happened:** I pushed c43816a (midnight on the clock-change Sundays) to #297 at 13:27
      while an agent was still mapping every caller. The description said: "being mapped now…
