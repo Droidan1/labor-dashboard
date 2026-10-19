@@ -24,7 +24,7 @@ const ok = (c, m) => { if (c) { pass++; console.log('  PASS  ' + m); } else { fa
 const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m} (got ${JSON.stringify(a)}, want ${JSON.stringify(b)})`);
 
 // Pinned so "yesterday in ET" is the day the seeded rows cover (see test-scoped-daily-summary.mjs).
-const PINNED = '2026-08-13T12:00:00Z';
+const PINNED = '2026-08-13T09:00:00Z';   // 05:00 ET, the send time
 const COVERS = '2026-08-12';
 const RealDate = Date;
 globalThis.Date = class extends RealDate {
@@ -137,7 +137,7 @@ async function run({ objects = {}, media = true, mediaThrows = false } = {}) {
   const waits = [];
   const c = { waitUntil: p => waits.push(Promise.resolve(p).catch(e => console.error('waitUntil rejected:', e.message))), passThroughOnException: () => {} };
   const realLog = console.log; console.log = () => {};
-  await worker.scheduled({ cron: '0 12 * * *', scheduledTime: Date.now() }, env, c);
+  await worker.scheduled({ cron: '0 * * * *', scheduledTime: Date.now() }, env, c);
   await Promise.all(waits);
   console.log = realLog;
   const byTo = {};

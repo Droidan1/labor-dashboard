@@ -158,8 +158,9 @@ for (const [at, want, why] of [
       await Promise.all(waits);
       return bound;
     };
-    for (const at of ['2026-03-09T12:00:00.000Z', '2026-11-02T12:00:00.000Z', '2026-03-09T04:30:00.000Z']) {
-      const bound = await cron(at, '0 12 * * *');
+    // The daily summary rides the hourly cron at 5 AM Eastern: 09:00 UTC in EDT, 10:00 UTC in EST.
+    for (const at of ['2026-03-09T09:00:00.000Z', '2026-11-02T10:00:00.000Z']) {
+      const bound = await cron(at, '0 * * * *');
       eq(firstBind(bound, 'FROM daily_sales WHERE date = ? AND (total IS NOT NULL'), calendar(today(at), -1),
          `the daily summary run at ${at} reports on yesterday`);
     }

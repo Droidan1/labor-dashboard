@@ -11,7 +11,7 @@
  * pushes an alert the morning after a day goes missing.
  *
  * The recap's PDF (BL-Live-Recap-YYYY-MM-DD.pdf) is uploaded after the day's
- * sales, to /?action=live-recap-pdf, and the 8 AM Executive Summary attaches it.
+ * sales, to /?action=live-recap-pdf, and the 5 AM Executive Summary attaches it.
  * A failed upload is retried on the next run without re-posting the sales.
  *
  * A recap is posted only if its show lines add up to the total and show count
@@ -55,7 +55,7 @@ const CONFIG = {
 
 /** Install the trigger (run once; re-running replaces it). runDaily every 10
  *  minutes: the recap's arrival time varies (7:03 AM on 2026-10-13) and the
- *  Executive Summary sends at 8 AM, so it is picked up within 10 minutes of
+ *  Executive Summary sends at 5 AM, so it is picked up within 10 minutes of
  *  landing. Fixed-hour triggers were tried first and never fired: they run in
  *  the project's time zone and anywhere inside their hour. A run with nothing
  *  new posts nothing (see postedRecaps), so the cadence costs one Gmail search. */
