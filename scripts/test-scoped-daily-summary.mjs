@@ -4,7 +4,7 @@
 // stayed there for a week while the Settings toggle still said "on".
 //
 // This pins the replacement. It drives the REAL cron entry point —
-// worker.scheduled({cron:'0 12 * * *'}) — and captures the actual Resend
+// worker.scheduled({cron:'0 * * * *'}) at 5 AM ET — and captures the actual Resend
 // payloads, so it sees the wiring and the rendered body, not just a helper's
 // return value. Regex-extracting the dispatcher would prove nothing about
 // whether the cron calls it.
@@ -24,7 +24,7 @@ const src = fs.readFileSync(path.join(REPO, 'worker.js'), 'utf8');
 // Pin the clock so "yesterday in ET" — the date the handler derives and queries
 // — is deterministic. Without this the seeded daily_sales rows would miss the
 // queried date and every assertion would pass vacuously against zero emails.
-const PINNED = '2026-08-13T12:00:00Z';       // 08:00 ET, the real send time
+const PINNED = '2026-08-13T09:00:00Z';       // 05:00 ET, the real send time
 const COVERS = '2026-08-12';                 // the date the handler will report on
 const RealDate = Date;
 globalThis.Date = class extends RealDate {
@@ -113,7 +113,7 @@ async function run(people, opts = {}) {
   const realLog = console.log;
   const logs = [];
   console.log = (...a) => logs.push(a.join(' '));
-  await worker.scheduled({ cron: '0 12 * * *', scheduledTime: Date.now() }, env, ctx);
+  await worker.scheduled({ cron: '0 * * * *', scheduledTime: Date.now() }, env, ctx);
   await Promise.all(waits);
   console.log = realLog;
   const byTo = {};
@@ -315,7 +315,7 @@ console.log('\na cron that THROWS alerts instead of vanishing:');
   console.log = (...a) => errs.push(a.join(' '));
   let threw = false;
   try {
-    await worker.scheduled({ cron: '0 12 * * *', scheduledTime: Date.now() }, env,
+    await worker.scheduled({ cron: '0 * * * *', scheduledTime: Date.now() }, env,
       { waitUntil: p => waits.push(p), passThroughOnException: () => {} });
     // 🔑 waitUntil's promise must RESOLVE. A rejecting promise here is the bug:
     // the runtime swallows it and the operator learns nothing.

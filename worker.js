@@ -6944,11 +6944,14 @@ async function storeScopedRecipients(env) {
   return out;
 }
 
+// The Executive Summary's send hour, Eastern (see the hourly cron in scheduled()).
+const DAILY_SUMMARY_ET_HOUR = 5;
+
 // ── The BL-Live-Recap PDF on the Executive Summary ─────────────────────────
 // The "Bargain Lane Live recap" email carries a PDF (BL-Live-Recap-<date>.pdf)
 // that only the Apps Script feeder sees. It uploads it to ?action=live-recap-pdf,
 // which keeps it privately in R2 under live-recap/ (no route serves that prefix),
-// and the 8 AM send attaches the one for the day the email covers.
+// and the 5 AM send attaches the one for the day the email covers.
 //
 // 🔑 The PDF lists Fort Wayne's and Battle Creek's shows side by side, so it goes
 // only to a copy entitled to BOTH stores: every chain-wide copy, and a scoped
@@ -23080,7 +23083,7 @@ export default {
     // `stores` renders the STORE-SCOPED body a manager would receive, using the
     // same labels dispatchScopedDailySummaries() picks. Without it there is no
     // way to check a scoped send against live data short of waiting for the next
-    // 8 AM cron — and "it will be right tomorrow" is not a verification.
+    // 5 AM send — and "it will be right tomorrow" is not a verification.
     // Unknown codes are dropped rather than queried, so this cannot be used to
     // probe for stores that do not exist.
     if (request.method === "GET" && url.searchParams.get("action") === "preview-daily-summary") {
@@ -30337,7 +30340,19 @@ export default {
     // Comment ingest rides this hourly slot rather than taking a cron of its own —
     // no new schedule means no day-of-week or DST arithmetic to get wrong. Separate
     // waitUntil so a failure in one cannot abort the other.
+    //
+    // The Executive Summary rides it too, at DAILY_SUMMARY_ET_HOUR (5 AM Eastern,
+    // Brian 2026-10-19). A UTC cron cannot say "5 AM Eastern": the old
+    // "0 12 * * *" was 8 AM in summer and 7 AM in winter. The Eastern hour of the
+    // scheduled instant is 5 exactly once on every day, both clock-change Sundays
+    // included (test-daily-summary-schedule.mjs).
     if (event.cron === "0 * * * *") {
+      // scheduledTime is always set by Cloudflare; a hand-run without it must not throw
+      // here, before the other hourly jobs below are even started.
+      const at = Number.isFinite(event.scheduledTime) ? event.scheduledTime : Date.now();
+      if (etHourSlot(at).slice(11) === String(DAILY_SUMMARY_ET_HOUR).padStart(2, "0")) {
+        ctx.waitUntil(superviseCronJob(env, "daily-summary", dispatchDailySummary(env, getETYesterday())));
+      }
       ctx.waitUntil(superviseCronJob(env, "interval-summary", dispatchIntervalSummary(env)));
       ctx.waitUntil(ingestFacebookComments(env, {}).then(r => console.log("fb-comment-ingest:", JSON.stringify(r))).catch(e => console.error("fb-comment-ingest threw:", (e && e.stack) || e)));
       ctx.waitUntil(syncBufferPosts(env, new Date(), "older").then(r => console.log("buffer-sync older:", JSON.stringify(r))).catch(e => console.error("buffer-sync threw:", (e && e.stack) || e)));
@@ -30361,14 +30376,6 @@ export default {
       return;
     }
 
-    // "0 12 * * *" — 8 AM ET daily summary (12:00 UTC = EDT; 7 AM during EST).
-    // Runs after the 7 AM auction feeder so the email includes yesterday's auction.
-    if (event.cron === "0 12 * * *") {
-      const date = getETYesterday();
-      ctx.waitUntil(superviseCronJob(env, "daily-summary", dispatchDailySummary(env, date)));
-      return;
-    }
-
     // "0 11 * * 1" — 7 AM ET Sunday weekly digest (11:00 UTC = EDT / 6 AM EST)
     // NOTE: Cloudflare cron day-of-week is 1-7 where 1=Sunday, 7=Saturday (NOT
     // POSIX 0=Sun — "0" is rejected as an invalid cron). Must match wrangler.toml.
@@ -30388,7 +30395,15 @@ export default {
       return;
     }
 
-    // "55 3 * * *" — nightly end-of-day snapshot rollup (fall-through below)
+    // "55 3 * * *" — nightly end-of-day snapshot rollup (fall-through below).
+    // 🛑 ONLY that cron. Anything else used to fall through to here as well, so a
+    // cron removed from this handler but left in a stale wrangler.toml (as
+    // "0 12 * * *" was, when the daily summary moved to the hourly slot) would
+    // have re-run the rollup at its old time. An unnamed cron now does nothing.
+    if (event.cron !== "55 3 * * *") {
+      console.log(JSON.stringify({ cron_unhandled: event.cron }));
+      return;
+    }
     const { dateStr: todayStr, startOfDay } = getETToday();
 
     const results = {};
