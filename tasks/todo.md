@@ -1,3 +1,32 @@
+# Executive Summary: attach the BL-Live-Recap PDF (2026-10-19)
+
+**Ask (Brian):** "add the BL-Live-Recap attachment that's in the Bargain Lane Live recap email to our executive
+summary as an attachment."
+**Found:** the recap reaches only the Apps Script feeder (Gmail, bhoward@bargainlane.com), which already reads
+the attachment NAME (`BL-Live-Recap-YYYY-MM-DD.pdf`) to check the date. The worker never sees the file. The
+PDF's date is the email's `through` day, and the email already warns when that day's recap has not arrived.
+**Decisions (defaults, not asked):** who gets it follows the email's access rule. Chain-wide copies always get it;
+a store-scoped copy gets it only if its stores include BOTH live-sales stores (BL1, BL14), because the PDF shows
+both. A late recap never holds the email: it goes at 8 AM without the PDF.
+
+- [x] Test first: cron attaches `live-recap/<through>.pdf` from R2 to chain-wide copies and to a BL1+BL14 scoped
+      copy, NOT to a BL1-only copy; no object → sent without attachments; upload endpoint refuses no secret, a
+      bad date, a non-PDF, an oversized body; stores the bytes under the private key (20 of 32 failed before)
+- [x] Feeder test first: PDF uploaded after the ingest POST; a failed upload is retried next run without
+      re-posting the day; preview uploads nothing; an uploaded PDF is not re-sent (6 failed before)
+- [x] worker.js: `POST ?action=live-recap-pdf&date=` (secret, raw PDF, R2 `live-recap/`), attach in both dispatchers
+- [x] whatnot-recap-ingest.gs: upload step with its own `uploadedPdfs` bookkeeping
+- [x] Mutants: 6 worker + 3 feeder, all caught. Fresh-eyes review: no blocker. Fixed its should-fix (a THROWN
+      fetch, not an HTTP error, aborted the loop and left later days' sales unposted) and 4 nits (400/413 not
+      retried, Content-Length precheck, PDF matched by date like the parser, mirror pin deduped). `npm test`
+      10,405 / 118
+- [ ] PR; Brian: deploy the worker (inert until a PDF is uploaded), then paste the new .gs into "Whatnot sales"
+
+## Review
+Left alone, noted in the PR: re-running the day's send by hand after a late PDF reuses each copy's Resend
+idempotency key with a different body, which Resend refuses (409). That was already true for any body change.
+A recap whose newest copy lacks the PDF sends the email without it and nothing says so.
+
 # get_item_sales: per-store totals; periods fit the MCP cap (2026-10-16)
 
 **Ask (Brian):** "yes, add the per-store totals", after my first Varsity table under-counted two weeks. One product
