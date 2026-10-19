@@ -15855,11 +15855,16 @@ const BUFFER_SETTLE_MS = 5 * 60 * 1000;                 // how long a fresh post
 // Buffer has no idempotency key, so this is the only thing between a lost answer and a
 // second post. Each 'handing' row records exactly what it sent (channel, image URLs,
 // text), because the draft may have been edited since; a match is a LIVE post on that
-// channel, made since, with those images in that order and that text. Our image URLs
-// carry the photo ids and Buffer keeps them on the post (checked on a sent post,
-// 2026-10-19), so another draft — or a staged Buffer draft, or a story — never matches.
-// Anything that stops it ruling a post out (a failed call, a listing with more pages,
-// an attempt too fresh to be listed yet) is a refusal: try again later.
+// channel with those images in that order and that text. Our image URLs carry the photo
+// ids and Buffer keeps them on the post (checked on a sent post, 2026-10-19), so another
+// draft — or a staged Buffer draft, or a story — never matches.
+// Each lost attempt is searched from 2 minutes before it, oldest first: if Buffer made
+// it, it is within the first few posts listed. A listing that runs past 10 minutes after
+// the attempt without a match proves it never arrived, so that attempt is RESOLVED and
+// the caller closes it — an open one would pin every later search to its date.
+// Anything that stops it ruling a post out (a failed call, a full page all inside those
+// 10 minutes, no match for an attempt too fresh to be listed yet) is a refusal: try again
+// later.
 // Returns { ok, post|null } or an error.
 async function bufferFindEarlierPost(env, priors, sentNow) {
   for (const p of priors.filter(x => x.buffer_post_id)) {
@@ -15867,27 +15872,28 @@ async function bufferFindEarlierPost(env, priors, sentNow) {
     if (r.ok && r.data.post && BUFFER_LIVE.includes(r.data.post.status)) return { ok: true, post: r.data.post };
     if (!r.ok && r.code !== "NOT_FOUND") return r;
   }
-  const lost = priors.filter(x => !x.buffer_post_id).map(x => {
-    let sent = null; try { sent = JSON.parse(x.response || "null"); } catch (_) {}
-    return { at: new Date(x.created_at).getTime(), sent: sent && sent.ch ? sent : sentNow };
-  });
-  if (!lost.length) return { ok: true, post: null };
   const key = s => `${s.ch}|${(s.assets || []).join("\n")}|${String(s.text || "").trim()}`;
-  const want = new Set(lost.map(l => key(l.sent)));
-  for (const ch of [...new Set(lost.map(l => l.sent.ch))]) {
-    const since = new Date(Math.min(...lost.filter(l => l.sent.ch === ch).map(l => l.at)) - 120000).toISOString();
+  for (const x of priors.filter(p => !p.buffer_post_id)) {
+    let sent = null; try { sent = JSON.parse(x.response || "null"); } catch (_) {}
+    if (!sent || !sent.ch) sent = sentNow;
+    const at = new Date(x.created_at).getTime();
     const r = await bufferGql(env,
-      "query Recent($org: OrganizationId!, $ch: [ChannelId!], $since: DateTime!) { posts(first: 100, input: { organizationId: $org, filter: { channelIds: $ch, status: [scheduled, sending, sent], createdAt: { start: $since } }, sort: [{ field: createdAt, direction: asc }] }) { pageInfo { hasNextPage } edges { node { id status text assets { source } } } } }",
-      { org: BUFFER_ORG_ID, ch: [ch], since });
+      "query Recent($org: OrganizationId!, $ch: [ChannelId!], $since: DateTime!) { posts(first: 100, input: { organizationId: $org, filter: { channelIds: $ch, status: [scheduled, sending, sent], createdAt: { start: $since } }, sort: [{ field: createdAt, direction: asc }] }) { pageInfo { hasNextPage } edges { node { id status text createdAt assets { source } } } } }",
+      { org: BUFFER_ORG_ID, ch: [sent.ch], since: new Date(at - 120000).toISOString() });
     if (!r.ok) return r;
     const posts = r.data.posts || {};
-    const hit = (posts.edges || []).map(e => e && e.node).find(p => p && BUFFER_LIVE.includes(p.status)
-      && want.has(key({ ch, assets: (p.assets || []).map(a => a && a.source), text: p.text })));
+    const nodes = (posts.edges || []).map(e => e && e.node).filter(Boolean);
+    const want = key(sent);
+    const hit = nodes.find(p => BUFFER_LIVE.includes(p.status) && key({ ch: sent.ch, assets: (p.assets || []).map(a => a && a.source), text: p.text }) === want);
     if (hit) return { ok: true, post: hit };
-    if (posts.pageInfo && posts.pageInfo.hasNextPage) return { ok: false, status: 503, error: "Couldn't rule out an earlier copy of this post in Buffer (too many posts to check). Try again later." };
-  }
-  if (Date.now() - Math.max(...lost.map(l => l.at)) < BUFFER_SETTLE_MS) {
-    return { ok: false, status: 503, error: "The last attempt may still be reaching Buffer. Try again in a few minutes." };
+    // Not listed yet is not the same as never made, for an attempt only seconds old.
+    if (Date.now() - at < BUFFER_SETTLE_MS) {
+      return { ok: false, status: 503, error: "The last attempt may still be reaching Buffer. Try again in a few minutes." };
+    }
+    const last = nodes.length ? new Date(nodes[nodes.length - 1].createdAt).getTime() : 0;
+    if (posts.pageInfo && posts.pageInfo.hasNextPage && !(last > at + 10 * 60 * 1000)) {
+      return { ok: false, status: 503, error: "Couldn't rule out an earlier copy of this post in Buffer. Try again later." };
+    }
   }
   return { ok: true, post: null };
 }
@@ -15914,9 +15920,18 @@ async function publishDraftViaBuffer(env, { draftId, published }) {
   let post = null;
   if (priors.length) {
     const found = await bufferFindEarlierPost(env, priors, sentNow);
-    if (!found.ok) return found;   // cannot rule out a duplicate: try again later
+    // Cannot rule out a duplicate: try again later. Nothing was attempted, so the
+    // scheduler does not count it against the post's tries.
+    if (!found.ok) return { ...found, noAttempt: true };
     post = found.post;
+    // None of them reached Buffer: close them now, or an open one would pin every
+    // later search to its date.
+    if (!post) for (const p of priors) await env.DB.prepare("UPDATE marketing_publish_log SET status='superseded' WHERE id=?").bind(p.id).run();
   }
+  // A post found in Buffer is live (only live posts match), whatever this attempt asked
+  // for: recording it as staged would let a later live publish make a second one.
+  const adopted = !!post;
+  const live = published || adopted;
 
   // 2. Record the hand-off, and exactly what it sends, BEFORE making it. If this write
   //    fails, nothing is sent: a hand-off with no record is the one a retry can't find.
@@ -15931,7 +15946,7 @@ async function publishDraftViaBuffer(env, { draftId, published }) {
   // 3. Hand it over (or adopt the one Buffer already has).
   if (!post) {
     const input = { channelId, text: chk.text, schedulingType: "automatic", mode: published ? "shareNow" : "addToQueue", metadata: { facebook: { type: "post" } }, assets };
-    if (!published) input.saveToDraft = true;   // staged: lands as a Buffer draft for marketing
+    if (!published) input.saveToDraft = true;   // staged: lands as a Buffer draft for marketing (never adopted: see `live`)
     const r = await bufferGql(env,
       "mutation CreatePost($input: CreatePostInput!) { createPost(input: $input) { __typename ... on PostActionSuccess { post { id status } } ... on MutationError { message } } }",
       { input });
@@ -15955,19 +15970,20 @@ async function publishDraftViaBuffer(env, { draftId, published }) {
   //    post, so a failed write must not report failure: retry once, then carry on.
   const done = { buffer_post_id: String(post.id), response: JSON.stringify(post) };
   let settled = false;
-  try { await settle(published ? "queued" : "staged", done); settled = true; }
-  catch (_) { try { await settle(published ? "queued" : "staged", done); settled = true; } catch (e) { console.error("buffer publish log failed:", (e && e.message) || e); } }
-  if (settled) {
+  try { await settle(live ? "queued" : "staged", done); settled = true; }
+  catch (_) { try { await settle(live ? "queued" : "staged", done); settled = true; } catch (e) { console.error("buffer publish log failed:", (e && e.message) || e); } }
+  if (settled && adopted) {
     for (const p of priors) await env.DB.prepare("UPDATE marketing_publish_log SET status='superseded' WHERE id=?").bind(p.id).run().catch(() => {});
   }
   const now = new Date().toISOString();
-  const next = published ? "published" : "approved";
-  try { await env.DB.prepare("UPDATE marketing_drafts SET status=?, updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=?").bind(next, now, published ? now : null, draftId).run(); }
-  catch (_) { try { await env.DB.prepare("UPDATE marketing_drafts SET status=?, updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=?").bind(next, now, published ? now : null, draftId).run(); } catch (_) {} }
+  const next = live ? "published" : "approved";
+  try { await env.DB.prepare("UPDATE marketing_drafts SET status=?, updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=?").bind(next, now, live ? now : null, draftId).run(); }
+  catch (_) { try { await env.DB.prepare("UPDATE marketing_drafts SET status=?, updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=?").bind(next, now, live ? now : null, draftId).run(); } catch (_) {} }
   return {
-    ok: true, published, page: { id: pageId, name: target ? target.page_name : null },
+    ok: true, published: live, page: { id: pageId, name: target ? target.page_name : null },
     postId: null, postUrl: null, photos: chk.images.length, bufferPostId: String(post.id),
-    note: published ? "Sent to Buffer. It posts to the store's Facebook Page within a minute."
+    note: adopted ? "Buffer already had this post from an earlier attempt, so no second copy was made."
+      : live ? "Sent to Buffer. It posts to the store's Facebook Page within a minute."
       : "Saved as a Buffer draft. Schedule it in Buffer to post it.",
   };
 }
@@ -16208,18 +16224,27 @@ async function processScheduledPosts(env, now) {
   // A STAGED copy only answers for a staged attempt: a post staged once and then
   // rescheduled live has not gone out live, and must not be marked as if it had.
   const alreadyPosted = async (draftId, live) =>
-    env.DB.prepare(`SELECT COALESCE(post_id, buffer_post_id) AS post_id FROM marketing_publish_log WHERE draft_id=? AND (post_id IS NOT NULL OR buffer_post_id IS NOT NULL) AND status IN (${live ? "'published','queued'" : "'published','staged','queued'"}) ORDER BY id DESC LIMIT 1`)
+    env.DB.prepare(`SELECT status, COALESCE(post_id, buffer_post_id) AS post_id FROM marketing_publish_log WHERE draft_id=? AND (post_id IS NOT NULL OR buffer_post_id IS NOT NULL) AND status IN (${live ? "'published','queued'" : "'published','staged','queued'"}) ORDER BY id DESC LIMIT 1`)
       .bind(draftId).first();   // no catch: a log it cannot read must stop a publish, never allow a second one
 
   // 1. Reaper: rescue rows a prior tick left stuck in 'publishing'.
   const staleIso = new Date(nowMs - CLAIM_STALE_MS).toISOString();
   const stale = await env.DB.prepare(
-    "SELECT id, publish_attempts, publish_live FROM marketing_drafts WHERE status='publishing' AND (claimed_at IS NULL OR claimed_at < ?) LIMIT 10"
+    "SELECT id, publish_attempts, publish_live, claimed_at FROM marketing_drafts WHERE status='publishing' AND (claimed_at IS NULL OR claimed_at < ?) LIMIT 10"
   ).bind(staleIso).all().catch(() => ({ results: [] }));
   for (const row of (stale.results || [])) {
+    // What did the interrupted attempt itself leave? Judged by the rows it wrote (since
+    // its claim), not by the schedule's live/staged setting: a manual Stage can be the
+    // attempt that was interrupted, and finishing it as live would post it publicly.
     let done;
-    try { done = await alreadyPosted(row.id, row.publish_live !== 0); } catch (e) { out.skipped++; continue; }   // leave it stuck, never re-post blind
-    if (done && done.post_id) {
+    try {
+      done = row.claimed_at
+        ? await env.DB.prepare("SELECT status FROM marketing_publish_log WHERE draft_id=? AND created_at >= ? AND (post_id IS NOT NULL OR buffer_post_id IS NOT NULL) AND status IN ('published','staged','queued') ORDER BY id DESC LIMIT 1").bind(row.id, row.claimed_at).first()
+        : await alreadyPosted(row.id, row.publish_live !== 0);
+    } catch (e) { out.skipped++; continue; }   // leave it stuck, never re-post blind
+    if (done && done.status === 'staged') {
+      await env.DB.prepare("UPDATE marketing_drafts SET status='approved', updated_at=? WHERE id=? AND status='publishing'").bind(nowIso, row.id).run().catch(() => {});
+    } else if (done) {
       await env.DB.prepare("UPDATE marketing_drafts SET status='published', updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=? AND status='publishing'").bind(nowIso, nowIso, row.id).run().catch(() => {});
     } else if ((row.publish_attempts || 0) >= MAX_ATTEMPTS) {
       await failSchedule(env, row.id, 'Gave up after repeated interruptions', nowIso, true);
@@ -16263,6 +16288,13 @@ async function processScheduledPosts(env, now) {
     try { r = await publishDraft(env, { draftId: row.id, published: row.publish_live !== 0 }); }
     catch (e) { r = { ok: false, error: String((e && e.message) || e) }; }
     if (r.ok) { out.published++; continue; }  // publishDraft advanced status to published/approved
+    // 7a. Refused before anything was sent (Buffer could not yet rule out an earlier copy):
+    //     not a try, so it does not count toward MAX_ATTEMPTS. MAX_LATE_MS still bounds it.
+    if (r.noAttempt) {
+      await env.DB.prepare("UPDATE marketing_drafts SET status='scheduled', claimed_at=NULL, publish_attempts=MAX(publish_attempts-1, 0), next_attempt_at=?, schedule_error=? WHERE id=?")
+        .bind(new Date(nowMs + 3 * 60 * 1000).toISOString(), String(r.error || 'waiting on Buffer').slice(0, 300), row.id).run().catch(() => {});
+      out.skipped++; continue;
+    }
     // 7. Failure: transient -> backoff & requeue; terminal / attempts exhausted -> schedule_error + notify.
     const attempts = (row.publish_attempts || 0) + 1;
     const errText = String(r.error || "") + " " + JSON.stringify(r.detail || "");

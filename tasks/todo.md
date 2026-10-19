@@ -59,7 +59,15 @@ Design:
       Accepted: a reaped-while-still-running publish (needs a >5 min hung fetch); a staged Buffer draft left in
       Buffer when the Hub draft is later published live (staging used once ever in prod).
       `npm test` 10604 assertions / 120 suites.
-- [ ] Push + PR (Brian's go-ahead)
+- [x] Push + PR: [#351](https://github.com/Droidan1/labor-dashboard/pull/351) (Brian: "push it and open the PR")
+- [x] Third review of `3cff0f6` reproduced 4 more, each now failing on 3cff0f6 (11 assertions):
+      (1) a never-made attempt stayed 'handing' through later refusals and pinned every look-up to its date,
+      so a busy channel refused forever: an attempt a look proves never-made is closed at once, and each one is
+      searched from its own time, oldest first, so its post (if any) is in the first page; (2) a Stage retry
+      that adopted a LIVE post recorded it as staged, so a later live publish made a second: an adopted post is
+      always live; (3) the reaper judged by the schedule's live flag, not the interrupted attempt: it now reads
+      only the rows that attempt wrote; (4) a "can't rule it out yet" refusal spent one of the 3 tries: it no
+      longer counts. `npm test` 10624 assertions / 120 suites.
 - [ ] Deploy order (Brian): migration-079 → confirm columns read-only → worker → merge → read-only check for
       scheduled drafts Buffer would refuse → `wrangler secret put BUFFER_API_KEY` → one South Bend post end to end
 

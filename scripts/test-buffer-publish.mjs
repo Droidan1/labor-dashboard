@@ -36,8 +36,8 @@ const NOT_FOUND = { status: 404, json: { errors: [{ message: 'Post not found for
 // `fake.before(body)` may answer first: return a reply, 'THROW' (the network drops),
 // or 'LOST' (Buffer makes the post, then the answer is lost on the way back).
 let calls = [];
-const fake = { posts: new Map(), seq: 0, before: null, morePages: false };
-function resetFake() { calls = []; fake.posts = new Map(); fake.before = null; fake.morePages = false; }
+const fake = { posts: new Map(), seq: 0, before: null };
+function resetFake() { calls = []; fake.posts = new Map(); fake.before = null; }
 function bufferAnswer(body) {
   const q = body.query;
   if (/createPost/.test(q)) {
@@ -47,12 +47,15 @@ function bufferAnswer(body) {
     return { data: { createPost: { __typename: 'PostActionSuccess', post: { id, status: fake.posts.get(id).status } } } };
   }
   if (/posts\(/.test(q)) {
-    // Honours what the worker asks for: channel, created-since, and a status filter if given.
+    // Honours what the worker asks for: channel, created-since, a status filter if given,
+    // oldest first, and `first:` with a real hasNextPage.
     const { ch, since } = body.variables;
     const live = /status: \[scheduled, sending, sent\]/.test(q);
+    const first = Number((/first: (\d+)/.exec(q) || [])[1] || 20);
     const rows = [...fake.posts.values()].filter(p => ch.includes(p.channelId)
-      && (!p.createdAt || p.createdAt >= since) && (!live || ['scheduled', 'sending', 'sent'].includes(p.status)));
-    return { data: { posts: { pageInfo: { hasNextPage: fake.morePages }, edges: rows.map(node => ({ node })) } } };
+      && (!p.createdAt || p.createdAt >= since) && (!live || ['scheduled', 'sending', 'sent'].includes(p.status)))
+      .sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+    return { data: { posts: { pageInfo: { hasNextPage: rows.length > first }, edges: rows.slice(0, first).map(node => ({ node })) } } };
   }
   if (/post\(input/.test(q)) {
     const p = fake.posts.get(body.variables.id);
@@ -78,6 +81,11 @@ globalThis.fetch = async (url, init = {}) => {
 const bufferCalls = () => calls.filter(c => c.body);
 const creates = () => bufferCalls().filter(c => /createPost/.test(c.body.query)).length;
 const lists = () => bufferCalls().filter(c => /posts\(/.test(c.body.query)).length;
+// Other live posts on a channel (stories, marketing's own posts) created at `atMs`.
+const crowd = (n, atMs, ch = BL2_CHANNEL) => { for (let i = 0; i < n; i++) {
+  const id = 'crowd' + String(fake.seq++).padStart(19, '0');
+  fake.posts.set(id, { id, status: 'sent', text: '', channelId: ch, assets: [{ source: 'https://scontent.xx.fbcdn.net/' + id + '.jpg' }], createdAt: new Date(atMs + i).toISOString() });
+} };
 const send = (id, extra = {}) => Object.assign(fake.posts.get(id), { status: 'sent', externalLink: LINK, ...extra });
 
 const uuid = n => `${String(n).repeat(8)}-${String(n).repeat(4)}-4${String(n).repeat(3)}-a${String(n).repeat(3)}-${String(n).repeat(12)}`;
@@ -559,22 +567,109 @@ for (const via of ['publish', 'schedule', 'cron-backoff']) {
   eq(s.row(id).status, 'published', 'and the draft is published');
 }
 
-// ── 19. 🛑 A listing with more pages can't rule a post out ────────────────────
+// ── 19. 🛑 Paging: a full page inside the attempt's window can't rule it out; a page
+//        that runs well past the attempt can — and then the attempt is closed ─────
 {
-  const s = await setup();
-  const id = s.draft({ photo_ids: [await s.photo()] });
+  let s = await setup();
+  let id = s.draft({ photo_ids: [await s.photo()] });
   fake.before = b => /createPost/.test(b.query) ? 'THROW' : null;
   await publish(s.env, id);
   fake.before = null;
   ageHanding(s, id);
-  fake.morePages = true;
+  const at = new Date(s.logs(id)[0].created_at).getTime();
+  crowd(101, at + 30e3);                                  // 101 posts within a minute of the attempt
   const r = await publish(s.env, id);
-  ok(r.status === 503 && /rule out/.test((await r.json()).error), 'no match on page one of several: refused');
-  eq(fake.posts.size, 0, 'and nothing is made');
-  fake.morePages = false;
+  ok(r.status === 503 && /rule out/.test((await r.json()).error), 'a full page all inside the window: refused');
+  eq(creates(), 1, 'and nothing more is made');            // (the THROWn one never reached the fake)
+
+  // 🛑 A month later, 101 posts AFTER the window: the attempt is proven never-made, closed,
+  // and the post goes out (it used to refuse forever).
+  s = await setup();
+  id = s.draft({ photo_ids: [await s.photo()] });
+  fake.before = b => /createPost/.test(b.query) ? 'THROW' : null;
   await publish(s.env, id);
-  eq(fake.posts.size, 1, 'once it can see everything, it posts');
+  fake.before = null;
+  s.db.prepare("UPDATE marketing_publish_log SET created_at=? WHERE draft_id=? AND status='handing'").run(ago(30 * 864e5), id);
+  crowd(101, Date.now() - 29 * 864e5);
+  eq((await publish(s.env, id)).status, 200, '🛑 the retry posts');
+  eq(s.logs(id)[0].status, 'superseded', 'and the never-made attempt is closed');
+  eq([...fake.posts.values()].filter(p => !/^crowd/.test(p.id)).length, 1, 'one post');
 }
+
+// ── 20. 🛑 A never-made attempt is closed as soon as a look proves it, so a refusal
+//        after it can't leave it open to pin every later search ─────────────────
+{
+  const s = await setup();
+  const id = s.draft({ photo_ids: [await s.photo()] });
+  fake.before = b => /createPost/.test(b.query) ? 'THROW' : null;
+  await publish(s.env, id);                                // never arrived
+  ageHanding(s, id);
+  fake.before = b => /createPost/.test(b.query) ? { data: { createPost: { __typename: 'InvalidInputError', message: 'Buffer said no' } } } : null;
+  await publish(s.env, id);                                // looked (nothing), then refused
+  eq(s.logs(id).map(l => l.status).join(','), 'superseded,error', 'the lost attempt is closed by the look, not left open');
+  fake.before = null;
+  calls = [];
+  await publish(s.env, id);
+  eq(lists(), 0, 'so the next attempt does not look again');
+  eq(creates(), 1, 'and posts');
+}
+
+// ── 21. 🛑 A post found in Buffer is live, whatever the retry asked for ────────
+{
+  const s = await setup();
+  const id = s.draft({ photo_ids: [await s.photo()] });
+  fake.before = b => /createPost/.test(b.query) ? 'LOST' : null;
+  await publish(s.env, id);                                // live; Buffer has it, answer lost
+  fake.before = null;
+  const r = await publish(s.env, id, false);               // then someone Stages it
+  const j = await r.json();
+  ok(/already had this post/.test(j.note || ''), 'the retry says Buffer already had it');
+  eq(s.row(id).status, 'published', '🛑 the draft reads published (it IS live), not approved');
+  eq(s.logs(id).at(-1).status, 'queued', "logged 'queued', so a later live publish can't make a second");
+  eq((await schedule(s.env, id)).status, 409, 'and it cannot be scheduled again');
+  eq(fake.posts.size, 1, 'one post');
+}
+
+// ── 22. 🛑 The reaper finishes the interrupted attempt as what IT was ────────
+{
+  // A manual Stage on a draft whose schedule says live, interrupted after Buffer took it.
+  const s = await setup();
+  const id = s.draft({ photo_ids: [await s.photo()], status: 'publishing', claimed_at: ago(10 * 60e3), publish_attempts: 1, publish_live: 1 });
+  s.db.prepare(`INSERT INTO marketing_publish_log (draft_id, store, status, created_at, buffer_post_id) VALUES (?, 'BL2', 'staged', ?, 'b00000000000000000stage1')`).run(id, ago(9 * 60e3));
+  await tick(s.env, '* * * * *');
+  eq(s.row(id).status, 'approved', '🛑 a staged hand-off is finished as staged, not published live');
+  eq(creates(), 0, 'and nothing is posted');
+
+  // A staged row from an EARLIER attempt says nothing about this one.
+  const s2 = await setup();
+  const id2 = s2.draft({ photo_ids: [await s2.photo()], status: 'publishing', claimed_at: ago(10 * 60e3), publish_attempts: 1, publish_live: 1 });
+  s2.db.prepare(`INSERT INTO marketing_publish_log (draft_id, store, status, created_at, buffer_post_id) VALUES (?, 'BL2', 'staged', ?, 'b00000000000000000stage2')`).run(id2, ago(864e5));
+  await tick(s2.env, '* * * * *');
+  eq(s2.row(id2).status, 'scheduled', 'an older staged copy does not mark this attempt done: it is requeued');
+}
+
+// ── 23. A "can't rule it out yet" refusal is not a try ───────────────────────
+{
+  const s = await setup();
+  const id = s.draft({ photo_ids: [await s.photo()], status: 'scheduled', scheduled_at: ago(60e3), publish_live: 1 });
+  fake.before = b => /createPost/.test(b.query) ? 'THROW' : null;
+  await tick(s.env, '* * * * *');                          // try 1: never arrived
+  fake.before = null;
+  eq(s.row(id).publish_attempts, 1, 'one try used');
+  s.db.prepare('UPDATE marketing_drafts SET next_attempt_at=? WHERE id=?').run(ago(1000), id);
+  await tick(s.env, '* * * * *');                          // 2 min later: too fresh to rule out
+  eq(s.row(id).status, 'scheduled', 'too fresh to rule out: it waits');
+  eq(s.row(id).publish_attempts, 1, '🛑 without spending a try');
+  ok(/few minutes/.test(s.row(id).schedule_error || ''), 'and says why');
+  ageHanding(s, id);
+  s.db.prepare('UPDATE marketing_drafts SET next_attempt_at=? WHERE id=?').run(ago(1000), id);
+  await tick(s.env, '* * * * *');
+  eq(s.row(id).status, 'published', 'then it posts');
+  eq(creates(), 2, '(the THROWn call plus the real one: one post on Facebook)');
+  eq(fake.posts.size, 1, 'one post');
+}
+
+
 
 // ── 15. 🛑 A publish log it cannot read stops a publish (fail closed) ──────────
 {
