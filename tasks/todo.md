@@ -68,7 +68,17 @@ Design:
       always live; (3) the reaper judged by the schedule's live flag, not the interrupted attempt: it now reads
       only the rows that attempt wrote; (4) a "can't rule it out yet" refusal spent one of the 3 tries: it no
       longer counts. `npm test` 10624 assertions / 120 suites.
-- [ ] Deploy order (Brian): migration-079 → confirm columns read-only → worker → merge → read-only check for
+- [x] migration-079 applied to prod by Brian (2026-10-19). `--file` failed first with `Authentication error
+      [code: 10000]` on D1's /import endpoint (OAuth token); `--command` with the same two ALTERs worked.
+      Verified read-only: `buffer_post_id TEXT`, `photos_curated INTEGER NOT NULL DEFAULT 0`, all 96 drafts 0
+- [x] Worker deployed by Brian from a fresh clone of `26e8af5`: version `f339e3d2-80a8-48c7-97e1-d8ca36f89848`,
+      6 crons, all bindings. Verified: the live bundle (Cloudflare MCP `workers_get_worker_code`, multipart body
+      only) is byte-identical to `wrangler deploy --dry-run` of the same clone (sha256 7733d464…, 1,142,084 B);
+      edge rollout: `/t/<made-up>` answered 404 text/plain from the new route on 3 passes 20 s apart, while an
+      unrouted path still answers 401 NO_SESSION (the old worker's answer for /t/)
+- [x] Pre-key check (read-only): no drafts in draft/scheduled/schedule_error/approved/publishing, so nothing
+      queued for Buffer to refuse
+- [ ] Deploy order (Brian): ~~migration-079 → confirm columns read-only~~ ~~→ worker~~ → worker → merge → read-only check for
       scheduled drafts Buffer would refuse → `wrangler secret put BUFFER_API_KEY` → one South Bend post end to end
 
 # Executive Summary: a test send to just me (2026-10-19)
