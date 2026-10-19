@@ -23,13 +23,45 @@ Design:
 - Admin trim must stick: an auto bin draft saved by a person stops being recomputed from the week's uploads.
 - migration-079: `marketing_publish_log.buffer_post_id`, `marketing_drafts.photos_curated`.
 
-- [ ] Plan + todo entry
-- [ ] Worker: Buffer transport, `/t/` cover links, 10-image cap, sync, retry guard, curated flag
-- [ ] migration-079
-- [ ] Frontend: composer cap 9 + counter, over-9 draft says "trim to 9", publish copy says Buffer, CACHE_NAME
-- [ ] Tests: `test-buffer-publish.mjs` through `worker.fetch` + `scheduled()`, failing on main; browser check
-- [ ] `npm test`; fresh-eyes review
-- [ ] Deploy order (Brian): migration-079 → worker → merge → `wrangler secret put BUFFER_API_KEY`
+- [x] Plan + todo entry
+- [x] Worker: Buffer transport, `/t/` cover links, 10-image cap, sync, retry guard, curated flag
+- [x] migration-079
+- [x] Frontend: composer cap 9 + counter, an over-limit draft says "remove N to post", Publish refuses it
+      before sending, success note from the worker, CACHE_NAME v282
+- [x] Tests: `test-buffer-publish.mjs` 76 (fails on main), `test-bin-photo-autodraft.mjs` case 21 (2 fail on
+      main), `browser-content-buffer-cap.mjs` 36/36 both themes incl. AA contrast (6 fail on main);
+      `npm test` 10533 assertions / 120 suites. Commit `c3cf4e1` (local)
+- [x] Fresh-eyes review of c3cf4e1 reproduced 2 ways to post twice and 1 false "Published". Fixed in
+      `721fd90`, each with a failing-first check:
+      (1) the duplicate look-up keyed on `publish_attempts`, which draft-schedule resets, so Schedule and the
+      Retry button skipped it: now a 'handing' log row is written BEFORE every createPost and any later attempt
+      looks first; (2) the look-up adopted any non-error post with the same text (a staged Buffer DRAFT, an
+      empty-text story, the other store's post on the shared BL1/BL4 channel): now only a live post whose first
+      image is this draft's own; (3) a draft scheduled before the switch-on wasn't re-checked: draft-schedule
+      runs the full check and Scheduled cards warn; (4) any 404 read as "deleted": now a GraphQL NOT_FOUND seen
+      twice 5 min apart; (5) one call per queued post per minute could pass 100/15 min: one list call per pass,
+      stops on 429; (6) a caption-only save stopped the refill; (7) select-all was a no-op at the cap.
+      Also: the reconcile now fails closed (its `.catch(() => null)` disarmed the Graph path's guard too if the
+      worker ran ahead of migration-079). 9 mutations of the new guards, all killed.
+      Left: covers are soft-deleted, so `/t/` keeps serving a retired cover (deliberate: a queued post may use
+      it); a D1 error on `/t/`/`/p/` answers 404, so Buffer would fail that post terminally.
+- [x] Second review of `721fd90` (duplicate guard only) reproduced 4 more double posts and 1 false
+      Published. Fixed, each case failing on 721fd90 (9 assertions):
+      (1) the look-up compared the draft as it is NOW: an edit between a lost answer and the retry made a
+      second post. Each 'handing' row now records what it sent (channel, image URLs, text) and is matched
+      against that; (2) earlier attempts were superseded before the new one was recorded, so a write failure
+      lost the earlier window: superseded only once Buffer's id is written; (3) a staged copy counted as
+      posted for a LIVE reschedule, so it never went out (pre-existing, Graph path too): 'staged' answers only
+      a staged attempt; (4) the look-up read one page: now live-only, oldest first, and `hasNextPage` with no
+      match refuses; (5) an attempt under 5 min old with no match refuses (it may not be listed yet).
+      Also: publish-draft releases its claim if the publisher throws. Checked live, read-only: the `posts`
+      filter/sort/pageInfo shape, and that Buffer keeps our image URL on a SENT post.
+      Accepted: a reaped-while-still-running publish (needs a >5 min hung fetch); a staged Buffer draft left in
+      Buffer when the Hub draft is later published live (staging used once ever in prod).
+      `npm test` 10604 assertions / 120 suites.
+- [ ] Push + PR (Brian's go-ahead)
+- [ ] Deploy order (Brian): migration-079 → confirm columns read-only → worker → merge → read-only check for
+      scheduled drafts Buffer would refuse → `wrangler secret put BUFFER_API_KEY` → one South Bend post end to end
 
 # Executive Summary: a test send to just me (2026-10-19)
 

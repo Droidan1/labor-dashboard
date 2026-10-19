@@ -36,19 +36,23 @@ const NOT_FOUND = { status: 404, json: { errors: [{ message: 'Post not found for
 // `fake.before(body)` may answer first: return a reply, 'THROW' (the network drops),
 // or 'LOST' (Buffer makes the post, then the answer is lost on the way back).
 let calls = [];
-const fake = { posts: new Map(), seq: 0, before: null };
-function resetFake() { calls = []; fake.posts = new Map(); fake.before = null; }
+const fake = { posts: new Map(), seq: 0, before: null, morePages: false };
+function resetFake() { calls = []; fake.posts = new Map(); fake.before = null; fake.morePages = false; }
 function bufferAnswer(body) {
   const q = body.query;
   if (/createPost/.test(q)) {
     const id = 'b' + String(++fake.seq).padStart(23, '0'), inp = body.variables.input;
     fake.posts.set(id, { id, status: inp.saveToDraft ? 'draft' : 'sending', text: inp.text, channelId: inp.channelId,
-      assets: inp.assets.map(a => ({ source: a.image.url })), externalLink: null, error: null });
+      assets: inp.assets.map(a => ({ source: a.image.url })), externalLink: null, error: null, createdAt: new Date().toISOString() });
     return { data: { createPost: { __typename: 'PostActionSuccess', post: { id, status: fake.posts.get(id).status } } } };
   }
   if (/posts\(/.test(q)) {
-    const ch = body.variables.ch;
-    return { data: { posts: { edges: [...fake.posts.values()].filter(p => ch.includes(p.channelId)).map(node => ({ node })) } } };
+    // Honours what the worker asks for: channel, created-since, and a status filter if given.
+    const { ch, since } = body.variables;
+    const live = /status: \[scheduled, sending, sent\]/.test(q);
+    const rows = [...fake.posts.values()].filter(p => ch.includes(p.channelId)
+      && (!p.createdAt || p.createdAt >= since) && (!live || ['scheduled', 'sending', 'sent'].includes(p.status)));
+    return { data: { posts: { pageInfo: { hasNextPage: fake.morePages }, edges: rows.map(node => ({ node })) } } };
   }
   if (/post\(input/.test(q)) {
     const p = fake.posts.get(body.variables.id);
@@ -125,6 +129,8 @@ async function tick(env, cron) {
   await Promise.allSettled(waits);
 }
 const ago = ms => new Date(Date.now() - ms).toISOString();
+// A lost attempt younger than 5 minutes may not be listed yet, so a retry waits it out.
+const ageHanding = (s, id) => s.db.prepare("UPDATE marketing_publish_log SET created_at=? WHERE draft_id=? AND status='handing'").run(ago(6 * 60e3), id);
 // What a person does to make a draft due now: schedule it (resets attempts), then the clock passes.
 async function scheduleNow(s, id) {
   eq((await schedule(s.env, id)).status, 200, `draft ${id} schedules`);
@@ -302,9 +308,12 @@ for (const via of ['publish', 'schedule', 'cron-backoff']) {
   fake.before = b => /createPost/.test(b.query) ? 'THROW' : null;
   await publish(s.env, id);
   fake.before = null;
+  const quick = await publish(s.env, id);
+  ok(quick.status === 503 && /few minutes/.test((await quick.json()).error), '🛑 a retry seconds later waits: the lost one may not be listed yet');
+  eq(fake.posts.size, 0, 'and makes nothing');
+  ageHanding(s, id);
   await publish(s.env, id);
-  eq(fake.posts.size, 1, 'a hand-off that never arrived is made on retry');
-  eq(lists(), 1, 'after one look');
+  eq(fake.posts.size, 1, 'a hand-off that never arrived is made on a later retry');
 
   // Staged first (a Buffer DRAFT, same text and images), then a lost live attempt:
   // the Buffer draft must not be adopted as the live post.
@@ -315,6 +324,7 @@ for (const via of ['publish', 'schedule', 'cron-backoff']) {
   fake.before = b => /createPost/.test(b.query) ? 'THROW' : null;
   await publish(s.env, id);
   fake.before = null;
+  ageHanding(s, id);
   await publish(s.env, id);
   const live = [...fake.posts.values()].filter(p => p.status !== 'draft');
   eq(live.length, 1, '🛑 the live publish made a live post, not adopting the Buffer draft');
@@ -328,6 +338,7 @@ for (const via of ['publish', 'schedule', 'cron-backoff']) {
   fake.before = b => /createPost/.test(b.query) ? 'THROW' : null;
   await publish(s.env, id);
   fake.before = null;
+  ageHanding(s, id);
   await publish(s.env, id);
   eq(creates(), 2, '🛑 an unrelated empty-text story is not adopted');
 
@@ -338,6 +349,7 @@ for (const via of ['publish', 'schedule', 'cron-backoff']) {
   fake.before = b => /createPost/.test(b.query) ? 'THROW' : null;
   await publish(s.env, mine);
   fake.before = null;
+  ageHanding(s, mine);
   await publish(s.env, mine);
   eq(fake.posts.size, 2, '🛑 a post with the same caption but other photos is not adopted');
 
@@ -477,6 +489,91 @@ for (const via of ['publish', 'schedule', 'cron-backoff']) {
   await tick(s.env, '* * * * *');
   eq(s.row(id).status, 'published', 'the reaper sees the hand-off and marks it published');
   eq(creates(), 0, '🛑 without handing it over again');
+}
+
+// ── 16. 🛑 The look-up matches what was SENT, not the draft as it is now ──────
+{
+  const s = await setup();
+  const id = s.draft({ photo_ids: [await s.photo()] });
+  fake.before = b => /createPost/.test(b.query) ? 'LOST' : null;
+  await publish(s.env, id);                                   // Buffer has it; the answer was lost
+  fake.before = null;
+  const d = s.row(id);
+  const ed = await worker.fetch(req('/?action=draft-save', { user: 'u-admin', method: 'POST',
+    body: { id, store: 'BL2', thumbnail_id: null, photo_ids: JSON.parse(d.photo_ids), caption: 'Fixed a typo' } }), s.env, { waitUntil: () => {} });
+  eq(ed.status, 200, 'the admin edits the caption before retrying');
+  await publish(s.env, id);
+  eq(fake.posts.size, 1, '🛑 the retry still finds the post that went out with the OLD caption');
+  eq(s.row(id).status, 'published', 'and adopts it');
+}
+
+// ── 17. 🛑 Earlier attempts stay open until the new one is recorded ──────────
+{
+  // The adopt succeeds, but recording the new hand-off fails: the lost attempt must stay
+  // findable, or the next retry looks from too late and posts again.
+  const s = await setup();
+  const id = s.draft({ photo_ids: [await s.photo()] });
+  fake.before = b => /createPost/.test(b.query) ? 'LOST' : null;
+  await publish(s.env, id);
+  fake.before = null;
+  const realPrepare = s.env.DB.prepare.bind(s.env.DB);
+  let breakInsert = true;
+  s.env.DB.prepare = sql => { if (breakInsert && /INSERT/.test(sql) && /'handing'/.test(sql)) throw new Error('D1 unavailable'); return realPrepare(sql); };
+  const r = await publish(s.env, id);
+  ok(r.status >= 400, 'the retry that cannot record its hand-off fails');
+  eq(s.row(id).status, 'draft', 'and releases its claim (no card stuck in publishing)');
+  eq(s.logs(id)[0].status, 'handing', 'the lost attempt is still open');
+  breakInsert = false;
+  await publish(s.env, id);
+  eq(fake.posts.size, 1, '🛑 the next retry still adopts it: one post');
+
+  // The adopt succeeds but every write after it fails: same rule.
+  const s2 = await setup();
+  const id2 = s2.draft({ photo_ids: [await s2.photo()] });
+  fake.before = b => /createPost/.test(b.query) ? 'LOST' : null;
+  await publish(s2.env, id2);
+  fake.before = null;
+  s2.db.prepare("UPDATE marketing_publish_log SET created_at=? WHERE draft_id=?").run(ago(10 * 60e3), id2);   // made 10 min ago
+  const real2 = s2.env.DB.prepare.bind(s2.env.DB);
+  let breakSettle = true;
+  s2.env.DB.prepare = sql => { if (breakSettle && /^\s*UPDATE marketing_(publish_log SET status=\?, buffer_post_id|drafts SET status=\?)/.test(sql)) throw new Error('D1 unavailable'); return real2(sql); };
+  await publish(s2.env, id2);
+  ok(s2.logs(id2).some(l => l.status === 'handing' && l.created_at < ago(9 * 60e3)), 'the 10-minute-old attempt is not superseded');
+  breakSettle = false;
+  s2.db.prepare("UPDATE marketing_drafts SET status='draft' WHERE id=?").run(id2);   // as the reaper/requeue would leave it
+  await publish(s2.env, id2);
+  eq(fake.posts.size, 1, '🛑 a later retry looks from the earliest attempt and still adopts: one post');
+}
+
+// ── 18. 🛑 Staged, then rescheduled live: it goes out live ────────────────────
+{
+  const s = await setup();
+  const id = s.draft({ photo_ids: [await s.photo()], status: 'scheduled', scheduled_at: ago(60e3), publish_live: 0 });
+  await tick(s.env, '* * * * *');
+  eq(s.row(id).status, 'approved', 'staged: a Buffer draft');
+  eq((await worker.fetch(req('/?action=draft-schedule', { user: 'u-admin', method: 'POST', body: { id, et_wall_clock: '2099-01-01T09:00', publish_live: true } }), s.env, { waitUntil: () => {} })).status, 200, 'rescheduled live');
+  s.db.prepare('UPDATE marketing_drafts SET scheduled_at=? WHERE id=?').run(ago(60e3), id);
+  await tick(s.env, '* * * * *');
+  const live = [...fake.posts.values()].filter(p => p.status !== 'draft');
+  eq(live.length, 1, '🛑 a live post is made (the staged copy does not count as posted live)');
+  eq(s.row(id).status, 'published', 'and the draft is published');
+}
+
+// ── 19. 🛑 A listing with more pages can't rule a post out ────────────────────
+{
+  const s = await setup();
+  const id = s.draft({ photo_ids: [await s.photo()] });
+  fake.before = b => /createPost/.test(b.query) ? 'THROW' : null;
+  await publish(s.env, id);
+  fake.before = null;
+  ageHanding(s, id);
+  fake.morePages = true;
+  const r = await publish(s.env, id);
+  ok(r.status === 503 && /rule out/.test((await r.json()).error), 'no match on page one of several: refused');
+  eq(fake.posts.size, 0, 'and nothing is made');
+  fake.morePages = false;
+  await publish(s.env, id);
+  eq(fake.posts.size, 1, 'once it can see everything, it posts');
 }
 
 // ── 15. 🛑 A publish log it cannot read stops a publish (fail closed) ──────────

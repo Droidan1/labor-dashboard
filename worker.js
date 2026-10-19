@@ -15847,35 +15847,49 @@ async function bufferDraftCheck(env, draft) {
 }
 
 const BUFFER_LIVE = ["scheduled", "sending", "sent"];   // a post Buffer has, and will send or has sent
+const BUFFER_SETTLE_MS = 5 * 60 * 1000;                 // how long a fresh post may stay out of Buffer's listings
 
 // Did an earlier attempt already give Buffer this post? Asked only when one may have:
 //   'handing'     the attempt reached Buffer and its answer was lost;
 //   'unconfirmed' Buffer took it but never reported it sent in 48 h.
 // Buffer has no idempotency key, so this is the only thing between a lost answer and a
-// second post. A match is a LIVE post on the channel, made since that attempt, whose
-// first image is this draft's own first image (our URLs carry the photo id, so two
-// drafts never share one) and whose text is this caption. A Buffer draft is not a
-// match: staging the post first must not let a live publish adopt the draft.
-// Returns { ok, post|null } or a bufferGql error, which means "cannot rule it out".
-async function bufferFindEarlierPost(env, channelId, priors, firstImageUrl, text) {
+// second post. Each 'handing' row records exactly what it sent (channel, image URLs,
+// text), because the draft may have been edited since; a match is a LIVE post on that
+// channel, made since, with those images in that order and that text. Our image URLs
+// carry the photo ids and Buffer keeps them on the post (checked on a sent post,
+// 2026-10-19), so another draft — or a staged Buffer draft, or a story — never matches.
+// Anything that stops it ruling a post out (a failed call, a listing with more pages,
+// an attempt too fresh to be listed yet) is a refusal: try again later.
+// Returns { ok, post|null } or an error.
+async function bufferFindEarlierPost(env, priors, sentNow) {
   for (const p of priors.filter(x => x.buffer_post_id)) {
     const r = await bufferGql(env, "query PostStatus($id: PostId!) { post(input: { id: $id }) { id status } }", { id: String(p.buffer_post_id) });
     if (r.ok && r.data.post && BUFFER_LIVE.includes(r.data.post.status)) return { ok: true, post: r.data.post };
     if (!r.ok && r.code !== "NOT_FOUND") return r;
   }
-  const lost = priors.filter(x => !x.buffer_post_id);
+  const lost = priors.filter(x => !x.buffer_post_id).map(x => {
+    let sent = null; try { sent = JSON.parse(x.response || "null"); } catch (_) {}
+    return { at: new Date(x.created_at).getTime(), sent: sent && sent.ch ? sent : sentNow };
+  });
   if (!lost.length) return { ok: true, post: null };
-  const since = new Date(Math.min(...lost.map(x => new Date(x.created_at).getTime())) - 120000).toISOString();
-  const r = await bufferGql(env,
-    "query Recent($org: OrganizationId!, $ch: [ChannelId!], $since: DateTime!) { posts(first: 100, input: { organizationId: $org, filter: { channelIds: $ch, createdAt: { start: $since } } }) { edges { node { id status text assets { source } } } } }",
-    { org: BUFFER_ORG_ID, ch: [channelId], since });
-  if (!r.ok) return r;
-  const want = String(text || "").trim();
-  const hit = ((r.data.posts && r.data.posts.edges) || []).map(e => e && e.node).find(p => p
-    && BUFFER_LIVE.includes(p.status)
-    && Array.isArray(p.assets) && p.assets[0] && p.assets[0].source === firstImageUrl
-    && String(p.text || "").trim() === want);
-  return { ok: true, post: hit || null };
+  const key = s => `${s.ch}|${(s.assets || []).join("\n")}|${String(s.text || "").trim()}`;
+  const want = new Set(lost.map(l => key(l.sent)));
+  for (const ch of [...new Set(lost.map(l => l.sent.ch))]) {
+    const since = new Date(Math.min(...lost.filter(l => l.sent.ch === ch).map(l => l.at)) - 120000).toISOString();
+    const r = await bufferGql(env,
+      "query Recent($org: OrganizationId!, $ch: [ChannelId!], $since: DateTime!) { posts(first: 100, input: { organizationId: $org, filter: { channelIds: $ch, status: [scheduled, sending, sent], createdAt: { start: $since } }, sort: [{ field: createdAt, direction: asc }] }) { pageInfo { hasNextPage } edges { node { id status text assets { source } } } } }",
+      { org: BUFFER_ORG_ID, ch: [ch], since });
+    if (!r.ok) return r;
+    const posts = r.data.posts || {};
+    const hit = (posts.edges || []).map(e => e && e.node).find(p => p && BUFFER_LIVE.includes(p.status)
+      && want.has(key({ ch, assets: (p.assets || []).map(a => a && a.source), text: p.text })));
+    if (hit) return { ok: true, post: hit };
+    if (posts.pageInfo && posts.pageInfo.hasNextPage) return { ok: false, status: 503, error: "Couldn't rule out an earlier copy of this post in Buffer (too many posts to check). Try again later." };
+  }
+  if (Date.now() - Math.max(...lost.map(l => l.at)) < BUFFER_SETTLE_MS) {
+    return { ok: false, status: 503, error: "The last attempt may still be reaching Buffer. Try again in a few minutes." };
+  }
+  return { ok: true, post: null };
 }
 
 async function publishDraftViaBuffer(env, { draftId, published }) {
@@ -15891,29 +15905,24 @@ async function publishDraftViaBuffer(env, { draftId, published }) {
   const chk = await bufferDraftCheck(env, draft);
   if (chk.error) return { ok: false, error: chk.error, status: 400 };
   const assets = chk.images.map(({ kind, row }) => ({ image: { url: bufferImageUrl(env, kind, row) } }));
+  const sentNow = { ch: channelId, assets: assets.map(a => a.image.url), text: chk.text };
 
   // 1. An earlier attempt with an unknown outcome may already have made this post.
-  const priorRows = await env.DB.prepare(
-    "SELECT id, buffer_post_id, created_at FROM marketing_publish_log WHERE draft_id = ? AND status IN ('handing','unconfirmed') ORDER BY id"
-  ).bind(draftId).all();
-  const priors = priorRows.results || [];
+  const priors = (await env.DB.prepare(
+    "SELECT id, buffer_post_id, created_at, response FROM marketing_publish_log WHERE draft_id = ? AND status IN ('handing','unconfirmed') ORDER BY id"
+  ).bind(draftId).all()).results || [];
   let post = null;
   if (priors.length) {
-    const found = await bufferFindEarlierPost(env, channelId, priors, assets[0].image.url, chk.text);
+    const found = await bufferFindEarlierPost(env, priors, sentNow);
     if (!found.ok) return found;   // cannot rule out a duplicate: try again later
     post = found.post;
-    // Resolved either way: Buffer has that post (adopted below) or never got it.
-    for (const p of priors) {
-      await env.DB.prepare("UPDATE marketing_publish_log SET status='superseded' WHERE id=?").bind(p.id).run();
-    }
   }
 
-  // 2. Record the hand-off BEFORE making it. If this write fails, nothing is sent: a
-  //    hand-off with no record is the one a retry could not find.
-  const startedAt = new Date().toISOString();
+  // 2. Record the hand-off, and exactly what it sends, BEFORE making it. If this write
+  //    fails, nothing is sent: a hand-off with no record is the one a retry can't find.
   const mark = await env.DB.prepare(
-    "INSERT INTO marketing_publish_log (draft_id, store, page_id, status, created_at) VALUES (?,?,?,'handing',?)"
-  ).bind(draftId, store, pageId, startedAt).run();
+    "INSERT INTO marketing_publish_log (draft_id, store, page_id, status, created_at, response) VALUES (?,?,?,'handing',?,?)"
+  ).bind(draftId, store, pageId, new Date().toISOString(), JSON.stringify(sentNow)).run();
   const markId = mark.meta && mark.meta.last_row_id;
   const settle = (status, fields = {}) => env.DB.prepare(
     "UPDATE marketing_publish_log SET status=?, buffer_post_id=COALESCE(?, buffer_post_id), response=? WHERE id=?"
@@ -15941,11 +15950,16 @@ async function publishDraftViaBuffer(env, { draftId, published }) {
   }
 
   // 4. 'queued' until syncBufferPosts sees Buffer send it; post_id/post_url arrive then.
-  //    Buffer already has the post, so a failed write must not report failure: retry
-  //    once, then carry on (the marker stays 'handing', which a retry would adopt).
+  //    Only once Buffer's id is recorded are the earlier attempts resolved: until then
+  //    they keep their earlier window open for a retry's look-up. Buffer already has the
+  //    post, so a failed write must not report failure: retry once, then carry on.
   const done = { buffer_post_id: String(post.id), response: JSON.stringify(post) };
-  try { await settle(published ? "queued" : "staged", done); }
-  catch (_) { try { await settle(published ? "queued" : "staged", done); } catch (e) { console.error("buffer publish log failed:", (e && e.message) || e); } }
+  let settled = false;
+  try { await settle(published ? "queued" : "staged", done); settled = true; }
+  catch (_) { try { await settle(published ? "queued" : "staged", done); settled = true; } catch (e) { console.error("buffer publish log failed:", (e && e.message) || e); } }
+  if (settled) {
+    for (const p of priors) await env.DB.prepare("UPDATE marketing_publish_log SET status='superseded' WHERE id=?").bind(p.id).run().catch(() => {});
+  }
   const now = new Date().toISOString();
   const next = published ? "published" : "approved";
   try { await env.DB.prepare("UPDATE marketing_drafts SET status=?, updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=?").bind(next, now, published ? now : null, draftId).run(); }
@@ -16191,18 +16205,20 @@ async function processScheduledPosts(env, now) {
 
   // Has this draft already been posted? (successful log row with a post_id, or one
   // handed to Buffer: 'queued' until Buffer sends it, and its post_id comes later.)
-  const alreadyPosted = async (draftId) =>
-    env.DB.prepare("SELECT COALESCE(post_id, buffer_post_id) AS post_id FROM marketing_publish_log WHERE draft_id=? AND (post_id IS NOT NULL OR buffer_post_id IS NOT NULL) AND status IN ('published','staged','queued') ORDER BY id DESC LIMIT 1")
+  // A STAGED copy only answers for a staged attempt: a post staged once and then
+  // rescheduled live has not gone out live, and must not be marked as if it had.
+  const alreadyPosted = async (draftId, live) =>
+    env.DB.prepare(`SELECT COALESCE(post_id, buffer_post_id) AS post_id FROM marketing_publish_log WHERE draft_id=? AND (post_id IS NOT NULL OR buffer_post_id IS NOT NULL) AND status IN (${live ? "'published','queued'" : "'published','staged','queued'"}) ORDER BY id DESC LIMIT 1`)
       .bind(draftId).first();   // no catch: a log it cannot read must stop a publish, never allow a second one
 
   // 1. Reaper: rescue rows a prior tick left stuck in 'publishing'.
   const staleIso = new Date(nowMs - CLAIM_STALE_MS).toISOString();
   const stale = await env.DB.prepare(
-    "SELECT id, publish_attempts FROM marketing_drafts WHERE status='publishing' AND (claimed_at IS NULL OR claimed_at < ?) LIMIT 10"
+    "SELECT id, publish_attempts, publish_live FROM marketing_drafts WHERE status='publishing' AND (claimed_at IS NULL OR claimed_at < ?) LIMIT 10"
   ).bind(staleIso).all().catch(() => ({ results: [] }));
   for (const row of (stale.results || [])) {
     let done;
-    try { done = await alreadyPosted(row.id); } catch (e) { out.skipped++; continue; }   // leave it stuck, never re-post blind
+    try { done = await alreadyPosted(row.id, row.publish_live !== 0); } catch (e) { out.skipped++; continue; }   // leave it stuck, never re-post blind
     if (done && done.post_id) {
       await env.DB.prepare("UPDATE marketing_drafts SET status='published', updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=? AND status='publishing'").bind(nowIso, nowIso, row.id).run().catch(() => {});
     } else if ((row.publish_attempts || 0) >= MAX_ATTEMPTS) {
@@ -16231,7 +16247,7 @@ async function processScheduledPosts(env, now) {
     if (!claim.meta || claim.meta.changes !== 1) { out.skipped++; continue; }
     // 5. Reconcile-before-publish — the only guard against an ambiguous-outcome duplicate.
     let prior;
-    try { prior = await alreadyPosted(row.id); }
+    try { prior = await alreadyPosted(row.id, row.publish_live !== 0); }
     catch (e) {
       // Cannot tell whether it already went out: put it back and say why, rather than risk a second post.
       await env.DB.prepare("UPDATE marketing_drafts SET status='scheduled', claimed_at=NULL, next_attempt_at=?, schedule_error=? WHERE id=?")
@@ -18722,7 +18738,10 @@ export default {
           if (!cur) return new Response(JSON.stringify({ error: "Draft not found" }), { status: 404, headers: corsJson });
           return new Response(JSON.stringify({ error: cur.status === "published" ? "Already published" : "Post is publishing — try again in a moment" }), { status: 409, headers: corsJson });
         }
-        const r = await publishDraft(env, { draftId, published: b.published === true, token: b.token });
+        // A throw must still release the claim, or the card sits in "publishing" until the reaper.
+        let r;
+        try { r = await publishDraft(env, { draftId, published: b.published === true, token: b.token }); }
+        catch (e) { r = { ok: false, error: String((e && e.message) || e), status: 500 }; }
         if (!r.ok) {
           // Release the claim (publishDraft leaves status='publishing' on failure) so it returns to Drafts.
           await env.DB.prepare("UPDATE marketing_drafts SET status='draft', claimed_at=NULL WHERE id=? AND status='publishing'").bind(draftId).run().catch(() => {});
