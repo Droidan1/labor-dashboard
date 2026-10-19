@@ -52,6 +52,9 @@ const DRAFTS = [
     post_type: 'bin_preview', status: 'draft', origin: 'photos', created_at: NOW, updated_at: NOW },
   { id: 8, store: 'BL2', thumbnail_id: 5, photo_ids: [101, 102], caption: 'Two photos', caption_source: 'manual', topic: null,
     post_type: 'bin_preview', status: 'draft', origin: null, created_at: NOW, updated_at: NOW },
+  // Scheduled before Buffer was switched on, with 11 photos: it would fail at its time.
+  { id: 9, store: 'BL2', thumbnail_id: 5, photo_ids: PHOTOS.slice(0, 11).map(p => p.id), caption: 'Queued early', caption_source: 'ai', topic: null,
+    post_type: 'bin_preview', status: 'scheduled', scheduled_at: new Date(Date.now() + 864e5).toISOString(), publish_live: 1, origin: null, created_at: NOW, updated_at: NOW },
 ];
 
 function mocks({ who, PHOTOS, DRAFTS, dark }) {
@@ -136,6 +139,12 @@ for (const dark of [true, false]) {
     const wr = await page.evaluate(RATIO, '#__warn');
     check(wr >= 4.5, `[${t}] the card warning clears AA (${wr}:1)`);
 
+    const sched = await text(page, '#ct-scheduled');
+    check(/remove 2 to post/.test(sched), `[${t}] a scheduled post with 11 photos says to remove 2 (${sched.slice(0, 120)})`);
+    await page.evaluate(() => { const d = [...document.querySelectorAll('#ct-scheduled div')].find(x => /remove 2 to post/.test(x.textContent) && !x.children.length); d.id = '__warn2'; });
+    const wr2 = await page.evaluate(RATIO, '#__warn2');
+    check(wr2 >= 4.5, `[${t}] that warning clears AA (${wr2}:1)`);
+
     // Publish on it stops before anything is sent.
     await page.evaluate(() => { window.ctPublishDraft(7); });   // resolves only when the dialog closes
     await page.waitForTimeout(300);
@@ -175,6 +184,12 @@ for (const dark of [true, false]) {
     check(/Added 5 of 8/.test(await text(page, '#ct-compose-status')), `[${t}] and says it added 5 of 8`);
     const order = await page.evaluate(() => [...document.querySelectorAll('.ct-tile[data-pid]')].filter(b => !b.querySelector('.ct-tile-badge.hidden')).map(b => Number(b.dataset.pid)));
     check(order.length === 9, `[${t}] nine tiles show as picked (${order.length})`);
+    // Full, with photos still unpicked in the folder: the button offers the way out, not a no-op.
+    const btn = () => page.evaluate(() => [...document.querySelectorAll('#ct-photo-pick button')].find(b => /select all/i.test(b.textContent))?.textContent.trim());
+    check(await btn() === 'Deselect all', `[${t}] at the cap the folder button reads Deselect all (${await btn()})`);
+    await page.evaluate(() => window.ctSelectAllInFolder());
+    check(await text(page, '#ct-photo-count') === '0 of 9 attached', `[${t}] and clears the folder`);
+    check(await btn() === 'Select all', `[${t}] then reads Select all again`);
 
     check(errs.length === 0, `[${t}] no page errors (${errs.join(' | ').slice(0, 200)})`);
   });

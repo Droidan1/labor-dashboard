@@ -15813,6 +15813,71 @@ function bufferImageUrl(env, kind, row) {
   return `${apiOrigin(env)}/${kind}/${row.id}-${file}`;
 }
 
+// Everything Buffer would refuse or fail on later, checked up front: by draft-schedule
+// (so a post is refused while someone is watching, not at 9 pm) and by the publisher.
+// Returns { error } or { text, images: [{ kind, row }] } in posting order, cover first.
+async function bufferDraftCheck(env, draft) {
+  const n = bufferImageCount(draft);
+  if (!n) return { error: "Draft has no cover or photos to post" };
+  if (n > BUFFER_MAX_IMAGES) return { error: bufferTooManyImages(n, !!draft.thumbnail_id) };
+  const text = String(draft.caption || "");
+  if (text.length > BUFFER_FB_TEXT_MAX) return { error: `Caption is ${text.length} characters; Facebook takes ${BUFFER_FB_TEXT_MAX}` };
+  const images = [];
+  if (draft.thumbnail_id) {
+    const th = await env.DB.prepare("SELECT id, r2_key, content_type FROM marketing_thumbnails WHERE id = ?").bind(draft.thumbnail_id).first();
+    if (!th) return { error: `Image missing: cover #${draft.thumbnail_id}` };
+    images.push({ kind: "t", row: th });
+  }
+  let photoIds = []; try { photoIds = JSON.parse(draft.photo_ids || "[]"); } catch (_) {}
+  for (const pid of photoIds) {
+    const ph = await env.DB.prepare("SELECT id, r2_key, content_type, photo_type, status FROM marketing_photos WHERE id = ?").bind(pid).first();
+    if (!ph) return { error: `Image missing: photo #${pid}` };
+    // The public route refuses these, so Buffer could never fetch them.
+    if (ph.status === "rejected" || !PUBLIC_PHOTO_TYPES.includes(ph.photo_type)) {
+      return { error: `Photo #${pid} is a ${ph.photo_type} photo, which is not posted publicly. Remove it in Edit` };
+    }
+    images.push({ kind: "p", row: ph });
+  }
+  for (const { row } of images) {
+    if (!BUFFER_IMAGE_TYPE.test(String(row.content_type || ""))) {
+      return { error: `Facebook through Buffer takes JPEG, PNG or WebP; image #${row.id} is ${row.content_type}` };
+    }
+  }
+  return { text, images };
+}
+
+const BUFFER_LIVE = ["scheduled", "sending", "sent"];   // a post Buffer has, and will send or has sent
+
+// Did an earlier attempt already give Buffer this post? Asked only when one may have:
+//   'handing'     the attempt reached Buffer and its answer was lost;
+//   'unconfirmed' Buffer took it but never reported it sent in 48 h.
+// Buffer has no idempotency key, so this is the only thing between a lost answer and a
+// second post. A match is a LIVE post on the channel, made since that attempt, whose
+// first image is this draft's own first image (our URLs carry the photo id, so two
+// drafts never share one) and whose text is this caption. A Buffer draft is not a
+// match: staging the post first must not let a live publish adopt the draft.
+// Returns { ok, post|null } or a bufferGql error, which means "cannot rule it out".
+async function bufferFindEarlierPost(env, channelId, priors, firstImageUrl, text) {
+  for (const p of priors.filter(x => x.buffer_post_id)) {
+    const r = await bufferGql(env, "query PostStatus($id: PostId!) { post(input: { id: $id }) { id status } }", { id: String(p.buffer_post_id) });
+    if (r.ok && r.data.post && BUFFER_LIVE.includes(r.data.post.status)) return { ok: true, post: r.data.post };
+    if (!r.ok && r.code !== "NOT_FOUND") return r;
+  }
+  const lost = priors.filter(x => !x.buffer_post_id);
+  if (!lost.length) return { ok: true, post: null };
+  const since = new Date(Math.min(...lost.map(x => new Date(x.created_at).getTime())) - 120000).toISOString();
+  const r = await bufferGql(env,
+    "query Recent($org: OrganizationId!, $ch: [ChannelId!], $since: DateTime!) { posts(first: 100, input: { organizationId: $org, filter: { channelIds: $ch, createdAt: { start: $since } } }) { edges { node { id status text assets { source } } } } }",
+    { org: BUFFER_ORG_ID, ch: [channelId], since });
+  if (!r.ok) return r;
+  const want = String(text || "").trim();
+  const hit = ((r.data.posts && r.data.posts.edges) || []).map(e => e && e.node).find(p => p
+    && BUFFER_LIVE.includes(p.status)
+    && Array.isArray(p.assets) && p.assets[0] && p.assets[0].source === firstImageUrl
+    && String(p.text || "").trim() === want);
+  return { ok: true, post: hit || null };
+}
+
 async function publishDraftViaBuffer(env, { draftId, published }) {
   if (!env.DB) return { ok: false, error: "Storage not configured (DB)", status: 500 };
   const draft = await env.DB.prepare("SELECT * FROM marketing_drafts WHERE id = ?").bind(draftId).first();
@@ -15821,127 +15886,138 @@ async function publishDraftViaBuffer(env, { draftId, published }) {
   const channelId = BUFFER_FACEBOOK_CHANNELS[store];
   if (!channelId) return { ok: false, error: `No Buffer Facebook channel mapped for store ${store}`, status: 400 };
   const target = await env.DB.prepare("SELECT page_id, page_name FROM facebook_page_targets WHERE store = ?").bind(store).first().catch(() => null);
+  const pageId = target ? String(target.page_id) : null;
 
-  const n = bufferImageCount(draft);
-  if (!n) return { ok: false, error: "Draft has no cover or photos to post", status: 400 };
-  if (n > BUFFER_MAX_IMAGES) return { ok: false, error: bufferTooManyImages(n, !!draft.thumbnail_id), status: 400 };
-  const text = String(draft.caption || "");
-  if (text.length > BUFFER_FB_TEXT_MAX) return { ok: false, error: `Caption is ${text.length} characters; Facebook takes ${BUFFER_FB_TEXT_MAX}`, status: 400 };
+  const chk = await bufferDraftCheck(env, draft);
+  if (chk.error) return { ok: false, error: chk.error, status: 400 };
+  const assets = chk.images.map(({ kind, row }) => ({ image: { url: bufferImageUrl(env, kind, row) } }));
 
-  // Ordered image list: cover first, then the photos, as the Graph path does.
-  const rows = [];
-  if (draft.thumbnail_id) {
-    const th = await env.DB.prepare("SELECT id, r2_key, content_type FROM marketing_thumbnails WHERE id = ?").bind(draft.thumbnail_id).first().catch(() => null);
-    if (!th) return { ok: false, error: `Image missing: cover #${draft.thumbnail_id}`, status: 400 };
-    rows.push({ kind: "t", row: th });
-  }
-  let photoIds = []; try { photoIds = JSON.parse(draft.photo_ids || "[]"); } catch (_) {}
-  for (const pid of photoIds) {
-    const ph = await env.DB.prepare("SELECT id, r2_key, content_type, photo_type, status FROM marketing_photos WHERE id = ?").bind(pid).first().catch(() => null);
-    if (!ph) return { ok: false, error: `Image missing: photo #${pid}`, status: 400 };
-    // The public route refuses these, so Buffer could never fetch them.
-    if (ph.status === "rejected" || !PUBLIC_PHOTO_TYPES.includes(ph.photo_type)) {
-      return { ok: false, error: `Photo #${pid} is a ${ph.photo_type} photo, which is not posted publicly — remove it in Edit`, status: 400 };
-    }
-    rows.push({ kind: "p", row: ph });
-  }
-  for (const { row } of rows) {
-    if (!BUFFER_IMAGE_TYPE.test(String(row.content_type || ""))) {
-      return { ok: false, error: `Facebook through Buffer takes JPEG, PNG or WebP; image #${row.id} is ${row.content_type}`, status: 400 };
-    }
-  }
-  const assets = rows.map(({ kind, row }) => ({ image: { url: bufferImageUrl(env, kind, row) } }));
-
-  // Buffer has no idempotency key, so a retry first looks for the post an earlier
-  // attempt may have made before its answer was lost. Only on a retry: the first
-  // attempt has nothing to find.
+  // 1. An earlier attempt with an unknown outcome may already have made this post.
+  const priorRows = await env.DB.prepare(
+    "SELECT id, buffer_post_id, created_at FROM marketing_publish_log WHERE draft_id = ? AND status IN ('handing','unconfirmed') ORDER BY id"
+  ).bind(draftId).all();
+  const priors = priorRows.results || [];
   let post = null;
-  if ((draft.publish_attempts || 0) > 1) {
-    const since = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
-    const found = await bufferGql(env,
-      "query Recent($org: OrganizationId!, $ch: [ChannelId!], $since: DateTime!) { posts(first: 50, input: { organizationId: $org, filter: { channelIds: $ch, createdAt: { start: $since } } }) { edges { node { id status text } } } }",
-      { org: BUFFER_ORG_ID, ch: [channelId], since });
-    if (!found.ok) return found;   // can't rule out a duplicate: let the scheduler retry later
-    const edges = (found.data.posts && found.data.posts.edges) || [];
-    const hit = edges.map(e => e.node).find(p => p && p.text === text && p.status !== "error");
-    if (hit) post = hit;
+  if (priors.length) {
+    const found = await bufferFindEarlierPost(env, channelId, priors, assets[0].image.url, chk.text);
+    if (!found.ok) return found;   // cannot rule out a duplicate: try again later
+    post = found.post;
+    // Resolved either way: Buffer has that post (adopted below) or never got it.
+    for (const p of priors) {
+      await env.DB.prepare("UPDATE marketing_publish_log SET status='superseded' WHERE id=?").bind(p.id).run();
+    }
   }
+
+  // 2. Record the hand-off BEFORE making it. If this write fails, nothing is sent: a
+  //    hand-off with no record is the one a retry could not find.
+  const startedAt = new Date().toISOString();
+  const mark = await env.DB.prepare(
+    "INSERT INTO marketing_publish_log (draft_id, store, page_id, status, created_at) VALUES (?,?,?,'handing',?)"
+  ).bind(draftId, store, pageId, startedAt).run();
+  const markId = mark.meta && mark.meta.last_row_id;
+  const settle = (status, fields = {}) => env.DB.prepare(
+    "UPDATE marketing_publish_log SET status=?, buffer_post_id=COALESCE(?, buffer_post_id), response=? WHERE id=?"
+  ).bind(status, fields.buffer_post_id || null, String(fields.response || "").slice(0, 2000), markId).run();
+
+  // 3. Hand it over (or adopt the one Buffer already has).
   if (!post) {
-    const input = {
-      channelId, text, schedulingType: "automatic",
-      mode: published ? "shareNow" : "addToQueue",
-      metadata: { facebook: { type: "post" } },
-      assets,
-    };
+    const input = { channelId, text: chk.text, schedulingType: "automatic", mode: published ? "shareNow" : "addToQueue", metadata: { facebook: { type: "post" } }, assets };
     if (!published) input.saveToDraft = true;   // staged: lands as a Buffer draft for marketing
     const r = await bufferGql(env,
       "mutation CreatePost($input: CreatePostInput!) { createPost(input: $input) { __typename ... on PostActionSuccess { post { id status } } ... on MutationError { message } } }",
       { input });
-    if (!r.ok) return r;
+    if (!r.ok) {
+      // Unreachable or a 5xx: Buffer may have made it, so the marker stays 'handing' and
+      // the next attempt looks first. Anything else is a definite refusal.
+      if (!(r.status >= 500)) await settle("error", { response: r.error }).catch(() => {});
+      return r;
+    }
     const cp = r.data.createPost || {};
     if (cp.__typename !== "PostActionSuccess" || !cp.post || !cp.post.id) {
+      await settle("error", { response: cp.message || cp.__typename }).catch(() => {});
       return { ok: false, error: `Buffer refused the post: ${cp.message || cp.__typename || "no answer"}`, status: 400 };
     }
     post = cp.post;
   }
 
-  // Log FIRST (the scheduler's reconcile reads it), then advance the draft. 'queued'
-  // until syncBufferPosts sees Buffer send it; post_id/post_url arrive then.
-  // Buffer already has the post, so a failed write here must not report failure:
-  // retry once, then carry on (a retry's duplicate check still finds it by text).
+  // 4. 'queued' until syncBufferPosts sees Buffer send it; post_id/post_url arrive then.
+  //    Buffer already has the post, so a failed write must not report failure: retry
+  //    once, then carry on (the marker stays 'handing', which a retry would adopt).
+  const done = { buffer_post_id: String(post.id), response: JSON.stringify(post) };
+  try { await settle(published ? "queued" : "staged", done); }
+  catch (_) { try { await settle(published ? "queued" : "staged", done); } catch (e) { console.error("buffer publish log failed:", (e && e.message) || e); } }
   const now = new Date().toISOString();
-  const log = () => env.DB.prepare(
-    "INSERT INTO marketing_publish_log (draft_id, store, page_id, post_id, post_url, response, status, created_at, buffer_post_id) VALUES (?,?,?,?,?,?,?,?,?)"
-  ).bind(draftId, store, target ? String(target.page_id) : null, null, null, JSON.stringify(post).slice(0, 2000), published ? "queued" : "staged", now, String(post.id)).run();
-  try { await log(); } catch (_) { try { await log(); } catch (e) { console.error("buffer publish log failed:", (e && e.message) || e); } }
   const next = published ? "published" : "approved";
   try { await env.DB.prepare("UPDATE marketing_drafts SET status=?, updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=?").bind(next, now, published ? now : null, draftId).run(); }
   catch (_) { try { await env.DB.prepare("UPDATE marketing_drafts SET status=?, updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=?").bind(next, now, published ? now : null, draftId).run(); } catch (_) {} }
   return {
-    ok: true, published, page: { id: target ? String(target.page_id) : null, name: target ? target.page_name : null },
-    postId: null, postUrl: null, photos: rows.length, bufferPostId: String(post.id),
+    ok: true, published, page: { id: pageId, name: target ? target.page_name : null },
+    postId: null, postUrl: null, photos: chk.images.length, bufferPostId: String(post.id),
     note: published ? "Sent to Buffer. It posts to the store's Facebook Page within a minute."
       : "Saved as a Buffer draft. Schedule it in Buffer to post it.",
   };
 }
 
-// Follow handed-off posts until Buffer sends them. `recent` (every minute) covers
-// the first 30 minutes, when nearly all of them resolve; `older` (hourly) the rest
-// of 48 hours, after which a post Buffer never confirmed is called failed. Bounded
-// that way so a stuck post cannot spend the key's 500 calls a day.
+// Follow handed-off posts until Buffer sends them: one list call per pass covers every
+// queued post (Buffer allows 100 calls per 15 minutes and 500 a day, shared with anyone
+// else using the key). `recent` runs every minute over the first 30 minutes, when
+// nearly all of them resolve; `older` runs hourly over the rest of 48 hours, after
+// which a post Buffer never confirmed is called failed. A post missing from the list is
+// asked for by id, and only a NOT_FOUND seen twice 5 minutes apart counts as deleted:
+// a fresh post can be briefly invisible, and one stale read must not fail a real post.
 async function syncBufferPosts(env, now, window) {
   if (!env.DB || !env.BUFFER_API_KEY) return { skipped: "no DB or BUFFER_API_KEY" };
   const nowMs = now.getTime(), nowIso = now.toISOString();
-  const MIN30 = 30 * 60 * 1000, H48 = 48 * 3600 * 1000;
+  const MIN30 = 30 * 60 * 1000, H48 = 48 * 3600 * 1000, RECHECK = 5 * 60 * 1000;
   const [from, to] = window === "older" ? [nowMs - H48, nowMs - MIN30] : [nowMs - MIN30, nowMs + 60000];
   const out = { checked: 0, sent: 0, failed: 0, expired: 0, waiting: 0, errors: 0 };
-  const failDraft = async (row, reason) => {
-    await env.DB.prepare("UPDATE marketing_publish_log SET status='error', response=? WHERE id=? AND status='queued'")
-      .bind(String(reason).slice(0, 2000), row.id).run().catch(() => {});
+  const failDraft = async (row, status, reason) => {
+    await env.DB.prepare("UPDATE marketing_publish_log SET status=?, response=? WHERE id=? AND status='queued'")
+      .bind(status, String(reason).slice(0, 2000), row.id).run().catch(() => {});
     await failSchedule(env, row.draft_id, reason, nowIso, true);
   };
 
   if (window === "older") {
+    // 'unconfirmed', not 'error': Buffer may still send it, so a Retry looks first.
     const stale = await env.DB.prepare(
       "SELECT id, draft_id FROM marketing_publish_log WHERE status='queued' AND buffer_post_id IS NOT NULL AND created_at < ? LIMIT 20"
     ).bind(new Date(nowMs - H48).toISOString()).all().catch(() => ({ results: [] }));
-    for (const row of (stale.results || [])) { await failDraft(row, "Buffer never confirmed it posted (48 h)"); out.expired++; }
+    for (const row of (stale.results || [])) { await failDraft(row, "unconfirmed", "Buffer never confirmed it posted (48 h)"); out.expired++; }
   }
 
-  const due = await env.DB.prepare(
-    "SELECT id, draft_id, buffer_post_id FROM marketing_publish_log WHERE status='queued' AND buffer_post_id IS NOT NULL AND created_at >= ? AND created_at < ? ORDER BY id LIMIT 10"
-  ).bind(new Date(from).toISOString(), new Date(to).toISOString()).all().catch(() => ({ results: [] }));
-  for (const row of (due.results || [])) {
+  const due = (await env.DB.prepare(
+    "SELECT id, draft_id, buffer_post_id, created_at, response FROM marketing_publish_log WHERE status='queued' AND buffer_post_id IS NOT NULL AND created_at >= ? AND created_at < ? ORDER BY id LIMIT 50"
+  ).bind(new Date(from).toISOString(), new Date(to).toISOString()).all().catch(() => ({ results: [] }))).results || [];
+  if (!due.length) return out;
+
+  const since = new Date(Math.min(...due.map(r => new Date(r.created_at).getTime())) - 120000).toISOString();
+  const list = await bufferGql(env,
+    "query Recent($org: OrganizationId!, $ch: [ChannelId!], $since: DateTime!) { posts(first: 100, input: { organizationId: $org, filter: { channelIds: $ch, createdAt: { start: $since } } }) { edges { node { id status externalLink error { message } } } } }",
+    { org: BUFFER_ORG_ID, ch: [...new Set(Object.values(BUFFER_FACEBOOK_CHANNELS))], since });
+  if (!list.ok) { out.errors++; return out; }   // try again next pass (and never hammer a 429)
+  const byId = new Map(((list.data.posts && list.data.posts.edges) || []).map(e => e && e.node).filter(Boolean).map(p => [String(p.id), p]));
+
+  let lookups = 0;
+  for (const row of due) {
     out.checked++;
-    const r = await bufferGql(env,
-      "query PostStatus($id: PostId!) { post(input: { id: $id }) { id status sentAt externalLink error { message } } }",
-      { id: String(row.buffer_post_id) });
-    if (!r.ok) {
-      if (r.status === 404) { await failDraft(row, "Deleted in Buffer before it posted"); out.failed++; }
-      else out.errors++;   // try again next pass
-      continue;
+    let p = byId.get(String(row.buffer_post_id));
+    if (!p) {
+      if (lookups++ >= 3) { out.waiting++; continue; }   // bounded; the rest wait for the next pass
+      const r = await bufferGql(env,
+        "query PostStatus($id: PostId!) { post(input: { id: $id }) { id status externalLink error { message } } }",
+        { id: String(row.buffer_post_id) });
+      if (!r.ok && r.code === "NOT_FOUND") {
+        const seen = /^not_found_at:(.+)$/.exec(String(row.response || ""));
+        if (seen && nowMs - new Date(seen[1]).getTime() >= RECHECK) { await failDraft(row, "error", "Deleted in Buffer before it posted"); out.failed++; }
+        else if (!seen) {
+          await env.DB.prepare("UPDATE marketing_publish_log SET response=? WHERE id=? AND status='queued'").bind(`not_found_at:${nowIso}`, row.id).run().catch(() => {});
+          out.waiting++;
+        } else out.waiting++;
+        continue;
+      }
+      if (!r.ok) { out.errors++; if (r.status === 429) break; continue; }
+      p = r.data.post || {};
     }
-    const p = r.data.post || {};
     if (p.status === "sent") {
       const link = p.externalLink ? String(p.externalLink) : null;
       const m = link && /\/(\d+_\d+)\/?$/.exec(link);
@@ -15949,7 +16025,7 @@ async function syncBufferPosts(env, now, window) {
         .bind(m ? m[1] : null, link, JSON.stringify(p).slice(0, 2000), row.id).run().catch(() => {});
       out.sent++;
     } else if (p.status === "error") {
-      await failDraft(row, `Buffer couldn't post it: ${(p.error && p.error.message) || "unknown error"}`);
+      await failDraft(row, "error", `Buffer couldn't post it: ${(p.error && p.error.message) || "unknown error"}`);
       out.failed++;
     } else {
       out.waiting++;
@@ -16117,7 +16193,7 @@ async function processScheduledPosts(env, now) {
   // handed to Buffer: 'queued' until Buffer sends it, and its post_id comes later.)
   const alreadyPosted = async (draftId) =>
     env.DB.prepare("SELECT COALESCE(post_id, buffer_post_id) AS post_id FROM marketing_publish_log WHERE draft_id=? AND (post_id IS NOT NULL OR buffer_post_id IS NOT NULL) AND status IN ('published','staged','queued') ORDER BY id DESC LIMIT 1")
-      .bind(draftId).first().catch(() => null);
+      .bind(draftId).first();   // no catch: a log it cannot read must stop a publish, never allow a second one
 
   // 1. Reaper: rescue rows a prior tick left stuck in 'publishing'.
   const staleIso = new Date(nowMs - CLAIM_STALE_MS).toISOString();
@@ -16125,7 +16201,8 @@ async function processScheduledPosts(env, now) {
     "SELECT id, publish_attempts FROM marketing_drafts WHERE status='publishing' AND (claimed_at IS NULL OR claimed_at < ?) LIMIT 10"
   ).bind(staleIso).all().catch(() => ({ results: [] }));
   for (const row of (stale.results || [])) {
-    const done = await alreadyPosted(row.id);
+    let done;
+    try { done = await alreadyPosted(row.id); } catch (e) { out.skipped++; continue; }   // leave it stuck, never re-post blind
     if (done && done.post_id) {
       await env.DB.prepare("UPDATE marketing_drafts SET status='published', updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=? AND status='publishing'").bind(nowIso, nowIso, row.id).run().catch(() => {});
     } else if ((row.publish_attempts || 0) >= MAX_ATTEMPTS) {
@@ -16153,7 +16230,14 @@ async function processScheduledPosts(env, now) {
     ).bind(nowIso, row.id).run();
     if (!claim.meta || claim.meta.changes !== 1) { out.skipped++; continue; }
     // 5. Reconcile-before-publish — the only guard against an ambiguous-outcome duplicate.
-    const prior = await alreadyPosted(row.id);
+    let prior;
+    try { prior = await alreadyPosted(row.id); }
+    catch (e) {
+      // Cannot tell whether it already went out: put it back and say why, rather than risk a second post.
+      await env.DB.prepare("UPDATE marketing_drafts SET status='scheduled', claimed_at=NULL, next_attempt_at=?, schedule_error=? WHERE id=?")
+        .bind(new Date(nowMs + 10 * 60 * 1000).toISOString(), `Publish log unreadable: ${String((e && e.message) || e)}`.slice(0, 300), row.id).run().catch(() => {});
+      out.skipped++; continue;
+    }
     if (prior && prior.post_id) {
       await env.DB.prepare("UPDATE marketing_drafts SET status='published', updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=?").bind(nowIso, nowIso, row.id).run().catch(() => {});
       out.published++; continue;
@@ -18248,12 +18332,14 @@ export default {
           const id = parseInt(b.id, 10);
           const cur = await env.DB.prepare("SELECT status FROM marketing_drafts WHERE id=?").bind(id).first().catch(() => null);
           if (cur && cur.status === "publishing") return new Response(JSON.stringify({ error: "Post is publishing — can't edit right now" }), { status: 409, headers: corsJson });
-          // photos_curated: a person has now chosen this post's photos, so the bin
-          // auto-draft stops refilling them from the week's uploads (it would undo a
-          // trim to Buffer's 10-image limit with the next upload).
+          // photos_curated: once a person changes the photo list, the bin auto-draft
+          // stops refilling it from the week's uploads (that would undo a trim to
+          // Buffer's 10-image limit with the next upload). A caption-only save leaves
+          // the flag alone, so later uploads keep landing. (SET reads the OLD row.)
           const res = await env.DB.prepare(
-            `UPDATE marketing_drafts SET store=?, thumbnail_id=?, photo_ids=?, caption=?, caption_source=?, topic=?, post_type=?, photos_curated=1, updated_at=? WHERE id=?`
-          ).bind(store, thumbnailId, JSON.stringify(photoIds), caption, captionSource, topic, postType, now, id).run();
+            `UPDATE marketing_drafts SET store=?, thumbnail_id=?, photo_ids=?, caption=?, caption_source=?, topic=?, post_type=?,
+                    photos_curated = CASE WHEN COALESCE(photo_ids, '[]') = ? THEN photos_curated ELSE 1 END, updated_at=? WHERE id=?`
+          ).bind(store, thumbnailId, JSON.stringify(photoIds), caption, captionSource, topic, postType, JSON.stringify(photoIds), now, id).run();
           if (!res.meta || res.meta.changes === 0) return new Response(JSON.stringify({ error: "Draft not found" }), { status: 404, headers: corsJson });
           // A scheduled post must always have an image; an edit that removes them auto-unschedules it.
           if (cur && cur.status === "scheduled" && !thumbnailId && !photoIds.length) {
@@ -18535,14 +18621,15 @@ export default {
         const b = await request.json();
         const id = parseInt(b.id, 10);
         if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
-        const draft = await env.DB.prepare("SELECT status, thumbnail_id, photo_ids FROM marketing_drafts WHERE id=?").bind(id).first();
+        const draft = await env.DB.prepare("SELECT status, thumbnail_id, photo_ids, caption FROM marketing_drafts WHERE id=?").bind(id).first();
         if (!draft) return new Response(JSON.stringify({ error: "Draft not found" }), { status: 404, headers: corsJson });
         if (draft.status === "published" || draft.status === "publishing") return new Response(JSON.stringify({ error: "That post is already publishing or published" }), { status: 409, headers: corsJson });
         let pids = []; try { pids = JSON.parse(draft.photo_ids || "[]"); } catch (_) {}
         if (!draft.thumbnail_id && !pids.length) return new Response(JSON.stringify({ error: "Add a cover or a photo before scheduling" }), { status: 400, headers: corsJson });
         // Refuse now, not at the scheduled time when nobody is watching.
-        if (env.BUFFER_API_KEY && bufferImageCount(draft) > BUFFER_MAX_IMAGES) {
-          return new Response(JSON.stringify({ error: bufferTooManyImages(bufferImageCount(draft), !!draft.thumbnail_id) }), { status: 400, headers: corsJson });
+        if (env.BUFFER_API_KEY) {
+          const chk = await bufferDraftCheck(env, draft);
+          if (chk.error) return new Response(JSON.stringify({ error: chk.error }), { status: 400, headers: corsJson });
         }
         const when = etWallClockToUtc(b.et_wall_clock, b.tz);
         if (!when) return new Response(JSON.stringify({ error: "Invalid date/time" }), { status: 400, headers: corsJson });

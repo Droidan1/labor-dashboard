@@ -424,6 +424,24 @@ console.log('bin-photo auto-draft (upload-triggered)');
   eq(JSON.parse(drafts(db).find(r => r.store === 'BL2').photo_ids).length, 2, 'an unpicked draft keeps refilling');
 }
 
+// 22 — a caption-only save is not a photo pick: the week's later uploads keep landing.
+// (Only a change to the photo list stops the refill; otherwise Thursday's batch would
+// silently miss the post because someone fixed a typo on Tuesday.)
+{
+  const { env, db } = makeEnv();
+  for (let i = 0; i < 3; i++) await upload(env, 'BL1', 'bins');
+  const d = drafts(db)[0];
+  const res = await worker.fetch(new Request('https://x/?action=draft-save', {
+    method: 'POST', headers: { 'X-Snapshot-Secret': SECRET, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: d.id, store: 'BL1', thumbnail_id: d.thumbnail_id, photo_ids: JSON.parse(d.photo_ids), caption: 'Typo fixed' }),
+  }), env, { waitUntil: () => {} });
+  eq(res.status, 200, 'the caption is saved');
+  eq(drafts(db)[0].photos_curated, 0, 'with the same photos, the draft is not marked as picked');
+  await upload(env, 'BL1', 'bins');
+  eq(JSON.parse(drafts(db)[0].photo_ids).length, 4, 'and the next upload still lands in it');
+  eq(drafts(db)[0].caption, 'Typo fixed', 'without touching the caption');
+}
+
 // Tally in the shape scripts/test.sh counts: "<n> passed, <m> failed".
 console.log(`\n${assertions - failures} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

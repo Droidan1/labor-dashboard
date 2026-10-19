@@ -5,11 +5,18 @@
 // What has to hold:
 //   - the payload Buffer needs (channel, shareNow, facebook type, images in order),
 //     with image links our own public routes actually serve;
-//   - Buffer's 10-image cap is refused with a plain message, never trimmed;
-//   - a post is never handed over twice (no idempotency key on Buffer's side);
-//   - a failure Buffer reports after the hand-off reaches the card and a push.
-// Drives the real worker.fetch and worker.scheduled: the wiring (cron → publisher,
-// cron → sync, endpoint → publisher) is what a regex-extracted helper cannot see.
+//   - Buffer's 10-image cap (and anything else it would refuse) is refused while
+//     someone is watching, never trimmed;
+//   - 🛑 a post is never handed over twice. Buffer has no idempotency key, so every
+//     hand-off is recorded BEFORE it is made, and an attempt whose answer was lost is
+//     looked for before another is made — however the retry arrives (Publish again,
+//     Schedule, the Retry button, the cron's backoff);
+//   - a failure Buffer reports after the hand-off reaches the card and a push, and one
+//     stale read never fails a real post;
+//   - the sync spends one call per pass, whatever is queued.
+// Drives the real worker.fetch and worker.scheduled against a small fake Buffer: the
+// wiring (cron → publisher, cron → sync, endpoint → publisher) is what a
+// regex-extracted helper cannot see.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,28 +30,57 @@ const eq = (a, b, m) => ok(a === b, `${m} (got ${JSON.stringify(a)}, want ${JSON
 const worker = await loadWorker(repo);
 const BL2_CHANNEL = '6ac7dd7f6a5c39ccb6548539';
 const LINK = 'https://facebook.com/264627006733058_122311668812239321';
+const NOT_FOUND = { status: 404, json: { errors: [{ message: 'Post not found for id', extensions: { code: 'NOT_FOUND' } }], data: null } };
 
-// ── Outbound fetch: Buffer is answered by `buffer`, anything else is recorded and refused.
-let calls = [], buffer = () => ({ data: {} });
+// ── A fake Buffer: createPost stores the post; posts() lists them; post() reads one.
+// `fake.before(body)` may answer first: return a reply, 'THROW' (the network drops),
+// or 'LOST' (Buffer makes the post, then the answer is lost on the way back).
+let calls = [];
+const fake = { posts: new Map(), seq: 0, before: null };
+function resetFake() { calls = []; fake.posts = new Map(); fake.before = null; }
+function bufferAnswer(body) {
+  const q = body.query;
+  if (/createPost/.test(q)) {
+    const id = 'b' + String(++fake.seq).padStart(23, '0'), inp = body.variables.input;
+    fake.posts.set(id, { id, status: inp.saveToDraft ? 'draft' : 'sending', text: inp.text, channelId: inp.channelId,
+      assets: inp.assets.map(a => ({ source: a.image.url })), externalLink: null, error: null });
+    return { data: { createPost: { __typename: 'PostActionSuccess', post: { id, status: fake.posts.get(id).status } } } };
+  }
+  if (/posts\(/.test(q)) {
+    const ch = body.variables.ch;
+    return { data: { posts: { edges: [...fake.posts.values()].filter(p => ch.includes(p.channelId)).map(node => ({ node })) } } };
+  }
+  if (/post\(input/.test(q)) {
+    const p = fake.posts.get(body.variables.id);
+    return p ? { data: { post: p } } : NOT_FOUND;
+  }
+  return { data: {} };
+}
 globalThis.fetch = async (url, init = {}) => {
   const u = String(url);
   if (u === 'https://api.buffer.com') {
     const body = JSON.parse(init.body);
-    calls.push({ url: u, auth: (init.headers || {}).Authorization, body });
-    const r = buffer(body);
+    calls.push({ auth: (init.headers || {}).Authorization, body });
+    let r = fake.before ? fake.before(body) : null;
+    if (r === 'THROW') throw new Error('The operation was aborted (timeout)');
+    if (r === 'LOST') { bufferAnswer(body); throw new Error('socket hang up'); }
+    if (r && r.raw) return new Response(r.raw, { status: r.status, headers: { 'Content-Type': 'text/html' } });
+    r = r || bufferAnswer(body);
     return new Response(JSON.stringify(r.json || r), { status: r.status || 200, headers: { 'Content-Type': 'application/json' } });
   }
   calls.push({ url: u });
   throw new Error('outbound fetch blocked in test: ' + u.slice(0, 80));
 };
-const bufferCalls = () => calls.filter(c => c.url === 'https://api.buffer.com');
-const created = (id = 'b0000000000000000000000a') => ({ data: { createPost: { __typename: 'PostActionSuccess', post: { id, status: 'sending' } } } });
-const status = (s, extra = {}) => ({ data: { post: { id: 'x', status: s, sentAt: null, externalLink: null, error: null, ...extra } } });
+const bufferCalls = () => calls.filter(c => c.body);
+const creates = () => bufferCalls().filter(c => /createPost/.test(c.body.query)).length;
+const lists = () => bufferCalls().filter(c => /posts\(/.test(c.body.query)).length;
+const send = (id, extra = {}) => Object.assign(fake.posts.get(id), { status: 'sent', externalLink: LINK, ...extra });
 
 const uuid = n => `${String(n).repeat(8)}-${String(n).repeat(4)}-4${String(n).repeat(3)}-a${String(n).repeat(3)}-${String(n).repeat(12)}`;
 const BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
 
 async function setup({ key = 'buffer-test-key' } = {}) {
+  resetFake();
   const { db, env } = makeEnv(repo);
   db.exec(fs.readFileSync(path.join(repo, 'migration-020.sql'), 'utf8'));
   db.exec(fs.readFileSync(path.join(repo, 'migration-021.sql'), 'utf8'));
@@ -82,31 +118,34 @@ async function setup({ key = 'buffer-test-key' } = {}) {
 }
 
 const publish = (env, id, published = true) => worker.fetch(req('/?action=publish-draft', { user: 'u-admin', method: 'POST', body: { draft_id: id, published } }), env, { waitUntil: () => {} });
+const schedule = (env, id, when = '2099-01-01T09:00') => worker.fetch(req('/?action=draft-schedule', { user: 'u-admin', method: 'POST', body: { id, et_wall_clock: when } }), env, { waitUntil: () => {} });
 async function tick(env, cron) {
   const waits = [];
   await worker.scheduled({ cron, scheduledTime: Date.now() }, env, { waitUntil: p => waits.push(p) });
   await Promise.allSettled(waits);
 }
 const ago = ms => new Date(Date.now() - ms).toISOString();
+// What a person does to make a draft due now: schedule it (resets attempts), then the clock passes.
+async function scheduleNow(s, id) {
+  eq((await schedule(s.env, id)).status, 200, `draft ${id} schedules`);
+  s.db.prepare('UPDATE marketing_drafts SET scheduled_at=? WHERE id=?').run(ago(60e3), id);
+}
 
 console.log('Hub → Buffer publishing');
 
 // ── 1. Publish now: the payload Buffer gets, and links our own routes serve ──
 {
-  calls = [];
   const s = await setup();
   const c = await s.cover(), p1 = await s.photo(), p2 = await s.photo({ type: 'retail' });
   const id = s.draft({ thumbnail_id: c, photo_ids: [p1, p2] });
-  buffer = () => created();
   const r = await publish(s.env, id);
   const j = await r.json();
   eq(r.status, 200, 'publish answers 200');
   ok(/Buffer/.test(j.note || ''), 'and says it went to Buffer');
-  const b = bufferCalls();
-  eq(b.length, 1, 'one call to Buffer');
-  eq(calls.filter(x => /graph\.facebook\.com/.test(x.url)).length, 0, '🛑 nothing posted through our own Meta app');
-  eq(b[0].auth, 'Bearer buffer-test-key', 'authorised with the key');
-  const input = b[0].body.variables.input;
+  eq(bufferCalls().length, 1, 'one call to Buffer (a first attempt has nothing to look for)');
+  eq(calls.filter(x => x.url && /graph\.facebook\.com/.test(x.url)).length, 0, '🛑 nothing posted through our own Meta app');
+  eq(bufferCalls()[0].auth, 'Bearer buffer-test-key', 'authorised with the key');
+  const input = bufferCalls()[0].body.variables.input;
   eq(input.channelId, BL2_CHANNEL, "the store's Buffer Facebook channel");
   eq(input.mode, 'shareNow', 'shareNow: the Hub already decided the time');
   eq(input.schedulingType, 'automatic', 'automatic, not a phone reminder');
@@ -126,36 +165,38 @@ console.log('Hub → Buffer publishing');
   const L = s.logs(id);
   eq(L.length, 1, 'one log row');
   eq(L[0].status, 'queued', "logged 'queued' until Buffer sends it");
-  eq(L[0].buffer_post_id, 'b0000000000000000000000a', 'with the Buffer post id');
+  ok(/^b0+1$/.test(L[0].buffer_post_id), 'with the Buffer post id');
   eq(L[0].post_id, null, 'no Facebook id yet');
 }
 
-// ── 2. The cover route: same rules as /p/ ──────────────────────────────────
+// ── 2. The cover route: same rules as /p/, and the two never cross ──────────
 {
   const s = await setup();
   const c = await s.cover();
-  const get = p => worker.fetch(new Request('https://api.retjghub.com' + p), s.env, { waitUntil: () => {} });
+  const p = await s.photo();
+  eq(c, p, '(fixture: a cover and a photo share id ' + c + ')');
+  const get = q => worker.fetch(new Request('https://api.retjghub.com' + q), s.env, { waitUntil: () => {} });
   const good = await get(`/t/${c}-${uuid(7)}.png`);
   eq(good.status, 200, 'a cover is served');
   eq(good.headers.get('content-type'), 'image/png', 'as its type');
   eq(good.headers.get('content-security-policy'), "default-src 'none'; sandbox", 'sandboxed');
   eq((await get(`/t/${c}-${uuid(8)}.png`)).status, 404, '🛑 a made-up UUID is refused');
-  const p = await s.photo();
   const pkey = s.db.prepare('SELECT r2_key FROM marketing_photos WHERE id=?').get(p).r2_key.split('/').pop();
-  eq((await get(`/t/${p}-${pkey}`)).status, 404, '🛑 a photo cannot be fetched through the cover route');
-  const odd = s.db.prepare(`INSERT INTO marketing_thumbnails (name, r2_key, content_type, created_at) VALUES ('x', ?, 'image/png', 'now')`)
-    .run(`bin-dump/BL1/${uuid(5)}.png`);
-  await s.env.MEDIA.put(`bin-dump/BL1/${uuid(5)}.png`, BYTES, { httpMetadata: { contentType: 'image/png' } });
-  eq((await get(`/t/${Number(odd.lastInsertRowid)}-${uuid(5)}.png`)).status, 404, '🛑 a key outside marketing/_thumbnails/ is refused');
+  eq((await get(`/t/${p}-${pkey}`)).status, 404, '🛑 a photo is not reachable through the cover route, even at the same id');
+  eq((await get(`/p/${c}-${uuid(7)}.png`)).status, 404, '🛑 a cover is not reachable through the photo route, even at the same id');
+  // A cover row pointing anywhere but marketing/_thumbnails/ — even at a sign-in-only team photo.
+  const team = await s.photo({ type: 'team' });
+  const tkey = s.db.prepare('SELECT r2_key FROM marketing_photos WHERE id=?').get(team).r2_key;
+  const odd = s.db.prepare(`INSERT INTO marketing_thumbnails (name, r2_key, content_type, created_at) VALUES ('x', ?, 'image/jpeg', 'now')`).run(tkey);
+  eq((await get(`/t/${Number(odd.lastInsertRowid)}-${tkey.split('/').pop()}`)).status, 404, '🛑 a cover row outside marketing/_thumbnails/ is refused');
   const svg = s.db.prepare(`INSERT INTO marketing_thumbnails (name, r2_key, content_type, created_at) VALUES ('x', ?, 'image/svg+xml', 'now')`)
     .run(`marketing/_thumbnails/${uuid(4)}.svgxm`);
   await s.env.MEDIA.put(`marketing/_thumbnails/${uuid(4)}.svgxm`, BYTES, {});
   eq((await get(`/t/${Number(svg.lastInsertRowid)}-${uuid(4)}.svgxm`)).status, 404, '🛑 a non-raster cover is refused');
 }
 
-// ── 3. 🛑 Buffer's 10-image cap is refused, never trimmed ─────────────────────
+// ── 3. 🛑 Buffer's limits are refused while someone is watching, never trimmed ─
 {
-  calls = [];
   const s = await setup();
   const c = await s.cover();
   const ten = []; for (let i = 0; i < 10; i++) ten.push(await s.photo());
@@ -166,160 +207,257 @@ console.log('Hub → Buffer publishing');
   ok(/keep your best 9/.test(j.error || ''), `and says what to do (${j.error})`);
   eq(bufferCalls().length, 0, '🛑 nothing reaches Buffer');
   eq(s.row(id).status, 'draft', 'the draft goes back to Drafts');
-
-  const sch = await worker.fetch(req('/?action=draft-schedule', { user: 'u-admin', method: 'POST', body: { id, et_wall_clock: '2099-01-01T09:00' } }), s.env, { waitUntil: () => {} });
-  eq(sch.status, 400, '🛑 scheduling it is refused now, not when nobody is watching');
+  eq((await schedule(s.env, id)).status, 400, '🛑 scheduling it is refused now, not when nobody is watching');
   eq(s.row(id).status, 'draft', 'still a draft');
 
   const noCover = s.draft({ photo_ids: ten });
-  buffer = () => created();
   eq((await publish(s.env, noCover)).status, 200, 'without a cover, 10 photos fit');
   eq(bufferCalls().at(-1).body.variables.input.assets.length, 10, 'all 10 sent');
+
+  // What Buffer could not fetch or take, refused at schedule time too.
+  const teamId = s.draft({ photo_ids: [await s.photo({ type: 'team' })] });
+  const heicId = s.draft({ photo_ids: [await s.photo({ ct: 'image/heic', ext: 'heic' })] });
+  const rt = await schedule(s.env, teamId), rh = await schedule(s.env, heicId);
+  ok(rt.status === 400 && /not posted publicly/.test((await rt.json()).error), 'a team photo (sign-in only) is refused at schedule');
+  ok(rh.status === 400 && /JPEG, PNG or WebP/.test((await rh.json()).error), 'a HEIC photo is refused at schedule, with the formats Buffer takes');
+  const before = bufferCalls().length;
+  eq((await publish(s.env, teamId)).status, 400, 'and at publish');
+  eq(bufferCalls().length, before, 'neither reached Buffer');
 }
 
-// ── 4. Photos Buffer could not fetch are refused before the hand-off ─────────
+// ── 4. No key: the old Graph path, untouched (incl. no Buffer check at schedule) ──
 {
-  calls = [];
-  const s = await setup();
-  const team = await s.photo({ type: 'team' });
-  const id = s.draft({ photo_ids: [team] });
-  const r = await publish(s.env, id);
-  eq(r.status, 400, 'a team photo (sign-in only) is refused');
-  const heic = await s.photo({ ct: 'image/heic', ext: 'heic' });
-  const id2 = s.draft({ photo_ids: [heic] });
-  const r2 = await publish(s.env, id2);
-  ok(r2.status === 400 && /JPEG, PNG or WebP/.test((await r2.json()).error), 'a HEIC photo is refused with the formats Buffer takes');
-  eq(bufferCalls().length, 0, 'neither reached Buffer');
-}
-
-// ── 5. No key: the old Graph path, untouched ────────────────────────────────
-{
-  calls = [];
   const s = await setup({ key: null });
-  const id = s.draft({ photo_ids: [await s.photo()] });
-  const r = await publish(s.env, id);
-  const j = await r.json();
+  const c = await s.cover();
+  const ten = []; for (let i = 0; i < 10; i++) ten.push(await s.photo());
+  const id = s.draft({ thumbnail_id: c, photo_ids: ten });
+  const j = await (await publish(s.env, id)).json();
   ok(/No Page token/.test(j.error || ''), 'without BUFFER_API_KEY it takes the Graph path (here: no Page token)');
-  eq(bufferCalls().length, 0, 'and never calls Buffer');
+  eq((await schedule(s.env, id)).status, 200, 'and scheduling keeps its old rules');
+  eq(bufferCalls().length, 0, 'never calls Buffer');
 }
 
-// ── 6. A scheduled post goes out on the minute cron, then the sync finds it sent ──
+// ── 5. A scheduled post goes out on the minute cron, then the sync finds it sent ──
 {
-  calls = [];
   const s = await setup();
   const id = s.draft({ photo_ids: [await s.photo()], status: 'scheduled', scheduled_at: ago(60e3), publish_live: 1 });
-  buffer = (b) => /createPost/.test(b.query) ? created('b0000000000000000000000b') : status('sending');
   await tick(s.env, '* * * * *');
   eq(s.row(id).status, 'published', 'the cron hands it to Buffer');
-  eq(bufferCalls().filter(c => /createPost/.test(c.body.query)).length, 1, 'once');
+  eq(creates(), 1, 'once');
   eq(s.logs(id)[0].status, 'queued', 'queued');
 
-  buffer = () => status('sent', { externalLink: LINK, sentAt: new Date().toISOString() });
+  send(s.logs(id)[0].buffer_post_id);
   await tick(s.env, '* * * * *');
   const L = s.logs(id)[0];
-  eq(L.status, 'published', "the sync marks it published once Buffer sent it");
+  eq(L.status, 'published', 'the sync marks it published once Buffer sent it');
   eq(L.post_url, LINK, "with Facebook's link");
   eq(L.post_id, '264627006733058_122311668812239321', "and Facebook's post id (comment ingest reads it)");
-  eq(bufferCalls().filter(c => /createPost/.test(c.body.query)).length, 1, '🛑 never handed over a second time');
+  eq(creates(), 1, '🛑 never handed over a second time');
   const list = await (await worker.fetch(req('/?action=drafts&status=all', { user: 'u-admin' }), s.env, { waitUntil: () => {} })).json();
   eq(list.drafts.find(d => d.id === id).post_url, LINK, 'the card gets its View link');
-
   const before = bufferCalls().length;
   await tick(s.env, '* * * * *');
   eq(bufferCalls().length, before, 'a sent post is not checked again');
 }
 
-// ── 7. Buffer fails after the hand-off: the card says so ────────────────────
+// ── 6. Buffer fails after the hand-off: the card says so, and Retry works ────
 {
-  calls = [];
   const s = await setup();
   const id = s.draft({ photo_ids: [await s.photo()] });
-  buffer = () => created();
   await publish(s.env, id);
-  buffer = () => status('error', { error: { message: 'Facebook rejected the image' } });
+  Object.assign(fake.posts.get(s.logs(id)[0].buffer_post_id), { status: 'error', error: { message: 'Facebook rejected the image' } });
   await tick(s.env, '* * * * *');
   eq(s.row(id).status, 'schedule_error', 'the draft shows as failed');
   ok(/Buffer couldn't post it: Facebook rejected the image/.test(s.row(id).schedule_error), "with Buffer's reason");
   eq(s.logs(id)[0].status, 'error', 'the log row is an error');
-
-  // Retry (Publish again) is allowed: an errored hand-off does not count as posted.
-  buffer = (b) => /createPost/.test(b.query) ? created('b0000000000000000000000c') : { data: { posts: { edges: [] } } };
   eq((await publish(s.env, id)).status, 200, 'publishing again is allowed');
+  eq(creates(), 2, 'and makes a new post (the failed one is not adopted)');
 }
 
-// ── 8. Deleted in Buffer before it went out ─────────────────────────────────
+// ── 7. 🛑 A lost answer, however the retry arrives, never makes a second post ──
+for (const via of ['publish', 'schedule', 'cron-backoff']) {
+  const s = await setup();
+  const scheduled = via === 'cron-backoff';
+  const id = s.draft({ photo_ids: [await s.photo()], ...(scheduled ? { status: 'scheduled', scheduled_at: ago(60e3), publish_live: 1 } : {}) });
+  fake.before = b => /createPost/.test(b.query) ? 'LOST' : null;   // Buffer makes it; the answer never arrives
+  if (scheduled) await tick(s.env, '* * * * *'); else eq((await publish(s.env, id)).status, 503, `[${via}] the lost answer reads as unreachable`);
+  eq(fake.posts.size, 1, `[${via}] (Buffer did make the post)`);
+  eq(s.logs(id)[0].status, 'handing', `[${via}] the hand-off was recorded before it was made`);
+  fake.before = null;
+  if (via === 'publish') await publish(s.env, id);
+  if (via === 'schedule') { await scheduleNow(s, id); await tick(s.env, '* * * * *'); }
+  if (via === 'cron-backoff') { s.db.prepare('UPDATE marketing_drafts SET next_attempt_at=? WHERE id=?').run(ago(1000), id); await tick(s.env, '* * * * *'); }
+  eq(fake.posts.size, 1, `🛑 [${via}] the retry does not make a second post`);
+  eq(s.row(id).status, 'published', `[${via}] it adopts the one Buffer has`);
+  const L = s.logs(id);
+  eq(L.map(x => x.status).join(','), 'superseded,queued', `[${via}] the lost attempt is resolved and the adopted one queued`);
+  eq(L[1].buffer_post_id, [...fake.posts.keys()][0], `[${via}] queued under Buffer's id`);
+}
+
+// ── 8. 🛑 …and the look-up adopts only THIS draft's live post ─────────────────
+{
+  // A lost attempt that never reached Buffer: nothing to adopt, so it is made.
+  let s = await setup();
+  let id = s.draft({ photo_ids: [await s.photo()] });
+  fake.before = b => /createPost/.test(b.query) ? 'THROW' : null;
+  await publish(s.env, id);
+  fake.before = null;
+  await publish(s.env, id);
+  eq(fake.posts.size, 1, 'a hand-off that never arrived is made on retry');
+  eq(lists(), 1, 'after one look');
+
+  // Staged first (a Buffer DRAFT, same text and images), then a lost live attempt:
+  // the Buffer draft must not be adopted as the live post.
+  s = await setup();
+  id = s.draft({ photo_ids: [await s.photo()] });
+  await publish(s.env, id, false);
+  eq([...fake.posts.values()][0].status, 'draft', '(staged: a Buffer draft)');
+  fake.before = b => /createPost/.test(b.query) ? 'THROW' : null;
+  await publish(s.env, id);
+  fake.before = null;
+  await publish(s.env, id);
+  const live = [...fake.posts.values()].filter(p => p.status !== 'draft');
+  eq(live.length, 1, '🛑 the live publish made a live post, not adopting the Buffer draft');
+  eq(s.logs(id).at(-1).buffer_post_id, live[0].id, 'and queued that one');
+
+  // Empty caption, with a story on the channel (Buffer lists those with empty text).
+  s = await setup();
+  id = s.draft({ photo_ids: [await s.photo()], caption: '' });
+  fake.posts.set('story0000000000000000000', { id: 'story0000000000000000000', status: 'sent', text: '', channelId: BL2_CHANNEL,
+    assets: [{ source: 'https://scontent.xx.fbcdn.net/story.jpg' }] });
+  fake.before = b => /createPost/.test(b.query) ? 'THROW' : null;
+  await publish(s.env, id);
+  fake.before = null;
+  await publish(s.env, id);
+  eq(creates(), 2, '🛑 an unrelated empty-text story is not adopted');
+
+  // Coliseum and Dupont share a channel: the same caption on the other store's post is not this one.
+  s = await setup();
+  const mine = s.draft({ photo_ids: [await s.photo()] }), theirs = s.draft({ photo_ids: [await s.photo()] });
+  await publish(s.env, theirs);
+  fake.before = b => /createPost/.test(b.query) ? 'THROW' : null;
+  await publish(s.env, mine);
+  fake.before = null;
+  await publish(s.env, mine);
+  eq(fake.posts.size, 2, '🛑 a post with the same caption but other photos is not adopted');
+
+  // A definite refusal is not "maybe made": the next attempt does not look.
+  s = await setup();
+  id = s.draft({ photo_ids: [await s.photo()] });
+  fake.before = b => /createPost/.test(b.query) ? { data: { createPost: { __typename: 'InvalidInputError', message: 'text too long' } } } : null;
+  eq((await publish(s.env, id)).status, 400, 'a refusal answers 400');
+  eq(s.logs(id)[0].status, 'error', 'and is logged as an error, not a lost hand-off');
+  fake.before = null;
+  await publish(s.env, id);
+  eq(lists(), 0, 'so the next attempt goes straight to createPost');
+
+  // Can't look (Buffer down for the look-up): refuse rather than risk a second post.
+  s = await setup();
+  id = s.draft({ photo_ids: [await s.photo()] });
+  fake.before = b => /createPost/.test(b.query) ? 'LOST' : null;
+  await publish(s.env, id);
+  fake.before = b => /posts\(/.test(b.query) ? { status: 502, json: { errors: [{ message: 'Bad gateway' }] } } : null;
+  const r = await publish(s.env, id);
+  ok(r.status >= 500, `🛑 with the look-up failing, the retry is refused (${r.status})`);
+  eq(fake.posts.size, 1, 'and makes nothing');
+
+  // The hand-off cannot be recorded: nothing is sent.
+  s = await setup();
+  id = s.draft({ photo_ids: [await s.photo()] });
+  const realPrepare = s.env.DB.prepare.bind(s.env.DB);
+  s.env.DB.prepare = sql => { if (/'handing'/.test(sql) && /INSERT/.test(sql)) throw new Error('D1 unavailable'); return realPrepare(sql); };
+  const rr = await publish(s.env, id);
+  ok(rr.status >= 400, 'a hand-off it cannot record is refused');
+  eq(fake.posts.size, 0, '🛑 and never reaches Buffer');
+}
+
+// ── 9. Deleted in Buffer: only a NOT_FOUND seen twice, 5 minutes apart ───────
 {
   const s = await setup();
   const id = s.draft({ photo_ids: [await s.photo()] });
-  buffer = () => created();
   await publish(s.env, id);
-  buffer = () => ({ status: 200, json: { errors: [{ message: 'Post not found for id', extensions: { code: 'NOT_FOUND' } }], data: null } });
+  fake.posts.clear();                       // gone from Buffer
   await tick(s.env, '* * * * *');
-  eq(s.row(id).status, 'schedule_error', 'a post deleted in Buffer shows as failed');
+  eq(s.row(id).status, 'published', 'one NOT_FOUND is not enough');
+  ok(/^not_found_at:/.test(s.logs(id)[0].response), 'it is noted');
+  await tick(s.env, '* * * * *');
+  eq(s.row(id).status, 'published', 'nor a second one a minute later');
+  s.db.prepare('UPDATE marketing_publish_log SET response=? WHERE draft_id=?').run('not_found_at:' + ago(6 * 60e3), id);
+  await tick(s.env, '* * * * *');
+  eq(s.row(id).status, 'schedule_error', 'seen again 5+ minutes later, it shows as failed');
   ok(/Deleted in Buffer/.test(s.row(id).schedule_error), 'and says why');
+
+  // A gateway's HTML 404 is not Buffer saying "deleted".
+  const s2 = await setup();
+  const id2 = s2.draft({ photo_ids: [await s2.photo()] });
+  await publish(s2.env, id2);
+  fake.posts.clear();
+  fake.before = b => /post\(input/.test(b.query) ? { raw: '<html>404 Not Found</html>', status: 404 } : null;
+  s2.db.prepare('UPDATE marketing_publish_log SET response=? WHERE draft_id=?').run('not_found_at:' + ago(6 * 60e3), id2);
+  await tick(s2.env, '* * * * *');
+  eq(s2.row(id2).status, 'published', '🛑 an HTML 404 never fails a post');
 }
 
-// ── 9. The sync's windows bound what it spends ──────────────────────────────
+// ── 10. The sync spends one call per pass, and stops on a 429 ────────────────
 {
+  const s = await setup();
+  const ids = [];
+  for (let i = 0; i < 6; i++) { const id = s.draft({ photo_ids: [await s.photo()] }); ids.push(id); await publish(s.env, id); }
   calls = [];
+  await tick(s.env, '* * * * *');
+  eq(bufferCalls().length, 1, 'six queued posts: one list call');
+  calls = [];
+  fake.before = () => ({ status: 429, json: { errors: [{ message: 'Too many requests', extensions: { code: 'RATE_LIMIT_EXCEEDED', window: '15m' } }] } });
+  await tick(s.env, '* * * * *');
+  eq(bufferCalls().length, 1, 'rate-limited: one call, then it stops');
+  ok(ids.every(id => s.row(id).status === 'published'), 'and nothing is failed for it');
+}
+
+// ── 11. The windows: minute for 30 min, hourly to 48 h, then 'unconfirmed' ──
+{
   const s = await setup();
   const old = s.draft({ status: 'published' }), mid = s.draft({ status: 'published' });
   const ins = s.db.prepare(`INSERT INTO marketing_publish_log (draft_id, store, status, created_at, buffer_post_id) VALUES (?, 'BL2', 'queued', ?, ?)`);
   ins.run(old, ago(49 * 3600e3), 'b00000000000000000000old');
   ins.run(mid, ago(2 * 3600e3), 'b00000000000000000000mid');
-  buffer = () => status('sending');
+  fake.posts.set('b00000000000000000000mid', { id: 'b00000000000000000000mid', status: 'sending', channelId: BL2_CHANNEL, assets: [] });
   await tick(s.env, '* * * * *');
   eq(bufferCalls().length, 0, 'the minute cron leaves posts older than 30 minutes alone');
   await tick(s.env, '0 * * * *');
-  eq(bufferCalls().length, 1, 'the hourly cron checks the 2-hour-old one, once');
+  eq(bufferCalls().length, 1, 'the hourly cron checks the 2-hour-old one, in one call');
   eq(s.row(old).status, 'schedule_error', 'a post Buffer never confirmed in 48 h is called failed');
   ok(/48 h/.test(s.row(old).schedule_error), 'and says so');
+  eq(s.logs(old)[0].status, 'unconfirmed', "logged 'unconfirmed': Buffer may still send it");
   eq(s.row(mid).status, 'published', 'the one still sending is left as it is');
+
+  // Retry on the unconfirmed one: if Buffer did send it after all, it is adopted, not re-made.
+  s.db.prepare('UPDATE marketing_drafts SET photo_ids=? WHERE id=?').run(JSON.stringify([await s.photo()]), old);
+  fake.posts.set('b00000000000000000000old', { id: 'b00000000000000000000old', status: 'sent', channelId: BL2_CHANNEL, assets: [] });
+  const before = creates();
+  eq((await publish(s.env, old)).status, 200, 'Retry on the unconfirmed post');
+  eq(creates(), before, '🛑 finds Buffer sent it after all, and makes no second post');
 }
 
-// ── 10. 🛑 A retry finds the post an earlier attempt made ─────────────────────
+// ── 12. Transient failures retry on the scheduler's backoff; a bad key does not ──
 {
-  calls = [];
-  const s = await setup();
-  const id = s.draft({ photo_ids: [await s.photo()], publish_attempts: 1 });
-  buffer = (b) => /posts\(/.test(b.query)
-    ? { data: { posts: { edges: [{ node: { id: 'b0000000000000000000000d', status: 'sending', text: 'Fresh bins at South Bend' } }] } } }
-    : created('b00000000000000000000dup');
-  const r = await publish(s.env, id);
-  eq(r.status, 200, 'the retry succeeds');
-  eq(bufferCalls().filter(c => /createPost/.test(c.body.query)).length, 0, '🛑 and does not create a second post');
-  eq(s.logs(id)[0].buffer_post_id, 'b0000000000000000000000d', 'it adopts the one Buffer already has');
-
-  // First attempt: nothing to look for, so no extra call.
-  calls = [];
-  const fresh = s.draft({ photo_ids: [await s.photo()] });
-  buffer = () => created('b0000000000000000000000e');
-  await publish(s.env, fresh);
-  eq(bufferCalls().length, 1, 'a first attempt makes exactly one call');
-}
-
-// ── 11. Transient failures retry on the scheduler's backoff; a bad key does not ──
-{
-  calls = [];
   const s = await setup();
   const id = s.draft({ photo_ids: [await s.photo()], status: 'scheduled', scheduled_at: ago(60e3), publish_live: 1 });
-  buffer = () => ({ status: 429, json: { errors: [{ message: 'Too many requests', extensions: { code: 'RATE_LIMIT_EXCEEDED' } }] } });
+  fake.before = () => ({ status: 429, json: { errors: [{ message: 'Too many requests', extensions: { code: 'RATE_LIMIT_EXCEEDED' } }] } });
   await tick(s.env, '* * * * *');
   eq(s.row(id).status, 'scheduled', 'rate-limited: still scheduled');
   ok(!!s.row(id).next_attempt_at, 'with a retry time');
+  eq(s.logs(id)[0].status, 'error', 'a 429 is a definite "not made", so no look-up next time');
 
   const id2 = s.draft({ photo_ids: [await s.photo()], status: 'scheduled', scheduled_at: ago(60e3), publish_live: 1 });
-  buffer = () => ({ status: 401, json: { errors: [{ message: 'An authentication JWT or Access Token is required', extensions: { code: 'UNAUTHENTICATED' } }] } });
+  fake.before = () => ({ status: 401, json: { errors: [{ message: 'An authentication JWT or Access Token is required', extensions: { code: 'UNAUTHENTICATED' } }] } });
   await tick(s.env, '* * * * *');
   eq(s.row(id2).status, 'schedule_error', 'a refused key fails it straight away (retrying cannot help)');
 }
 
-// ── 12. Staged → a Buffer draft for marketing, not followed by the sync ──────
+// ── 13. Staged → a Buffer draft for marketing, not followed by the sync ──────
 {
-  calls = [];
   const s = await setup();
   const id = s.draft({ photo_ids: [await s.photo()] });
-  buffer = () => created('b0000000000000000000000f');
   await publish(s.env, id, false);
   const input = bufferCalls()[0].body.variables.input;
   eq(input.saveToDraft, true, 'staged becomes a Buffer draft');
@@ -331,16 +469,26 @@ console.log('Hub → Buffer publishing');
   eq(bufferCalls().length, 0, 'the sync does not poll a Buffer draft');
 }
 
-// ── 13. A crashed tick's 'publishing' row is reconciled from the queued log ──
+// ── 14. A crashed tick's 'publishing' row is reconciled from the queued log ──
 {
-  calls = [];
   const s = await setup();
   const id = s.draft({ photo_ids: [await s.photo()], status: 'publishing', claimed_at: ago(10 * 60e3), publish_attempts: 1 });
   s.db.prepare(`INSERT INTO marketing_publish_log (draft_id, store, status, created_at, buffer_post_id) VALUES (?, 'BL2', 'queued', ?, 'b0000000000000000000000g')`).run(id, ago(9 * 60e3));
-  buffer = () => status('sending');
   await tick(s.env, '* * * * *');
   eq(s.row(id).status, 'published', 'the reaper sees the hand-off and marks it published');
-  eq(bufferCalls().filter(c => /createPost/.test(c.body.query)).length, 0, '🛑 without handing it over again');
+  eq(creates(), 0, '🛑 without handing it over again');
+}
+
+// ── 15. 🛑 A publish log it cannot read stops a publish (fail closed) ──────────
+{
+  const s = await setup();
+  const id = s.draft({ photo_ids: [await s.photo()], status: 'scheduled', scheduled_at: ago(60e3), publish_live: 1 });
+  const realPrepare = s.env.DB.prepare.bind(s.env.DB);
+  s.env.DB.prepare = sql => (/COALESCE\(post_id, buffer_post_id\)/.test(sql) ? realPrepare('SELECT no_such_column FROM marketing_publish_log') : realPrepare(sql));
+  await tick(s.env, '* * * * *');
+  eq(creates(), 0, '🛑 the reconcile cannot read the log, so nothing is posted');
+  eq(s.row(id).status, 'scheduled', 'the post waits');
+  ok(/Publish log unreadable/.test(s.row(id).schedule_error || ''), 'and says why');
 }
 
 console.log(`\n${assertions - failures} passed, ${failures} failed`);
