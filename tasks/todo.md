@@ -78,7 +78,15 @@ Design:
       unrouted path still answers 401 NO_SESSION (the old worker's answer for /t/)
 - [x] Pre-key check (read-only): no drafts in draft/scheduled/schedule_error/approved/publishing, so nothing
       queued for Buffer to refuse
-- [ ] Deploy order (Brian): ~~migration-079 → confirm columns read-only~~ ~~→ worker~~ → worker → merge → read-only check for
+- [x] #351 merged by Brian 14:25:16Z (`8e67a4c`); frontend live (sw v282 + composer code, 3 passes). I then
+      pushed c5af446 (this log) to the merged branch: lesson recorded, recovered on `claude/buffer-notes-recovery`
+- [x] `BUFFER_API_KEY` set by Brian (prod `clover-sales-api`)
+- [x] **End to end, South Bend (2026-10-19):** draft 1253 (cover #4 + 1 photo) published from Content Studio →
+      log 98 'queued' 14:45:14Z → Buffer post `6ad62cfbe21b24048f513943` `shareNow`, sent 14:45:36Z (22 s);
+      Buffer fetched both images from our links (`/t/4-…png` 1254×1254, `/p/2743-…jpeg` 1536×2048) → the
+      minute sync marked log 98 'published' with Facebook post `264627006733058_122312548730239321` and its
+      URL, which the card's View link now reads. Reach to check tomorrow (Buffer metrics lag ~24 h)
+- [ ] Deploy order (Brian): ~~migration-079 → confirm columns read-only~~ ~~→ worker~~ ~~→ merge~~ ~~→ key~~ ~~→ one post~~ → worker → merge → read-only check for
       scheduled drafts Buffer would refuse → `wrangler secret put BUFFER_API_KEY` → one South Bend post end to end
 
 # Executive Summary: a test send to just me (2026-10-19)
