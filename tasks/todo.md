@@ -1,3 +1,36 @@
+# Hub → Buffer: Content Studio publishes through Buffer, Facebook first (2026-10-19)
+
+**Ask (Brian):** "start on #1": the publish button sends the post to Buffer instead of straight to Facebook.
+**Why:** Buffer's South Bend test post (Oct 13) got 476 impressions; posts from our own Meta app (Development
+mode, never confirmed fixed) got ~5 views in July, and the app has published 10 more that way since Oct 7.
+
+**Decided (Brian, 2026-10-19):** Buffer takes at most 10 images on a Facebook post, and 46 of 54 posts since
+Aug 18 had more than 9 photos plus the cover. **The admin picks 9**: the composer stops at 9 photos plus the
+cover, and a draft with more is refused at publish/schedule until it is trimmed. Nothing is dropped silently.
+**My call (stated, not asked):** the Hub keeps the schedule (its every-minute cron) and hands the post to Buffer
+with `shareNow` at the time. Edit/Unschedule on a scheduled card keep working with no Buffer sync; showing
+Hub posts on Buffer's calendar ahead of time is a later step if marketing wants it.
+
+Design:
+- `BUFFER_API_KEY` secret set → `publishDraft` goes through Buffer; unset → today's Graph path. Rollback =
+  delete the secret. Store → Buffer Facebook channel is a constant (IDs in weekly-marketing-intake.md).
+- Images by public URL: photos via `/p/…` (#328), covers via a new `/t/<id>-<uuid>.<ext>` on the same rules.
+- Staged (`publish_live=0`) → a Buffer draft (`saveToDraft`), which marketing schedules in Buffer.
+- `marketing_publish_log` row `status='queued'` + `buffer_post_id`; the draft moves to Published. A sync reads
+  Buffer: `sent` → log `published` with the Facebook post id/URL; `error` → card shows "Failed: <Buffer's
+  reason>" + superuser push. Checked every minute for 30 min, then hourly to 48 h (rate limit 500/day).
+- No idempotency key on Buffer's createPost: a retry first looks for a post it already made on that channel.
+- Admin trim must stick: an auto bin draft saved by a person stops being recomputed from the week's uploads.
+- migration-079: `marketing_publish_log.buffer_post_id`, `marketing_drafts.photos_curated`.
+
+- [ ] Plan + todo entry
+- [ ] Worker: Buffer transport, `/t/` cover links, 10-image cap, sync, retry guard, curated flag
+- [ ] migration-079
+- [ ] Frontend: composer cap 9 + counter, over-9 draft says "trim to 9", publish copy says Buffer, CACHE_NAME
+- [ ] Tests: `test-buffer-publish.mjs` through `worker.fetch` + `scheduled()`, failing on main; browser check
+- [ ] `npm test`; fresh-eyes review
+- [ ] Deploy order (Brian): migration-079 → worker → merge → `wrangler secret put BUFFER_API_KEY`
+
 # Executive Summary: a test send to just me (2026-10-19)
 
 **Ask (Brian):** "Build the test send to just me (superuser only, one copy, no push)", to check the recap PDF
@@ -557,7 +590,19 @@ Step two: Buffer proof (South Bend = BL2)
       link: URL is now `/p/<id>-<uuid>.<ext>`, a primary-key read; cache 1 year → 1 hour (deletion is the
       takedown); team/other photos stay sign-in only. Left: small originals keep EXIF (GPS = the store),
       `status='rejected'` is never set by anything (photo-delete is the takedown)
-- [ ] Push + PR, merge, worker deploy; then fetch one link from outside to confirm
+- [x] #328 merged 19:58:49Z as `623a05d`; Brian deployed from a fresh clone, `77f266cb` (MEDIA, BL16, 6 crons).
+      Verified from outside on 3 consecutive passes (19:59:48–20:00:24Z): a real South Bend retail photo's
+      link → 200, exact 1,267,316 bytes, image/jpeg, CSP sandbox; a made-up UUID on a real id → 404 "Not found";
+      every other endpoint still 401. The photo is a JPEG of Levi's 569 jeans on a rack (id 1401, Aug 20)
+- [x] Image draft to South Bend (Brian's go-ahead): `6ace90001044e5796a68f4d2`, status draft, no due time. Buffer
+      read the photo through our public link: it recorded 1536 × 2048, the photo's true size, and image/jpeg
+- [x] Scheduled South Bend post (Brian: "tonight at 9pm"): `6ace92841044e5796a69748e`, `mode: customScheduled`,
+      `dueAt: 2026-10-14T01:00:00.000Z` (9:00 pm EDT), same photo, read back as the ONLY scheduled post on the
+      channel with the image at 1536 × 2048. Caption: "just hit the racks" → "are on the racks" (photo is Aug 20)
+- [x] Confirmed 2026-10-19 (Buffer API, read-only): `sent` at 01:00:32Z, Facebook post
+      `264627006733058_122311668812239321`; 476 impressions, 13 clicks, 2.73% engagement (July's app-published
+      posts got ~5 views). Since then marketing has hand-posted 12 Facebook posts through Buffer (Oct 14–15),
+      nothing is queued, and the app still published 10 posts through our own Meta app (last Oct 15)
 - [x] Draft post to South Bend (cannot publish) → `6ace65cbd718c7e2826f6d09`, read back as draft, no due
       time. Facebook requires `metadata.facebook.type`. Payload recorded in weekly-marketing-intake.md
 - [ ] With Brian's go-ahead: one scheduled South Bend retail post → record blockers

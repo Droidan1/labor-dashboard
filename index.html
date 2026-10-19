@@ -19713,6 +19713,10 @@
   let ctPhotos = [];
   let ctSelThumb = null;
   let ctSelPhotos = new Set();
+  // Buffer takes 10 images on a Facebook post: the cover plus 9 photos. Brian chose
+  // (2026-10-19) to have the admin pick the 9 rather than the app dropping any, so the
+  // picker stops at 9 and a draft that already has more says how many to remove.
+  const CT_MAX_PHOTOS = 9;
   let ctFlowWeeks = null;      // cached retail-week ranges (marketing_flow) for foldering photos
   let ctPhotoDelMode = false;  // "select to delete" mode in the Bin photos picker
   let ctPhotoDel = new Set();
@@ -19801,6 +19805,7 @@
   async function ctScheduleFromComposer() {
     const st = el('ct-compose-status');
     const show = (m, c) => { st.textContent = m; st.className = 'text-sm ' + c; st.classList.remove('hidden'); };
+    if (ctSelPhotos.size > CT_MAX_PHOTOS) return show(`A post takes ${CT_MAX_PHOTOS} photos plus the cover. Remove ${ctSelPhotos.size - CT_MAX_PHOTOS} first.`, 'text-op-bad');
     let id;
     try { id = await ctPersistDraft(); } catch (e) { return show((e && e.message) || 'Save failed', 'text-op-bad'); }
     if (id == null) return show('Save the draft first.', 'text-op-bad');
@@ -20528,7 +20533,7 @@
   function ctRenderPhotoPicker() {
     const pick = el('ct-photo-pick');
     if (!pick) return;
-    const cnt = el('ct-photo-count'); if (cnt) cnt.textContent = ctPhotos.length ? `${ctSelPhotos.size} of ${ctPhotos.length} attached` : '';
+    ctUpdatePhotoCount();
     const { arr, cur } = ctPhotoGroups();
     if (!arr.length) { ctOpenFolder = null; pick.innerHTML = '<div class="text-[12px] text-opl-inkDim dark:text-op-inkDim py-2">No submitted photos for this store yet.</div>'; return; }
     if (ctOpenFolder && !arr.some(g => g.key === ctOpenFolder)) ctOpenFolder = null;
@@ -20545,7 +20550,25 @@
   function ctBackToTypes() { ctOpenType = null; ctPhotoDelMode = false; ctPhotoDel = new Set(); ctRenderPhotoPicker(); }
   window.ctBackToTypes = ctBackToTypes;
 
-  function ctTogglePhoto(id) { if (ctSelPhotos.has(id)) ctSelPhotos.delete(id); else ctSelPhotos.add(id); ctSyncTileSelection(); ctRenderPreview(); ctMarkDirty(); }
+  function ctPhotoCapNotice(msg) {
+    const st = el('ct-compose-status'); if (!st) return;
+    st.textContent = msg; st.className = 'text-sm text-op-bad'; st.classList.remove('hidden');
+    clearTimeout(ctPhotoCapNotice.t); ctPhotoCapNotice.t = setTimeout(() => st.classList.add('hidden'), 4000);
+  }
+  function ctUpdatePhotoCount() {
+    const cnt = el('ct-photo-count'); if (!cnt) return;
+    const n = ctSelPhotos.size, over = n - CT_MAX_PHOTOS;
+    cnt.textContent = !ctPhotos.length && !n ? '' : over > 0
+      ? `${n} of ${CT_MAX_PHOTOS} attached · remove ${over} to post`
+      : `${n} of ${CT_MAX_PHOTOS} attached`;
+    cnt.className = 'text-[12px] ' + (over > 0 ? 'font-semibold text-opl-bad dark:text-[#f87171]' : 'text-opl-inkDim dark:text-op-inkDim');
+  }
+  function ctTogglePhoto(id) {
+    if (ctSelPhotos.has(id)) ctSelPhotos.delete(id);
+    else if (ctSelPhotos.size >= CT_MAX_PHOTOS) return ctPhotoCapNotice(`A post takes ${CT_MAX_PHOTOS} photos plus the cover. Remove one to add another.`);
+    else ctSelPhotos.add(id);
+    ctSyncTileSelection(); ctRenderPreview(); ctMarkDirty();
+  }
   // Select (or, if all already selected, deselect) every photo in the currently
   // open week+type folder — so the whole folder can be attached without tapping
   // each tile. Full re-render updates the tiles + the button's Select/Deselect label.
@@ -20556,7 +20579,12 @@
     const tg = ctTypeGroups(g.photos).find(t => t.key === ctOpenType); if (!tg || !tg.photos.length) return;
     const ids = tg.photos.map(p => p.id);
     if (ids.every(id => ctSelPhotos.has(id))) ids.forEach(id => ctSelPhotos.delete(id));  // all on → clear this folder
-    else ids.forEach(id => ctSelPhotos.add(id));                                           // else → add all (in folder order)
+    else {                                                                                 // else → add, in folder order, up to the cap
+      const add = ids.filter(id => !ctSelPhotos.has(id));
+      const room = Math.max(0, CT_MAX_PHOTOS - ctSelPhotos.size);
+      add.slice(0, room).forEach(id => ctSelPhotos.add(id));
+      if (add.length > room) ctPhotoCapNotice(`Added ${room} of ${add.length}: a post takes ${CT_MAX_PHOTOS} photos plus the cover.`);
+    }
     ctRenderPhotoPicker(); ctRenderPreview(); ctMarkDirty();
   }
   window.ctSelectAllInFolder = ctSelectAllInFolder;
@@ -20576,7 +20604,7 @@
       const badge = btn.querySelector('.ct-tile-badge');
       if (badge) { badge.classList.toggle('hidden', !on); if (on) badge.textContent = idx + 1; }
     });
-    const cnt = el('ct-photo-count'); if (cnt) cnt.textContent = ctPhotos.length ? `${ctSelPhotos.size} of ${ctPhotos.length} attached` : '';
+    ctUpdatePhotoCount();
   }
   window.ctSyncTileSelection = ctSyncTileSelection;
   window.ctTogglePhoto = ctTogglePhoto;
@@ -20922,9 +20950,10 @@
           + `<button onclick="ctUnschedule(${dr.id})" class="shrink-0 text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim px-1">Unschedule</button>`;
       }
     } else {
-      const nPhotos = (dr.photo_ids || []).length;
-      meta = escapeHtml(ctStoreLabel(dr.store)) + ' · ' + nPhotos + ' photo' + (nPhotos === 1 ? '' : 's') + (dr.origin === 'flow' ? ' · from Flow' : '');
-      metaClass = 'text-opl-inkDim dark:text-op-inkDim';
+      const nPhotos = (dr.photo_ids || []).length, over = nPhotos - ctPhotoRoom(dr);
+      meta = escapeHtml(ctStoreLabel(dr.store)) + ' · ' + nPhotos + ' photo' + (nPhotos === 1 ? '' : 's') + (dr.origin === 'flow' ? ' · from Flow' : '')
+        + (over > 0 ? ` · remove ${over} to post` : '');
+      metaClass = over > 0 ? 'font-semibold text-opl-bad dark:text-[#f87171]' : 'text-opl-inkDim dark:text-op-inkDim';
       actions = `<button onclick="ctPublishDraft(${dr.id})" class="shrink-0 text-[11px] font-semibold text-white bg-accent-blue rounded-md px-2 py-0.5">Publish</button>`
         + `<button onclick="ctEditDraft(${dr.id})" class="shrink-0 text-[11px] font-semibold text-accent-green px-1">Edit</button>`
         + `<button onclick="ctDeleteDraft(${dr.id})" aria-label="Delete draft" class="shrink-0 text-[11px] font-semibold text-opl-bad dark:text-[#f87171] px-1">Delete</button>`;
@@ -21092,8 +21121,17 @@
   }
   window.ctDeleteDraft = ctDeleteDraft;
 
+  // Photos a post can carry: Buffer's 10 images, less one when there is a cover.
+  function ctPhotoRoom(dr) { return dr && dr.thumbnail_id ? CT_MAX_PHOTOS : CT_MAX_PHOTOS + 1; }
+
   async function ctPublishDraft(id) {
-    const ok = await uiConfirm('Post this to Facebook? The cover and photos will be published LIVE to the store’s Page with your caption.', { okText: 'Publish live', title: 'Publish to Facebook' });
+    const d0 = (ctAllDrafts || []).find(d => d.id === id);
+    const n0 = d0 ? (d0.photo_ids || []).length : 0;
+    if (d0 && n0 > ctPhotoRoom(d0)) {
+      await uiAlert(`This post has ${n0} photos, and a Facebook post takes ${ctPhotoRoom(d0)}${d0.thumbnail_id ? ' plus the cover' : ''}. Open Edit and keep your best ${ctPhotoRoom(d0)}.`, { title: 'Too many photos' });
+      return;
+    }
+    const ok = await uiConfirm('Post this to the store’s Facebook Page? The cover and photos go out LIVE with your caption.', { okText: 'Publish live', title: 'Publish to Facebook' });
     if (!ok) return;
 
     // Optimistically move the card into the Scheduled lane as "Posting…" the
@@ -21120,7 +21158,8 @@
     const cur = (ctAllDrafts || []).find(d => d.id === id) || {};
 
     if (cur.status === 'published') {
-      await uiAlert(`Posted to ${ctStoreLabel(cur.store)} ✓${cur.post_url ? '\n\n' + cur.post_url : ''}`, { title: 'Published' });
+      const note = resp && resp.j && resp.j.note;
+      await uiAlert(`Posted to ${ctStoreLabel(cur.store)} ✓${note ? '\n\n' + note : ''}${cur.post_url ? '\n\n' + cur.post_url : ''}`, { title: 'Published' });
       return;
     }
     if (cur.status === 'publishing') {
