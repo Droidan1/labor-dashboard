@@ -338,6 +338,15 @@ own attention around the merge, which is the one moment I do not control.
      was safe: 38eed1b was on `main` and identical to the deployed worker.
      - **A housekeeping commit is still a push to a PR branch.** Every push after the turn that
        opened the PR uses the guard. "It's only the log" is when the guard gets skipped.
+   - **Fifth time (#351, 2026-10-19), the SAME day as the fourth, and the third time's exact
+     mistake:** `gh pr view 351 --json state --jq .state && git add … && git commit … && git push`
+     printed `MERGED` and pushed c5af446 (todo only) anyway. Brian had merged at 14:25:16Z while I
+     was byte-verifying the worker he deployed from the branch. I had scanned the lesson headings
+     at session start but did not open this one, because the task (a Buffer feature) did not look
+     like it touched it. Every PR task touches it.
+     - The written rule failed twice in one day. Rule 4 says a repeat changes the plan, not the
+       wording: the mechanism is a `pre-push` hook that refuses a push to a branch whose head is
+       already in `origin/main`, proposed to Brian rather than installed unasked.
 7. **Push a change only once the check that could change its diff has finished (2026-09-28).**
    - **What happened:** I pushed c43816a (midnight on the clock-change Sundays) to #297 at 13:27
      while an agent was still mapping every caller. The description said: "being mapped now…
