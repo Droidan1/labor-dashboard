@@ -1,3 +1,37 @@
+# Store videos: upload now, Facebook posting next (2026-10-19)
+
+**Ask (Brian):** "Let's stay on Facebook for right now, can we add the video upload option?"
+**Decided (Brian, 2026-10-19):** both kinds: a store walk filmed SIDEWAYS, at least 3:00, posted as a normal
+Facebook video, and short clips filmed UPRIGHT, 3–90 s, posted as Reels (Buffer makes every 9:16 video a
+Reel, and Reels stop at 90 s, so an upright 3-minute walk could not post). Record at 1080p; refuse over 1 GB.
+Spec + the corrected manager email: weekly-marketing-intake.md "Video".
+
+PR A — upload (this one):
+- [x] migration-080 `marketing_videos`
+- [x] Worker: video-upload-start / -part / -complete / -abort (R2 multipart through the worker, 10 MiB parts,
+      uploader-only, rules re-checked), hourly abort of uploads abandoned for a day, store-walk weekly count
+- [x] Submit Photos: two video choices, phone-side length/orientation/size checks (browser metadata, else the
+      MP4/MOV header), poster frame, chunked upload with retries + wake lock; store-walk bar and admin target
+- [x] Tests: test-video-upload 49 (fails on main), test-photo-targets updated, browser-submit-video 76/76 both
+      themes; `npm test` 10676 / 121 suites. Commit `a118330` (local)
+- [x] Fresh-eyes review of a118330: 🛑 parts went as PUT, which resolveCors does not allow, so EVERY part would
+      have died at the browser's preflight in prod while both suites passed (worker.fetch has no preflight; the
+      browser check mocks fetch). Now POST, plus a test that every method index.html sends passes a real
+      OPTIONS preflight. Also fixed, each with a check that fails on a118330: a lost/5xx finish aborted a fully
+      uploaded video (now retried, and complete is idempotent); unlimited open uploads per person (now 2, with
+      their own >2 h stale ones cleared first); an R2 upload orphaned when the insert failed; a wrong-size part
+      read into memory before refusal (Content-Length checked first); a black poster when no frame decoded;
+      an old-editor save reset store_walk to 1 (now keeps the saved value); a trailing 8-byte box in moov made
+      the header reader give up (seen failing on a118330). Left: the <video>/poster path has no automated test
+      (no playable fixture without ffmpeg) — the first real-phone upload is its test.
+      `npm test` 10693 / 121; browser-submit-video 88/88
+- [ ] Push + PR (Brian's go-ahead) → migration-080 → worker → merge
+
+PR B — post a video to Facebook through Buffer:
+- [ ] Content Studio video post (one video, no photos): store walk → `facebook.type: post`, clip → `reel`
+- [ ] Public `/v/` link with Range/206 for Buffer's fetcher
+- [ ] One test post from Brian to settle: an iPhone HEVC .mov by URL, and what a sideways walk becomes
+
 # Hub → Buffer: Content Studio publishes through Buffer, Facebook first (2026-10-19)
 
 **Ask (Brian):** "start on #1": the publish button sends the post to Buffer instead of straight to Facebook.

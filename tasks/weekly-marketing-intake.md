@@ -42,6 +42,15 @@ note, and some are real caption facts ("Vcf furniture will be $10 each", "Applia
 Delivered as three PRs: (1) targets + bars + admin control + picker/type/associate fixes + note; (2) video;
 (3) morning line. (1) and (3) need no new storage beyond a settings key; (2) needs a migration.
 
+## Video (Brian, 2026-10-19)
+
+- Two kinds, both for Facebook through Buffer: a **store walk** filmed **sideways**, at least 3:00 (a normal
+  Facebook video), and a **short clip** filmed **upright**, 3–90 s (a Reel). Why sideways: Buffer posts every
+  9:16 video as a Reel, and Reels stop at 90 s, so an upright 3-minute walk could not post. This reverses the
+  email's original "holding the phone upright".
+- **1080p**, and anything over Buffer's 1 GB is refused on the phone before it uploads.
+- A video post carries no photos (Buffer: one video per Facebook post).
+
 ## Decisions (Brian, 2026-10-13)
 
 - Retail target **20**; bins 20; one store walk of at least 3:00.
@@ -56,12 +65,18 @@ Delivered as three PRs: (1) targets + bars + admin control + picker/type/associa
 >
 > 1. **20 retail photos**: new arrivals, featured products, end caps, seasonal.
 > 2. **20 bin photos**: full bins on bin day, plus anything that stands out.
-> 3. **One store-walk video, at least 3 minutes**: walk the sales floor slowly, holding the phone upright.
+> 3. **One store-walk video, at least 3 minutes**: walk the sales floor slowly, holding the phone **sideways**.
+>
+> You can also send **short clips** (up to 90 seconds) any time, filmed **upright**: a new arrival, a full bin,
+> a deal worth showing. These can go out as Facebook Reels.
+>
+> **Before you film, set the camera to 1080p** (iPhone: Settings › Camera › Record Video › 1080p HD at 30 fps).
+> Videos over 1 GB can't be posted, and the app will tell you before it uploads.
 >
 > **Anyone on your team can upload.** The bars count every upload for your store, so split it across shifts.
 > They reset every Sunday.
 >
-> **Pick the right type** (Retail, Bins, or Store walk) before you submit. If you know a price, a sale, or a
+> **Pick the right type** (Retail, Bins, Store walk, or Short clip) before you submit. If you know a price, a sale, or a
 > restock time, add it in the info box so the post can mention it.
 >
 > **Take good photos**: good light, product filling the frame, no customers' faces, and only what is

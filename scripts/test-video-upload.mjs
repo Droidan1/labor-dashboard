@@ -40,10 +40,12 @@ const PART = 10 * 1024 * 1024;
 function withMultipart(env) {
   const mpus = new Map();
   env.MEDIA._mpus = mpus;
+  // Like R2, create returns the same R2MultipartUpload object resume does (key, uploadId,
+  // uploadPart, complete, abort) — a bare {key, uploadId} hid a missing abort once.
   env.MEDIA.createMultipartUpload = async (key, opts = {}) => {
     const uploadId = 'mpu-' + (mpus.size + 1);
     mpus.set(uploadId, { key, opts, parts: new Map(), state: 'open' });
-    return { key, uploadId };
+    return { key, uploadId, ...env.MEDIA.resumeMultipartUpload(key, uploadId) };
   };
   env.MEDIA.resumeMultipartUpload = (key, uploadId) => ({
     async uploadPart(n, body) {
@@ -80,7 +82,7 @@ function env0({ videos = true } = {}) {
 }
 const call = (env, url, opts = {}) => worker.fetch(req(url, opts), env, ctx);
 const put = (env, user, id, part, bytes) => worker.fetch(new Request(`https://api.retjghub.com/?action=video-upload-part&id=${id}&part=${part}`, {
-  method: 'PUT', headers: { Cookie: `session=sess-${user}` }, body: bytes,
+  method: 'POST', headers: { Cookie: `session=sess-${user}` }, body: bytes,
 }), env, ctx);
 const complete = (env, user, id, parts, poster) => {
   const fd = new FormData();
@@ -96,6 +98,23 @@ const CLIP = { store: 'BL1', video_type: 'clip', content_type: 'video/mp4', byte
 const start = (env, user, body) => call(env, '/?action=video-upload-start', { user, method: 'POST', body });
 
 console.log('store videos: chunked upload');
+
+// ── 0. 🛑 Every method the page sends cross-origin passes the CORS preflight ──
+// The first cut sent parts as PUT, which resolveCors does not allow: every part died in
+// the browser while every test here passed, because worker.fetch has no preflight.
+{
+  const { env } = env0();
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const methods = [...new Set([...html.matchAll(/method:\s*'([A-Z]+)'/g)].map(m => m[1]))].filter(m => m !== 'GET');
+  ok(methods.includes('POST'), `(found the page's methods: ${methods.join(', ')})`);
+  for (const m of methods) {
+    const r = await worker.fetch(new Request('https://api.retjghub.com/?action=video-upload-part&id=1&part=1', {
+      method: 'OPTIONS', headers: { Origin: 'https://www.retjghub.com', 'Access-Control-Request-Method': m, 'Access-Control-Request-Headers': 'content-type' },
+    }), env, ctx);
+    const allow = (r.headers.get('access-control-allow-methods') || '').split(/,\s*/);
+    ok(allow.includes(m), `🛑 the preflight allows ${m}, which index.html sends (allowed: ${allow.join(', ')})`);
+  }
+}
 
 // ── 1. The type rules, enforced by the worker ──────────────────────────────
 {
@@ -156,6 +175,43 @@ console.log('store videos: chunked upload');
   eq(obj && obj.size, PART + 5, 'the whole video is in R2');
   ok(!!(await env.MEDIA.get(done.r2_key.replace(/\.mov$/, '.thumb.jpg'))), 'with its poster frame beside it');
   eq((await put(env, 'u-mgr1', j.id, 1, new Uint8Array(PART))).status, 409, 'a finished upload takes no more parts');
+  // The phone's complete went through but its answer was lost; it asks again.
+  const again = await complete(env, 'u-mgr1', j.id, [{ part: 1, etag: p1.etag }, { part: 2, etag: p2.etag }]);
+  const aj = await json(again);
+  ok(again.status === 200 && aj.ok && aj.already, '🔑 completing a finished upload again answers ok (so the manager is not told it failed)');
+  eq((await complete(env, 'u-mgr2', j.id, [])).status, 403, 'but not for someone else');
+}
+
+// ── 2b. At most two uploads in flight per person; an abandoned one of theirs is cleared ──
+{
+  const { db, env } = env0();
+  const a = await json(await start(env, 'u-mgr1', WALK));
+  const b = await json(await start(env, 'u-mgr1', WALK));
+  const third = await start(env, 'u-mgr1', WALK);
+  eq(third.status, 429, '🛑 a third upload in flight is refused (each can hold 1 GB of parts)');
+  ok(/two videos uploading/.test((await json(third)).error || ''), 'with a plain reason');
+  eq((await start(env, 'u-mgr2', { ...WALK, store: 'BL4' })).status, 200, "someone else's uploads are theirs to count");
+  db.prepare('UPDATE marketing_videos SET created_at=? WHERE id=?').run('2026-10-13T13:00:00.000Z', a.id);   // 3 h ago
+  const aUid = db.prepare('SELECT upload_id FROM marketing_videos WHERE id=?').get(a.id).upload_id;
+  eq((await start(env, 'u-mgr1', WALK)).status, 200, '🔑 a crashed upload over 2 h old does not lock them out: it is cleared and the new one starts');
+  eq(db.prepare('SELECT status FROM marketing_videos WHERE id=?').get(a.id).status, 'aborted', 'the stale one is aborted');
+  eq(env.MEDIA._mpus.get(aUid).state, 'aborted', 'and its parts freed');
+  eq(db.prepare('SELECT status FROM marketing_videos WHERE id=?').get(b.id).status, 'uploading', 'the recent one is untouched');
+}
+
+// ── 2c. No row, no upload: an insert that fails aborts the R2 upload it just opened ──
+{
+  const { env } = env0({ videos: false });
+  const r = await start(env, 'u-mgr1', WALK);
+  ok(r.status >= 400, 'without migration-080, start fails');
+  ok([...env.MEDIA._mpus.values()].every(u => u.state !== 'open'), 'and leaves no upload open in R2');
+
+  const { env: env2 } = env0();
+  const real = env2.DB.prepare.bind(env2.DB);
+  env2.DB.prepare = sql => { if (/INSERT INTO marketing_videos/.test(sql)) throw new Error('D1 unavailable'); return real(sql); };
+  const r2 = await start(env2, 'u-mgr1', WALK);
+  ok(r2.status >= 400, 'an insert that fails fails the start');
+  eq([...env2.MEDIA._mpus.values()].map(u => u.state), ['aborted'], '🛑 and the multipart upload it had opened is aborted, not orphaned');
 }
 
 // ── 3. A completed object that is not the declared size is thrown away ─────
@@ -222,7 +278,7 @@ console.log('store videos: chunked upload');
   eq((await set({ retail: 20, bins: 20, store_walk: 2 })).status, 200, 'saves a store-walk target of 2');
   eq((await json(await call(env, '/?action=photo-targets', { user: 'u-admin' }))).targets.store_walk, 2, 'and it reads back');
   eq((await set({ retail: 15, bins: 25 })).status, 200, '🔑 a page still running the old editor (no store_walk) can save');
-  eq((await json(await call(env, '/?action=photo-targets', { user: 'u-admin' }))).targets, { retail: 15, bins: 25, store_walk: 1 }, 'store_walk takes its default');
+  eq((await json(await call(env, '/?action=photo-targets', { user: 'u-admin' }))).targets, { retail: 15, bins: 25, store_walk: 2 }, '🛑 and the store-walk target set on a newer page is kept');
   eq((await set({ retail: 15, bins: 25, store_walk: -1 })).status, 400, 'a negative store-walk target is refused');
 }
 

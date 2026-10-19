@@ -19707,7 +19707,8 @@
           let size = u32(dv, o); const t = type(dv, o + 4); let head = 8;
           if (size === 1) { size = u64(dv, o + 8); head = 16; } else if (size === 0) size = end - o;
           if (size < head || o + size > end) return;
-          const c = o + head, ver = dv.getUint8(c);
+          const c = o + head;
+          const ver = (t === 'mvhd' || t === 'tkhd') ? dv.getUint8(c) : 0;   // a bare 8-byte box has no version byte
           if (t === 'mvhd') {
             const scale = ver === 1 ? u32(dv, c + 20) : u32(dv, c + 12);
             const dur = ver === 1 ? u64(dv, c + 24) : u32(dv, c + 16);
@@ -19749,7 +19750,9 @@
       if (loaded && isFinite(video.duration) && video.duration > 0 && video.videoWidth && video.videoHeight) {
         meta = { duration_ms: Math.round(video.duration * 1000), width: video.videoWidth, height: video.videoHeight };
         try {
-          await new Promise(res => { const t = setTimeout(res, 4000); video.onseeked = () => { clearTimeout(t); res(); }; video.currentTime = Math.min(1, video.duration / 2); });
+          const seeked = await new Promise(res => { const t = setTimeout(() => res(false), 4000); video.onseeked = () => { clearTimeout(t); res(true); }; video.currentTime = Math.min(1, video.duration / 2); });
+          // Without a decoded frame, drawImage paints nothing: send no poster rather than a black one.
+          if (!seeked || video.readyState < 2) throw new Error('no frame');
           const scale = Math.min(1, 640 / Math.max(video.videoWidth, video.videoHeight));
           const cv = document.createElement('canvas');
           cv.width = Math.round(video.videoWidth * scale); cv.height = Math.round(video.videoHeight * scale);
@@ -19823,7 +19826,8 @@
         for (let tries = 1; ; tries++) {
           let res = null, j = {};
           try {
-            res = await fetch(`${WORKER_BASE}?action=video-upload-part&id=${id}&part=${p}`, { method: 'PUT', credentials: 'include', body: blob });
+            // POST: the worker's CORS allows GET/POST/PATCH/DELETE, and a PUT dies at the preflight.
+            res = await fetch(`${WORKER_BASE}?action=video-upload-part&id=${id}&part=${p}`, { method: 'POST', credentials: 'include', body: blob });
             j = await res.json().catch(() => ({}));
           } catch (_) { res = null; }
           if (res && res.ok && j.ok) { parts.push({ part: p, etag: j.etag }); break; }
@@ -19834,14 +19838,20 @@
         }
         onProgress(Math.round(p / d.parts * 100));
       }
-      const fd = new FormData();
-      fd.append('id', String(id));
-      fd.append('parts', JSON.stringify(parts));
-      if (v.poster) fd.append('poster', v.poster, 'poster.jpg');
-      const c = await post('video-upload-complete', { body: fd });
-      const cd = await c.json().catch(() => ({}));
-      if (!c.ok || !cd.ok) return await fail(cd.error || 'Could not finish the upload.');
-      return null;
+      // Finishing is retried like a part, and never aborted on a dropped signal: every byte
+      // is already stored, and the worker answers ok if an earlier try did finish it.
+      for (let tries = 1; ; tries++) {
+        const fd = new FormData();
+        fd.append('id', String(id));
+        fd.append('parts', JSON.stringify(parts));
+        if (v.poster) fd.append('poster', v.poster, 'poster.jpg');
+        let c = null, cd = {};
+        try { c = await post('video-upload-complete', { body: fd }); cd = await c.json().catch(() => ({})); } catch (_) { c = null; }
+        if (c && c.ok && cd.ok) return null;
+        if (c && c.status >= 400 && c.status < 500 && c.status !== 429) return await fail(cd.error || 'Could not finish the upload.');
+        if (tries >= 4) return 'The upload reached us but could not be finished. Check your signal; it may still show up in a minute.';
+        await new Promise(ok => setTimeout(ok, 1500 * tries));
+      }
     } catch (_) {
       return await fail('Could not reach the server. Check your connection and try again.');
     }

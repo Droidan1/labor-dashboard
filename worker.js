@@ -7766,15 +7766,17 @@ async function readUploadTargets(env) {
 
 // The admin's edit, validated whole: every key present, every value a whole
 // number in range. Returns the JSON to store, or null to refuse the write.
-function parseUploadTargets(raw) {
+// `current` (readUploadTargets) fills a key an older editor doesn't send.
+function parseUploadTargets(raw, current = UPLOAD_TARGET_DEFAULTS) {
   let v;
   try { v = typeof raw === "string" ? JSON.parse(raw) : raw; } catch (_) { return null; }
   if (!v || typeof v !== "object" || Array.isArray(v)) return null;
   const out = {};
   for (const k of Object.keys(UPLOAD_TARGET_DEFAULTS)) {
     // store_walk arrived after the editor did (2026-10-19): a page still running the
-    // old editor sends only retail and bins, and that save must not be refused.
-    if (k === "store_walk" && (v[k] == null || v[k] === "")) { out[k] = UPLOAD_TARGET_DEFAULTS[k]; continue; }
+    // old editor sends only retail and bins. That save must not be refused, nor reset
+    // the store-walk target someone set on a newer page.
+    if (k === "store_walk" && (v[k] == null || v[k] === "")) { out[k] = current[k] != null ? current[k] : UPLOAD_TARGET_DEFAULTS[k]; continue; }
     const n = v[k] != null && v[k] !== "" ? Number(v[k]) : NaN;
     if (!Number.isInteger(n) || n < 0 || n > UPLOAD_TARGET_MAX) return null;
     out[k] = n;
@@ -7822,7 +7824,7 @@ async function abortStaleVideoUploads(env, now) {
   if (!env.DB || !env.MEDIA) return { skipped: true };
   const cutoff = new Date(now.getTime() - 24 * 3600 * 1000).toISOString();
   const { results } = await env.DB.prepare(
-    "SELECT id, r2_key, upload_id FROM marketing_videos WHERE status = 'uploading' AND created_at < ? LIMIT 20"
+    "SELECT id, r2_key, upload_id FROM marketing_videos WHERE status = 'uploading' AND created_at < ? LIMIT 100"
   ).bind(cutoff).all().catch(() => ({ results: [] }));
   for (const r of results || []) {
     if (r.upload_id) await env.MEDIA.resumeMultipartUpload(r.r2_key, r.upload_id).abort().catch(() => {});
@@ -18093,14 +18095,35 @@ export default {
         if (ruleErr) return new Response(JSON.stringify({ error: ruleErr }), { status: 400, headers: corsJson });
         const note = String(b.note || "").trim().slice(0, 500) || null;
         const now = new Date();
+        const uploader = (currentUser && currentUser.email) || null;
+        // Each open upload can hold up to 1 GB of parts, so one person gets two at a time.
+        // Theirs from over two hours ago were abandoned (a closed tab): clear those first,
+        // so a crash never locks a manager out until the hourly sweep.
+        if (uploader) {
+          const stale = await env.DB.prepare("SELECT id, r2_key, upload_id FROM marketing_videos WHERE uploader = ? AND status = 'uploading' AND created_at < ?")
+            .bind(uploader, new Date(now.getTime() - 2 * 3600 * 1000).toISOString()).all();
+          for (const r of stale.results || []) {
+            if (r.upload_id) await env.MEDIA.resumeMultipartUpload(r.r2_key, r.upload_id).abort().catch(() => {});
+            await env.DB.prepare("UPDATE marketing_videos SET status='aborted', upload_id=NULL WHERE id=? AND status='uploading'").bind(r.id).run();
+          }
+          const open = await env.DB.prepare("SELECT COUNT(*) AS n FROM marketing_videos WHERE uploader = ? AND status = 'uploading'").bind(uploader).first();
+          if (open && open.n >= 2) return new Response(JSON.stringify({ error: "You already have two videos uploading. Let them finish, or try again in a couple of hours." }), { status: 429, headers: corsJson });
+        }
         const ym = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
         const key = `marketing/${store}/video/${ym}/${crypto.randomUUID()}.${ext}`;
         const mpu = await env.MEDIA.createMultipartUpload(key, { httpMetadata: { contentType: ct } });
-        const res = await env.DB.prepare(
-          `INSERT INTO marketing_videos (store, video_type, r2_key, content_type, bytes, duration_ms, width, height, uploader, note, status, upload_id, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?, 'uploading', ?, ?)`
-        ).bind(store, type, key, ct, Number(b.bytes), Math.round(Number(b.duration_ms)), Math.round(Number(b.width)), Math.round(Number(b.height)),
-               (currentUser && currentUser.email) || null, note, mpu.uploadId, now.toISOString()).run();
+        let res;
+        try {
+          res = await env.DB.prepare(
+            `INSERT INTO marketing_videos (store, video_type, r2_key, content_type, bytes, duration_ms, width, height, uploader, note, status, upload_id, created_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?, 'uploading', ?, ?)`
+          ).bind(store, type, key, ct, Number(b.bytes), Math.round(Number(b.duration_ms)), Math.round(Number(b.width)), Math.round(Number(b.height)),
+                 uploader, note, mpu.uploadId, now.toISOString()).run();
+        } catch (e) {
+          // No row means nothing would ever find this upload to abort it: abort it now.
+          await mpu.abort().catch(() => {});
+          throw e;
+        }
         const id = res.meta && res.meta.last_row_id;
         return new Response(JSON.stringify({ ok: true, id, part_bytes: VIDEO_PART_BYTES, parts: Math.ceil(Number(b.bytes) / VIDEO_PART_BYTES) }), { headers: corsJson });
       } catch (e) {
@@ -18108,10 +18131,12 @@ export default {
       }
     }
 
-    // PUT ?action=video-upload-part&id=&part=  body: the part's bytes. Every part is
+    // POST ?action=video-upload-part&id=&part=  body: the part's bytes. Every part is
     // exactly VIDEO_PART_BYTES except the last, which is the rest of the declared size:
     // R2 needs equal parts, and this is also what holds the file to its declared size.
-    if (request.method === "PUT" && url.searchParams.get("action") === "video-upload-part") {
+    // 🛑 POST, not PUT: the page is on another origin, and resolveCors allows
+    // GET/POST/PATCH/DELETE — a PUT dies at the browser's preflight (review, 2026-10-19).
+    if (request.method === "POST" && url.searchParams.get("action") === "video-upload-part") {
       if (!currentUser && !isAdminSecret) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
       if (!env.DB || !env.MEDIA) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
       try {
@@ -18123,6 +18148,10 @@ export default {
         const total = Math.ceil(v.row.bytes / VIDEO_PART_BYTES);
         if (part < 1 || part > total) return new Response(JSON.stringify({ error: `Part ${part} is outside 1–${total}` }), { status: 400, headers: corsJson });
         const want = part < total ? VIDEO_PART_BYTES : v.row.bytes - (total - 1) * VIDEO_PART_BYTES;
+        // Refuse a wrong size before reading it: up to 100 MB would otherwise land in a
+        // 128 MB isolate just to be thrown away.
+        const declared = request.headers.get("content-length");
+        if (declared != null && Number(declared) !== want) return new Response(JSON.stringify({ error: `Part ${part} is ${declared} bytes; expected ${want}` }), { status: 400, headers: corsJson });
         const buf = await request.arrayBuffer();
         if (buf.byteLength !== want) return new Response(JSON.stringify({ error: `Part ${part} is ${buf.byteLength} bytes; expected ${want}` }), { status: 400, headers: corsJson });
         const up = await env.MEDIA.resumeMultipartUpload(v.row.r2_key, v.row.upload_id).uploadPart(part, buf);
@@ -18140,6 +18169,12 @@ export default {
         const form = await request.formData();
         const id = parseInt(String(form.get("id") || ""), 10);
         if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
+        // Already finished — its answer was lost and the phone is asking again: say so, so
+        // the manager isn't told it failed and doesn't upload the same walk twice.
+        const prev = await env.DB.prepare("SELECT status, uploader, store, video_type, bytes FROM marketing_videos WHERE id = ?").bind(id).first();
+        if (prev && prev.status === "new" && (isAdminSecret || (currentUser && prev.uploader === currentUser.email))) {
+          return new Response(JSON.stringify({ ok: true, id, store: prev.store, video_type: prev.video_type, bytes: prev.bytes, already: true }), { headers: corsJson });
+        }
         const v = await videoRowFor(id);
         if (v.error) return new Response(JSON.stringify({ error: v.error }), { status: v.status, headers: corsJson });
         const total = Math.ceil(v.row.bytes / VIDEO_PART_BYTES);
@@ -18429,7 +18464,7 @@ export default {
             value = String(coverId);
           }
           if (key === "upload_targets") {
-            value = parseUploadTargets(b.value);
+            value = parseUploadTargets(b.value, await readUploadTargets(env));
             if (value === null) {
               return new Response(JSON.stringify({ error: `Targets must be whole numbers from 0 to ${UPLOAD_TARGET_MAX}` }), { status: 400, headers: corsJson });
             }

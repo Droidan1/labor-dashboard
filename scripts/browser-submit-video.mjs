@@ -61,6 +61,20 @@ function tkhd(w, h, turned) {
   b.writeUInt32BE(w * 65536, 76); b.writeUInt32BE(h * 65536, 80);
   return box('tkhd', b);
 }
+// Version-1 headers (64-bit times), as long recordings use: timescale 600.
+function mvhd1(durMs) { const b = Buffer.alloc(112); b.writeUInt8(1, 0); b.writeUInt32BE(600, 20); b.writeUInt32BE(0, 24); b.writeUInt32BE(durMs * 600 / 1000, 28); return box('mvhd', b); }
+function tkhd1(w, h, M) {
+  const b = Buffer.alloc(96); b.writeUInt8(1, 0);
+  M.forEach((v, i) => b.writeInt32BE(v, 52 + i * 4));
+  b.writeUInt32BE(w * 65536, 88); b.writeUInt32BE(h * 65536, 92);
+  return box('tkhd', b);
+}
+// A box with a 64-bit size (size field 1, then the real size), as a big mdat is written.
+function box64(type, payload) {
+  const h = Buffer.alloc(16); h.writeUInt32BE(1, 0); h.write(type, 4, 'ascii'); h.writeUInt32BE(0, 8); h.writeUInt32BE(16 + payload.length, 12);
+  return Buffer.concat([h, payload]);
+}
+const ROT180 = [-65536, 0, 0, 0, -65536, 0, 0, 0, 0x40000000];
 // An audio track first (no frame size), then the video track, as a phone writes them.
 const mp4 = ({ durMs, w, h, turned = false, extra = 0 }) => Buffer.concat([
   box('ftyp', Buffer.from('qt  \0\0\0\0qt  ', 'binary')),
@@ -73,6 +87,13 @@ const FILES = {
   walkShort: { name: 'IMG_0422.MOV', mimeType: 'video/quicktime', buffer: mp4({ durMs: 95000, w: 1920, h: 1080 }) },
   clip: { name: 'clip.mp4', mimeType: 'video/mp4', buffer: mp4({ durMs: 45000, w: 1080, h: 1920 }) },
   clipNoType: { name: 'VID_2026.mp4', mimeType: '', buffer: mp4({ durMs: 30000, w: 1080, h: 1920 }) },
+  // v1 mvhd + tkhd, a 64-bit mdat, the camera held upside down (180°: still sideways), and
+  // a bare 8-byte box closing the moov — each a shape the header reader must get through.
+  walkV1: { name: 'IMG_0500.MOV', mimeType: 'video/quicktime', buffer: Buffer.concat([
+    box('ftyp', Buffer.from('qt  \0\0\0\0qt  ', 'binary')),
+    box64('mdat', Buffer.alloc(9000, 0x5a)),
+    box('moov', mvhd1(200000), box('trak', tkhd1(1920, 1080, ROT180)), box('udta')),
+  ]) },
 };
 
 function mocks({ who, dark, script }) {
@@ -98,6 +119,7 @@ function mocks({ who, dark, script }) {
         return J({ ok: true, id: 77, part_bytes: pb, parts: Math.ceil(window.__start.bytes / pb) });
       }
       case 'video-upload-part': {
+        if (o.method !== 'POST') return J({ error: 'the worker\u2019s CORS allows POST, not ' + o.method }, 405);
         const part = Number(url.searchParams.get('part'));
         if (script === 'retry' && part === 2 && !failedOnce) { failedOnce = true; return J({ error: 'upstream' }, 503); }
         if (script === 'refuse' && part === 2) return J({ error: 'Part 2 is 9 bytes; expected 4096' }, 400);
@@ -106,8 +128,12 @@ function mocks({ who, dark, script }) {
       }
       case 'video-upload-complete': {
         const f = o.body;
+        window.__completeCalls = (window.__completeCalls || 0) + 1;
+        if (window.__complete && script === 'completeLost') return J({ ok: true, id: 77, already: true });
         window.__complete = { id: f.get('id'), parts: JSON.parse(f.get('parts')), poster: !!f.get('poster') };
         targets.stores[0].store_walk = 1;
+        // The worker finished it, but the answer never reaches the phone.
+        if (script === 'completeLost') throw new TypeError('Failed to fetch');
         return J({ ok: true, id: 77 });
       }
       case 'video-upload-abort': window.__aborts.push(JSON.parse(o.body).id); return J({ ok: true });
@@ -238,6 +264,21 @@ for (const dark of [true, false]) {
     await chip(page, 'Bins');
     check(!(await page.evaluate(() => !!document.getElementById('sp-video-card'))), `[${t}] choosing a photo type clears the video`);
     check(await page.evaluate(() => document.getElementById('sp-files').accept) === 'image/*' && await page.evaluate(() => document.getElementById('sp-files').multiple), `[${t}] and the picker takes photos again`);
+    check(errs.length === 0, `[${t}] no page errors (${errs.join(' | ').slice(0, 200)})`);
+  });
+
+  // ── 2b. The finish answer is lost: retried, not aborted, and reported as sent ──
+  await section(`lost finish ${t}`, async () => {
+    const { page, errs } = await open(MGR, { dark, script: 'completeLost' });
+    await chip(page, 'Store walk (video)');
+    await pick(page, FILES.walkV1);
+    check(!(await page.evaluate(() => !!document.getElementById('sp-video-error'))), `[${t}] a v1 / 64-bit / upside-down header reads as a sideways walk`);
+    check(/3:20 · sideways/.test(await text(page, '#sp-video-card')), `[${t}] at 3:20 (${await text(page, '#sp-video-card')})`);
+    await page.click('#sp-submit');
+    await page.waitForFunction(() => /sent to marketing|could not/i.test(document.getElementById('sp-status')?.textContent || ''), null, { timeout: 20000 });
+    check(/✓ Store walk sent to marketing/.test(await text(page, '#sp-status')), `[${t}] 🛑 a lost finish answer is retried and reported as sent (${await text(page, '#sp-status')})`);
+    check(await page.evaluate(() => window.__completeCalls) === 2, `[${t}] after one retry`);
+    check((await page.evaluate(() => window.__aborts)).length === 0, `[${t}] 🛑 and the stored video is never aborted`);
     check(errs.length === 0, `[${t}] no page errors (${errs.join(' | ').slice(0, 200)})`);
   });
 
