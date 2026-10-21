@@ -51,6 +51,8 @@ const VIDEOS = [
 ];
 const DRAFTS = [
   { id: 5, store: 'BL2', thumbnail_id: null, photo_ids: [], video_id: 12, video_type: 'clip', video_duration_ms: 45000, caption: 'New today', caption_source: 'manual', status: 'draft', created_at: NOW, updated_at: NOW },
+  // The Friday retail auto-draft (2026-10-21).
+  { id: 7, store: 'BL2', thumbnail_id: 5, photo_ids: [101, 102], video_id: null, caption: 'New arrivals', caption_source: 'ai', topic: "This week's new arrivals", post_type: 'new_arrivals', origin: 'retail', status: 'draft', created_at: NOW, updated_at: NOW },
   // Its video is older than the 50 the picker lists.
   { id: 6, store: 'BL2', thumbnail_id: null, photo_ids: [], video_id: 3, video_type: 'store_walk', video_duration_ms: 200000, caption: 'Old walk', caption_source: 'manual', status: 'draft', created_at: NOW, updated_at: NOW },
 ];
@@ -199,6 +201,7 @@ for (const dark of [true, false]) {
     await page.waitForTimeout(300);
     const card = await text(page, '#ct-drafts');
     check(/South Bend · Clip 0:45 · Reel/.test(card), `[${t}] the board's card says Clip 0:45 · Reel (${card.slice(0, 100)})`);
+    check(/South Bend · 2 photos · Friday retail/.test(card), `[${t}] the retail auto-draft's card says Friday retail`);
     // Editing a draft whose video the picker doesn't list: shown, selected, removable.
     await page.evaluate(() => window.ctEditDraft(6));
     await page.waitForTimeout(500);

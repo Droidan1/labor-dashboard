@@ -7516,11 +7516,13 @@ async function buildCaption(env, opts) {
     notes = ((rows && rows.results) || []).map(r => String(r.note).replace(/[<>]/g, "").replace(/\s+/g, " ").trim().slice(0, 200)).filter(Boolean);
   }
   const photoImgs = [];
+  const photoTypes = new Set();   // what the photos ARE (bins / retail / event) sets how they're described
   if (env.DB && env.MEDIA && photoIds.length) {
     const rows = await env.DB.prepare(
-      `SELECT r2_key, content_type FROM marketing_photos WHERE id IN (${photoIds.map(() => "?").join(",")})`
+      `SELECT r2_key, content_type, photo_type FROM marketing_photos WHERE id IN (${photoIds.map(() => "?").join(",")})`
     ).bind(...photoIds).all().catch(() => null);
     for (const p of (rows && rows.results) || []) {
+      photoTypes.add(String(p.photo_type || ""));
       // Prefer the small derivative: a phone original is routinely over the
       // API's 5 MB cap, and the thumb is plenty to see what is in a bin.
       const img = await r2ImageBlock(env, thumbKeyOf(p.r2_key), "image/jpeg")
@@ -7584,7 +7586,11 @@ async function buildCaption(env, opts) {
     `Store: Bargain Lane ${label}.`,
     postType ? `Post type: ${MARKETING_POST_TYPE_LABELS[postType] || postType}.` : "",
     `This post is about: ${topic}.`,
-    photoImgs.length ? `The attached ${photoImgs.length === 1 ? "image is a photo" : photoImgs.length + " images are photos"} the store team just took of THIS week's bins, and ${photoImgs.length === 1 ? "it is" : "they are"} a sample of a larger batch. They are the subject of this post: write about what is actually in them — the kinds of items, the variety, what is worth digging for. Keep it about the mix rather than hanging the whole caption on one item, and describe only what you can see. No price, day, discount, or offer is printed on a bin photo, so do not state one${notes.length ? " unless the store team's notes below give it" : ""}.` : "",
+    // Retail-floor photos are described as the sales floor, not as bins: until 2026-10-21
+    // every photo post was told it was bins, which a new-arrivals post is not.
+    photoImgs.length && photoTypes.size === 1 && photoTypes.has("retail")
+      ? `The attached ${photoImgs.length === 1 ? "image is a photo" : photoImgs.length + " images are photos"} the store team just took on the SALES FLOOR this week — new arrivals and featured products, not the bins — and ${photoImgs.length === 1 ? "it is" : "they are"} a sample of a larger batch. They are the subject of this post: write about what is actually in them — the kinds of products, the brands or categories you can clearly make out, why it is worth a trip this week. Keep it about the mix rather than hanging the whole caption on one item, and describe only what you can see. Do not state a price, day, discount, or offer${notes.length ? " unless the store team's notes below give it" : ""}: a price tag in a photo is easy to misread, and a wrong price is a promise the register has to keep.`
+      : photoImgs.length ? `The attached ${photoImgs.length === 1 ? "image is a photo" : photoImgs.length + " images are photos"} the store team just took of THIS week's bins, and ${photoImgs.length === 1 ? "it is" : "they are"} a sample of a larger batch. They are the subject of this post: write about what is actually in them — the kinds of items, the variety, what is worth digging for. Keep it about the mix rather than hanging the whole caption on one item, and describe only what you can see. No price, day, discount, or offer is printed on a bin photo, so do not state one${notes.length ? " unless the store team's notes below give it" : ""}.` : "",
     video ? (video.video_type === "store_walk"
       ? `This post is a walk-through VIDEO of the store floor (${Math.round(video.duration_ms / 60000)} minute${Math.round(video.duration_ms / 60000) === 1 ? "" : "s"} long), filmed by the store team this week. ${videoImg ? "The attached image is one frame from it: write about the store floor and what shoppers will find, and invite people to watch the walk-through and come in." : "You cannot see it: write a short invitation to watch the walk-through and come in, and do not describe specific items."}`
       : `This post is a SHORT VIDEO CLIP (${Math.round(video.duration_ms / 1000)} seconds), posted as a Facebook Reel. ${videoImg ? "The attached image is one frame from it: write about what it shows." : "You cannot see it: keep it to a short line that makes people want to watch, and do not describe specific items."} Keep a Reel caption short — two or three sentences before the hashtags.`) : "",
@@ -7620,7 +7626,7 @@ async function buildCaption(env, opts) {
     "",
     "Shape each caption like this:",
     "1. A hook that makes someone stop scrolling — a question, a specific find, a number.",
-    "2. Two or three sentences of concrete detail: what is actually in the bins, what the theme is, why this week is worth the trip.",
+    "2. Two or three sentences of concrete detail: what is actually in the bins or on the sales floor, what the theme is, why this week is worth the trip.",
     "3. One clear call to action.",
     "4. Three to five hashtags. Lead with the store's own tag, written as #BargainLane + the store name with no spaces (Coliseum -> #BargainLaneColiseum), then two to four topical ones.",
     "",
@@ -7629,7 +7635,7 @@ async function buildCaption(env, opts) {
     "Aim for 50-80 words before the hashtags. Facebook hides anything past roughly 80 words behind a 'See more' link, so stay under that.",
     "",
     "Write for THIS post, not a generic promo. The user says what it is about and may attach images — the post's branded cover graphic, or photos the store just took. Match the caption to what those images actually show.",
-    "When the inputs disagree, this is the order of authority. The attached images and the post type define what this post IS. The operator's description refines that. Anything you are told about the week's wider store plan is supporting context — use it where it genuinely belongs, but never let it displace what the images show. Your first sentence must be about this post's own subject: if the cover says NEW ARRIVALS, the caption opens on new arrivals; if you were given the store's own bin photos, it opens on what is in the bins — whatever else is running that week.",
+    "When the inputs disagree, this is the order of authority. The attached images and the post type define what this post IS. The operator's description refines that. Anything you are told about the week's wider store plan is supporting context — use it where it genuinely belongs, but never let it displace what the images show. Your first sentence must be about this post's own subject: if the cover says NEW ARRIVALS, the caption opens on new arrivals; if you were given the store's own bin photos, it opens on what is in the bins; if you were given photos of the sales floor, it opens on what is on the floor — whatever else is running that week.",
     "Only reference prices, discounts, dates, schedules, offers, or claims that are printed on an attached cover graphic or given to you in the text. Never invent, guess, or embellish beyond what you were given: a made-up price is a promise the store has to honor at the register.",
     "Vary the opening and the structure from one caption to the next — do not reuse the same hook shape every time.",
     "Do not use the store's internal code (BL1, BL4, and so on).",
@@ -8323,8 +8329,29 @@ const BOL_PROMPT = [
   "anywhere to catch it against. Never invent a value to fill out the shape.",
 ].join("\n");
 
-async function ensureAutoDraftForPhotos(env, store, now) {
+// The two weekly auto-drafts (2026-10-13 meeting: Thursday bins, Friday retail). Same
+// machinery, one row of settings each. `origin` is what the unique index is partial on,
+// so each kind gets its own one-per-store-per-week guarantee.
+const AUTO_DRAFT_KINDS = {
+  bins: { origin: "photos", photoType: "bins", postType: "bin_preview", coverType: "bin_preview", pinKey: "auto_draft_cover_id",
+          topic: "This week's bin photos", createdBy: "auto:bin-photos", index: "uq_drafts_auto_week",
+          captionTopic: "this week's bin photos — fresh finds just put out in the bins" },
+  retail: { origin: "retail", photoType: "retail", postType: "new_arrivals", coverType: "new_arrivals", pinKey: null,
+          topic: "This week's new arrivals", createdBy: "auto:retail-photos", index: "uq_drafts_auto_week_retail",
+          captionTopic: "this week's new arrivals on the sales floor" },   // no "Friday": the model would repeat a day the post may not go out on
+};
+
+async function ensureAutoDraftForPhotos(env, store, now, kindName = "bins") {
   if (!env.DB) return { skipped: "no D1" };
+  const kind = AUTO_DRAFT_KINDS[kindName];
+  if (!kind) return { skipped: "unknown kind" };
+  // 🛑 Without its unique index, a burst of uploads would each insert a draft (ON CONFLICT
+  // has nothing to conflict on). The retail index arrives in migration-082: until it
+  // exists, skip rather than make twenty drafts.
+  if (kindName !== "bins") {
+    const ix = await env.DB.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?").bind(kind.index).first().catch(() => null);
+    if (!ix) return { skipped: `no ${kind.index} (migration-082)` };
+  }
   const nowIso = now.toISOString();
   const week = autoWeekOf(now);
   const weekEnd = new Date(new Date(week + "T00:00:00Z").getTime() + 7 * 24 * 3600 * 1000).toISOString().slice(0, 10);
@@ -8338,9 +8365,9 @@ async function ensureAutoDraftForPhotos(env, store, now) {
   // because the cover is what the caption model is shown. A pin may name any
   // active cover — that one is a deliberate choice, not a guess.
   let coverId = null;
-  const pin = await env.DB.prepare(
-    "SELECT value FROM content_settings WHERE key = 'auto_draft_cover_id'"
-  ).first().catch(() => null);
+  const pin = kind.pinKey ? await env.DB.prepare(
+    "SELECT value FROM content_settings WHERE key = ?"
+  ).bind(kind.pinKey).first().catch(() => null) : null;
   const pinnedId = pin && pin.value ? parseInt(pin.value, 10) : NaN;
   if (Number.isInteger(pinnedId)) {
     const p = await env.DB.prepare("SELECT id FROM marketing_thumbnails WHERE id = ? AND active = 1").bind(pinnedId).first().catch(() => null);
@@ -8349,8 +8376,8 @@ async function ensureAutoDraftForPhotos(env, store, now) {
   }
   if (!coverId) {
     const cover = await env.DB.prepare(
-      "SELECT id FROM marketing_thumbnails WHERE active = 1 AND post_type = 'bin_preview' ORDER BY created_at DESC LIMIT 1"
-    ).first().catch(() => null);
+      "SELECT id FROM marketing_thumbnails WHERE active = 1 AND post_type = ? ORDER BY created_at DESC LIMIT 1"
+    ).bind(kind.coverType).first().catch(() => null);
     coverId = cover ? cover.id : null;
   }
 
@@ -8358,9 +8385,9 @@ async function ensureAutoDraftForPhotos(env, store, now) {
   try {
     const res = await env.DB.prepare(
       `INSERT INTO marketing_drafts (store, thumbnail_id, photo_ids, caption, caption_source, topic, post_type, status, origin, auto_week, created_by, created_at, updated_at)
-       VALUES (?, ?, '[]', NULL, 'manual', ?, 'bin_preview', 'draft', 'photos', ?, 'auto:bin-photos', ?, ?)
+       VALUES (?, ?, '[]', NULL, 'manual', ?, ?, 'draft', ?, ?, ?, ?, ?)
        ON CONFLICT DO NOTHING`
-    ).bind(store, coverId, "This week's bin photos", week, nowIso, nowIso).run();
+    ).bind(store, coverId, kind.topic, kind.postType, kind.origin, week, kind.createdBy, nowIso, nowIso).run();
     createdNow = !!(res.meta && res.meta.changes);
   } catch (e) {
     if (!/UNIQUE|constraint/i.test(String((e && e.message) || e))) throw e;
@@ -8374,24 +8401,26 @@ async function ensureAutoDraftForPhotos(env, store, now) {
   await env.DB.prepare(
     `UPDATE marketing_drafts
         SET photo_ids = COALESCE((SELECT json_group_array(id) FROM marketing_photos
-                                   WHERE store = ? AND photo_type = 'bins'
+                                   WHERE store = ? AND photo_type = ?
                                      AND created_at >= ? AND created_at < ?), '[]'),
             updated_at = ?
-      WHERE store = ? AND origin = 'photos' AND auto_week = ? AND status = 'draft' AND photos_curated = 0 AND video_id IS NULL`
-  ).bind(store, etDayStartIso(week), etDayStartIso(weekEnd), nowIso, store, week).run();
+      WHERE store = ? AND origin = ? AND auto_week = ? AND status = 'draft' AND photos_curated = 0 AND video_id IS NULL`
+  ).bind(store, kind.photoType, etDayStartIso(week), etDayStartIso(weekEnd), nowIso, store, kind.origin, week).run();
 
-  return { store, week, cover_id: coverId, created: createdNow };
+  return { store, week, kind: kindName, cover_id: coverId, created: createdNow };
 }
 
 // Write the caption for a freshly created auto-draft. Runs in waitUntil so the
 // manager's upload never waits on a model call, and stays best-effort: a draft
 // with no caption is still useful, a failed upload is not.
-async function fillAutoDraftCaption(env, store, week) {
+async function fillAutoDraftCaption(env, store, week, kindName = "bins") {
   try {
     if (!env.ANTHROPIC_API_KEY) return;
+    const kind = AUTO_DRAFT_KINDS[kindName];
+    if (!kind) return;
     const row = await env.DB.prepare(
-      "SELECT id, photo_ids FROM marketing_drafts WHERE store = ? AND origin = 'photos' AND auto_week = ? LIMIT 1"
-    ).bind(store, week).first().catch(() => null);
+      "SELECT id, photo_ids FROM marketing_drafts WHERE store = ? AND origin = ? AND auto_week = ? LIMIT 1"
+    ).bind(store, kind.origin, week).first().catch(() => null);
     if (!row) return;
     // The photos are the post. Deliberately NOT the cover: the cover is a
     // branded promo graphic, and handing it over instead is what produced five
@@ -8400,10 +8429,7 @@ async function fillAutoDraftCaption(env, store, week) {
     // created the draft, and a Thursday batch arrives as ~30 more requests.
     let photoIds = [];
     try { photoIds = JSON.parse(row.photo_ids || "[]"); } catch (_) { /* keep it captionable */ }
-    const r = await buildCaption(env, {
-      store, postType: "bin_preview", photoIds,
-      topic: "this week's bin photos — fresh finds just put out in the bins",
-    });
+    const r = await buildCaption(env, { store, postType: kind.postType, photoIds, topic: kind.captionTopic });
     if (!r || !r.ok || !r.caption) { console.log("auto-draft caption skipped:", store, (r && r.error) || "no caption"); return; }
     // Only fill a caption that is still empty — never overwrite Brian's editing.
     await env.DB.prepare(
@@ -18172,14 +18198,15 @@ export default {
         // upload is the thing that must not fail, and the manager should not wait
         // on a model call. Only the request that actually creates the draft pays
         // for a caption; the rest of the burst just re-syncs.
+        // Retail photos do the same for the Friday new-arrivals post (2026-10-21).
         let autoDraft = null;
-        if (ptype === "bins") {
-          autoDraft = await ensureAutoDraftForPhotos(env, store, now).catch(e => {
-            console.error("auto-draft failed:", store, (e && e.message) || e);
+        if (ptype === "bins" || ptype === "retail") {
+          autoDraft = await ensureAutoDraftForPhotos(env, store, now, ptype).catch(e => {
+            console.error("auto-draft failed:", store, ptype, (e && e.message) || e);
             return null;
           });
           if (autoDraft && autoDraft.created) {
-            ctx.waitUntil(fillAutoDraftCaption(env, store, autoDraft.week));
+            ctx.waitUntil(fillAutoDraftCaption(env, store, autoDraft.week, ptype));
           }
         }
         return new Response(JSON.stringify({ ok: true, id, store, photo_type: ptype, r2_key: key, bytes, url: `?action=photo&id=${id}`, auto_draft: autoDraft }), { headers: corsJson });

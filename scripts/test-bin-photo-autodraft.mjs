@@ -37,7 +37,7 @@ const worker = (await import(pathToFileURL(tmp).href + `?v=${src.length}`)).defa
 
 // thumbs: [id, post_type, created_at] — the cover picker's whole input.
 function makeEnv({ apiKey = null, caption = 'A generated caption 🔥 #BargainLaneColiseum',
-                   thumbs = [[6, 'bin_preview', '2026-08-01T00:00:00Z']], pin = null } = {}) {
+                   thumbs = [[6, 'bin_preview', '2026-08-01T00:00:00Z']], pin = null, retailIndex = true } = {}) {
   const db = new DatabaseSync(':memory:');
   db.exec(`
     CREATE TABLE marketing_photos (id INTEGER PRIMARY KEY AUTOINCREMENT, store TEXT, photo_type TEXT,
@@ -56,6 +56,8 @@ function makeEnv({ apiKey = null, caption = 'A generated caption 🔥 #BargainLa
       content_type TEXT, post_type TEXT, active INTEGER DEFAULT 1, created_at TEXT);
     CREATE TABLE content_settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT);
   `);
+  // The retail draft's one-per-week index, from the migration itself.
+  if (retailIndex) db.exec(fs.readFileSync(path.join(REPO, 'migration-082.sql'), 'utf8'));
   for (const [id, type, at] of thumbs) {
     db.prepare(`INSERT INTO marketing_thumbnails (id,name,r2_key,post_type,active,created_at) VALUES (?,?,?,?,1,?)`)
       .run(id, `cover-${id}`, `k/${id}.png`, type, at);
@@ -153,12 +155,14 @@ console.log('bin-photo auto-draft (upload-triggered)');
   eq(JSON.parse(d[0].photo_ids).length, 1, 'the uploaded photo is attached');
 }
 
-// 2 — retail uploads never create a draft
+// 2 — event, team and other uploads create nothing. (Retail did not either until
+// 2026-10-21, when Brian asked for the Friday retail draft: see R1–R7 below.)
 {
   const { env, db } = makeEnv();
-  await upload(env, 'BL1', 'retail');
+  await upload(env, 'BL1', 'event');
   await upload(env, 'BL1', 'other');
-  eq(drafts(db).length, 0, 'non-bins uploads create nothing (Brian chose bins-only)');
+  await upload(env, 'BL1', 'team');
+  eq(drafts(db).length, 0, 'event, team and other uploads create no draft');
 }
 
 // 3 — 🛑 the burst property: N uploads -> exactly ONE draft, list converges
@@ -451,6 +455,113 @@ console.log('bin-photo auto-draft (upload-triggered)');
   db.prepare("UPDATE marketing_drafts SET photo_ids='[]', video_id=7, photos_curated=0").run();
   await upload(env, 'BL1', 'bins');
   eq(drafts(db)[0].photo_ids, '[]', '🛑 a video post gets no bin photos added behind its back');
+}
+
+// ── The Friday retail draft (Brian, 2026-10-21) ─────────────────────────────
+// R1 — a retail upload builds its own weekly draft, beside (not inside) the bins one
+{
+  const { env, db } = makeEnv({ thumbs: [[6, 'bin_preview', '2026-08-01T00:00:00Z'], [9, 'new_arrivals', '2026-07-09T00:00:00Z']] });
+  const { body } = await upload(env, 'BL1', 'retail');
+  ok(body.ok && body.auto_draft && body.auto_draft.kind === 'retail', 'the upload reports the retail draft');
+  await upload(env, 'BL1', 'bins');
+  const d = drafts(db);
+  eq(d.length, 2, 'a retail and a bins draft, separately');
+  const r = d.find(x => x.origin === 'retail'), b = d.find(x => x.origin === 'photos');
+  eq(JSON.stringify([r.post_type, r.topic, r.created_by, r.status, r.auto_week]), JSON.stringify(['new_arrivals', "This week's new arrivals", 'auto:retail-photos', 'draft', '2026-08-16']), 'the retail draft: new arrivals, this week, in Drafts');
+  eq(r.thumbnail_id, 9, 'with the New Arrivals cover');
+  eq(b.thumbnail_id, 6, 'and the bins draft keeps the Bin Preview cover');
+  eq(`${JSON.parse(r.photo_ids)}|${JSON.parse(b.photo_ids)}`, '1|2', '🛑 each holds only its own kind of photo (retail #1, bins #2)');
+}
+
+// R2 — 🛑 a burst of retail uploads makes ONE draft that holds them all, per store
+{
+  const { env, db } = makeEnv();
+  await Promise.all(Array.from({ length: 12 }, () => upload(env, 'BL1', 'retail')));
+  for (let i = 0; i < 8; i++) await upload(env, 'BL2', 'retail');
+  const d = drafts(db).filter(x => x.origin === 'retail');
+  eq(d.length, 2, '🛑 one retail draft per store, not one per upload');
+  eq(JSON.parse(d.find(x => x.store === 'BL1').photo_ids).length, 12, 'twelve concurrent uploads all land');
+  eq(JSON.parse(d.find(x => x.store === 'BL2').photo_ids).length, 8, 'and the other store keeps its own');
+}
+
+// R3 — 🛑 the cover never crosses post types, and the bins pin is the bins' only
+{
+  const { env, db } = makeEnv({ thumbs: [[6, 'bin_preview', '2026-10-01T00:00:00Z']], pin: 6 });
+  await upload(env, 'BL1', 'retail');
+  eq(drafts(db)[0].thumbnail_id, null, '🛑 no New Arrivals cover: no cover, not the bins cover, not the bins pin');
+  const two = makeEnv({ thumbs: [[3, 'new_arrivals', '2026-07-01T00:00:00Z'], [4, 'new_arrivals', '2026-09-01T00:00:00Z']] });
+  await upload(two.env, 'BL1', 'retail');
+  eq(drafts(two.db)[0].thumbnail_id, 4, 'the newest New Arrivals cover');
+}
+
+// R4 — the caption is written once, about the SALES FLOOR, not the bins
+{
+  const { env, db, sent } = makeEnv({ apiKey: 'sk-test' });
+  await upload(env, 'BL1', 'retail', { note: 'Patio sets $40' });
+  await upload(env, 'BL1', 'retail');
+  const r = drafts(db)[0];
+  ok(r.caption && r.caption_source === 'ai', 'the retail draft gets an AI caption');
+  eq(sent.length, 1, 'once, from the upload that created it');
+  const { images, text } = askedFor(sent);
+  eq(images.length, 1, 'shown the retail photo');
+  ok(/SALES FLOOR this week — new arrivals and featured products, not the bins/.test(text), 'told the photos are the sales floor');
+  ok(!text.includes("just took of THIS week's bins"), '🛑 and not told they are bins');
+  ok(/Post type: new arrivals/.test(text), 'post type: new arrivals');
+  ok(/Patio sets \$40/.test(text) && /Do not state a price, day, discount, or offer unless the store team's notes below give it/.test(text), "the staff note can give a price; nothing else can");
+  ok(!/Friday/.test(text), "🛑 no day is handed to the model (a Friday post can go out Thursday or late)");
+}
+
+// R5 — 🔑 without migration-082's index the retail draft is skipped, never duplicated
+{
+  const { env, db } = makeEnv({ retailIndex: false });
+  const { body } = await upload(env, 'BL1', 'retail');
+  ok(body.ok, 'the upload still succeeds');
+  ok(/migration-082/.test((body.auto_draft && body.auto_draft.skipped) || ''), 'and says the retail draft waits on migration-082');
+  for (let i = 0; i < 3; i++) await upload(env, 'BL1', 'retail');
+  eq(drafts(db).length, 0, '🛑 no drafts at all (an unguarded burst would make one per upload)');
+  await upload(env, 'BL1', 'bins');
+  eq(drafts(db).length, 1, 'bins are unaffected');
+}
+
+// R6 — a person's pick on the retail draft sticks, as with bins
+{
+  const { env, db } = makeEnv();
+  for (let i = 0; i < 12; i++) await upload(env, 'BL1', 'retail');
+  const d = drafts(db)[0];
+  const nine = JSON.parse(d.photo_ids).slice(0, 9);
+  const res = await worker.fetch(new Request('https://x/?action=draft-save', {
+    method: 'POST', headers: { 'X-Snapshot-Secret': SECRET, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: d.id, store: 'BL1', thumbnail_id: d.thumbnail_id, photo_ids: nine, caption: d.caption, post_type: 'new_arrivals' }),
+  }), env, { waitUntil: () => {} });
+  eq(res.status, 200, 'the admin saves a 9-photo pick');
+  await upload(env, 'BL1', 'retail');
+  eq(drafts(db)[0].photo_ids, JSON.stringify(nine), '🛑 a later retail upload leaves the pick alone');
+}
+
+// R7 — a scheduled or published retail post is never touched by a later upload
+for (const frozen of ['scheduled', 'published']) {
+  const { env, db } = makeEnv();
+  await upload(env, 'BL1', 'retail');
+  db.prepare(`UPDATE marketing_drafts SET status = ?`).run(frozen);
+  const before = drafts(db)[0].photo_ids;
+  await upload(env, 'BL1', 'retail');
+  eq(drafts(db).length, 1, `no second retail draft while one is ${frozen}`);
+  eq(drafts(db)[0].photo_ids, before, `🛑 the ${frozen} post's photos are left alone`);
+}
+
+// R8 — a store that already has this week's bins draft: its first retail upload gets
+// its own caption, on the retail row, written from the retail photo
+{
+  const { env, db, sent } = makeEnv({ apiKey: 'sk-test' });
+  await upload(env, 'BL1', 'bins');
+  await upload(env, 'BL1', 'retail');
+  eq(sent.length, 2, 'two captions: one per draft');
+  const r = drafts(db).find(x => x.origin === 'retail'), b = drafts(db).find(x => x.origin === 'photos');
+  ok(r.caption && r.caption_source === 'ai', 'the retail row has its caption');
+  const msg = sent[1].messages[0].content;
+  const text = msg.filter(x => x.type === 'text').map(x => x.text).join('');
+  ok(/SALES FLOOR/.test(text) && !/THIS week's bins/.test(text), 'written about the retail photo, not the bins');
+  eq(JSON.parse(r.photo_ids).length + JSON.parse(b.photo_ids).length, 2, 'and the bins draft still has only its own photo');
 }
 
 // Tally in the shape scripts/test.sh counts: "<n> passed, <m> failed".
