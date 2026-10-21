@@ -21369,7 +21369,7 @@
       const what = dr.video_id
         ? `${dr.video_type === 'clip' ? 'Clip' : 'Store walk'}${dr.video_duration_ms ? ' ' + ctMmss(dr.video_duration_ms) : ''} · ${dr.video_type === 'clip' ? 'Reel' : 'video'}`
         : nPhotos + ' photo' + (nPhotos === 1 ? '' : 's');
-      meta = escapeHtml(ctStoreLabel(dr.store)) + ' · ' + escapeHtml(what) + (dr.origin === 'flow' ? ' · from Flow' : '')
+      meta = escapeHtml(ctStoreLabel(dr.store)) + ' · ' + escapeHtml(what) + (dr.origin === 'flow' ? ' · from Flow' : dr.origin === 'retail' ? ' · Friday retail' : '')
         + (over > 0 ? ` · remove ${over} to post` : '');
       metaClass = over > 0 ? 'font-semibold text-opl-bad dark:text-[#f87171]' : 'text-opl-inkDim dark:text-op-inkDim';
       actions = `<button onclick="ctPublishDraft(${dr.id})" class="shrink-0 text-[11px] font-semibold text-white bg-accent-blue rounded-md px-2 py-0.5">Publish</button>`

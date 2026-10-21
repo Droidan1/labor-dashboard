@@ -1,3 +1,24 @@
+# Friday retail auto-draft (2026-10-21)
+
+**Ask (Brian):** "start the Friday retail auto-draft". The 2026-10-13 meeting set Thursday = bins, Friday =
+retail/new arrivals; bins already draft themselves on upload, retail photos produced nothing.
+**Design (mirrors bins, stated not asked):** retail uploads build ONE `new_arrivals` draft per store per week
+(origin `retail`, its own unique index, migration-082), refilled from the week's retail photos until a person
+changes its photo list, with the newest active New Arrivals cover (no cross-type fallback) and an AI caption
+written once, about the sales floor rather than bins. Draft only: a person picks the 9 and schedules it for
+Friday, as with bins. Context: 709 retail photos all-time, 8 this week; one `new_arrivals` cover exists (Jul 9).
+
+- [x] migration-082 (unique index; the worker skips the retail draft until it exists, so order is free)
+- [x] Worker: AUTO_DRAFT_KINDS (bins / retail) drives ensureAutoDraftForPhotos + fillAutoDraftCaption; retail
+      uploads trigger it; a caption about retail-only photos describes the SALES FLOOR (until now every photo post,
+      new arrivals included, was told its photos were bins) and states no price unless a staff note gives it
+- [x] Content Studio card: "· Friday retail" on the retail auto-draft
+- [x] Tests: test-bin-photo-autodraft 103 (+26: R1–R7 through photo-upload; case 2's "bins only" rule rewritten,
+      since Brian reversed it), browser-content-video 43; `npm test` 10855 / 124. Flake: test-price-scan failed once
+      in a full run, passed alone (1105) and on the re-run — not touched by this change
+- [ ] Fresh-eyes review
+- [ ] Push + PR → migration-082 → worker → merge
+
 # Executive Summary at 5 AM Eastern (2026-10-19)
 
 **Ask (Brian):** "change the time from 8 am to 5 am EST every morning". Asked about the live feeds landing after
