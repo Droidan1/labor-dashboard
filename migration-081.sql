@@ -1,0 +1,14 @@
+-- migration-081: a Content Studio post can be ONE video instead of a cover and photos (2026-10-19).
+--
+-- marketing_drafts.video_id → marketing_videos.id. Buffer takes one video per Facebook post
+-- and no images beside it, so a draft with a video_id has no thumbnail_id and no photo_ids.
+-- A store walk posts as a normal Facebook video; a short clip as a Reel.
+--
+-- Additive. MUST land before the worker that reads it: ?action=drafts joins on d.video_id,
+-- and without the column the whole Posts board fails to load.
+--   npx wrangler d1 execute labor-dashboard-db --remote --command="ALTER TABLE marketing_drafts ADD COLUMN video_id INTEGER;"
+-- (--command, not --file: --file's /import endpoint failed with code 10000 on 2026-10-19.)
+-- Confirm it landed (expects video_id):
+--   npx wrangler d1 execute labor-dashboard-db --remote \
+--     --command="SELECT name FROM pragma_table_info('marketing_drafts') WHERE name='video_id'"
+ALTER TABLE marketing_drafts ADD COLUMN video_id INTEGER;

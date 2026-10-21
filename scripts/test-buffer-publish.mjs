@@ -96,6 +96,7 @@ async function setup({ key = 'buffer-test-key' } = {}) {
   const { db, env } = makeEnv(repo);
   db.exec(fs.readFileSync(path.join(repo, 'migration-020.sql'), 'utf8'));
   db.exec(fs.readFileSync(path.join(repo, 'migration-021.sql'), 'utf8'));
+  db.exec(fs.readFileSync(path.join(repo, 'migration-080.sql'), 'utf8'));   // ?action=drafts joins marketing_videos
   applyMigrationAlters(db, repo);
   if (key) env.BUFFER_API_KEY = key;
   let n = 0;

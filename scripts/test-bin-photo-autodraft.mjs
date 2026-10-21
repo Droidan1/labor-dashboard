@@ -47,7 +47,8 @@ function makeEnv({ apiKey = null, caption = 'A generated caption 🔥 #BargainLa
       thumbnail_id INTEGER, photo_ids TEXT, caption TEXT, caption_source TEXT, topic TEXT,
       post_type TEXT, status TEXT, origin TEXT, auto_week TEXT, flow_fiscal_year TEXT,
       flow_retail_week INTEGER, created_by TEXT, created_at TEXT, updated_at TEXT, published_at TEXT,
-      photos_curated INTEGER NOT NULL DEFAULT 0);   -- migration-079
+      photos_curated INTEGER NOT NULL DEFAULT 0,    -- migration-079
+      video_id INTEGER);                            -- migration-081
     CREATE UNIQUE INDEX uq_drafts_auto_week ON marketing_drafts(store, auto_week) WHERE origin = 'photos';
     CREATE TABLE marketing_flow (fiscal_year TEXT, retail_week INTEGER, week_start TEXT, week_end TEXT,
       special_event TEXT, weekly_theme TEXT, product_focus TEXT, dd_loyalty TEXT);
@@ -440,6 +441,16 @@ console.log('bin-photo auto-draft (upload-triggered)');
   await upload(env, 'BL1', 'bins');
   eq(JSON.parse(drafts(db)[0].photo_ids).length, 4, 'and the next upload still lands in it');
   eq(drafts(db)[0].caption, 'Typo fixed', 'without touching the caption');
+}
+
+// 23 — a draft turned into a video post is never refilled with bin photos, even if
+// its photo list was already empty (photos_curated never flipped).
+{
+  const { env, db } = makeEnv();
+  await upload(env, 'BL1', 'bins');
+  db.prepare("UPDATE marketing_drafts SET photo_ids='[]', video_id=7, photos_curated=0").run();
+  await upload(env, 'BL1', 'bins');
+  eq(drafts(db)[0].photo_ids, '[]', '🛑 a video post gets no bin photos added behind its back');
 }
 
 // Tally in the shape scripts/test.sh counts: "<n> passed, <m> failed".

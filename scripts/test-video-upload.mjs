@@ -34,6 +34,8 @@ const waits = [];
 const ctx = { waitUntil: p => waits.push(p), passThroughOnException() {} };
 const json = async r => { try { return await r.json(); } catch { return {}; } };
 const PART = 10 * 1024 * 1024;
+// A first part that opens like a real MP4/MOV: [size]['ftyp']… (the worker checks for it).
+const firstPart = (n, fill = 0) => { const b = new Uint8Array(n).fill(fill); if (n >= 8) b.set([0, 0, 0, 20, 0x66, 0x74, 0x79, 0x70], 0); return b; };
 
 // R2 multipart, faithfully enough: parts are kept by number, complete() joins them in
 // order and the object's size is the real byte count.
@@ -160,7 +162,8 @@ console.log('store videos: chunked upload');
   eq((await put(env, 'u-mgr1', j.id, 1, new Uint8Array(PART - 1))).status, 400, '🛑 a part one byte short is refused');
   eq((await put(env, 'u-mgr1', j.id, 2, new Uint8Array(6))).status, 400, '🛑 a last part one byte long is refused (the file is held to its checked size)');
   eq((await put(env, 'u-mgr1', j.id, 3, new Uint8Array(5))).status, 400, 'a part past the end is refused');
-  const p1 = await json(await put(env, 'u-mgr1', j.id, 1, new Uint8Array(PART).fill(7)));
+  eq((await put(env, 'u-mgr1', j.id, 1, new Uint8Array(PART).fill(7))).status, 400, '🛑 a first part that is not an MP4/MOV (no ftyp box) is refused');
+  const p1 = await json(await put(env, 'u-mgr1', j.id, 1, firstPart(PART, 7)));
   const p2 = await json(await put(env, 'u-mgr1', j.id, 2, new Uint8Array(5).fill(9)));
   ok(p1.ok && p2.ok, 'both parts land');
 
@@ -217,9 +220,9 @@ console.log('store videos: chunked upload');
 // ── 3. A completed object that is not the declared size is thrown away ─────
 {
   const { db, env } = env0();
-  const j = await json(await start(env, 'u-mgr1', { ...CLIP, bytes: 6 }));
-  const p1 = await json(await put(env, 'u-mgr1', j.id, 1, new Uint8Array(6)));
-  env.MEDIA._sizeOverride = 5;
+  const j = await json(await start(env, 'u-mgr1', { ...CLIP, bytes: 12 }));
+  const p1 = await json(await put(env, 'u-mgr1', j.id, 1, firstPart(12)));
+  env.MEDIA._sizeOverride = 11;
   const c = await complete(env, 'u-mgr1', j.id, [{ part: 1, etag: p1.etag }]);
   eq(c.status, 400, 'a size mismatch at complete is refused');
   const row = db.prepare('SELECT * FROM marketing_videos WHERE id=?').get(j.id);

@@ -5055,7 +5055,7 @@ function resolveCors(request, env) {
     || (!isProd && LOCALHOST_RE.test(origin));
   const headers = {
     "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, X-Snapshot-Secret",
+    "Access-Control-Allow-Headers": "Content-Type, X-Snapshot-Secret, Range",
     "Vary": "Origin",
   };
   if (allowed) {
@@ -5241,6 +5241,7 @@ const ACTION_BUSINESS = new Map([
   ["marketing-insights", "bl"],
   ["marketing-photos", "bl"],
   ["marketing-refresh", "bl"],
+  ["marketing-videos", "bl"],
   ["monthly-totals", "bl"],
   ["morning-briefing", "bl"],
   ["noncategorized-items", "bl"],
@@ -5290,6 +5291,8 @@ const ACTION_BUSINESS = new Map([
   ["item-lines", "bl"],
   ["update-clover-item", "bl"],
   ["update-user", "bl"],
+  ["video", "bl"],
+  ["video-poster", "bl"],
   ["video-upload-abort", "bl"],
   ["video-upload-complete", "bl"],
   ["video-upload-part", "bl"],
@@ -7530,9 +7533,17 @@ async function buildCaption(env, opts) {
   // Skipped when the caller named photos — gated on what it ASKED for, not on
   // how many images actually loaded, so an unreadable photo degrades to no
   // image rather than to a caption about the cover's promo.
+  // A video post: the model sees one frame of it (the poster) and the store team's note.
+  let video = null, videoImg = null;
+  const videoId = (opts.videoId != null && opts.videoId !== "") ? parseInt(opts.videoId, 10) : null;
+  if (env.DB && Number.isInteger(videoId)) {
+    video = await env.DB.prepare("SELECT video_type, r2_key, duration_ms, note FROM marketing_videos WHERE id = ? AND status = 'new'").bind(videoId).first().catch(() => null);
+    if (video && env.MEDIA) videoImg = await r2ImageBlock(env, thumbKeyOf(video.r2_key), "image/jpeg");
+    if (video && video.note) notes = [String(video.note).replace(/[<>]/g, "").replace(/\s+/g, " ").trim().slice(0, 200)].filter(Boolean);
+  }
   let coverImg = null;
   const thumbId = (opts.thumbnailId != null && opts.thumbnailId !== "") ? parseInt(opts.thumbnailId, 10) : null;
-  if (env.DB && !photoIds.length && Number.isInteger(thumbId)) {
+  if (env.DB && !photoIds.length && !video && Number.isInteger(thumbId)) {
     const th = await env.DB.prepare("SELECT r2_key, content_type FROM marketing_thumbnails WHERE id = ?").bind(thumbId).first().catch(() => null);
     if (th) coverImg = await r2ImageBlock(env, th.r2_key, th.content_type);
   }
@@ -7574,6 +7585,9 @@ async function buildCaption(env, opts) {
     postType ? `Post type: ${MARKETING_POST_TYPE_LABELS[postType] || postType}.` : "",
     `This post is about: ${topic}.`,
     photoImgs.length ? `The attached ${photoImgs.length === 1 ? "image is a photo" : photoImgs.length + " images are photos"} the store team just took of THIS week's bins, and ${photoImgs.length === 1 ? "it is" : "they are"} a sample of a larger batch. They are the subject of this post: write about what is actually in them — the kinds of items, the variety, what is worth digging for. Keep it about the mix rather than hanging the whole caption on one item, and describe only what you can see. No price, day, discount, or offer is printed on a bin photo, so do not state one${notes.length ? " unless the store team's notes below give it" : ""}.` : "",
+    video ? (video.video_type === "store_walk"
+      ? `This post is a walk-through VIDEO of the store floor (${Math.round(video.duration_ms / 60000)} minute${Math.round(video.duration_ms / 60000) === 1 ? "" : "s"} long), filmed by the store team this week. ${videoImg ? "The attached image is one frame from it: write about the store floor and what shoppers will find, and invite people to watch the walk-through and come in." : "You cannot see it: write a short invitation to watch the walk-through and come in, and do not describe specific items."}`
+      : `This post is a SHORT VIDEO CLIP (${Math.round(video.duration_ms / 1000)} seconds), posted as a Facebook Reel. ${videoImg ? "The attached image is one frame from it: write about what it shows." : "You cannot see it: keep it to a short line that makes people want to watch, and do not describe specific items."} Keep a Reel caption short — two or three sentences before the hashtags.`) : "",
     // Staff-typed text, so it is fenced and declared data: a note can supply a fact,
     // never an instruction.
     notes.length ? [
@@ -7598,7 +7612,7 @@ async function buildCaption(env, opts) {
     ].join("\n") : "",
     "Write the caption.",
   ].filter(Boolean).join("\n");
-  const imgs = photoImgs.length ? photoImgs : (coverImg ? [coverImg] : []);
+  const imgs = video ? (videoImg ? [videoImg] : []) : photoImgs.length ? photoImgs : (coverImg ? [coverImg] : []);
   const content = imgs.length ? [...imgs, { type: "text", text: userText }] : userText;
   const system = [
     "You write Facebook post captions for Bargain Lane, a chain of discount bin stores.",
@@ -7734,6 +7748,72 @@ async function servePublicPhoto(request, env, url) {
   };
   if (obj.size != null) headers["Content-Length"] = String(obj.size);
   return new Response(request.method === "HEAD" ? null : obj.body, { headers });
+}
+
+// "bytes=a-b" against an object of `size` bytes → { offset, length }, null for no
+// Range (serve it whole), or "invalid" (416). One range only: browsers and fetchers
+// asking for video send one.
+// A Range it can't read (several ranges, end before start, junk) is IGNORED and the
+// whole file served, as RFC 9110 says; 416 only for a range that starts past the end.
+function byteRangeOf(header, size) {
+  if (!header) return null;
+  const m = /^bytes=(\d*)-(\d*)$/i.exec(String(header).trim());
+  if (!m || (m[1] === "" && m[2] === "")) return null;
+  let start, end;
+  if (m[1] === "") { const n = Number(m[2]); if (!(n > 0)) return "invalid"; start = Math.max(0, size - n); end = size - 1; }
+  else { start = Number(m[1]); end = m[2] === "" ? size - 1 : Math.min(Number(m[2]), size - 1); }
+  if (start >= size) return "invalid";
+  if (!(start <= end)) return null;
+  return { offset: start, length: end - start + 1 };
+}
+
+// Serve an R2 object, honouring a Range. A video MUST answer ranges with 206: Safari
+// will not play one that doesn't, and Buffer's fetcher may ask for parts too.
+async function serveR2Ranged(request, env, key, headers, missing) {
+  const head = await env.MEDIA.head(key).catch(() => null);
+  if (!head) return missing();
+  const size = head.size;
+  const h = { ...headers, "Accept-Ranges": "bytes" };
+  const range = byteRangeOf(request.headers.get("range"), size);
+  if (range === "invalid") return new Response(null, { status: 416, headers: { ...h, "Content-Range": `bytes */${size}` } });
+  if (request.method === "HEAD") return new Response(null, { headers: { ...h, "Content-Length": String(size) } });
+  if (!range) {
+    const obj = await env.MEDIA.get(key).catch(() => null);
+    if (!obj) return missing();
+    return new Response(obj.body, { headers: { ...h, "Content-Length": String(size) } });
+  }
+  const obj = await env.MEDIA.get(key, { range }).catch(() => null);
+  if (!obj) return missing();
+  return new Response(obj.body, { status: 206, headers: {
+    ...h, "Content-Length": String(range.length),
+    "Content-Range": `bytes ${range.offset}-${range.offset + range.length - 1}/${size}`,
+  } });
+}
+
+// One uploaded video, publicly, for Buffer (which fetches media from a URL when it
+// posts): /v/<marketing_videos.id>-<the UUID in its R2 key>.<ext>. Same rules as /p/:
+// a primary-key read, the UUID is the secret, every refusal the same bare 404, and the
+// type comes from our allowlist, never from the upload. Only finished videos.
+const PUBLIC_VIDEO_PATH = /^\/v\/([1-9][0-9]{0,9})-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.(mp4|mov|m4v)$/;
+async function servePublicVideo(request, env, url) {
+  const notFound = () => new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain" } });
+  if (request.method !== "GET" && request.method !== "HEAD") return new Response("Method not allowed", { status: 405, headers: { Allow: "GET, HEAD" } });
+  const m = url.pathname.match(PUBLIC_VIDEO_PATH);
+  if (!m || !env.DB || !env.MEDIA) return notFound();
+  const [, id, uuid, ext] = m;
+  const row = await env.DB.prepare("SELECT store, r2_key, content_type, status FROM marketing_videos WHERE id = ?").bind(Number(id)).first().catch(() => null);
+  if (!row || row.status !== "new") return notFound();
+  if (!String(row.r2_key).startsWith(`marketing/${row.store}/video/`) || !String(row.r2_key).endsWith(`/${uuid}.${ext}`)) return notFound();
+  const ct = String(row.content_type || "").toLowerCase();
+  if (!VIDEO_TYPES[ct]) return notFound();
+  return serveR2Ranged(request, env, row.r2_key, {
+    "Content-Type": ct, "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "default-src 'none'; sandbox",
+    "Cache-Control": "public, max-age=3600",
+  }, notFound);
+}
+function bufferVideoUrl(env, row) {
+  return `${apiOrigin(env)}/v/${row.id}-${String(row.r2_key || "").split("/").pop()}`;
 }
 
 // ── Weekly upload targets (marketing meeting, 2026-10-13) ───────────────────
@@ -8297,7 +8377,7 @@ async function ensureAutoDraftForPhotos(env, store, now) {
                                    WHERE store = ? AND photo_type = 'bins'
                                      AND created_at >= ? AND created_at < ?), '[]'),
             updated_at = ?
-      WHERE store = ? AND origin = 'photos' AND auto_week = ? AND status = 'draft' AND photos_curated = 0`
+      WHERE store = ? AND origin = 'photos' AND auto_week = ? AND status = 'draft' AND photos_curated = 0 AND video_id IS NULL`
   ).bind(store, etDayStartIso(week), etDayStartIso(weekEnd), nowIso, store, week).run();
 
   return { store, week, cover_id: coverId, created: createdNow };
@@ -15880,6 +15960,22 @@ function bufferImageUrl(env, kind, row) {
 // (so a post is refused while someone is watching, not at 9 pm) and by the publisher.
 // Returns { error } or { text, images: [{ kind, row }] } in posting order, cover first.
 async function bufferDraftCheck(env, draft) {
+  // A video post: one video, nothing beside it. Its rules were checked at upload and
+  // are checked again here, in case the rules or the row changed since.
+  if (draft.video_id) {
+    if (bufferImageCount(draft)) return { error: "A video post carries no cover or photos. Remove them, or the video." };
+    const text = String(draft.caption || "");
+    if (text.length > BUFFER_FB_TEXT_MAX) return { error: `Caption is ${text.length} characters; Facebook takes ${BUFFER_FB_TEXT_MAX}` };
+    // Required: if Buffer re-hosts the video, the caption is what a retry knows it by.
+    if (!text.trim()) return { error: "Add a caption to a video post before posting it" };
+    const v = await env.DB.prepare("SELECT id, store, video_type, r2_key, content_type, bytes, duration_ms, width, height, status FROM marketing_videos WHERE id = ?").bind(draft.video_id).first();
+    if (!v || v.status !== "new") return { error: `Video missing: #${draft.video_id}` };
+    if (String(v.store) !== String(draft.store || "").toUpperCase()) return { error: "That video is from another store" };
+    if (!VIDEO_TYPES[String(v.content_type || "").toLowerCase()]) return { error: `Facebook through Buffer takes MP4 or MOV; video #${v.id} is ${v.content_type}` };
+    const rule = videoRuleError(v.video_type, v);
+    if (rule) return { error: rule };
+    return { text, video: v, images: [] };
+  }
   const n = bufferImageCount(draft);
   if (!n) return { error: "Draft has no cover or photos to post" };
   if (n > BUFFER_MAX_IMAGES) return { error: bufferTooManyImages(n, !!draft.thumbnail_id) };
@@ -15929,7 +16025,13 @@ const BUFFER_SETTLE_MS = 5 * 60 * 1000;                 // how long a fresh post
 // 10 minutes, no match for an attempt too fresh to be listed yet) is a refusal: try again
 // later.
 // Returns { ok, post|null } or an error.
-async function bufferFindEarlierPost(env, priors, sentNow) {
+//
+// A VIDEO is matched on more than its URL: Buffer converts video and may re-host it, so
+// its `source` may not be ours any more (unverified; review 2026-10-19). A video post
+// also matches as the one live video on that channel, with this exact caption (a video
+// post must have one), made within 10 minutes of the attempt, that no other draft has
+// already claimed.
+async function bufferFindEarlierPost(env, priors, sentNow, draftId) {
   for (const p of priors.filter(x => x.buffer_post_id)) {
     const r = await bufferGql(env, "query PostStatus($id: PostId!) { post(input: { id: $id }) { id status } }", { id: String(p.buffer_post_id) });
     if (r.ok && r.data.post && BUFFER_LIVE.includes(r.data.post.status)) return { ok: true, post: r.data.post };
@@ -15941,13 +16043,25 @@ async function bufferFindEarlierPost(env, priors, sentNow) {
     if (!sent || !sent.ch) sent = sentNow;
     const at = new Date(x.created_at).getTime();
     const r = await bufferGql(env,
-      "query Recent($org: OrganizationId!, $ch: [ChannelId!], $since: DateTime!) { posts(first: 100, input: { organizationId: $org, filter: { channelIds: $ch, status: [scheduled, sending, sent], createdAt: { start: $since } }, sort: [{ field: createdAt, direction: asc }] }) { pageInfo { hasNextPage } edges { node { id status text createdAt assets { source } } } } }",
+      "query Recent($org: OrganizationId!, $ch: [ChannelId!], $since: DateTime!) { posts(first: 100, input: { organizationId: $org, filter: { channelIds: $ch, status: [scheduled, sending, sent], createdAt: { start: $since } }, sort: [{ field: createdAt, direction: asc }] }) { pageInfo { hasNextPage } edges { node { id status text createdAt assets { type source } } } } }",
       { org: BUFFER_ORG_ID, ch: [sent.ch], since: new Date(at - 120000).toISOString() });
     if (!r.ok) return r;
     const posts = r.data.posts || {};
     const nodes = (posts.edges || []).map(e => e && e.node).filter(Boolean);
     const want = key(sent);
-    const hit = nodes.find(p => BUFFER_LIVE.includes(p.status) && key({ ch: sent.ch, assets: (p.assets || []).map(a => a && a.source), text: p.text }) === want);
+    let hit = nodes.find(p => BUFFER_LIVE.includes(p.status) && key({ ch: sent.ch, assets: (p.assets || []).map(a => a && a.source), text: p.text }) === want);
+    const caption = String(sent.text || "").trim();
+    if (!hit && sent.video && caption) {
+      for (const p of nodes) {
+        const as = p.assets || [];
+        if (!BUFFER_LIVE.includes(p.status) || as.length !== 1 || !as[0] || as[0].type !== "video") continue;
+        if (String(p.text || "").trim() !== caption) continue;
+        if (!(new Date(p.createdAt).getTime() <= at + 10 * 60 * 1000)) continue;
+        const claimed = await env.DB.prepare("SELECT 1 FROM marketing_publish_log WHERE buffer_post_id = ? AND draft_id <> ? LIMIT 1").bind(String(p.id), draftId).first();
+        if (claimed) continue;
+        hit = p; break;
+      }
+    }
     if (hit) return { ok: true, post: hit };
     // Not listed yet is not the same as never made, for an attempt only seconds old.
     if (Date.now() - at < BUFFER_SETTLE_MS) {
@@ -15973,8 +16087,11 @@ async function publishDraftViaBuffer(env, { draftId, published }) {
 
   const chk = await bufferDraftCheck(env, draft);
   if (chk.error) return { ok: false, error: chk.error, status: 400 };
-  const assets = chk.images.map(({ kind, row }) => ({ image: { url: bufferImageUrl(env, kind, row) } }));
-  const sentNow = { ch: channelId, assets: assets.map(a => a.image.url), text: chk.text };
+  // A store walk posts as a normal Facebook video; a clip as a Reel (Brian, 2026-10-19).
+  const assets = chk.video ? [{ video: { url: bufferVideoUrl(env, chk.video) } }]
+    : chk.images.map(({ kind, row }) => ({ image: { url: bufferImageUrl(env, kind, row) } }));
+  const fbType = chk.video && chk.video.video_type === "clip" ? "reel" : "post";
+  const sentNow = { ch: channelId, assets: assets.map(a => (a.image || a.video).url), text: chk.text, video: !!chk.video };
 
   // 1. An earlier attempt with an unknown outcome may already have made this post.
   const priors = (await env.DB.prepare(
@@ -15982,7 +16099,7 @@ async function publishDraftViaBuffer(env, { draftId, published }) {
   ).bind(draftId).all()).results || [];
   let post = null;
   if (priors.length) {
-    const found = await bufferFindEarlierPost(env, priors, sentNow);
+    const found = await bufferFindEarlierPost(env, priors, sentNow, draftId);
     // Cannot rule out a duplicate: try again later. Nothing was attempted, so the
     // scheduler does not count it against the post's tries.
     if (!found.ok) return { ...found, noAttempt: true };
@@ -16008,7 +16125,7 @@ async function publishDraftViaBuffer(env, { draftId, published }) {
 
   // 3. Hand it over (or adopt the one Buffer already has).
   if (!post) {
-    const input = { channelId, text: chk.text, schedulingType: "automatic", mode: published ? "shareNow" : "addToQueue", metadata: { facebook: { type: "post" } }, assets };
+    const input = { channelId, text: chk.text, schedulingType: "automatic", mode: published ? "shareNow" : "addToQueue", metadata: { facebook: { type: fbType } }, assets };
     if (!published) input.saveToDraft = true;   // staged: lands as a Buffer draft for marketing (never adopted: see `live`)
     const r = await bufferGql(env,
       "mutation CreatePost($input: CreatePostInput!) { createPost(input: $input) { __typename ... on PostActionSuccess { post { id status } } ... on MutationError { message } } }",
@@ -16044,7 +16161,7 @@ async function publishDraftViaBuffer(env, { draftId, published }) {
   catch (_) { try { await env.DB.prepare("UPDATE marketing_drafts SET status=?, updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=?").bind(next, now, live ? now : null, draftId).run(); } catch (_) {} }
   return {
     ok: true, published: live, page: { id: pageId, name: target ? target.page_name : null },
-    postId: null, postUrl: null, photos: chk.images.length, bufferPostId: String(post.id),
+    postId: null, postUrl: null, photos: chk.images.length, video: chk.video ? chk.video.id : null, bufferPostId: String(post.id),
     note: adopted ? "Buffer already had this post from an earlier attempt, so no second copy was made."
       : live ? "Sent to Buffer. It posts to the store's Facebook Page within a minute."
       : "Saved as a Buffer draft. Schedule it in Buffer to post it.",
@@ -16134,6 +16251,7 @@ async function publishDraft(env, { draftId, published, token }) {
   const draft = await env.DB.prepare("SELECT * FROM marketing_drafts WHERE id = ?").bind(draftId).first();
   if (!draft) return { ok: false, error: "Draft not found", status: 404 };
   const store = String(draft.store || "").toUpperCase();
+  if (draft.video_id) return { ok: false, error: "Video posts go out through Buffer, and BUFFER_API_KEY is not set", status: 400 };
 
   // Resolve the Facebook Page for this store.
   const target = await env.DB.prepare("SELECT page_id, page_name FROM facebook_page_targets WHERE store = ?").bind(store).first().catch(() => null);
@@ -16787,6 +16905,8 @@ export default {
     // response — so the link is the capability.
     // Covers get the same treatment at /t/, from marketing_thumbnails.
     if (url.pathname.startsWith("/p/") || url.pathname.startsWith("/t/")) return servePublicPhoto(request, env, url);
+    // …and finished store videos at /v/, with Range support (servePublicVideo).
+    if (url.pathname.startsWith("/v/")) return servePublicVideo(request, env, url);
 
     // ── Reporting API (external, static-key auth) ─────────────────
     // A small family of read-only endpoints for the external Chief of Staff
@@ -18157,6 +18277,11 @@ export default {
         if (declared != null && Number(declared) !== want) return new Response(JSON.stringify({ error: `Part ${part} is ${declared} bytes; expected ${want}` }), { status: 400, headers: corsJson });
         const buf = await request.arrayBuffer();
         if (buf.byteLength !== want) return new Response(JSON.stringify({ error: `Part ${part} is ${buf.byteLength} bytes; expected ${want}` }), { status: 400, headers: corsJson });
+        // An MP4/MOV opens with an 'ftyp' box: anything else is not a video, whatever it
+        // was labelled. Checked once, on the first part (it will be served publicly at /v/).
+        if (part === 1 && (buf.byteLength < 8 || String.fromCharCode(...new Uint8Array(buf, 4, 4)) !== "ftyp")) {
+          return new Response(JSON.stringify({ error: "This file isn't an MP4 or MOV video." }), { status: 400, headers: corsJson });
+        }
         const up = await env.MEDIA.resumeMultipartUpload(v.row.r2_key, v.row.upload_id).uploadPart(part, buf);
         return new Response(JSON.stringify({ ok: true, part: up.partNumber, etag: up.etag }), { headers: corsJson });
       } catch (e) {
@@ -18548,6 +18673,71 @@ export default {
 
     // ── Bin-post composer (Slice 1b-2): drafts (admin) ───────────────
     // List submitted photos to pick from. GET ?action=marketing-photos&store=&type=&status=
+    // ── Store videos in Content Studio (admin) ────────────────────────────
+    // GET ?action=marketing-videos&store=  — a store's finished videos, newest first.
+    if (request.method === "GET" && url.searchParams.get("action") === "marketing-videos") {
+      if (!isAdminSecret && !canAccessInventory(currentUser)) return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      if (!env.DB || !env.MEDIA) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
+      const store = String(url.searchParams.get("store") || "").trim().toUpperCase();
+      if (!ALL_STORES.includes(store)) return new Response(JSON.stringify({ error: "Invalid store" }), { status: 400, headers: corsJson });
+      const { results } = await env.DB.prepare(
+        `SELECT id, store, video_type, r2_key, bytes, duration_ms, width, height, uploader, note, created_at
+           FROM marketing_videos WHERE store = ? AND status = 'new' ORDER BY created_at DESC LIMIT 50`
+      ).bind(store).all();
+      const videos = [];
+      for (const v of results || []) {
+        const poster = await env.MEDIA.head(thumbKeyOf(v.r2_key)).catch(() => null);
+        const { r2_key, ...rest } = v;
+        videos.push({ ...rest, has_poster: !!poster });
+      }
+      return new Response(JSON.stringify({ ok: true, videos }), { headers: corsJson });
+    }
+
+    // GET ?action=video&id=[&size=thumb] — the video itself (with Range, so it plays and
+    // seeks) or its poster frame. Signed-in and store-scoped, like ?action=photo. Carries
+    // the CORS credentials headers, so Content Studio can draw a frame of it onto a canvas.
+    if ((request.method === "GET" || request.method === "HEAD") && url.searchParams.get("action") === "video") {
+      if (!currentUser && !isAdminSecret) return new Response("Unauthorized", { status: 401, headers: corsHeaders });
+      if (!env.DB || !env.MEDIA) return new Response("Storage not configured", { status: 500, headers: corsHeaders });
+      const id = parseInt(url.searchParams.get("id") || "", 10);
+      if (!Number.isInteger(id)) return new Response("Invalid id", { status: 400, headers: corsHeaders });
+      const row = await env.DB.prepare("SELECT store, r2_key, content_type, status FROM marketing_videos WHERE id = ?").bind(id).first();
+      if (!row || row.status !== "new") return new Response("Not found", { status: 404, headers: corsHeaders });
+      const allow = currentUser ? allowedStores(currentUser) : null;
+      if (allow && !allow.includes(row.store)) return new Response("Forbidden", { status: 403, headers: corsHeaders });
+      const missing = () => new Response("Gone", { status: 404, headers: corsHeaders });
+      if (url.searchParams.get("size") === "thumb") {
+        const obj = await env.MEDIA.get(thumbKeyOf(row.r2_key)).catch(() => null);
+        if (!obj) return missing();
+        return new Response(obj.body, { headers: { ...corsHeaders, "Content-Type": "image/jpeg", "Cache-Control": "private, max-age=300" } });
+      }
+      const ct = String(row.content_type || "").toLowerCase();
+      if (!VIDEO_TYPES[ct]) return missing();
+      return serveR2Ranged(request, env, row.r2_key, { ...corsHeaders, "Content-Type": ct, "X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=300" }, missing);
+    }
+
+    // POST ?action=video-poster  form: id, poster (JPEG ≤ 512 KB) — the frame Content Studio
+    // took on the admin's computer, for a video whose phone could not grab one.
+    if (request.method === "POST" && url.searchParams.get("action") === "video-poster") {
+      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      if (!env.DB || !env.MEDIA) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
+      try {
+        const form = await request.formData();
+        const id = parseInt(String(form.get("id") || ""), 10);
+        const row = Number.isInteger(id) ? await env.DB.prepare("SELECT r2_key, status FROM marketing_videos WHERE id = ?").bind(id).first() : null;
+        if (!row || row.status !== "new") return new Response(JSON.stringify({ error: "Video not found" }), { status: 404, headers: corsJson });
+        const poster = form.get("poster");
+        if (!poster || typeof poster.arrayBuffer !== "function" || poster.type !== "image/jpeg") return new Response(JSON.stringify({ error: "Send the frame as a JPEG" }), { status: 400, headers: corsJson });
+        const pb = await poster.arrayBuffer();
+        if (!pb.byteLength || pb.byteLength > 512 * 1024) return new Response(JSON.stringify({ error: "The frame must be under 512 KB" }), { status: 400, headers: corsJson });
+        await env.MEDIA.put(thumbKeyOf(row.r2_key), pb, { httpMetadata: { contentType: "image/jpeg" } });
+        return new Response(JSON.stringify({ ok: true, id }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
     if (request.method === "GET" && url.searchParams.get("action") === "marketing-photos") {
       if (!isAdminSecret && !canAccessInventory(currentUser)) return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
       if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
@@ -18612,6 +18802,16 @@ export default {
         const captionSource = (b.caption_source === "ai") ? "ai" : "manual";
         const topic = (b.topic == null ? "" : String(b.topic)).trim() || null;
         const postType = MARKETING_POST_TYPES.includes(String(b.post_type)) ? String(b.post_type) : null;
+        // A video post is ONE video and nothing else (Buffer takes no images beside a
+        // video on Facebook), from the same store's finished uploads.
+        const videoId = (b.video_id != null && b.video_id !== "") ? parseInt(b.video_id, 10) : null;
+        if (videoId != null) {
+          if (!Number.isInteger(videoId)) return new Response(JSON.stringify({ error: "Invalid video" }), { status: 400, headers: corsJson });
+          if (thumbnailId || photoIds.length) return new Response(JSON.stringify({ error: "A video post carries no cover or photos. Remove them, or the video." }), { status: 400, headers: corsJson });
+          const vrow = await env.DB.prepare("SELECT store, status FROM marketing_videos WHERE id = ?").bind(videoId).first();
+          if (!vrow || vrow.status !== "new") return new Response(JSON.stringify({ error: "That video isn't available" }), { status: 400, headers: corsJson });
+          if (vrow.store !== store) return new Response(JSON.stringify({ error: "That video is from another store" }), { status: 400, headers: corsJson });
+        }
         const now = new Date().toISOString();
         if (b.id != null && b.id !== "") {
           const id = parseInt(b.id, 10);
@@ -18622,20 +18822,20 @@ export default {
           // Buffer's 10-image limit with the next upload). A caption-only save leaves
           // the flag alone, so later uploads keep landing. (SET reads the OLD row.)
           const res = await env.DB.prepare(
-            `UPDATE marketing_drafts SET store=?, thumbnail_id=?, photo_ids=?, caption=?, caption_source=?, topic=?, post_type=?,
+            `UPDATE marketing_drafts SET store=?, thumbnail_id=?, photo_ids=?, video_id=?, caption=?, caption_source=?, topic=?, post_type=?,
                     photos_curated = CASE WHEN COALESCE(photo_ids, '[]') = ? THEN photos_curated ELSE 1 END, updated_at=? WHERE id=?`
-          ).bind(store, thumbnailId, JSON.stringify(photoIds), caption, captionSource, topic, postType, JSON.stringify(photoIds), now, id).run();
+          ).bind(store, thumbnailId, JSON.stringify(photoIds), videoId, caption, captionSource, topic, postType, JSON.stringify(photoIds), now, id).run();
           if (!res.meta || res.meta.changes === 0) return new Response(JSON.stringify({ error: "Draft not found" }), { status: 404, headers: corsJson });
-          // A scheduled post must always have an image; an edit that removes them auto-unschedules it.
-          if (cur && cur.status === "scheduled" && !thumbnailId && !photoIds.length) {
+          // A scheduled post must always have an image or a video; an edit that removes them auto-unschedules it.
+          if (cur && cur.status === "scheduled" && !thumbnailId && !photoIds.length && !videoId) {
             await env.DB.prepare("UPDATE marketing_drafts SET status='draft', scheduled_at=NULL, schedule_error=? WHERE id=?").bind("Unscheduled — needs a cover or photo", id).run().catch(() => {});
           }
           return new Response(JSON.stringify({ ok: true, id }), { headers: corsJson });
         }
         const res = await env.DB.prepare(
-          `INSERT INTO marketing_drafts (store, thumbnail_id, photo_ids, caption, caption_source, topic, post_type, status, created_by, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?, 'draft', ?, ?, ?)`
-        ).bind(store, thumbnailId, JSON.stringify(photoIds), caption, captionSource, topic, postType, (currentUser && currentUser.email) || null, now, now).run();
+          `INSERT INTO marketing_drafts (store, thumbnail_id, photo_ids, video_id, caption, caption_source, topic, post_type, status, created_by, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?, 'draft', ?, ?, ?)`
+        ).bind(store, thumbnailId, JSON.stringify(photoIds), videoId, caption, captionSource, topic, postType, (currentUser && currentUser.email) || null, now, now).run();
         return new Response(JSON.stringify({ ok: true, id: res.meta && res.meta.last_row_id }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
@@ -18647,7 +18847,8 @@ export default {
       if (!isAdminSecret && !canAccessInventory(currentUser)) return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
       if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
       const status = String(url.searchParams.get("status") || "").trim().toLowerCase();
-      let q = "SELECT d.*, (SELECT pl.post_url FROM marketing_publish_log pl WHERE pl.draft_id = d.id AND pl.post_url IS NOT NULL ORDER BY pl.id DESC LIMIT 1) AS post_url FROM marketing_drafts d WHERE 1=1";
+      let q = "SELECT d.*, (SELECT pl.post_url FROM marketing_publish_log pl WHERE pl.draft_id = d.id AND pl.post_url IS NOT NULL ORDER BY pl.id DESC LIMIT 1) AS post_url," +
+        " v.video_type AS video_type, v.duration_ms AS video_duration_ms FROM marketing_drafts d LEFT JOIN marketing_videos v ON v.id = d.video_id WHERE 1=1";
       const binds = [];
       if (status && status !== "all") { q += " AND d.status = ?"; binds.push(status); }
       q += " ORDER BY COALESCE(d.updated_at, d.created_at) DESC LIMIT 300";
@@ -18877,7 +19078,7 @@ export default {
         const b = await request.json();
         const r = await buildCaption(env, {
           store: b.store, fiscalYear: b.fiscal_year, topic: b.topic,
-          postType: b.post_type, thumbnailId: b.thumbnail_id,
+          postType: b.post_type, thumbnailId: b.thumbnail_id, videoId: b.video_id,
         });
         if (!r.ok) {
           const payload = { error: r.error };
@@ -18906,12 +19107,13 @@ export default {
         const b = await request.json();
         const id = parseInt(b.id, 10);
         if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
-        const draft = await env.DB.prepare("SELECT status, thumbnail_id, photo_ids, caption FROM marketing_drafts WHERE id=?").bind(id).first();
+        const draft = await env.DB.prepare("SELECT store, status, thumbnail_id, photo_ids, video_id, caption FROM marketing_drafts WHERE id=?").bind(id).first();
         if (!draft) return new Response(JSON.stringify({ error: "Draft not found" }), { status: 404, headers: corsJson });
         if (draft.status === "published" || draft.status === "publishing") return new Response(JSON.stringify({ error: "That post is already publishing or published" }), { status: 409, headers: corsJson });
         let pids = []; try { pids = JSON.parse(draft.photo_ids || "[]"); } catch (_) {}
-        if (!draft.thumbnail_id && !pids.length) return new Response(JSON.stringify({ error: "Add a cover or a photo before scheduling" }), { status: 400, headers: corsJson });
+        if (!draft.thumbnail_id && !pids.length && !draft.video_id) return new Response(JSON.stringify({ error: "Add a cover or a photo before scheduling" }), { status: 400, headers: corsJson });
         // Refuse now, not at the scheduled time when nobody is watching.
+        if (draft.video_id && !env.BUFFER_API_KEY) return new Response(JSON.stringify({ error: "Video posts go out through Buffer, and BUFFER_API_KEY is not set" }), { status: 400, headers: corsJson });
         if (env.BUFFER_API_KEY) {
           const chk = await bufferDraftCheck(env, draft);
           if (chk.error) return new Response(JSON.stringify({ error: chk.error }), { status: 400, headers: corsJson });
