@@ -85,7 +85,14 @@ PR B — post a video to Facebook through Buffer (branch `claude/video-posts`):
       post: `AND video_id IS NULL`; CORS Allow-Headers gains Range.
       Deploy note (review): worker before migration-081 breaks EVERY draft save and schedule, not just the board.
       `npm test` 10778 / 122; browser checks 41 + 46 + 88
-- [ ] Push + PR → migration-081 → confirm column read-only → worker → merge → one test video post from Brian
+- [x] migration-081 applied by Brian 2026-10-21; `video_id INTEGER` confirmed read-only (97 drafts, none set)
+- [x] Pushed; main had moved (#353, 5 AM summary, already LIVE): merged it in so the deploy carries it, and both
+      sides had claimed CACHE_NAME v284 → v285. PR [#354](https://github.com/Droidan1/labor-dashboard/pull/354)
+- [x] Worker deployed by Brian from a fresh clone of `de16589`: `e4449cab-9890-4447-a863-a0f44cc00d56`, 5 crons (no
+      `0 12`, matching #353). Live bundle byte-identical to the dry-run of the same clone (sha256 0acbf4aa…,
+      1,171,054 B), carrying both the 5 AM summary and video posts; `/v/<made-up>` answers 404 text/plain from the
+      new route on 3 passes 20 s apart (the old worker answered 401 NO_SESSION)
+- [ ] Merge → one test video post from Brian
       (settles what Facebook does with a sideways walk and an upright clip sent by URL, and whether Buffer keeps
       our video URL)
 
