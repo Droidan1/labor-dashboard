@@ -5,10 +5,11 @@ compatibility_date = "2024-01-01"
 # Cron triggers:
 #   - "55 3 * * *"  — 11:55 PM ET (03:55 UTC) daily end-of-day snapshot rollup
 #   - "* * * * *"   — every minute: sale scheduler (activate pending, revert expired)
-#   - "0 12 * * *"  — 8 AM ET daily summary email (12:00 UTC = EDT; runs after the
-#                     7 AM auction feeder so the email includes auction. In EST this
-#                     is 7 AM ET — bump to "0 13 * * *" when DST ends in November.)
-#   - "0 * * * *"   — top of every hour: interval sales summary push notifications
+#   - "0 * * * *"   — top of every hour: interval sales summary push notifications,
+#                     and the Executive Summary email when the hour is 5 AM Eastern
+#                     (worker checks the ET hour, so it stays 5 AM through DST). There
+#                     is no "0 12 * * *" any more: a cron the handler does not name
+#                     now does nothing, so leave it out rather than keep it "just in case".
 #   - "0 11 * * 1"  — 7 AM ET Sunday weekly digest (11:00 UTC = EDT). NOTE: Cloudflare
 #                     cron day-of-week is 1-7 where 1=Sunday, 7=Saturday (NOT POSIX
 #                     0=Sun). "0" is rejected as invalid. Must match the handler's
@@ -19,7 +20,7 @@ compatibility_date = "2024-01-01"
 # soon as a manager submits rather than at a fixed hour — and it needs no
 # day-of-week arithmetic, no DST handling, and no Flow Calendar coverage.
 [triggers]
-crons = ["55 3 * * *", "* * * * *", "0 12 * * *", "0 11 * * 1", "0 * * * *", "30 10 * * *"]
+crons = ["55 3 * * *", "* * * * *", "0 11 * * 1", "0 * * * *", "30 10 * * *"]
 
 [vars]
 # 🔑 API TOKENS AND SNAPSHOT_SECRET ARE SECRETS, NOT vars.

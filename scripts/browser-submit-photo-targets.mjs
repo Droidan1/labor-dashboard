@@ -198,7 +198,7 @@ for (const dark of [true, false]) {
     await page.evaluate(() => window.navigateToPage('submit-photos'));
     await page.waitForTimeout(500);
     const rows = await page.evaluate(() => [...document.querySelectorAll('#sp-targets tbody tr')].map(r => [...r.cells].map(c => c.textContent.trim()).join(' ')));
-    check(rows.length === 5 && rows[2] === 'South Bend 6/20 20/20', `[${t}] the admin sees all five stores (${JSON.stringify(rows)})`);
+    check(rows.length === 5 && rows[2] === 'South Bend 6/20 20/20 0/1', `[${t}] the admin sees all five stores, with the store-walk column (${JSON.stringify(rows)})`);
     await readable(page, '#sp-targets', t);
     await page.click('#sp-targets button:has-text("Edit weekly targets")');
     check(await shown(page, '#sp-target-edit'), `[${t}] Edit opens the targets form`);
@@ -219,7 +219,7 @@ for (const dark of [true, false]) {
     check(reread, `[${t}] the table re-reads against the new target`);
     check(!(await shown(page, '#sp-target-edit')), `[${t}] and the form closes once saved`);
     const sent = await page.evaluate(() => window.__settings);
-    check(JSON.stringify(sent) === '[{"key":"upload_targets","value":{"retail":"25","bins":"20"}}]', `[${t}] saved as the upload_targets setting (${JSON.stringify(sent)})`);
+    check(JSON.stringify(sent) === '[{"key":"upload_targets","value":{"retail":"25","bins":"20","store_walk":"1"}}]', `[${t}] saved as the upload_targets setting, store walk included (${JSON.stringify(sent)})`);
     check(errs.length === 0, `[${t}] no page errors (${errs.join(' | ').slice(0, 200)})`);
   });
 }

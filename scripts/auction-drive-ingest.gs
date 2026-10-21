@@ -13,7 +13,7 @@
  *   1. script.google.com → New project → paste this file.
  *   2. Fill in the CONFIG block below (FOLDER_ID + SNAPSHOT_SECRET).
  *   3. Run `installTrigger` once and authorize when prompted.
- *      (That schedules runDaily every morning ~6 AM.)
+ *      (That runs runDaily every 10 minutes.)
  *   4. Optional: run `runDaily` manually to backfill what's in the folder now.
  *
  * The endpoint is idempotent (UNIQUE channel+store+date), so re-running or
@@ -47,19 +47,21 @@ const CONFIG = {
 // ─── ENTRY POINTS ────────────────────────────────────────────────────────────
 
 /**
- * Install the daily triggers (run once, manually).
- * 7 AM = primary (after the zip lands ~6–7 AM); 1 PM + 5 PM = idempotent safety
- * nets in case the 7 AM run is skipped/errors (Apps Script triggers are
- * best-effort). Re-POSTing is safe — the endpoint upserts on (channel,store,date).
+ * Install the trigger (run once, manually; re-running replaces it).
+ * runDaily every 10 minutes: the Executive Summary sends at 5 AM Eastern
+ * (2026-10-19), and the old 7 AM / 1 PM / 5 PM hour triggers would have left
+ * yesterday's auction out of it every day. Hour triggers also fire anywhere in
+ * their hour, in the project's time zone (the Whatnot feeder found the same).
+ * A run with no new zip only lists the folder (see _seenFileIds), and re-POSTing
+ * is safe anyway: the endpoint upserts on (channel, store, date).
  */
 function installTrigger() {
   // Clear any existing triggers for runDaily to avoid duplicates.
   ScriptApp.getProjectTriggers()
     .filter(t => t.getHandlerFunction() === 'runDaily')
     .forEach(t => ScriptApp.deleteTrigger(t));
-  [7, 13, 17].forEach(h =>
-    ScriptApp.newTrigger('runDaily').timeBased().everyDays(1).atHour(h).create());
-  Logger.log('Installed daily triggers: runDaily @ 7 AM, 1 PM, 5 PM');
+  ScriptApp.newTrigger('runDaily').timeBased().everyMinutes(10).create();
+  Logger.log('Installed trigger: runDaily every 10 minutes');
 }
 
 /** Main job: process any not-yet-seen auction result zips. */
@@ -74,6 +76,7 @@ function runDaily() {
     const name = file.getName();
     if (name.indexOf(CONFIG.FILE_PREFIX) !== 0) continue;          // not an auction-results zip
     if (name.slice(-4).toLowerCase() !== '.zip') continue;
+    if (file.getDateCreated().getTime() < _seenCutoff()) continue;  // older than any day still in play
     if (seen[file.getId()]) continue;                              // already ingested
 
     try {
@@ -239,8 +242,17 @@ function _seenFileIds() {
   const raw = PropertiesService.getScriptProperties().getProperty('seenFileIds');
   return raw ? JSON.parse(raw) : {};
 }
+// seenFileIds is ONE Script Property, capped at 9 KB (~180 entries). It only grew,
+// and once full, setProperty throws inside runDaily's try: nothing is marked seen
+// again and every new zip is re-read and re-POSTed on every run. The export is a
+// rolling 7 days, so a zip older than SEEN_RETAIN_DAYS is never read (runDaily skips
+// it) and its entry is dropped here. Tested by scripts/test-auction-feeder.mjs.
+const SEEN_RETAIN_DAYS = 60;
+function _seenCutoff() { return Date.now() - SEEN_RETAIN_DAYS * 864e5; }
 function _markSeen(id) {
   const seen = _seenFileIds();
   seen[id] = Date.now();
+  const cutoff = _seenCutoff();
+  Object.keys(seen).forEach(k => { if (seen[k] < cutoff) delete seen[k]; });
   PropertiesService.getScriptProperties().setProperty('seenFileIds', JSON.stringify(seen));
 }

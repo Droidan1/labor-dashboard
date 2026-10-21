@@ -1,3 +1,30 @@
+# Executive Summary at 5 AM Eastern (2026-10-19)
+
+**Ask (Brian):** "change the time from 8 am to 5 am EST every morning". Asked about the live feeds landing after
+5 AM; Brian: "5 am, the online auction and Whatnot sales time has changed too".
+**Decided (mine, stated):** 5 AM Eastern all year (EDT and EST), not a fixed UTC hour: the send rides the
+existing hourly cron and fires when the ET hour is 5, so there is no new trigger and no DST arithmetic.
+**Found:** a cron the handler does not name FELL THROUGH into the nightly snapshot rollup (Sheet import +
+Clover). Removing the "0 12 * * *" branch while a stale wrangler.toml still carried that cron would have run
+the rollup at noon. Also: the online-auction feeder in the repo still ran at 7 AM / 1 PM / 5 PM.
+
+- [x] Test first: test-daily-summary-schedule (12 of 21 failed): one send per day at 5 AM ET on an EDT day, an
+      EST day and both clock-change Sundays; the whole list, dated today; "0 12 * * *" and any unnamed cron do
+      nothing (no send, no rollup); "55 3 * * *" still runs the rollup; wrangler.toml has no "0 12 * * *" and
+      every prod cron is named by scheduled() except the rollup. test-auction-feeder-trigger fails on main's .gs
+- [x] worker.js: send on the hourly cron at DAILY_SUMMARY_ET_HOUR = 5; "0 12" branch removed; fall-through
+      guarded to "55 3 * * *"; scheduledTime missing → now (a hand-run threw before the other hourly jobs
+      started: test-sheet-import-cron). wrangler.toml: "0 12 * * *" removed. Old 8 AM tests re-pinned to
+      5 AM ET. Mutants (fixed 09:00 UTC, no guard, every hour) all caught
+- [x] Settings text "8 AM recap" → "5 AM recap"; CACHE_NAME v284 + shell-cache fixture
+- [x] auction-drive-ingest.gs: runDaily every 10 minutes (was 7 AM / 1 PM / 5 PM); whatnot .gs comments
+- [x] Fresh-eyes review: no blocker. Fixed: the auction feeder's `seenFileIds` (one 9 KB Script Property)
+      only grew and would fill ~late Nov 2026, after which every new zip is re-read and re-POSTed every run
+      (144×/day at the new cadence). Zips older than 60 days are now skipped and their entries dropped
+      (test-auction-feeder, fails on main). Rollback note: `wrangler rollback` restores code, NOT triggers
+- [ ] PR; Brian: deploy the worker (trigger list changes with it), merge (app text ships on merge), and paste
+      the new auction-drive-ingest.gs over the project's code KEEPING its CONFIG, then run installTrigger
+
 # Store videos: upload now, Facebook posting next (2026-10-19)
 
 **Ask (Brian):** "Let's stay on Facebook for right now, can we add the video upload option?"
