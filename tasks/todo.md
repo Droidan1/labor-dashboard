@@ -26,7 +26,13 @@ Friday, as with bins. Context: 709 retail photos all-time, 8 this week; one `new
       Left: the retail index check's `.catch` would read a D1 error as "no index" (fails safe: skipped, never
       duplicated) — after migration-082, confirm a retail upload returns `auto_draft.created: true`.
       `npm test` 10862 / 124; browser 43 + 50
-- [ ] Push + PR → migration-082 → worker → merge → first retail upload makes a draft
+- [x] PR [#355](https://github.com/Droidan1/labor-dashboard/pull/355). migration-082 applied by Brian 2026-10-21 (first try
+      7403 after a wrangler token refresh again — `wrangler login` fixed it; memory note added); index verified
+      read-only, and that read proves prod D1 answers a `sqlite_master` query (the worker's index check)
+- [x] Worker deployed by Brian from a fresh clone of `47f60e8`: `878e2585-0a52-40b2-b4f7-93747bc9f5ee`, 5 crons; live
+      bundle byte-identical to the dry-run of the same clone (sha256 6d55ee82…, 1,173,566 B), still carrying the
+      5 AM summary and video posts. No public route changed, so rollout is not externally probeable
+- [ ] Merge → first retail upload makes the week's retail draft (`auto_draft.created: true`, not `skipped`)
 
 # Executive Summary at 5 AM Eastern (2026-10-19)
 
