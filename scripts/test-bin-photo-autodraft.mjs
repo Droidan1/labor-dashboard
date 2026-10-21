@@ -507,7 +507,8 @@ console.log('bin-photo auto-draft (upload-triggered)');
   ok(/SALES FLOOR this week — new arrivals and featured products, not the bins/.test(text), 'told the photos are the sales floor');
   ok(!text.includes("just took of THIS week's bins"), '🛑 and not told they are bins');
   ok(/Post type: new arrivals/.test(text), 'post type: new arrivals');
-  ok(/Patio sets \$40/.test(text) && /Do not state a price, discount, or offer unless the store team's notes below give it/.test(text), "the staff note can give a price; nothing else can");
+  ok(/Patio sets \$40/.test(text) && /Do not state a price, day, discount, or offer unless the store team's notes below give it/.test(text), "the staff note can give a price; nothing else can");
+  ok(!/Friday/.test(text), "🛑 no day is handed to the model (a Friday post can go out Thursday or late)");
 }
 
 // R5 — 🔑 without migration-082's index the retail draft is skipped, never duplicated
@@ -538,14 +539,29 @@ console.log('bin-photo auto-draft (upload-triggered)');
 }
 
 // R7 — a scheduled or published retail post is never touched by a later upload
-{
+for (const frozen of ['scheduled', 'published']) {
   const { env, db } = makeEnv();
   await upload(env, 'BL1', 'retail');
-  db.prepare(`UPDATE marketing_drafts SET status = 'scheduled'`).run();
+  db.prepare(`UPDATE marketing_drafts SET status = ?`).run(frozen);
   const before = drafts(db)[0].photo_ids;
   await upload(env, 'BL1', 'retail');
-  eq(drafts(db).length, 1, 'no second retail draft while one is scheduled');
-  eq(drafts(db)[0].photo_ids, before, "🛑 the scheduled post's photos are left alone");
+  eq(drafts(db).length, 1, `no second retail draft while one is ${frozen}`);
+  eq(drafts(db)[0].photo_ids, before, `🛑 the ${frozen} post's photos are left alone`);
+}
+
+// R8 — a store that already has this week's bins draft: its first retail upload gets
+// its own caption, on the retail row, written from the retail photo
+{
+  const { env, db, sent } = makeEnv({ apiKey: 'sk-test' });
+  await upload(env, 'BL1', 'bins');
+  await upload(env, 'BL1', 'retail');
+  eq(sent.length, 2, 'two captions: one per draft');
+  const r = drafts(db).find(x => x.origin === 'retail'), b = drafts(db).find(x => x.origin === 'photos');
+  ok(r.caption && r.caption_source === 'ai', 'the retail row has its caption');
+  const msg = sent[1].messages[0].content;
+  const text = msg.filter(x => x.type === 'text').map(x => x.text).join('');
+  ok(/SALES FLOOR/.test(text) && !/THIS week's bins/.test(text), 'written about the retail photo, not the bins');
+  eq(JSON.parse(r.photo_ids).length + JSON.parse(b.photo_ids).length, 2, 'and the bins draft still has only its own photo');
 }
 
 // Tally in the shape scripts/test.sh counts: "<n> passed, <m> failed".

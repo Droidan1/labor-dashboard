@@ -7589,7 +7589,7 @@ async function buildCaption(env, opts) {
     // Retail-floor photos are described as the sales floor, not as bins: until 2026-10-21
     // every photo post was told it was bins, which a new-arrivals post is not.
     photoImgs.length && photoTypes.size === 1 && photoTypes.has("retail")
-      ? `The attached ${photoImgs.length === 1 ? "image is a photo" : photoImgs.length + " images are photos"} the store team just took on the SALES FLOOR this week — new arrivals and featured products, not the bins — and ${photoImgs.length === 1 ? "it is" : "they are"} a sample of a larger batch. They are the subject of this post: write about what is actually in them — the kinds of products, the brands or categories you can clearly make out, why it is worth a trip this week. Keep it about the mix rather than hanging the whole caption on one item, and describe only what you can see. Do not state a price, discount, or offer${notes.length ? " unless the store team's notes below give it" : ""}: a price tag in a photo is easy to misread, and a wrong price is a promise the register has to keep.`
+      ? `The attached ${photoImgs.length === 1 ? "image is a photo" : photoImgs.length + " images are photos"} the store team just took on the SALES FLOOR this week — new arrivals and featured products, not the bins — and ${photoImgs.length === 1 ? "it is" : "they are"} a sample of a larger batch. They are the subject of this post: write about what is actually in them — the kinds of products, the brands or categories you can clearly make out, why it is worth a trip this week. Keep it about the mix rather than hanging the whole caption on one item, and describe only what you can see. Do not state a price, day, discount, or offer${notes.length ? " unless the store team's notes below give it" : ""}: a price tag in a photo is easy to misread, and a wrong price is a promise the register has to keep.`
       : photoImgs.length ? `The attached ${photoImgs.length === 1 ? "image is a photo" : photoImgs.length + " images are photos"} the store team just took of THIS week's bins, and ${photoImgs.length === 1 ? "it is" : "they are"} a sample of a larger batch. They are the subject of this post: write about what is actually in them — the kinds of items, the variety, what is worth digging for. Keep it about the mix rather than hanging the whole caption on one item, and describe only what you can see. No price, day, discount, or offer is printed on a bin photo, so do not state one${notes.length ? " unless the store team's notes below give it" : ""}.` : "",
     video ? (video.video_type === "store_walk"
       ? `This post is a walk-through VIDEO of the store floor (${Math.round(video.duration_ms / 60000)} minute${Math.round(video.duration_ms / 60000) === 1 ? "" : "s"} long), filmed by the store team this week. ${videoImg ? "The attached image is one frame from it: write about the store floor and what shoppers will find, and invite people to watch the walk-through and come in." : "You cannot see it: write a short invitation to watch the walk-through and come in, and do not describe specific items."}`
@@ -7626,7 +7626,7 @@ async function buildCaption(env, opts) {
     "",
     "Shape each caption like this:",
     "1. A hook that makes someone stop scrolling — a question, a specific find, a number.",
-    "2. Two or three sentences of concrete detail: what is actually in the bins, what the theme is, why this week is worth the trip.",
+    "2. Two or three sentences of concrete detail: what is actually in the bins or on the sales floor, what the theme is, why this week is worth the trip.",
     "3. One clear call to action.",
     "4. Three to five hashtags. Lead with the store's own tag, written as #BargainLane + the store name with no spaces (Coliseum -> #BargainLaneColiseum), then two to four topical ones.",
     "",
@@ -7635,7 +7635,7 @@ async function buildCaption(env, opts) {
     "Aim for 50-80 words before the hashtags. Facebook hides anything past roughly 80 words behind a 'See more' link, so stay under that.",
     "",
     "Write for THIS post, not a generic promo. The user says what it is about and may attach images — the post's branded cover graphic, or photos the store just took. Match the caption to what those images actually show.",
-    "When the inputs disagree, this is the order of authority. The attached images and the post type define what this post IS. The operator's description refines that. Anything you are told about the week's wider store plan is supporting context — use it where it genuinely belongs, but never let it displace what the images show. Your first sentence must be about this post's own subject: if the cover says NEW ARRIVALS, the caption opens on new arrivals; if you were given the store's own bin photos, it opens on what is in the bins — whatever else is running that week.",
+    "When the inputs disagree, this is the order of authority. The attached images and the post type define what this post IS. The operator's description refines that. Anything you are told about the week's wider store plan is supporting context — use it where it genuinely belongs, but never let it displace what the images show. Your first sentence must be about this post's own subject: if the cover says NEW ARRIVALS, the caption opens on new arrivals; if you were given the store's own bin photos, it opens on what is in the bins; if you were given photos of the sales floor, it opens on what is on the floor — whatever else is running that week.",
     "Only reference prices, discounts, dates, schedules, offers, or claims that are printed on an attached cover graphic or given to you in the text. Never invent, guess, or embellish beyond what you were given: a made-up price is a promise the store has to honor at the register.",
     "Vary the opening and the structure from one caption to the next — do not reuse the same hook shape every time.",
     "Do not use the store's internal code (BL1, BL4, and so on).",
@@ -8338,7 +8338,7 @@ const AUTO_DRAFT_KINDS = {
           captionTopic: "this week's bin photos — fresh finds just put out in the bins" },
   retail: { origin: "retail", photoType: "retail", postType: "new_arrivals", coverType: "new_arrivals", pinKey: null,
           topic: "This week's new arrivals", createdBy: "auto:retail-photos", index: "uq_drafts_auto_week_retail",
-          captionTopic: "this week's new arrivals on the sales floor — the Friday retail post" },
+          captionTopic: "this week's new arrivals on the sales floor" },   // no "Friday": the model would repeat a day the post may not go out on
 };
 
 async function ensureAutoDraftForPhotos(env, store, now, kindName = "bins") {

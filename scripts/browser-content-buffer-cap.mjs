@@ -191,6 +191,17 @@ for (const dark of [true, false]) {
     check(await text(page, '#ct-photo-count') === '0 of 9 attached', `[${t}] and clears the folder`);
     check(await btn() === 'Select all', `[${t}] then reads Select all again`);
 
+    // The cover-pin badge names which auto-post it is for, now there are two (bins, retail).
+    await page.evaluate(() => window.ctSetTab('thumbs'));
+    await page.waitForTimeout(300);
+    const badge = await page.evaluate(() => {
+      const b = [...document.querySelectorAll('button')].find(x => /^AUTO/.test(x.textContent.trim()) && x.offsetParent);
+      if (!b) return null;
+      const r = b.getBoundingClientRect(), tile = b.parentElement.getBoundingClientRect();
+      return { text: b.textContent.trim(), fits: r.right <= tile.right - 30 && r.left >= tile.left };   // clear of the × at top-right
+    });
+    check(badge && badge.text === 'AUTO · BINS', `[${t}] the cover-pin badge says AUTO · BINS (${badge && badge.text})`);
+    check(badge && badge.fits, `[${t}] and fits its tile, clear of the remove button`);
     check(errs.length === 0, `[${t}] no page errors (${errs.join(' | ').slice(0, 200)})`);
   });
 }
