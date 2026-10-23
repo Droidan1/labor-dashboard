@@ -30,6 +30,9 @@ moon glow (body::before, behind panels) and a bat flock every 30 s (body::after,
       (focus rings, file buttons, PTR spinner, #5fd170 tab text) → Halloween overrides
 - [x] CACHE_NAME v287 + shell-cache fixture; npm test 10952/10952; browser-sign-studio's 3 download-event
       failures and mobile-menu's 5 associate-menu failures are identical on main (Mac Chrome / stale fixture)
+- [x] PR #357 merged by Brian 2026-10-23 16:11 UTC (7853875). Live www.retjghub.com verified by content, 3
+      clean passes: index.html and sw.js byte-identical to main (sha256 eae62375… / 484cab35…), CACHE_NAME
+      v287, served tailwind.css carries the `var(--accent-green)` rules and the `op-good` utilities
 
 # Online auction feed: Drive folder → Looker email (2026-10-23)
 
