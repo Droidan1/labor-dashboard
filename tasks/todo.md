@@ -1,3 +1,42 @@
+# Online auction feed: Drive folder → Looker email (2026-10-23)
+
+**Ask (Brian):** the auction results no longer land in the Drive folder; they come by email now, like the
+Whatnot recap. Pull them from the email. Sample: "Bargain Lane Auction Results" from Looker
+<noreply@lookermail.com> to bhoward@bargainlane.com, 06:00 UTC, attachment
+`Bargain_Lane_Auction_Results_2026-10-23T0200.zip`: the SAME zip as the Drive file (details.csv columns
+unchanged; per-site sums match the file's own hammer_sales.csv, $2,379.01). Prod's last Drive file was
+`…2026-10-19T0500.zip`, so BL14 10-19 and BL16 10-19..21 are missing and BL16 10-18 is stale.
+**Design (stated, not asked):** only the source changes. The feeder reads the zip from Gmail instead of
+Drive; parsing, store map and the ingest endpoint are untouched, so no worker deploy. Each email is a
+rolling 7 days, so emails post oldest first and a record of the newest posted email (one timestamp)
+replaces the per-file seen list: an older email never overwrites a newer one. Secret moves to a Script
+Property, as in the Whatnot feeder (this repo is public).
+
+- [x] scripts/auction-drive-ingest.gs → scripts/auction-email-ingest.gs (Gmail; runDaily / backfill / preview).
+      Also: never posts an email sent before the last Drive file (FIRST_EMAIL); runDaily does not open
+      messages older than 4 days (a Gmail thread keeps its old messages); preview names unmapped sites
+- [x] test-auction-feeder: 31 assertions on the real file (invented rows under the real header: the export
+      carries bidder usernames). Mutants caught: no sort, no postedThrough skip, no floor, no lookback, no
+      sender check, swallowed failures, wrong unzip content type. The real emailed details.csv parses to
+      $2,379.01, equal to the zip's own hammer_sales.csv
+- [x] References: ORIENT.md, PLAN.md (secret rotation step now names both feeders' Script Properties)
+- [x] Fresh-eyes review: no stale-number bug. Taken: (1) the feed stopping was silent, as the Drive one was
+      for 4 days: runDaily now FAILS when the newest results email is over 30 h old (Apps Script emails the
+      owner); (2) details.csv must add up to the zip's own hammer_sales.csv or nothing posts (411 rows today,
+      near Looker's usual 500-row tile limit); (3) trashed messages in a thread are skipped; (4) tests for
+      backfill past 4 days and postedThrough never moving back. Setup now runs backfill once (10-19 is only
+      in emails that fall out of runDaily's 4 days by ~10-27). 42 assertions; 10 mutants all caught; the real
+      email runs through runDaily to the 7 expected rows
+- [x] Brian: "This email does come in at around 2 am every day, so make sure it's added to the executive
+      summary, no need to add the pdf on this though". Already true by construction: the summary's sales =
+      daily_sales.total + daily_sales.auction (online auction + Whatnot), and the feeder polls every 10 min,
+      so the 2 AM email is posted by ~2:10, before the 5 AM send. No worker change, no attachment. Pinned by
+      test-auction-email-to-summary (feeder in a VM → real worker ingest → real preview route; fails if the
+      feeder's channel stops projecting). I had reported "yesterday may be missing: the email ends at 10-21".
+      Wrong: auction numbers are sequential (Indy East BND…32–36 = 10-17..10-21) and the zip lists Battle
+      Creek's not-yet-ended 10-23 auction, so no auction ended on 10-22
+- [ ] PR; Brian: new Apps Script project in bhoward@bargainlane.com, retire the Drive one
+
 # Friday retail auto-draft (2026-10-21)
 
 **Ask (Brian):** "start the Friday retail auto-draft". The 2026-10-13 meeting set Thursday = bins, Friday =

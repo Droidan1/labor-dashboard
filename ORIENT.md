@@ -19,7 +19,7 @@ An installable **PWA sales + labor dashboard** for the Bargain Lane / RETJG reta
 - Every request below the auth gate needs a **session cookie** (`Domain=retjghub.com`, so it's shared between www. and api.). Roles: `superuser` / `admin` / `district_manager` / `manager` / basic.
 - **Admin endpoints: `requireAdminAccess`** — a superuser session may **write**, an admin session may **read**, and `X-Snapshot-Secret` still passes for cron/tooling. It's **method-aware** because several actions read on GET and write on POST behind one guard. It returns **403, not 401** — 401 means "no session" here and bounces the client to login.
 - 🔑 **The client no longer ships the secret.** It used to be a literal in `index.html` (public via view-source), which made all 22 admin endpoints effectively open. Only **3** endpoints are secret-only now, all machine-facing: `ingest` (Apps Script feeder), `sales-diag`, `clientdate-probe`.
-- ⏸ **The old secret value is still burned** — it sat in public page source for months. Rotating it means `wrangler secret put SNAPSHOT_SECRET` **and** `CONFIG.SNAPSHOT_SECRET` in `scripts/auction-drive-ingest.gs`, together, or the nightly auction feeder stops silently.
+- ⏸ **The old secret value is still burned** — it sat in public page source for months. Rotating it means `wrangler secret put SNAPSHOT_SECRET` **and** the `SNAPSHOT_SECRET` Script Property of both Apps Script feeders (`scripts/auction-email-ingest.gs`, `scripts/whatnot-recap-ingest.gs`), together, or the live-sales feeds stop.
 
 ## Most common operations
 
