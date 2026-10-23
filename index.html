@@ -59,6 +59,7 @@
       --op-border: rgba(255,255,255,0.06);
       --op-borderHi: rgba(255,255,255,0.1);
       --op-glass: rgba(22,32,58,0.55);
+      --accent-green: 34 197 94;  /* #22c55e — brand accent; Halloween re-points it */
     }
     html.oled {
       --op-bg: 0 0 0;             /* #000000 — pixels off on OLED */
@@ -117,6 +118,122 @@
     html.oled .dark\:hover\:bg-gray-700\/20:hover { background-color: rgba(255,255,255,0.03); }
     html.oled .dark\:focus\:ring-offset-gray-800:focus { --tw-ring-offset-color: #0a0a0a; }
 
+    /* ═══ Halloween ═══════════════════════════════════════════════════
+       Additive like pure black: `<html class="dark halloween">`. Warm
+       black grounds, bone ink, and the BRAND accent re-pointed to pumpkin.
+       Semantic colour is deliberately untouched: ahead of budget is still
+       op-good green, behind is op-warn amber, over is op-bad red — an
+       orange "ahead" next to an amber "behind" would be unreadable.
+
+       Contrast (WCAG 2.1) on bg / panel / panelHi:
+         ink       17.3 / 16.4 / 15.3    pumpkin   7.6 / 7.2 / 6.8
+         inkDim     8.3 /  7.9 /  7.3    good      8.7 / 8.3 / 7.7
+         inkDimmer  5.9 /  5.6 /  5.2    warn      9.2 / 8.8 / 8.2
+       Page black on a pumpkin button is 7.6:1 (6.5 on its hover). */
+    html.halloween {
+      --op-bg: 12 9 7;              /* #0c0907 */
+      --op-panel: 22 16 9;          /* #161009 */
+      --op-panelHi: 33 23 14;       /* #21170e */
+      --op-ink: 246 238 227;        /* #f6eee3 — bone */
+      --op-inkDim: 184 164 140;     /* #b8a48c */
+      --op-inkDimmer: 156 137 113;  /* #9c8971 */
+      --op-sidebar: 8 6 4;          /* #080604 */
+      --op-border: rgba(255,138,40,0.13);
+      --op-borderHi: rgba(255,138,40,0.24);
+      --op-glass: rgba(22,16,9,0.74);
+      --accent-green: 255 122 26;   /* #ff7a1a — pumpkin */
+    }
+    html.halloween .dark\:bg-gray-900 { background-color: #0c0907; }
+    html.halloween .dark\:bg-gray-800 { background-color: #161009; }
+    html.halloween .dark\:bg-gray-700 { background-color: #21170e; }
+    html.halloween .dark\:bg-gray-600 { background-color: #2e2116; }
+    html.halloween .dark\:bg-gray-700\/80 { background-color: rgba(255,200,150,0.10); }
+    html.halloween .dark\:bg-gray-700\/50 { background-color: rgba(255,200,150,0.07); }
+    html.halloween .dark\:bg-gray-700\/40 { background-color: rgba(255,200,150,0.055); }
+    html.halloween .dark\:bg-gray-700\/30 { background-color: rgba(255,200,150,0.04); }
+    html.halloween .dark\:border-gray-800 { border-color: rgba(255,170,100,0.08); }
+    html.halloween .dark\:border-gray-700 { border-color: rgba(255,170,100,0.14); }
+    html.halloween .dark\:border-gray-600 { border-color: rgba(255,170,100,0.22); }
+    html.halloween .dark\:border-gray-500 { border-color: rgba(255,170,100,0.34); }
+    html.halloween .dark\:border-gray-700\/50 { border-color: rgba(255,170,100,0.07); }
+    html.halloween .dark\:border-gray-700\/30 { border-color: rgba(255,170,100,0.045); }
+    html.halloween .dark\:divide-gray-700 > :not([hidden]) ~ :not([hidden]) {
+      border-color: rgba(255,170,100,0.14);
+    }
+    html.halloween .dark\:hover\:bg-gray-700:hover { background-color: #21170e; }
+    html.halloween .dark\:hover\:bg-gray-600:hover { background-color: #2e2116; }
+    html.halloween .dark\:hover\:bg-gray-500:hover { background-color: #3b2b1d; }
+    html.halloween .dark\:hover\:bg-gray-700\/50:hover { background-color: rgba(255,200,150,0.07); }
+    html.halloween .dark\:hover\:bg-gray-700\/20:hover { background-color: rgba(255,200,150,0.03); }
+    html.halloween .dark\:focus\:ring-offset-gray-800:focus { --tw-ring-offset-color: #161009; }
+
+    /* Spooky set dressing. Pseudo-elements only: no markup, no a11y node,
+       no pointer events. A moonlit cobweb sits in the top-right corner
+       behind the panels, and a small flock of bats crosses the top of the
+       screen once every 30 s. Off for prefers-reduced-motion. */
+    html.halloween .font-brand.text-accent-green { text-shadow: 0 0 14px rgba(255,122,26,0.45); }
+    html.halloween body::before {
+      content: ''; position: fixed; top: 0; right: 0; z-index: -1; pointer-events: none;
+      width: 320px; height: 320px;
+      background:
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 240'%3E%3Cpath d='M240 0L231 252M240 0L162 240M240 0L99 209M240 0L47 162M240 0L10 102M240 0L-10 35M239 34Q235 29 229 32Q227 26 221 28Q220 22 214 22Q215 15 209 14Q212 8 206 5M238 66Q230 56 220 63Q215 51 203 55Q202 42 189 42Q192 30 180 27Q185 16 175 9M236 102Q225 86 208 97Q202 79 183 85Q181 65 162 66Q166 46 147 41Q156 24 139 14M235 142Q219 120 196 135Q186 110 161 118Q158 91 131 91Q136 65 110 58Q123 34 99 20M234 186Q212 158 183 177Q170 144 136 154Q133 119 98 120Q104 85 70 76Q86 44 56 26M232 232Q205 196 168 221Q153 179 110 192Q106 148 62 149Q71 106 28 94Q48 55 10 32' fill='none' stroke='%23f6eee3' stroke-opacity='.16' stroke-width='1'/%3E%3C/svg%3E") top right / 100% 100% no-repeat,
+        radial-gradient(circle at 100% 0, rgba(255,122,26,0.14), transparent 62%);
+    }
+    html.halloween body::after {
+      content: ''; position: fixed; top: 0; left: 0; z-index: 70; pointer-events: none;
+      width: 120px; height: 44px; opacity: 0.55;
+      background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 44'%3E%3Cdefs%3E%3Cpath id='b' d='M32 7L34.5 3L35.5 8Q44 5 62 6Q56 9 55 14Q51 11 47 15Q42 14 39 20Q36 21 32 25Q28 21 25 20Q22 14 17 15Q13 11 9 14Q8 9 2 6Q20 5 28.5 8L29.5 3Z' fill='%23ff7a1a'/%3E%3C/defs%3E%3Cuse href='%23b' transform='translate(0 8) scale(.62)'/%3E%3Cuse href='%23b' transform='translate(44 0) scale(.9)'/%3E%3Cuse href='%23b' transform='translate(84 22) scale(.5)'/%3E%3C/svg%3E") center / contain no-repeat;
+      transform: translate3d(-140px, 14vh, 0);
+      animation: hw-bats 30s linear 3s infinite;
+    }
+    @keyframes hw-bats {
+      0%    { transform: translate3d(-140px, 14vh, 0); }
+      3.5%  { transform: translate3d(25vw, 8vh, 0); }
+      7%    { transform: translate3d(50vw, 13vh, 0); }
+      10.5% { transform: translate3d(75vw, 5vh, 0); }
+      14%   { transform: translate3d(calc(100vw + 20px), 9vh, 0); }
+      100%  { transform: translate3d(calc(100vw + 20px), 9vh, 0); }
+    }
+    @media (prefers-reduced-motion: reduce) { html.halloween body::after { display: none; } }
+
+    /* Brand green in the spellings the --accent-green variable cannot reach:
+       the #3BB54A primary buttons and their hovers, the #5fd170 tab text, the
+       refresh and pull-to-refresh bars, the theme switch. Same specificity
+       technique as the pure-black block: `html.halloween .x` is (0,2,1) and
+       beats Tailwind's (0,1,0). Text ON pumpkin is the page black (7.6:1);
+       white on it would be 2.6:1. Semantic greens (ok, pass, live, ahead) are
+       not in this list on purpose. */
+    html.halloween .bg-\[\#3BB54A\] { background-color: #ff7a1a; }
+    html.halloween .hover\:bg-\[\#32a040\]:hover,
+    html.halloween .hover\:bg-\[\#2ea042\]:hover { background-color: #f26b0f; }
+    html.halloween .bg-\[\#3BB54A\].text-white { color: #0c0907; }
+    html.halloween .bg-\[\#3BB54A\]\/10 { background-color: rgb(255 122 26 / .1); }
+    html.halloween .border-\[\#3BB54A\] { border-color: #ff7a1a; }
+    html.halloween .text-\[\#3BB54A\],
+    html.halloween .hover\:text-\[\#3BB54A\]:hover { color: #ff7a1a; }
+    html.halloween .accent-\[\#3BB54A\] { accent-color: #ff7a1a; }
+    html.halloween .refresh-btn { background: #ff7a1a; color: #0c0907; }
+    html.halloween .refresh-btn:hover { background: #f26b0f; }
+    html.halloween #ptr-indicator { background: #ff7a1a; color: #0c0907; }
+    html.halloween .toggle-track.active { background: linear-gradient(135deg, #ff7a1a, #a64300); }
+    html.halloween .ct-pill button[aria-pressed=true] { background: #ff7a1a; border-color: #ff7a1a; color: #0c0907; }
+    html.halloween .eb-chip-on { background: #ff7a1a; border-color: #ff7a1a; }
+    html.halloween .ob-tab.on, html.halloween .ps-tab.on,
+    html.halloween .ps-btn.ghost, html.halloween .ps-link { color: #ff7a1a; }
+    html.halloween .focus\:ring-\[\#3BB54A\]:focus { --tw-ring-color: rgb(255 122 26); }
+    html.halloween .focus\:ring-\[\#3BB54A\]\/50:focus { --tw-ring-color: rgb(255 122 26 / .5); }
+    html.halloween .focus\:border-\[\#3BB54A\]:focus,
+    html.halloween .hover\:border-\[\#3BB54A\]:hover { border-color: #ff7a1a; }
+    html.halloween .file\:bg-\[\#3BB54A\]\/10::file-selector-button { background-color: rgb(255 122 26 / .1); }
+    html.halloween .hover\:file\:bg-\[\#3BB54A\]\/20::file-selector-button:hover { background-color: rgb(255 122 26 / .2); }
+    html.halloween .file\:text-\[\#3BB54A\]::file-selector-button { color: #ff7a1a; }
+    html.halloween #ptr-spinner { border-color: rgba(12,9,7,0.3); border-top-color: #0c0907; }
+    html.halloween #ps-tools-btn, html.halloween .pr-tab.on,
+    html.halloween .fn-seg button.on, html.halloween .fn-prices button.on { color: #ff7a1a; }
+    .mk-sel { box-shadow: inset 3px 0 0 #3BB54A; }
+    html.halloween .mk-sel { box-shadow: inset 3px 0 0 #ff7a1a; background-color: rgb(255 122 26 / .14); }
+    @media print { html.halloween body::before, html.halloween body::after { display: none; } }
+
     /* ── Light mode: accent-green is a FILL colour, not a text colour ──
        `accent-green` #22c55e measures 2.28:1 on opl-panel, 2.18 on
        opl-panelHi, 2.05 on opl-bg and 1.86 on opl-sidebar. Every one of
@@ -148,6 +265,11 @@
        and `bg-op-bad` are ternaries — `text-op-bad bg-op-bad/10` OR
        `text-accent-green bg-accent-green/10` — so they never co-apply. */
     html:not(.dark) .text-accent-green { color: #166534; }
+    /* `op-good` is the same #22c55e as a semantic "ahead / positive" colour,
+       so it needs the same light-mode text fix. This also lifts the 14
+       `text-op-good` sites that predate the Halloween theme (the Labor page,
+       the Repair health tile) from 2.28:1 to 7.13:1 in light, on purpose. */
+    html:not(.dark) .text-op-good { color: #166534; }
     /* The rule above fixes the Tailwind utility. These handle the inline styles that
        cannot carry a dark: override — the LIVE pill, the pace percentage and the
        budget delta all set colour in JS. On the light ground #22c55e is 2.28:1,
@@ -239,9 +361,9 @@
     .dark .a11y-theme-opt { border-color: var(--op-border); }
     .a11y-theme-opt:hover { background: #fafaf6; }                    /* opl-panelHi */
     .dark .a11y-theme-opt:hover { background: rgb(var(--op-panelHi)); }
-    .a11y-theme-opt:focus-visible { outline: 2px solid #22c55e; outline-offset: 2px; }
-    .a11y-theme-opt[aria-checked="true"] { border-color: #22c55e; background: rgba(34,197,94,0.07); }
-    .dark .a11y-theme-opt[aria-checked="true"] { background: rgba(34,197,94,0.10); }
+    .a11y-theme-opt:focus-visible { outline: 2px solid rgb(var(--accent-green)); outline-offset: 2px; }
+    .a11y-theme-opt[aria-checked="true"] { border-color: rgb(var(--accent-green)); background: rgb(var(--accent-green) / .07); }
+    .dark .a11y-theme-opt[aria-checked="true"] { background: rgb(var(--accent-green) / .10); }
 
     /* The swatch is a literal sample of each theme's page ground, so the
        inline background on it is the point — do not tokenise it. */
@@ -253,6 +375,11 @@
     .a11y-sw::after {
       content: ''; position: absolute; left: 6px; right: 6px; bottom: 6px;
       height: 5px; border-radius: 2px; background: #22c55e; opacity: .85;
+    }
+    .a11y-sw-halloween::after { background: #ff7a1a; }
+    .a11y-sw-halloween::before {
+      content: ''; position: absolute; left: 7px; top: 4px; width: 18px; height: 16px;
+      background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 16'%3E%3Cpath d='M9 3.5C13.5 3 17 5.6 17 9.5S13.5 16 9 16 1 13.4 1 9.5 4.5 4 9 3.5Z' fill='%23ff7a1a'/%3E%3Cpath d='M8.4 4L8 1H10L9.6 4Z' fill='%2365a30d'/%3E%3Cpath d='M4.5 8L6.5 7L7 9ZM13.5 8L11.5 7L11 9ZM4.5 11.5Q9 14.5 13.5 11.5L12 11.8L11 12.6L9 12L7 12.6L6 11.8Z' fill='%230c0907'/%3E%3C/svg%3E") center / contain no-repeat;
     }
 
     .a11y-lab { flex: 1; min-width: 0; }
@@ -267,9 +394,9 @@
       display: grid; place-content: center;
     }
     .dark .a11y-radio { border-color: rgb(var(--op-inkDim)); }
-    .a11y-theme-opt[aria-checked="true"] .a11y-radio { border-color: #22c55e; }
+    .a11y-theme-opt[aria-checked="true"] .a11y-radio { border-color: rgb(var(--accent-green)); }
     .a11y-theme-opt[aria-checked="true"] .a11y-radio::after {
-      content: ''; width: 9px; height: 9px; border-radius: 50%; background: #22c55e;
+      content: ''; width: 9px; height: 9px; border-radius: 50%; background: rgb(var(--accent-green));
     }
 
     .loading-dot { animation: pulse 1.2s infinite; }
@@ -599,7 +726,7 @@
       background: rgba(34,197,94,0.10); color: #22c55e;
       border-left-color: transparent; font-weight: 600;
     }
-    .dark .sidebar .nav-item.active { background: rgba(34,197,94,0.12); color: #22c55e; }
+    .dark .sidebar .nav-item.active { background: rgb(var(--accent-green) / .12); color: rgb(var(--accent-green)); }
     .sidebar.collapsed .nav-item { justify-content: center; border-left-color: transparent; overflow: hidden; }
     .sidebar.collapsed .nav-icon { width: 100%; }
     .sidebar .nav-icon { flex-shrink: 0; width: 48px; display: grid; place-content: center; }
@@ -684,28 +811,28 @@
     /* ── Coach-marks (first-time hints) ── */
     .coach {
       position: fixed; z-index: 200; width: 232px;
-      background: rgb(var(--op-panelHi)); border: 1px solid rgba(34,197,94,.45);
+      background: rgb(var(--op-panelHi)); border: 1px solid rgb(var(--accent-green) / .45);
       border-radius: 14px; padding: 12px 13px; box-shadow: 0 12px 32px rgba(0,0,0,.5);
       backdrop-filter: blur(6px); opacity: 0; transform: translateY(4px);
       transition: opacity .18s ease, transform .18s ease;
     }
     .coach.show { opacity: 1; transform: translateY(0); }
     .coach .coach-txt { font-size: 12.5px; line-height: 1.45; color: rgb(var(--op-ink)); font-weight: 500; }
-    .coach .coach-txt b { color: #22c55e; font-weight: 700; }
+    .coach .coach-txt b { color: rgb(var(--accent-green)); font-weight: 700; }
     .coach .coach-row { margin-top: 9px; display: flex; align-items: center; justify-content: space-between; }
     .coach .coach-step { font-size: 10.5px; color: rgb(var(--op-inkDim)); font-weight: 600; }
-    .coach .coach-got { cursor: pointer; font-size: 11.5px; font-weight: 700; color: #06210f; background: #22c55e; padding: 4px 11px; border-radius: 8px; border: 0; }
-    .coach .coach-caret { position: absolute; width: 13px; height: 13px; background: rgb(var(--op-panelHi)); border: 1px solid rgba(34,197,94,.45); transform: rotate(45deg); }
+    .coach .coach-got { cursor: pointer; font-size: 11.5px; font-weight: 700; color: #06210f; background: rgb(var(--accent-green)); padding: 4px 11px; border-radius: 8px; border: 0; }
+    .coach .coach-caret { position: absolute; width: 13px; height: 13px; background: rgb(var(--op-panelHi)); border: 1px solid rgb(var(--accent-green) / .45); transform: rotate(45deg); }
     .coach.below .coach-caret { top: -7px; border-right: 0; border-bottom: 0; }
     .coach.above .coach-caret { bottom: -7px; border-left: 0; border-top: 0; }
     .coach-pulse {
       position: fixed; z-index: 199; pointer-events: none;
-      box-shadow: 0 0 0 0 rgba(34,197,94,.5); animation: coach-pulse 1.8s ease-out infinite;
+      box-shadow: 0 0 0 0 rgb(var(--accent-green) / .5); animation: coach-pulse 1.8s ease-out infinite;
     }
     @keyframes coach-pulse {
-      0%   { box-shadow: 0 0 0 0 rgba(34,197,94,.5); }
-      70%  { box-shadow: 0 0 0 12px rgba(34,197,94,0); }
-      100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
+      0%   { box-shadow: 0 0 0 0 rgb(var(--accent-green) / .5); }
+      70%  { box-shadow: 0 0 0 12px rgb(var(--accent-green) / 0); }
+      100% { box-shadow: 0 0 0 0 rgb(var(--accent-green) / 0); }
     }
 
     /* Bottom-nav center "Submit" action — soft-green tinted squircle. */
@@ -715,7 +842,7 @@
       display: flex; align-items: center; justify-content: center;
       background: rgba(34,197,94,.12); color: #16a34a; transition: background .15s ease;
     }
-    .dark .bn-submit-ic { background: rgba(34,197,94,.16); color: #22c55e; }
+    .dark .bn-submit-ic { background: rgb(var(--accent-green) / .16); color: rgb(var(--accent-green)); }
     .bn-submit-ic svg { width: 21px; height: 21px; }
     /* Tab labels (10px, under the icon). Submit's label is brand green —
        as TEXT, so light mode takes green-800: #16a34a measured 3.23:1 on the
@@ -726,10 +853,10 @@
        equal share widens its own tab by a few px instead (scripts/browser-associate-price-scan §4). */
     .bn-lb { font-size: 10px; font-weight: 600; margin-top: 3px; letter-spacing: .01em; line-height: 1; white-space: nowrap; }
     #bn-submit-photos .bn-lb { color: #166534; }
-    .dark #bn-submit-photos .bn-lb { color: #22c55e; }
+    .dark #bn-submit-photos .bn-lb { color: rgb(var(--accent-green)); }
     /* Slightly stronger tint while the Submit page is the active tab. */
     #bn-submit-photos.text-accent-green .bn-submit-ic { background: rgba(34,197,94,.22); }
-    .dark #bn-submit-photos.text-accent-green .bn-submit-ic { background: rgba(34,197,94,.26); }
+    .dark #bn-submit-photos.text-accent-green .bn-submit-ic { background: rgb(var(--accent-green) / .26); }
     /* Every visible tab takes an equal share of the bar (.bn-tab is flex-1).
        There used to be two flex halves to keep the manager's Submit centred;
        any bar with an odd split then went lopsided — an associate's or
@@ -781,8 +908,8 @@
       pointer-events: none;
     }
     .dark #bottom-nav .bn-tab.text-accent-green:not(#bn-submit-photos)::before {
-      background: rgba(34,197,94,.16);
-      box-shadow: 0 0 18px 5px rgba(34,197,94,.28);
+      background: rgb(var(--accent-green) / .16);
+      box-shadow: 0 0 18px 5px rgb(var(--accent-green) / .28);
     }
     /* Scroll-hide: translateY(100%) alone leaves a floating bar peeking
        above its bottom offset — push it fully past offset + shadow. */
@@ -869,14 +996,16 @@
     (function () {
       var root = document.documentElement;
       var on = localStorage.getItem('darkMode') === 'true';
-      var oled = on && localStorage.getItem('darkFlavor') === 'oled';
+      var flavor = on ? localStorage.getItem('darkFlavor') : null;
+      var oled = flavor === 'oled';
       if (on) root.classList.add('dark');
       if (oled) root.classList.add('oled');
+      if (flavor === 'halloween') root.classList.add('halloween');
       var m = document.querySelector('meta[name="theme-color"]');
       // Only pure black changes the browser chrome. Dark keeps the brand
       // green bar it has always had — a green status bar over a black app is
       // the one case that defeats the point, and dark is not that case.
-      if (m) m.content = oled ? '#000000' : '#3BB54A';
+      if (m) m.content = oled ? '#000000' : flavor === 'halloween' ? '#ff7a1a' : '#3BB54A';
     })();
   </script>
 </head>
@@ -982,7 +1111,7 @@
         <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Your name</label>
         <input id="assoc-reset-name" type="text" autocomplete="off" placeholder="First and last"
           class="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#3BB54A]" />
-        <div id="assoc-reset-done" class="hidden text-xs text-accent-green mt-3 font-medium"></div>
+        <div id="assoc-reset-done" class="hidden text-xs text-op-good mt-3 font-medium"></div>
         <button id="assoc-reset-btn" onclick="associateResetRequest()" class="w-full bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] font-semibold text-sm py-2.5 rounded-lg transition-colors" style="margin-top:1rem">
           Ask for a new code
         </button>
@@ -1288,16 +1417,16 @@
            Both fixed-position so they survive the page-translate during the
            gesture. Toggled by updateSwipeBackHint(). -->
       <div id="swipe-rail" class="hidden lg:hidden fixed left-0 top-[calc(env(safe-area-inset-top)+72px)] bottom-0 w-[3px] z-30 pointer-events-none"
-        style="background:linear-gradient(180deg,transparent 0%,#22c55e 50%,transparent 100%);opacity:.16;animation:swipe-rail-pulse 2.6s ease-in-out infinite"></div>
+        style="background:linear-gradient(180deg,transparent 0%,rgb(var(--accent-green)) 50%,transparent 100%);opacity:.16;animation:swipe-rail-pulse 2.6s ease-in-out infinite"></div>
       <div id="swipe-label" class="hidden lg:hidden fixed left-3 top-[44%] z-30 pointer-events-none inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10.5px] font-bold uppercase tracking-[0.06em] text-accent-green"
-        style="background:rgb(var(--op-panel) / .92);border:1px solid rgba(34,197,94,.42);backdrop-filter:blur(6px)">
+        style="background:rgb(var(--op-panel) / .92);border:1px solid rgb(var(--accent-green) / .42);backdrop-filter:blur(6px)">
         <svg class="w-[11px] h-[11px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
         Swipe back
       </div>
 
       <!-- First-time hint for mobile pull-to-refresh (shown once). -->
       <div id="ptr-hint" class="hidden lg:hidden fixed left-1/2 top-[calc(env(safe-area-inset-top)+62px)] z-30 pointer-events-none inline-flex items-center gap-1.5 px-3 py-2 rounded-full text-[11px] font-bold text-accent-green"
-        style="transform:translate(-50%,-8px);background:rgb(var(--op-panel) / .92);border:1px solid rgba(34,197,94,.42);backdrop-filter:blur(6px)">
+        style="transform:translate(-50%,-8px);background:rgb(var(--op-panel) / .92);border:1px solid rgb(var(--accent-green) / .42);backdrop-filter:blur(6px)">
         <svg class="w-[12px] h-[12px] ptr-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
         Pull down to refresh
       </div>
@@ -1438,7 +1567,7 @@
 
       <!-- V1 Operator hero — unified "Today's Sales · All Stores" card -->
       <section id="today-total-card" class="relative overflow-hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 lg:p-6 transition-colors">
-        <div class="pointer-events-none absolute inset-0" style="background:radial-gradient(120% 80% at 100% 0%, rgba(34,197,94,0.12), transparent 60%)"></div>
+        <div class="pointer-events-none absolute inset-0" style="background:radial-gradient(120% 80% at 100% 0%, rgb(var(--accent-green) / 0.12), transparent 60%)"></div>
         <div class="relative">
           <!-- top row: label + LIVE pill (pill right-aligned, like store cards) -->
           <div class="flex items-center justify-between gap-2.5">
@@ -1456,7 +1585,7 @@
             </div>
             <div class="text-right flex-shrink-0">
               <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Pace</div>
-              <div id="h-pace" class="mt-1 font-geist font-extrabold tabular-nums leading-none text-4xl sm:text-5xl tracking-tight text-accent-green">—</div>
+              <div id="h-pace" class="mt-1 font-geist font-extrabold tabular-nums leading-none text-4xl sm:text-5xl tracking-tight text-op-good">—</div>
               <div id="h-reporting" class="mt-1.5 text-[11px] text-opl-inkDim dark:text-op-inkDim"></div>
             </div>
           </div>
@@ -1566,7 +1695,7 @@
               <span id="c-variance" class="ml-auto text-sm font-bold">—</span>
             </div>
             <div class="mt-3 h-2 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
-              <div id="bgt-w-bar" class="h-full rounded-full bg-accent-green transition-[width] duration-500" style="width:0%"></div>
+              <div id="bgt-w-bar" class="h-full rounded-full bg-op-good transition-[width] duration-500" style="width:0%"></div>
             </div>
             <div class="flex justify-between mt-1.5 text-[10.5px] tracking-[0.04em] text-opl-inkDim dark:text-op-inkDim">
               <span id="bgt-w-pct">—</span><span id="bgt-w-rem"></span>
@@ -1583,7 +1712,7 @@
               <span id="c-month-variance" class="ml-auto text-sm font-bold">—</span>
             </div>
             <div class="mt-3 h-2 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
-              <div id="bgt-m-bar" class="h-full rounded-full bg-accent-green transition-[width] duration-500" style="width:0%"></div>
+              <div id="bgt-m-bar" class="h-full rounded-full bg-op-good transition-[width] duration-500" style="width:0%"></div>
             </div>
             <div class="flex justify-between mt-1.5 text-[10.5px] tracking-[0.04em] text-opl-inkDim dark:text-op-inkDim">
               <span id="bgt-m-pct">—</span><span id="bgt-m-rem"></span>
@@ -1683,7 +1812,7 @@
               font-weight:600;padding:9px 12px 8px;cursor:pointer;border-bottom:2px solid transparent;
               margin-bottom:-1px;white-space:nowrap;display:inline-flex;align-items:center;gap:7px;color:#6b6453}
             .dark .txn-tabs button{color:rgb(var(--op-inkDim))}
-            .txn-tabs button[aria-selected="true"]{color:#14110a;border-bottom-color:#22c55e}
+            .txn-tabs button[aria-selected="true"]{color:#14110a;border-bottom-color:rgb(var(--accent-green))}
             .dark .txn-tabs button[aria-selected="true"]{color:rgb(var(--op-ink))}
             .txn-tabs .txn-cnt{font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:999px;
               background:#ffffff;border:1px solid rgba(20,16,8,.18);font-variant-numeric:tabular-nums}
@@ -1732,7 +1861,7 @@
             .dark .txn-tbl tbody tr:hover td.txn-stick{background:rgb(var(--op-panelHi))}
             .txn-tbl tbody tr.txn-on td{background:#fafaf6}
             .dark .txn-tbl tbody tr.txn-on td{background:rgb(var(--op-panelHi))}
-            .txn-tbl tbody tr.txn-on td.txn-stick{box-shadow:inset 3px 0 0 #22c55e}
+            .txn-tbl tbody tr.txn-on td.txn-stick{box-shadow:inset 3px 0 0 rgb(var(--accent-green))}
             .txn-num{text-align:right}
             .txn-amt{font-weight:600}
             /* op-bad #ef4444 is only 4.16:1 on the refund wash in dark; red-400
@@ -1790,7 +1919,7 @@
             .txn-items-tog{display:flex;align-items:center;gap:9px;width:100%;padding:11px 18px;
               background:#fafaf6;border:0;cursor:pointer;text-align:left;font-size:12.5px;
               font-weight:700;color:#166534}
-            .dark .txn-items-tog{background:rgb(var(--op-panelHi));color:#22c55e}
+            .dark .txn-items-tog{background:rgb(var(--op-panelHi));color:rgb(var(--accent-green))}
             .txn-items-tog:hover{text-decoration:underline}
             .txn-items-chev{display:inline-block;font-size:10px;transition:transform .15s ease}
             .txn-items-tog[aria-expanded="true"] .txn-items-chev{transform:rotate(90deg)}
@@ -2055,8 +2184,8 @@
       .dark .invi,.dark input[type="text"].invi,.dark input[type="number"].invi,
       .dark input[type="search"].invi,.dark input[type="datetime-local"].invi,.dark select.invi{
         background:rgb(var(--op-panelHi));border-color:rgba(255,255,255,.16);color:rgb(var(--op-ink))}
-      .invi:focus{outline:none;border-color:#166534;box-shadow:0 0 0 3px rgba(34,197,94,.14)}
-      .dark .invi:focus{border-color:#22c55e}
+      .invi:focus{outline:none;border-color:#166534;box-shadow:0 0 0 3px rgb(var(--accent-green) / .14)}
+      .dark .invi:focus{border-color:rgb(var(--accent-green))}
       .invi::placeholder{color:#6b6453;font-weight:400}
       .dark .invi::placeholder{color:rgb(var(--op-inkDim))}
       select.invi{cursor:pointer}
@@ -2085,14 +2214,14 @@
       .invchk{display:flex;align-items:center;gap:9px;font-size:13px;font-weight:600;cursor:pointer;
         padding:9px 11px;border-radius:9px;border:1px solid rgba(20,16,8,.18);background:#fafaf6;color:#14110a}
       .dark .invchk{border-color:rgba(255,255,255,.16);background:rgb(var(--op-panelHi));color:rgb(var(--op-ink))}
-      .invchk input{width:15px;height:15px;accent-color:#22c55e;cursor:pointer;flex-shrink:0}
+      .invchk input{width:15px;height:15px;accent-color:rgb(var(--accent-green));cursor:pointer;flex-shrink:0}
       .invchk .sub{font-size:11px;font-weight:400;margin-left:auto;color:#6b6453}
       .dark .invchk .sub{color:rgb(var(--op-inkDim))}
 
       .invbtn{font:inherit;font-weight:700;border-radius:10px;cursor:pointer;border:1px solid transparent;
         transition:.15s;letter-spacing:.02em}
       .invbtn-primary{background:#166534;color:#ffffff;padding:10px 22px;font-size:14px}
-      .dark .invbtn-primary{background:#22c55e;color:#06210f}
+      .dark .invbtn-primary{background:rgb(var(--accent-green));color:#06210f}
       .invbtn-primary:hover{filter:brightness(1.08)}
       .invbtn-ghost{background:transparent;color:#14110a;border-color:rgba(20,16,8,.18);padding:8px 14px;font-size:12.5px}
       .dark .invbtn-ghost{color:rgb(var(--op-ink));border-color:rgba(255,255,255,.16)}
@@ -2112,7 +2241,7 @@
       .dark .invbtn-danger:hover{background:rgba(239,68,68,.12)}
       .invbtn:disabled{opacity:.45;cursor:not-allowed}
       .invbtn-on{border-color:#166534}
-      .dark .invbtn-on{border-color:#22c55e}
+      .dark .invbtn-on{border-color:rgb(var(--accent-green))}
 
       /* ── Status strip. index.html has no toast helper; transient feedback is an
            inline strip per panel (the invSetStatus idiom). ── */
@@ -2171,7 +2300,7 @@
       .dark .invtbl th{color:rgb(var(--op-inkDim));background:rgb(var(--op-panelHi))}
       .invtbl .num{text-align:right}
       .invtbl .ck{width:34px;padding-left:12px}
-      .invtbl input[type="checkbox"]{width:14px;height:14px;accent-color:#22c55e;cursor:pointer}
+      .invtbl input[type="checkbox"]{width:14px;height:14px;accent-color:rgb(var(--accent-green));cursor:pointer}
       /* §4.8 trap 2 — a sticky column needs its OWN opaque background or cells slide under it. */
       .invtbl .stick{position:sticky;left:0;z-index:2;background:#ffffff}
       .dark .invtbl .stick{background:rgb(var(--op-panel))}
@@ -2179,7 +2308,7 @@
       .dark .invtbl th.stick{background:rgb(var(--op-panelHi))}
       .invtbl tbody tr:hover td,.invtbl tbody tr:hover .stick{background:#fafaf6}
       .dark .invtbl tbody tr:hover td,.dark .invtbl tbody tr:hover .stick{background:rgb(var(--op-panelHi))}
-      .invtbl tr.sel td,.invtbl tr.sel .stick,.invtbl tr.sel:hover td,.invtbl tr.sel:hover .stick{background:rgba(34,197,94,.10)}
+      .invtbl tr.sel td,.invtbl tr.sel .stick,.invtbl tr.sel:hover td,.invtbl tr.sel:hover .stick{background:rgb(var(--accent-green) / .10)}
       .invtbl tr.dup td,.invtbl tr.dup .stick,.invtbl tr.dup:hover td,.invtbl tr.dup:hover .stick{background:rgba(245,158,11,.16)}
       .dark .invtbl tr.dup td,.dark .invtbl tr.dup .stick,
       .dark .invtbl tr.dup:hover td,.dark .invtbl tr.dup:hover .stick{background:rgba(245,158,11,.14)}
@@ -2190,7 +2319,7 @@
       .dark .invdim{color:rgb(var(--op-inkDim))}
       .invsort{cursor:pointer;user-select:none}
       .invsort .ar{margin-left:4px;color:#166534}
-      .dark .invsort .ar{color:#22c55e}
+      .dark .invsort .ar{color:rgb(var(--accent-green))}
 
       /* ── Badges / chips ── */
       .invbdg{display:inline-flex;align-items:center;gap:4px;font-size:9.5px;font-weight:700;
@@ -2225,11 +2354,11 @@
         font-size:12.5px;font-weight:600;transition:.15s;border:1px solid rgba(20,16,8,.18);
         background:#fafaf6;color:#14110a}
       .dark .invst{border-color:rgba(255,255,255,.16);background:rgb(var(--op-panelHi));color:rgb(var(--op-ink))}
-      .invst input{width:14px;height:14px;accent-color:#22c55e;cursor:pointer}
+      .invst input{width:14px;height:14px;accent-color:rgb(var(--accent-green));cursor:pointer}
       .invst .nm{font-weight:500;font-size:11px;color:#6b6453}
       .dark .invst .nm{color:rgb(var(--op-inkDim))}
-      .invst.on{border-color:rgba(22,101,52,.28);background:rgba(34,197,94,.10)}
-      .dark .invst.on{border-color:rgba(34,197,94,.28)}
+      .invst.on{border-color:rgba(22,101,52,.28);background:rgb(var(--accent-green) / .10)}
+      .dark .invst.on{border-color:rgb(var(--accent-green) / .28)}
 
       /* ── Per-store result rows ── */
       .invres{display:flex;align-items:center;gap:11px;padding:11px 13px;font-size:12.5px;
@@ -2269,7 +2398,7 @@
       .invit .p{margin-left:auto;flex-shrink:0;font-variant-numeric:tabular-nums;color:#6b6453}
       .dark .invit .p{color:rgb(var(--op-inkDim))}
       .invit .p b{font-weight:700;color:#166534}
-      .dark .invit .p b{color:#22c55e}
+      .dark .invit .p b{color:rgb(var(--accent-green))}
       .invit.errrow{background:rgba(192,57,43,.10)}
       .dark .invit.errrow{background:rgba(239,68,68,.12)}
       .invit.errrow .p{color:#c0392b}
@@ -2295,7 +2424,7 @@
       .invstep{display:flex;align-items:center;gap:9px}
       .invstep-n{width:21px;height:21px;border-radius:6px;font-size:11px;font-weight:700;display:grid;
         place-content:center;flex-shrink:0;background:#166534;color:#ffffff}
-      .dark .invstep-n{background:#22c55e;color:#06210f}
+      .dark .invstep-n{background:rgb(var(--accent-green));color:#06210f}
       .invstep-n.idle{background:transparent;border:1px solid rgba(20,16,8,.18);color:#6b6453}
       .dark .invstep-n.idle{border-color:rgba(255,255,255,.16);color:rgb(var(--op-inkDim))}
 
@@ -2515,7 +2644,7 @@
 
           <div id="inv-view-legend" class="hidden invp-legend">
             <span class="invlg"><span class="invlg-sw" style="background:rgba(245,158,11,.16);border-color:rgba(180,83,9,.45)"></span>Duplicate code — two items share this SKU</span>
-            <span class="invlg"><span class="invlg-sw" style="background:rgba(34,197,94,.10);border-color:rgba(22,101,52,.28)"></span>Selected for a sale</span>
+            <span class="invlg"><span class="invlg-sw" style="background:rgb(var(--accent-green) / .10);border-color:rgba(22,101,52,.28)"></span>Selected for a sale</span>
             <span class="invlg"><span class="invbdg">hidden</span>Off the register — still in the catalog</span>
             <span class="invlg"><span class="invbdg b">2 cats</span>In more than one Clover category</span>
             <span class="invlg"><span class="invdim">—</span>No cost recorded, so GP% is unknowable (never shown as 0%)</span>
@@ -2753,7 +2882,7 @@
            drops to green-800 (7.13:1). The same fault exists on the other page
            headings and is theirs to fix, not this page's to inherit. */
         .bd-h1{color:#166534}
-        .dark .bd-h1{color:#22c55e}
+        .dark .bd-h1{color:rgb(var(--accent-green))}
         /* Tabs. Live in the sticky header so switching back from a long log
            does not mean scrolling to the top. The negative bottom margin pulls
            the rail flush with the header's own border, so the active tab's 2px
@@ -2769,16 +2898,16 @@
         .bd-tab:hover{color:#14110a}
         .dark .bd-tab:hover{color:rgb(var(--op-ink))}
         .bd-tab[aria-selected="true"]{color:#166534;border-bottom-color:#166534}
-        .dark .bd-tab[aria-selected="true"]{color:#22c55e;border-bottom-color:#22c55e}
+        .dark .bd-tab[aria-selected="true"]{color:rgb(var(--accent-green));border-bottom-color:rgb(var(--accent-green))}
         .bd-tab:focus-visible{outline:2px solid #166534;outline-offset:-3px;border-radius:4px}
-        .dark .bd-tab:focus-visible{outline-color:#22c55e}
+        .dark .bd-tab:focus-visible{outline-color:rgb(var(--accent-green))}
         .bd-tab-n{font-size:11px;font-weight:700;padding:1px 6px;border-radius:999px;
           margin-left:6px;background:rgba(20,16,8,.07);color:#6b6453}
         /* .09 measured 4.48:1 — the badge's own wash lightens the panel just
            enough to break inkDim. .05 puts it at 5.06:1 and still reads as a chip. */
         .dark .bd-tab-n{background:rgba(255,255,255,.05);color:rgb(var(--op-inkDim))}
         .bd-tab[aria-selected="true"] .bd-tab-n{background:rgba(34,197,94,.14);color:#166534}
-        .dark .bd-tab[aria-selected="true"] .bd-tab-n{background:rgba(34,197,94,.16);color:#22c55e}
+        .dark .bd-tab[aria-selected="true"] .bd-tab-n{background:rgb(var(--accent-green) / .16);color:rgb(var(--accent-green))}
 
         /* 🛑 `hidden` LOSES TO AN AUTHOR `display`. The UA sheet's [hidden]{display:none}
            is beaten by any author rule that sets display, so .bd-status{display:flex}
@@ -2816,8 +2945,8 @@
         /* 🛑 Each swatch states BOTH themes and matches the value the table really
            paints. These were inline styles, which cannot carry a `.dark` variant —
            so "as first logged" rendered as a white block on the dark panel. */
-        .bd-sw-now{background:rgba(34,197,94,.10);border-color:rgba(22,101,52,.28)}
-        .dark .bd-sw-now{background:rgba(34,197,94,.10);border-color:rgba(34,197,94,.28)}
+        .bd-sw-now{background:rgb(var(--accent-green) / .10);border-color:rgba(22,101,52,.28)}
+        .dark .bd-sw-now{background:rgb(var(--accent-green) / .10);border-color:rgb(var(--accent-green) / .28)}
         .bd-sw-edit{background:rgba(245,158,11,.16);border-color:rgba(180,83,9,.45)}
         .dark .bd-sw-edit{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.45)}
         .bd-sw-plain{background:#ffffff}
@@ -2826,9 +2955,9 @@
         /* Capture */
         .bd-cap{padding:28px 20px 24px;text-align:center}
         .bd-glyph{width:58px;height:58px;margin:0 auto 13px;border-radius:16px;
-          background:rgba(34,197,94,.10);border:1px solid rgba(22,101,52,.28);
+          background:rgb(var(--accent-green) / .10);border:1px solid rgba(22,101,52,.28);
           display:flex;align-items:center;justify-content:center;color:#166534}
-        .dark .bd-glyph{border-color:rgba(34,197,94,.28);color:#22c55e}
+        .dark .bd-glyph{border-color:rgb(var(--accent-green) / .28);color:rgb(var(--accent-green))}
         .bd-glyph svg{width:28px;height:28px}
         .bd-cap-t{font-size:16px;font-weight:700}
         .bd-cap-d{font-size:12.5px;color:#6b6453;margin:6px auto 17px;max-width:280px;line-height:1.55}
@@ -2837,7 +2966,7 @@
           border:1px solid transparent;transition:filter .15s,background .15s;letter-spacing:.02em}
         .bd-btn:disabled{opacity:.45;cursor:not-allowed}
         .bd-primary{background:#166534;color:#fff;padding:11px 30px;font-size:14.5px}
-        .dark .bd-primary{background:#22c55e;color:#06210f}
+        .dark .bd-primary{background:rgb(var(--accent-green));color:#06210f}
         .bd-primary:hover:not(:disabled){filter:brightness(1.08)}
         .bd-primary.bd-big{padding:14px 44px;font-size:16px;border-radius:12px}
         .bd-ghost{background:transparent;border-color:rgba(20,16,8,.18);color:#14110a;
@@ -2854,7 +2983,7 @@
         .bd-reading{padding:32px 20px;text-align:center}
         .bd-spin{width:34px;height:34px;margin:0 auto 13px;border-radius:50%;
           border:3px solid rgba(20,16,8,.10);border-top-color:#166534;animation:bd-sp .85s linear infinite}
-        .dark .bd-spin{border-color:rgba(255,255,255,.09);border-top-color:#22c55e}
+        .dark .bd-spin{border-color:rgba(255,255,255,.09);border-top-color:rgb(var(--accent-green))}
         @keyframes bd-sp{to{transform:rotate(360deg)}}
         @media (prefers-reduced-motion:reduce){.bd-spin{animation-duration:2.4s}}
 
@@ -2894,8 +3023,8 @@
         .bd-wk-name{font-size:13px;font-weight:600;white-space:nowrap}
         .bd-badge{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
           padding:2px 6px;border-radius:5px;white-space:nowrap;
-          border:1px solid rgba(22,101,52,.28);background:rgba(34,197,94,.10);color:#166534}
-        .dark .bd-badge{border-color:rgba(34,197,94,.28);color:#22c55e}
+          border:1px solid rgba(22,101,52,.28);background:rgb(var(--accent-green) / .10);color:#166534}
+        .dark .bd-badge{border-color:rgb(var(--accent-green) / .28);color:rgb(var(--accent-green))}
         .bd-wk-meta{margin-left:auto;font-size:11.5px;color:#6b6453;
           font-variant-numeric:tabular-nums;white-space:nowrap}
         .dark .bd-wk-meta{color:rgb(var(--op-inkDim))}
@@ -2944,7 +3073,7 @@
           text-decoration:underline;text-decoration-color:rgba(20,16,8,.28);text-underline-offset:3px}
         .dark .bd-when-btn{text-decoration-color:rgba(255,255,255,.28)}
         .bd-when-btn:focus-visible{outline:2px solid #166534;outline-offset:-2px}
-        .dark .bd-when-btn:focus-visible{outline-color:#22c55e}
+        .dark .bd-when-btn:focus-visible{outline-color:rgb(var(--accent-green))}
         .bd-row-btn{background:transparent;border:1px solid rgba(20,16,8,.18);border-radius:6px;
           color:#6b6453;font:inherit;font-size:10.5px;font-weight:700;padding:3px 8px;
           cursor:pointer;letter-spacing:.05em}
@@ -2963,8 +3092,8 @@
           border-radius:9px;background:#fafaf6;border:1px solid rgba(20,16,8,.18);
           color:#14110a;font-variant-numeric:tabular-nums;transition:border-color .15s,box-shadow .15s}
         .dark .bd-in{background:rgb(var(--op-panelHi));border-color:rgba(255,255,255,.16);color:rgb(var(--op-ink))}
-        .bd-in:focus{outline:none;border-color:#166534;box-shadow:0 0 0 3px rgba(34,197,94,.16)}
-        .dark .bd-in:focus{border-color:#22c55e}
+        .bd-in:focus{outline:none;border-color:#166534;box-shadow:0 0 0 3px rgb(var(--accent-green) / .16)}
+        .dark .bd-in:focus{border-color:rgb(var(--accent-green))}
         .bd-in::placeholder{color:#6b6453;font-weight:400}
         .dark .bd-in::placeholder{color:rgb(var(--op-inkDim))}
         .bd-fld.warn .bd-in{background:rgba(245,158,11,.16);border-color:rgba(180,83,9,.45)}
@@ -3193,7 +3322,7 @@
            every pair below runs ≥ 4.5:1. accent-green #22c55e is 2.28:1 on the light
            panel and is therefore NOT used as text there — #166534 (7.13:1) is. */
         .ir-h1{color:#166534}
-        .dark .ir-h1{color:#22c55e}
+        .dark .ir-h1{color:rgb(var(--accent-green))}
 
         /* 🛑 `hidden` LOSES TO AN AUTHOR `display`. The UA sheet's [hidden]{display:none}
            is beaten by any author rule setting display, and this page styles several
@@ -3210,14 +3339,14 @@
         .ir-tab:hover{color:#14110a}
         .dark .ir-tab:hover{color:rgb(var(--op-ink))}
         .ir-tab[aria-selected="true"]{color:#166534;border-bottom-color:#166534}
-        .dark .ir-tab[aria-selected="true"]{color:#22c55e;border-bottom-color:#22c55e}
+        .dark .ir-tab[aria-selected="true"]{color:rgb(var(--accent-green));border-bottom-color:rgb(var(--accent-green))}
         .ir-tab:focus-visible{outline:2px solid #166534;outline-offset:-3px;border-radius:4px}
-        .dark .ir-tab:focus-visible{outline-color:#22c55e}
+        .dark .ir-tab:focus-visible{outline-color:rgb(var(--accent-green))}
         .ir-tab-n{font-size:11px;font-weight:700;padding:1px 6px;border-radius:999px;
           margin-left:6px;background:rgba(20,16,8,.07);color:#6b6453}
         .dark .ir-tab-n{background:rgba(255,255,255,.05);color:rgb(var(--op-inkDim))}
         .ir-tab[aria-selected="true"] .ir-tab-n{background:rgba(34,197,94,.14);color:#166534}
-        .dark .ir-tab[aria-selected="true"] .ir-tab-n{background:rgba(34,197,94,.16);color:#22c55e}
+        .dark .ir-tab[aria-selected="true"] .ir-tab-n{background:rgb(var(--accent-green) / .16);color:rgb(var(--accent-green))}
 
         .ir-panel{
           background:#ffffff;                      /* opl-panel */
@@ -3256,9 +3385,9 @@
 
         .ir-cap{padding:28px 20px 24px;text-align:center}
         .ir-glyph{width:58px;height:58px;margin:0 auto 13px;border-radius:16px;
-          background:rgba(34,197,94,.10);border:1px solid rgba(22,101,52,.28);
+          background:rgb(var(--accent-green) / .10);border:1px solid rgba(22,101,52,.28);
           display:flex;align-items:center;justify-content:center;color:#166534}
-        .dark .ir-glyph{border-color:rgba(34,197,94,.28);color:#22c55e}
+        .dark .ir-glyph{border-color:rgb(var(--accent-green) / .28);color:rgb(var(--accent-green))}
         .ir-glyph svg{width:29px;height:29px}
         .ir-cap-t{font-size:16px;font-weight:700}
         .ir-cap-d{font-size:12.5px;color:#6b6453;margin:6px auto 17px;max-width:330px;line-height:1.55}
@@ -3268,7 +3397,7 @@
           border:1px solid transparent;transition:filter .15s,background .15s;letter-spacing:.02em}
         .ir-btn:disabled{opacity:.45;cursor:not-allowed}
         .ir-primary{background:#166534;color:#fff;padding:11px 30px;font-size:14.5px}
-        .dark .ir-primary{background:#22c55e;color:#06210f}
+        .dark .ir-primary{background:rgb(var(--accent-green));color:#06210f}
         .ir-primary:hover:not(:disabled){filter:brightness(1.08)}
         .ir-primary.ir-big{padding:14px 40px;font-size:16px;border-radius:12px}
         .ir-ghost{background:transparent;border-color:rgba(20,16,8,.18);color:#14110a;
@@ -3285,7 +3414,7 @@
         .ir-reading{padding:32px 20px;text-align:center}
         .ir-spin{width:34px;height:34px;margin:0 auto 13px;border-radius:50%;
           border:3px solid rgba(20,16,8,.10);border-top-color:#166534;animation:ir-sp .85s linear infinite}
-        .dark .ir-spin{border-color:rgba(255,255,255,.09);border-top-color:#22c55e}
+        .dark .ir-spin{border-color:rgba(255,255,255,.09);border-top-color:rgb(var(--accent-green))}
         @keyframes ir-sp{to{transform:rotate(360deg)}}
         @media (prefers-reduced-motion:reduce){.ir-spin{animation-duration:2.4s}}
 
@@ -3329,7 +3458,7 @@
         .dark .ir-track{background:rgba(255,255,255,.06)}
         .ir-fill{height:100%;border-radius:999px;background:#166534;
           transition:width .5s cubic-bezier(.4,0,.2,1)}
-        .dark .ir-fill{background:#22c55e}
+        .dark .ir-fill{background:rgb(var(--accent-green))}
 
         .ir-strip{display:flex;gap:9px}
         .ir-tile{flex:1;background:#fff;border:1px solid rgba(20,16,8,.10);border-radius:12px;
@@ -3408,7 +3537,7 @@
           color:#14110a;font:inherit;font-size:14px;padding:9px 11px;width:100%}
         .dark .ir-in{background:rgb(var(--op-panelHi));border-color:rgba(255,255,255,.16);color:rgb(var(--op-ink))}
         .ir-in:focus{outline:2px solid #166534;outline-offset:-1px;border-color:transparent}
-        .dark .ir-in:focus{outline-color:#22c55e}
+        .dark .ir-in:focus{outline-color:rgb(var(--accent-green))}
         .ir-in.key{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:.02em}
         .ir-in.miss{border-color:rgba(192,57,43,.40);background:rgba(192,57,43,.10)}
         .dark .ir-in.miss{border-color:rgba(239,68,68,.42);background:rgba(239,68,68,.12)}
@@ -3792,7 +3921,7 @@
           padding:7px 12px;font-size:13px;color:#14110a;cursor:pointer}
         .dark #page-opportunity-buys .ob-btn{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.16);
           color:rgb(var(--op-ink))}
-        #page-opportunity-buys .ob-btn-primary{background:#22c55e;color:#06210f;border:none;border-radius:9px;
+        #page-opportunity-buys .ob-btn-primary{background:rgb(var(--accent-green));color:#06210f;border:none;border-radius:9px;
           padding:8px 15px;font-size:13px;font-weight:700;cursor:pointer}
         #page-opportunity-buys .ob-btn-primary:disabled{opacity:.42;cursor:not-allowed}
         #page-opportunity-buys .ob-in{background:#ffffff;border:1px solid rgba(20,16,8,.18);border-radius:9px;
@@ -3918,7 +4047,7 @@
         .ob-tab{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;border-radius:8px;
           padding:6px 11px;cursor:pointer;border:none;background:transparent;color:#6b6453;font-family:inherit}
         .dark .ob-tab{color:rgb(var(--op-inkDim))}
-        .ob-tab.on{background:rgba(34,197,94,.16);color:#1c7a33}
+        .ob-tab.on{background:rgb(var(--accent-green) / .16);color:#1c7a33}
         .dark .ob-tab.on{color:#5fd170}
         #ob-hero{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;padding:14px 18px;
           border-bottom:1px solid rgba(20,16,8,.10)}
@@ -3989,7 +4118,7 @@
         #ob-edit button{font:inherit;font-size:13px;border-radius:9px;padding:8px 14px;cursor:pointer}
         #ob-edit .ob-ecancel{background:transparent;border:1px solid rgba(20,16,8,.18);color:#14110a}
         .dark #ob-edit .ob-ecancel{border-color:rgba(255,255,255,.16);color:rgb(var(--op-ink))}
-        #ob-edit .ob-esave{background:#22c55e;color:#06210f;border:none;font-weight:700}
+        #ob-edit .ob-esave{background:rgb(var(--accent-green));color:#06210f;border:none;font-weight:700}
         #ob-edit .ob-esave:disabled{opacity:.5;cursor:default}
       </style>
 
@@ -4095,13 +4224,13 @@
         /* --mbad is red TEXT on its own wash (errors, Stolen), so dark takes #f87171: #ef4444
            measured 4.25:1 there (DESIGN.md §4.8; oppbuys-mos-11). */
         #page-mos [hidden]{display:none !important}
-        .mos-h1{color:#166534} .dark .mos-h1{color:#22c55e}
+        .mos-h1{color:#166534} .dark .mos-h1{color:rgb(var(--accent-green))}
 
         .mos-tabs{display:flex;gap:2px;margin-top:12px}
         .mos-tab{font:inherit;font-size:12.5px;font-weight:600;padding:9px 15px;border:0;cursor:pointer;
           background:transparent;color:var(--md);border-bottom:2px solid transparent;
           display:flex;align-items:center;gap:7px}
-        .mos-tab[aria-selected="true"]{color:var(--mi);border-bottom-color:#22c55e}
+        .mos-tab[aria-selected="true"]{color:var(--mi);border-bottom-color:rgb(var(--accent-green))}
         .mos-tab-n{font-size:9.5px;font-weight:700;padding:1.5px 5px;border-radius:5px;
           background:var(--mph);color:var(--md);font-variant-numeric:tabular-nums}
 
@@ -4119,12 +4248,12 @@
         .mos-in{width:100%;font-size:17px;font-weight:600;letter-spacing:.05em;
           font-family:ui-monospace,SFMono-Regular,Menlo,monospace;padding:12px 13px;border-radius:10px;
           border:1.5px solid var(--moke);background:var(--mp);color:var(--mi)}
-        .mos-in:focus{outline:2px solid #22c55e;outline-offset:1px}
+        .mos-in:focus{outline:2px solid rgb(var(--accent-green));outline-offset:1px}
         .mos-btn{font:inherit;font-size:13px;font-weight:600;padding:12px 16px;border-radius:10px;cursor:pointer;
           border:1px solid var(--mb);background:var(--mp);color:var(--mi);white-space:nowrap;
           display:inline-flex;align-items:center;gap:7px}
         .mos-btn:disabled{opacity:.5;cursor:default}
-        .mos-btn.go{background:#22c55e;border-color:#22c55e;color:#06210f}
+        .mos-btn.go{background:rgb(var(--accent-green));border-color:rgb(var(--accent-green));color:#06210f}
         .mos-btn.sm{font-size:12px;padding:7px 12px;border-radius:8px}
         .mos-btn svg{width:15px;height:15px;flex-shrink:0}
         .mos-hint{font-size:11px;color:var(--md);margin:0 16px 14px}
@@ -4291,12 +4420,12 @@
             <div id="mos-scanbox" hidden style="margin:0 16px 16px;position:relative;border-radius:12px;overflow:hidden;background:#000">
               <video id="mos-video" playsinline muted style="width:100%;display:block;max-height:min(52vh,380px);object-fit:cover"></video>
               <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
-                          width:min(62%,240px);aspect-ratio:1;border:2px solid #22c55e;border-radius:10px;
+                          width:min(62%,240px);aspect-ratio:1;border:2px solid rgb(var(--accent-green));border-radius:10px;
                           box-shadow:0 0 0 9999px rgba(0,0,0,.34)"></div>
               <div id="mos-scanhint" style="position:absolute;left:0;right:0;bottom:7px;text-align:center;font-size:11.5px;
                           color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.9)">Fill the square with the QR code</div>
               <input id="mos-zoom" type="range" class="hidden" oninput="mosZoom(this.value)" aria-label="Camera zoom"
-                     style="position:absolute;left:12%;right:12%;bottom:30px;width:76%;accent-color:#22c55e">
+                     style="position:absolute;left:12%;right:12%;bottom:30px;width:76%;accent-color:rgb(var(--accent-green))">
               <button id="mos-lens" type="button" onclick="mosNextLens()" hidden aria-label="Switch camera lens"
                       style="position:absolute;top:8px;right:56px;height:40px;padding:0 12px;border-radius:20px;
                              border:1px solid rgba(255,255,255,.45);background:rgba(0,0,0,.45);color:#fff;
@@ -4770,7 +4899,7 @@
         .mf-in{background:#ffffff;border:1px solid rgba(20,16,8,.18);border-radius:9px;padding:7px 11px;
           font-size:13px;color:#14110a}
         .dark .mf-in{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.16);color:rgb(var(--op-ink))}
-        .mf-btn{background:#22c55e;color:#06210f;border:none;border-radius:9px;padding:7px 14px;
+        .mf-btn{background:rgb(var(--accent-green));color:#06210f;border:none;border-radius:9px;padding:7px 14px;
           font-size:13px;font-weight:700;cursor:pointer}
         .mf-btn:disabled{opacity:.42;cursor:not-allowed}
         .mf-btn.ghost{background:transparent;color:#6b6453;border:1px solid rgba(20,16,8,.18);font-weight:600}
@@ -4859,7 +4988,7 @@
         .cv-seg button{background:transparent;border:none;padding:6px 13px;font-size:12.5px;font-weight:600;
           cursor:pointer;color:#6b6453}
         .dark .cv-seg button{color:rgb(var(--op-inkDim))}
-        .cv-seg button.on{background:#22c55e;color:#06210f}
+        .cv-seg button.on{background:rgb(var(--accent-green));color:#06210f}
         #cv-scroll{overflow-x:auto}
         #cv-tbl{border-collapse:separate;border-spacing:0;width:100%;font-size:13px;color:#14110a;
           font-variant-numeric:tabular-nums}
@@ -4962,15 +5091,15 @@
           border-radius:8px;padding:6px 11px;cursor:pointer;border:none;background:transparent;
           color:#6b6453;font-family:inherit}
         .dark .ps-tab{color:rgb(var(--op-inkDim))}
-        .ps-tab.on{background:rgba(34,197,94,.16);color:#1c7a33}
+        .ps-tab.on{background:rgb(var(--accent-green) / .16);color:#1c7a33}
         .dark .ps-tab.on{color:#5fd170}
         .ps-tab .n{font-variant-numeric:tabular-nums;opacity:.72;margin-left:5px}
         #ps-body{padding:16px;display:flex;flex-direction:column;gap:14px}
         .ps-in{width:100%;border:1px solid rgba(20,16,8,.18);border-radius:10px;padding:12px 13px;
           font-size:16px;background:#fff;color:#14110a;font-variant-numeric:tabular-nums}
         .dark .ps-in{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.16);color:rgb(var(--op-ink))}
-        .ps-in:focus{outline:2px solid #22c55e;outline-offset:1px}
-        .ps-btn{background:#22c55e;color:#06210f;border:none;border-radius:11px;padding:13px;
+        .ps-in:focus{outline:2px solid rgb(var(--accent-green));outline-offset:1px}
+        .ps-btn{background:rgb(var(--accent-green));color:#06210f;border:none;border-radius:11px;padding:13px;
           font-weight:700;font-size:15px;cursor:pointer;width:100%}
         .ps-btn.ghost{background:transparent;color:#1c7a33;box-shadow:inset 0 0 0 1px rgba(20,16,8,.20)}
         .dark .ps-btn.ghost{color:#5fd170;box-shadow:inset 0 0 0 1px rgba(255,255,255,.20)}
@@ -4993,7 +5122,7 @@
           padding:12px 6px;font-size:16px;text-align:center;background:#fff;color:#14110a;
           font-variant-numeric:tabular-nums;font-family:inherit}
         .dark .ps-qty{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.16);color:rgb(var(--op-ink))}
-        .ps-qty:focus{outline:2px solid #22c55e;outline-offset:1px}
+        .ps-qty:focus{outline:2px solid rgb(var(--accent-green));outline-offset:1px}
         /* The reprint row is tighter -- it already carries a title, a code and a price. */
         .ps-recent-row .ps-qty{width:52px;padding:8px 4px;font-size:15px}
         .ps-recent-qty{font-size:11.5px;font-weight:700;color:#6b6453;font-variant-numeric:tabular-nums}
@@ -5205,7 +5334,7 @@
         .fn-seg button{flex:1 1 44%;min-width:0;padding:10px 6px;border-radius:9px;border:1px solid rgba(20,16,8,.18);
           background:transparent;color:#14110a;font-size:12.5px;font-family:inherit;cursor:pointer;line-height:1.25}
         .dark .fn-seg button{color:rgb(var(--op-ink));border-color:rgba(255,255,255,.16)}
-        .fn-seg button.on{background:rgba(34,197,94,.16);border-color:transparent;color:#1c7a33;font-weight:700}
+        .fn-seg button.on{background:rgb(var(--accent-green) / .16);border-color:transparent;color:#1c7a33;font-weight:700}
         .dark .fn-seg button.on{color:#5fd170}
         .fn-match{display:grid;grid-template-columns:1fr 1fr;gap:9px}
         .fn-cell{border-radius:11px;border:1px solid rgba(20,16,8,.12);overflow:hidden;text-align:center}
@@ -5219,7 +5348,7 @@
         .fn-cond button{display:block;width:100%;text-align:left;padding:11px;border-radius:10px;
           border:1px solid rgba(20,16,8,.18);background:transparent;color:#14110a;font-family:inherit;cursor:pointer}
         .dark .fn-cond button{color:rgb(var(--op-ink));border-color:rgba(255,255,255,.16)}
-        .fn-cond button.on{border-color:#22c55e;background:rgba(34,197,94,.16)}
+        .fn-cond button.on{border-color:rgb(var(--accent-green));background:rgb(var(--accent-green) / .16)}
         .fn-cond .nm{font-weight:600;font-size:13.5px}
         .fn-cond .ex{font-size:11.5px;color:#6b6453;line-height:1.3}
         .dark .fn-cond .ex{color:rgb(var(--op-inkDim))}
@@ -5227,7 +5356,7 @@
         .fn-prices button{flex:1;padding:13px 4px;border-radius:10px;border:1px solid rgba(20,16,8,.18);
           background:transparent;cursor:pointer;font-family:inherit;text-align:center;color:#14110a}
         .dark .fn-prices button{color:rgb(var(--op-ink));border-color:rgba(255,255,255,.16)}
-        .fn-prices button.on{border-color:#22c55e;background:rgba(34,197,94,.16);color:#1c7a33}
+        .fn-prices button.on{border-color:rgb(var(--accent-green));background:rgb(var(--accent-green) / .16);color:#1c7a33}
         .dark .fn-prices button.on{color:#5fd170}
         .fn-prices .v{font-weight:700;font-size:19px;font-variant-numeric:tabular-nums}
         .fn-prices .t{font-size:9.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#6b6453}
@@ -5243,9 +5372,9 @@
         .ps-dot{flex:none;width:18px;height:18px;border-radius:9px;display:grid;place-items:center;
           border:2px solid rgba(20,16,8,.18);transition:border-color .25s,background .25s}
         .dark .ps-dot{border-color:rgba(255,255,255,.18)}
-        .ps-step.on .ps-dot{border-color:#22c55e;border-right-color:transparent;
+        .ps-step.on .ps-dot{border-color:rgb(var(--accent-green));border-right-color:transparent;
           animation:psSpin .7s linear infinite}
-        .ps-step.done .ps-dot{border-color:#22c55e;background:#22c55e;animation:none}
+        .ps-step.done .ps-dot{border-color:rgb(var(--accent-green));background:rgb(var(--accent-green));animation:none}
         .ps-step.done .ps-dot::after{content:"";width:9px;height:5px;border-left:2px solid #06210f;
           border-bottom:2px solid #06210f;transform:rotate(-45deg) translate(1px,-1px)}
         @keyframes psSpin{to{transform:rotate(360deg)}}
@@ -5338,12 +5467,12 @@
                    while the scanner read 45% of the frame, so it told people to line the
                    code up inside a slot far thinner than the one that would have worked. -->
               <div style="position:absolute;left:6%;right:6%;top:50%;transform:translateY(-50%);height:45%;
-                          border:2px solid #22c55e;border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,.34)"></div>
+                          border:2px solid rgb(var(--accent-green));border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,.34)"></div>
               <div id="ps-scanhint" style="position:absolute;left:0;right:0;bottom:7px;text-align:center;font-size:11.5px;
                           color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.9)">Fill the box with the barcode</div>
               <input id="ps-zoom" type="range" class="hidden" oninput="psZoom(this.value)"
                      aria-label="Camera zoom"
-                     style="position:absolute;left:12%;right:12%;bottom:30px;width:76%;accent-color:#22c55e">
+                     style="position:absolute;left:12%;right:12%;bottom:30px;width:76%;accent-color:rgb(var(--accent-green))">
               <!-- Width-capped so it can never reach the controls: this line grows with the
                    camera's answer, and at 4K it ran straight under the Lens button. -->
               <div id="ps-diag" style="position:absolute;top:8px;left:8px;max-width:calc(100% - 130px);
@@ -5390,7 +5519,7 @@
            theme, drawn by SignRender, never styled here. */
         #page-merch-signs{--ss-panel:#ffffff;--ss-panelHi:#fafaf6;--ss-ink:#14110a;--ss-inkDim:#6b6453;
           --ss-hairline:rgba(20,16,8,.10);--ss-border:rgba(20,16,8,.18);
-          --ss-accent:#166534;--ss-greenWash:rgba(34,197,94,.10);--ss-greenEdge:rgba(22,101,52,.30);
+          --ss-accent:#166534;--ss-greenWash:rgb(var(--accent-green) / .10);--ss-greenEdge:rgba(22,101,52,.30);
           --ss-amber:#92400e;--ss-amberWash:rgba(245,158,11,.16);--ss-amberEdge:rgba(180,83,9,.45);
           --ss-bad:#a93226;--ss-badWash:rgba(192,57,43,.10);--ss-badEdge:rgba(192,57,43,.40);
           --ss-blue:#1d4ed8;--ss-blueWash:rgba(29,78,216,.08);--ss-blueEdge:rgba(29,78,216,.32);
@@ -5398,7 +5527,7 @@
         .dark #page-merch-signs{--ss-panel:rgb(var(--op-panel));--ss-panelHi:rgb(var(--op-panelHi));
           --ss-ink:rgb(var(--op-ink));--ss-inkDim:rgb(var(--op-inkDim));
           --ss-hairline:rgba(255,255,255,.09);--ss-border:rgba(255,255,255,.16);
-          --ss-accent:#22c55e;--ss-greenEdge:rgba(34,197,94,.30);
+          --ss-accent:rgb(var(--accent-green));--ss-greenEdge:rgb(var(--accent-green) / .30);
           --ss-amber:#f59e0b;--ss-amberWash:rgba(245,158,11,.14);--ss-amberEdge:rgba(245,158,11,.45);
           --ss-bad:#f87171;--ss-badWash:rgba(239,68,68,.12);--ss-badEdge:rgba(239,68,68,.42);
           --ss-blue:#60a5fa;--ss-blueWash:rgba(96,165,250,.12);--ss-blueEdge:rgba(96,165,250,.38);
@@ -5411,8 +5540,8 @@
           border:1px solid var(--ss-border);background:var(--ss-panel);color:var(--ss-inkDim);font-size:13px;font-weight:600;cursor:pointer}
         .ss-step .ss-n{width:24px;height:24px;border-radius:50%;display:grid;place-content:center;font-size:12px;font-weight:700;
           background:var(--ss-panelHi);border:1px solid var(--ss-border);color:var(--ss-ink)}
-        .ss-step[aria-current="step"]{color:var(--ss-ink);border-color:#22c55e}
-        .ss-step[aria-current="step"] .ss-n{background:#22c55e;border-color:#22c55e;color:#06210f}
+        .ss-step[aria-current="step"]{color:var(--ss-ink);border-color:rgb(var(--accent-green))}
+        .ss-step[aria-current="step"] .ss-n{background:rgb(var(--accent-green));border-color:rgb(var(--accent-green));color:#06210f}
         .ss-step.done .ss-n{background:var(--ss-greenWash);border-color:var(--ss-greenEdge);color:var(--ss-accent)}
         .ss-grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
         .ss-panel{background:var(--ss-panel);border:1px solid var(--ss-hairline);border-radius:14px;overflow:hidden;color:var(--ss-ink)}
@@ -5431,7 +5560,7 @@
         .ss-inp{width:100%;font-family:inherit;font-size:16px;color:var(--ss-ink);background:var(--ss-panelHi);
           border:1px solid var(--ss-border);border-radius:10px;padding:10px 12px;min-height:44px;outline:none;min-width:0}
         .ss-inp::placeholder{color:var(--ss-inkDim);opacity:1}
-        .ss-inp:focus{border-color:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.18)}
+        .ss-inp:focus{border-color:rgb(var(--accent-green));box-shadow:0 0 0 3px rgb(var(--accent-green) / .18)}
         .ss-inp.bad{border-color:var(--ss-badEdge);background:var(--ss-badWash)}
         .ss-money,.ss-pct{position:relative}
         .ss-money .ss-inp{padding-left:26px;font-variant-numeric:tabular-nums}
@@ -5455,15 +5584,15 @@
         .ss-chips{display:flex;flex-wrap:wrap;gap:6px}
         .ss-chip{font-size:13px;font-weight:600;padding:8px 14px;min-height:40px;border-radius:999px;cursor:pointer;
           background:var(--ss-panelHi);color:var(--ss-ink);border:1px solid var(--ss-border)}
-        .ss-chip[aria-pressed="true"]{background:#22c55e;border-color:#22c55e;color:#06210f}
+        .ss-chip[aria-pressed="true"]{background:rgb(var(--accent-green));border-color:rgb(var(--accent-green));color:#06210f}
         .ss-chk{display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;color:var(--ss-ink);
           cursor:pointer;margin-bottom:12px;min-height:40px}
-        .ss-chk input{width:20px;height:20px;margin:0;accent-color:#22c55e}
+        .ss-chk input{width:20px;height:20px;margin:0;accent-color:rgb(var(--accent-green))}
         .ss-dot{width:14px;height:14px;border-radius:50%;background:#ffd200;border:2px solid #111111;flex-shrink:0}
         .ss-btn{font-weight:700;border-radius:11px;cursor:pointer;border:1px solid transparent;font-size:14px;padding:10px 16px;
           min-height:44px;display:inline-flex;align-items:center;gap:7px;justify-content:center;white-space:nowrap}
         .ss-btn svg{width:16px;height:16px}
-        .ss-primary{background:#22c55e;color:#06210f}
+        .ss-primary{background:rgb(var(--accent-green));color:#06210f}
         .ss-ghost{background:transparent;color:var(--ss-ink);border-color:var(--ss-border)}
         .ss-link{background:transparent;border:0;color:var(--ss-accent);padding:8px 2px;font-weight:700;font-size:13.5px;
           min-height:40px;cursor:pointer}
@@ -5487,7 +5616,10 @@
         .ss-pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:11.5px;
           font-weight:700;white-space:nowrap}
         .ss-pill i{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
-        .ss-pill.ok{background:var(--ss-greenWash);border:1px solid var(--ss-greenEdge);color:var(--ss-accent)}
+        /* ok is a STATUS, beside amber part and red no: semantic green, never the brand accent,
+           so it stays green when Halloween re-points --ss-accent to pumpkin. */
+        .ss-pill.ok{background:rgba(34,197,94,.10);border:1px solid rgba(22,101,52,.30);color:#166534}
+        .dark .ss-pill.ok{border-color:rgba(34,197,94,.30);color:#22c55e}
         .ss-pill.no{background:var(--ss-badWash);border:1px solid var(--ss-badEdge);color:var(--ss-bad)}
         .ss-pill.wait{background:var(--ss-panel);border:1px solid var(--ss-border);color:var(--ss-inkDim)}
         .ss-pill.part{background:var(--ss-amberWash);border:1px solid var(--ss-amberEdge);color:var(--ss-amber)}
@@ -5495,7 +5627,7 @@
         .ss-seg button{background:transparent;border:0;color:var(--ss-inkDim);cursor:pointer;font-size:12px;font-weight:600;
           padding:0 10px;min-height:36px;white-space:nowrap}
         .ss-seg button+button{border-left:1px solid var(--ss-border)}
-        .ss-seg button[aria-pressed="true"]{background:#22c55e;color:#06210f}
+        .ss-seg button[aria-pressed="true"]{background:rgb(var(--accent-green));color:#06210f}
         .ss-bar .ss-seg{margin-left:auto}
         /* The sign's paper: white in every theme; only its outline is the theme's. */
         .ss-sheet{position:relative;background:#ffffff;border-radius:4px;outline:1px solid var(--ss-paperEdge);overflow:hidden;width:100%}
@@ -5523,7 +5655,7 @@
         .ss-tile .tv{flex:1;display:flex;align-items:center;justify-content:flex-end;padding:8px 12px}
         .ss-tile .tn{font-size:12px;font-weight:600;padding:7px 10px;background:var(--ss-panelHi);color:var(--ss-ink);
           border-top:1px solid var(--ss-hairline)}
-        .ss-tile[aria-pressed="true"]{outline:3px solid #22c55e;outline-offset:1px;border-color:#22c55e}
+        .ss-tile[aria-pressed="true"]{outline:3px solid rgb(var(--accent-green));outline-offset:1px;border-color:rgb(var(--accent-green))}
         .ss-tile .lbl-t{font-family:'SS Poppins Black Italic',sans-serif;color:#20792B;line-height:.95;text-align:right;
           text-transform:uppercase;font-size:19px;overflow-wrap:anywhere}
         .ss-tile .none-t{font-size:12.5px;color:#6b6453;font-weight:600}
@@ -5540,7 +5672,8 @@
         .ss-save{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;margin-top:14px;padding-top:14px;
           border-top:1px dashed var(--ss-border)}
         .ss-savenote{flex:1 1 240px;min-width:0;font-size:12.5px;line-height:1.45;color:var(--ss-inkDim)}
-        .ss-savenote.ok{color:var(--ss-accent);font-weight:600}
+        .ss-savenote.ok{color:#166534;font-weight:600}
+        .dark .ss-savenote.ok{color:#22c55e}
         .ss-savenote.bad{color:var(--ss-bad)}
         #ss-lib-btn{flex-shrink:0;margin-top:2px}
         #ss-lib-btn[hidden]{display:none}   /* .ss-btn's display would beat the browser's own [hidden] */
@@ -5629,13 +5762,13 @@
           border-radius:8px;padding:7px 12px;cursor:pointer;border:none;background:transparent;
           color:#6b6453;font-family:inherit}
         .dark .pr-tab{color:rgb(var(--op-inkDim))}
-        .pr-tab.on{background:rgba(34,197,94,.16);color:#1c7a33}
+        .pr-tab.on{background:rgb(var(--accent-green) / .16);color:#1c7a33}
         .dark .pr-tab.on{color:#5fd170}
         .pr-tab .n{font-variant-numeric:tabular-nums;opacity:.72;margin-left:5px}
         #pr-q{flex:1;min-width:150px;border:1px solid rgba(20,16,8,.18);border-radius:9px;
           padding:8px 11px;font-size:15px;background:#fff;color:#14110a}
         .dark #pr-q{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.16);color:rgb(var(--op-ink))}
-        #pr-q:focus{outline:2px solid #22c55e;outline-offset:1px}
+        #pr-q:focus{outline:2px solid rgb(var(--accent-green));outline-offset:1px}
         .pr-row{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;
           padding:12px 14px;border-bottom:1px solid rgba(20,16,8,.08);cursor:pointer}
         .dark .pr-row{border-bottom-color:rgba(255,255,255,.07)}
@@ -5674,7 +5807,7 @@
         .dark .pr-editor{background:rgb(var(--op-panelHi));border-bottom-color:rgba(255,255,255,.07)}
         .pr-save,.pr-cancel{border-radius:10px;padding:11px;font-weight:700;font-size:14.5px;
           cursor:pointer;font-family:inherit;border:none}
-        .pr-save{background:#22c55e;color:#06210f}
+        .pr-save{background:rgb(var(--accent-green));color:#06210f}
         .pr-cancel{background:transparent;color:#6b6453;box-shadow:inset 0 0 0 1px rgba(20,16,8,.20)}
         .dark .pr-cancel{color:rgb(var(--op-inkDim));box-shadow:inset 0 0 0 1px rgba(255,255,255,.20)}
       </style>
@@ -5714,7 +5847,7 @@
         .vl-seg button{background:transparent;border:none;padding:6px 13px;font-size:12.5px;font-weight:600;
           cursor:pointer;color:#6b6453}
         .dark .vl-seg button{color:rgb(var(--op-inkDim))}
-        .vl-seg button.on{background:#22c55e;color:#06210f}
+        .vl-seg button.on{background:rgb(var(--accent-green));color:#06210f}
         #vl-scroll{overflow-x:auto}
         #vl-tbl{border-collapse:separate;border-spacing:0;width:100%;font-size:13px;color:#14110a;
           font-variant-numeric:tabular-nums}
@@ -5792,7 +5925,7 @@
         #mc-add{background:#ffffff;border:1px solid rgba(20,16,8,.18);border-radius:9px;padding:7px 11px;
           font-size:13px;color:#14110a;max-width:330px}
         .dark #mc-add{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.16);color:rgb(var(--op-ink))}
-        #mc-add-btn{background:#22c55e;color:#06210f;border:none;border-radius:9px;padding:7px 14px;
+        #mc-add-btn{background:rgb(var(--accent-green));color:#06210f;border:none;border-radius:9px;padding:7px 14px;
           font-size:13px;font-weight:700;cursor:pointer}
         #mc-add-btn:disabled{opacity:.42;cursor:not-allowed}
         #mc-scroll{overflow-x:auto}
@@ -5839,12 +5972,12 @@
           font-variant-numeric:tabular-nums}
         #mc-tbl input[type=text]:hover{border-color:rgba(20,16,8,.18)}
         .dark #mc-tbl input[type=text]:hover{border-color:rgba(255,255,255,.16)}
-        #mc-tbl input[type=text]:focus{outline:none;border-color:#22c55e;background:rgba(34,197,94,.07)}
+        #mc-tbl input[type=text]:focus{outline:none;border-color:rgb(var(--accent-green));background:rgb(var(--accent-green) / .07)}
         /* accent-color paints the CHECKED box; the unchecked one is UA-drawn and follows
            color-scheme, which this app never sets — so in dark mode it came out white.
            Scoped to this table rather than the root: setting it app-wide would restyle
            every native control on every page, which is not what was asked for. */
-        #mc-tbl input[type=checkbox]{accent-color:#22c55e;width:15px;height:15px}
+        #mc-tbl input[type=checkbox]{accent-color:rgb(var(--accent-green));width:15px;height:15px}
         .dark #mc-tbl input[type=checkbox]{color-scheme:dark}
         /* Inherited vs set-here vs changed-in-draft — the three states the table has to
            show at a glance, so nobody has to guess where a number came from.
@@ -5923,11 +6056,11 @@
           display:flex;justify-content:space-between;gap:6px;align-items:baseline;
           background:transparent;border:0;border-radius:7px;padding:7px 9px;color:#14110a}
         .ct-popopt:hover{background:rgba(20,16,8,.06)}
-        .ct-popopt[aria-pressed="true"]{color:#166534;font-weight:700;background:rgba(34,197,94,.12)}
+        .ct-popopt[aria-pressed="true"]{color:#166534;font-weight:700;background:rgb(var(--accent-green) / .12)}
         .ct-popopt b{font-weight:600;color:#6b6453;font-size:11px}
         .dark .ct-popopt{color:rgb(var(--op-ink))}
         .dark .ct-popopt:hover{background:rgba(255,255,255,.06)}
-        .dark .ct-popopt[aria-pressed="true"]{color:#22c55e;background:rgba(34,197,94,.16)}
+        .dark .ct-popopt[aria-pressed="true"]{color:rgb(var(--accent-green));background:rgb(var(--accent-green) / .16)}
         .dark .ct-popopt b{color:rgb(var(--op-inkDim))}
         .ct-popc{border-top:1px solid rgba(20,16,8,.10);margin-top:6px}
         .dark .ct-popc{border-top-color:rgba(255,255,255,.09)}
@@ -5946,7 +6079,7 @@
         .dark .ct-popfoot span{color:rgb(var(--op-inkDim))}
         .ct-popapply{appearance:none;border:0;border-radius:7px;cursor:pointer;
           font:inherit;font-size:11.5px;font-weight:800;padding:6px 12px;
-          background:#22c55e;color:#06210f}
+          background:rgb(var(--accent-green));color:#06210f}
         .ct-popapply:disabled{opacity:.4;cursor:not-allowed}
         .ct-ctl[hidden]{display:none!important}   /* a class that sets display outranks [hidden] */
 
@@ -5962,7 +6095,7 @@
         .ct-chip{appearance:none;font:inherit;font-size:11.5px;font-weight:600;padding:4px 11px;
           border-radius:999px;border:1px solid rgba(20,16,8,.18);background:transparent;color:#6b6453;cursor:pointer}
         .dark .ct-chip{border-color:var(--op-border);color:rgb(var(--op-inkDim))}
-        .ct-chip[aria-pressed=true]{background:#22c55e;border-color:#22c55e;color:#06210f}
+        .ct-chip[aria-pressed=true]{background:rgb(var(--accent-green));border-color:rgb(var(--accent-green));color:#06210f}
         #ct-scope{padding:11px 18px;border-bottom:1px solid rgba(20,16,8,.10);
           display:flex;align-items:center;gap:8px;flex-wrap:wrap}
         .dark #ct-scope{border-bottom-color:rgba(255,255,255,.09)}
@@ -6018,13 +6151,13 @@
         .dark .ct-row{border-bottom-color:rgba(255,255,255,.09);color:rgb(var(--op-ink))}
         .ct-row:hover{background:#fafaf6}
         .dark .ct-row:hover{background:rgb(var(--op-panelHi))}
-        .ct-row[aria-pressed=true]{background:rgba(34,197,94,.12)}
+        .ct-row[aria-pressed=true]{background:rgb(var(--accent-green) / .12)}
         .ct-nm{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
         .ct-bars{display:flex;flex-direction:column;gap:2px}  /* a 2px surface gap, never a stroke */
         .ct-trk{height:9px;border-radius:3px;background:rgba(20,16,8,.10);overflow:hidden}
         .dark .ct-trk{background:rgba(255,255,255,.09)}
         .ct-bar{height:100%;border-radius:3px}
-        .ct-bar.cur{background:#22c55e}   /* CHART_COLORS.tw */
+        .ct-bar.cur{background:rgb(var(--accent-green))}   /* CHART_COLORS.tw */
         .ct-bar.prv{background:#f59e0b}   /* CHART_COLORS.lw */
         .ct-v{text-align:right;font-variant-numeric:tabular-nums;line-height:1.35}
         .ct-cur{font-size:12.5px;font-weight:700;white-space:nowrap}
@@ -6038,7 +6171,7 @@
         .ct-cell{appearance:none;font:inherit;text-align:left;cursor:pointer;background:#fafaf6;
           border:1px solid rgba(20,16,8,.10);border-radius:10px;padding:9px 10px 5px;color:#14110a}
         .dark .ct-cell{background:rgb(var(--op-panelHi));border-color:rgba(255,255,255,.09);color:rgb(var(--op-ink))}
-        .ct-cell[aria-pressed=true]{border-color:#22c55e;background:rgba(34,197,94,.12)}
+        .ct-cell[aria-pressed=true]{border-color:rgb(var(--accent-green));background:rgb(var(--accent-green) / .12)}
         .ct-ct{font-size:11.5px;font-weight:600;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
         .ct-cv{font-size:14px;font-weight:700;margin-top:2px;font-variant-numeric:tabular-nums}
         .ct-cd{font-size:10.5px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:1px}
@@ -6961,7 +7094,7 @@
                 Enable Face Unlock on this device
               </button>
               <div id="passkey-register-error" class="hidden text-xs text-opl-bad dark:text-[#f87171] mt-2"></div>
-              <div id="passkey-register-success" class="hidden text-xs text-accent-green dark:text-accent-green mt-2 font-medium"></div>
+              <div id="passkey-register-success" class="hidden text-xs text-op-good dark:text-op-good mt-2 font-medium"></div>
             </div>
           </div>
         </div>
@@ -7016,6 +7149,15 @@
               <span class="a11y-lab">
                 <b>Pure black</b>
                 <span>True black. Saves battery on OLED screens.</span>
+              </span>
+              <span class="a11y-radio"></span>
+            </div>
+
+            <div class="a11y-theme-opt" role="radio" tabindex="-1" aria-checked="false" data-theme="halloween">
+              <span class="a11y-sw a11y-sw-halloween" style="background:#0c0907"></span>
+              <span class="a11y-lab">
+                <b>Halloween</b>
+                <span>Black and pumpkin orange, with cobwebs and the odd bat.</span>
               </span>
               <span class="a11y-radio"></span>
             </div>
@@ -9178,7 +9320,8 @@
       const _tc = window.themeColors();
       const bg = _tc.dialogBg, fg = _tc.dialogFg;
       const dim = _tc.dialogDim, border = _tc.dialogBorder;
-      const okBg = danger ? '#c0392b' : '#3BB54A', okFg = danger ? '#ffffff' : '#06210f';
+      const okBg = danger ? '#c0392b' : document.documentElement.classList.contains('halloween') ? '#ff7a1a' : '#3BB54A';
+      const okFg = danger ? '#ffffff' : '#06210f';
       const overlay = document.createElement('div');
       overlay.setAttribute('role', 'dialog'); overlay.setAttribute('aria-modal', 'true');
       overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(0,0,0,0.5);';
@@ -10267,7 +10410,7 @@
           id: `milestone:${code}:${todayStr}`,
           severity: 'ok', type: 'milestone',
           store: s,
-          title: `${label} hit <b class="text-accent-green num">${fmtDollar(sales)}</b> — day budget reached`,
+          title: `${label} hit <b class="text-op-good num">${fmtDollar(sales)}</b> — day budget reached`,
           meta: `${code} · target ${fmtDollar(dayBudget)}`,
         });
       }
@@ -10305,7 +10448,7 @@
         card.scrollIntoView({ behavior: 'smooth', block: 'center' });
         // Brief highlight pulse for confirmation.
         card.style.transition = 'box-shadow .3s';
-        card.style.boxShadow = '0 0 0 2px rgba(34,197,94,0.5)';
+        card.style.boxShadow = '0 0 0 2px rgb(var(--accent-green) / 0.5)';
         setTimeout(() => { card.style.boxShadow = ''; }, 900);
         return;
       }
@@ -10317,7 +10460,7 @@
     const cls = severity === 'critical' ? 'bg-op-bad/15 text-op-bad'
               : severity === 'warning'  ? 'bg-op-warn/15 text-op-warn'
               : severity === 'info'     ? 'bg-accent-blue/15 text-accent-blue'
-              :                           'bg-accent-green/15 text-accent-green';
+              :                           'bg-op-good/15 text-op-good';
     const svg = type === 'pace' && severity === 'critical'
       ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>'
       : type === 'pace'
@@ -10759,14 +10902,14 @@
       const pacePct = Math.round(grandTotal / todayTotalBudget * 100);
       const ahead = grandTotal >= todayTotalBudget;
       paceEl.textContent = pacePct + '%';
-      paceEl.className = paceBase + (ahead ? 'text-accent-green' : 'text-op-warn');
+      paceEl.className = paceBase + (ahead ? 'text-op-good' : 'text-op-warn');
       barEl.style.width = Math.min(100, Math.max(0, pacePct)) + '%';
       barEl.className = ahead
-        ? 'h-full rounded-full transition-[width] duration-500 bg-accent-green'
+        ? 'h-full rounded-full transition-[width] duration-500 bg-op-good'
         : 'h-full rounded-full transition-[width] duration-500 bg-op-warn';
     } else {
       paceEl.textContent = '—';
-      paceEl.className = paceBase + 'text-accent-green';
+      paceEl.className = paceBase + 'text-op-good';
       barEl.style.width = '0%';
     }
     const repEl = el("h-reporting");
@@ -10786,7 +10929,7 @@
       const isPositive = diff >= 0;
       diffEl.className = 'font-semibold';
       diffEl.innerHTML =
-        `<span class="${isPositive ? 'text-accent-green' : 'text-op-bad'}">${isPositive ? '+' : '−'}${fmtDollar(Math.abs(diff))}</span>` +
+        `<span class="${isPositive ? 'text-op-good' : 'text-op-bad'}">${isPositive ? '+' : '−'}${fmtDollar(Math.abs(diff))}</span>` +
         ` <span class="text-base font-semibold text-opl-ink dark:text-op-ink">vs ${fmtDollar(todayTotalBudget)}</span>`;
     } else {
       diffEl.textContent = '';
@@ -10838,7 +10981,7 @@
     const wkDiff = tA - tB;
     // text-accent-green is remapped to #166534 in light by the rule near the top of
     // this file, so it adapts; green-600 (3.30:1) and red-500 (3.76:1) do not.
-    const wkCls = wkDiff >= 0 ? 'text-accent-green' : 'text-opl-bad dark:text-[#f87171]';
+    const wkCls = wkDiff >= 0 ? 'text-op-good' : 'text-opl-bad dark:text-[#f87171]';
     el("c-variance").className = `text-xs font-semibold mt-1 ${wkCls}`;
     el("c-variance").textContent = `${wkDiff >= 0 ? '+' : '-'}${fmtDollar(Math.abs(wkDiff))}`;
 
@@ -10895,7 +11038,7 @@
     el("c-month-budget").textContent = fmtDollar(mB);
     el("c-month-label").textContent = monthLabel ? `Monthly · ${monthLabel}` : 'Monthly';
     const mDiff = mA - mB;
-    const mCls = mDiff >= 0 ? 'text-accent-green' : 'text-opl-bad dark:text-[#f87171]';
+    const mCls = mDiff >= 0 ? 'text-op-good' : 'text-opl-bad dark:text-[#f87171]';
     el("c-month-variance").className = `text-xs font-semibold mt-1 ${mCls}`;
     el("c-month-variance").textContent = `${mDiff >= 0 ? '+' : '-'}${fmtDollar(Math.abs(mDiff))}`;
 
@@ -10912,7 +11055,7 @@
       el("bgt-sum-mt").textContent = fmtK(mA);
       el("bgt-sum-mb").textContent = fmtK(mB);
       const barCls = (ahead) => ahead
-        ? 'h-full rounded-full transition-[width] duration-500 bg-accent-green'
+        ? 'h-full rounded-full transition-[width] duration-500 bg-op-good'
         : 'h-full rounded-full transition-[width] duration-500 bg-op-warn';
       const wb = el("bgt-w-bar");
       wb.style.width = Math.min(100, Math.max(0, wkPct)) + '%';
@@ -11925,7 +12068,7 @@
             <span class="text-opl-inkDimmer dark:text-op-inkDimmer">/</span>
             <span class="text-[12.5px] font-semibold text-opl-inkDim dark:text-op-inkDim">${hasBudget ? fmtDollar(mBudget) : '—'}</span>
           </div>
-          ${hasBudget && hasSales ? `<div class="text-[12px] font-bold tabular-nums ${diffPos ? 'text-accent-green' : 'text-op-bad'}">${diffPos ? '+' : '−'}${fmtDollar(Math.abs(diff))}</div>` : ''}
+          ${hasBudget && hasSales ? `<div class="text-[12px] font-bold tabular-nums ${diffPos ? 'text-op-good' : 'text-op-bad'}">${diffPos ? '+' : '−'}${fmtDollar(Math.abs(diff))}</div>` : ''}
         </div>
       </div>`;
   }
@@ -12009,7 +12152,7 @@
       const pct = (r.bTotal && r.bTotal > 0 && sales != null) ? (sales / r.bTotal * 100) : null;
       const barW = pct != null ? Math.min(100, Math.max(0, pct)) : 0;
       const barCls = pct == null ? 'bg-[rgba(255,255,255,0)]'
-        : pct >= 100 ? 'bg-accent-green'
+        : pct >= 100 ? 'bg-op-good'
         : pct >= 80 ? 'bg-op-warn'
         : 'bg-op-bad';
 
@@ -12071,11 +12214,11 @@
               <div class="sm:hidden flex items-center gap-1.5">${aucCaption}${aucValue}</div>`;
 
       const deltaHtml = diff != null
-        ? `<span class="text-[12.5px] font-bold tabular-nums ${diffPos ? 'text-accent-green' : 'text-op-bad'}">${diffPos ? '+' : '−'}${fmtDollar(Math.abs(diff))}</span>`
+        ? `<span class="text-[12.5px] font-bold tabular-nums ${diffPos ? 'text-op-good' : 'text-op-bad'}">${diffPos ? '+' : '−'}${fmtDollar(Math.abs(diff))}</span>`
         : '<span class="text-[12.5px] text-opl-inkDimmer dark:text-op-inkDimmer">—</span>';
 
       const laborHtml = dailyLabor != null
-        ? `<span class="text-[11px] font-bold tabular-nums px-1.5 py-0.5 rounded ${dailyLabor > LABOR_TARGET ? 'text-op-bad bg-op-bad/10' : 'text-accent-green bg-accent-green/10'}">${fmtPct(dailyLabor)}</span>`
+        ? `<span class="text-[11px] font-bold tabular-nums px-1.5 py-0.5 rounded ${dailyLabor > LABOR_TARGET ? 'text-op-bad bg-op-bad/10' : 'text-op-good bg-op-good/10'}">${fmtPct(dailyLabor)}</span>`
         : '<span class="text-[11px] text-opl-inkDimmer dark:text-op-inkDimmer">—</span>';
 
       rowsHtml += `
@@ -12125,8 +12268,8 @@
           <span class="text-[12.5px] font-bold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(wkAuction)}</span>
         </div>` : ''}
         <div class="flex flex-col items-end gap-1 flex-shrink-0 min-w-[80px]">
-          <span class="text-[13px] font-bold tabular-nums ${wkDiffPos ? 'text-accent-green' : 'text-op-bad'}">${wkDiffPos ? '+' : '−'}${fmtDollar(Math.abs(wkDiff))}</span>
-          ${wkLabor != null ? `<span class="text-[11px] font-bold tabular-nums px-1.5 py-0.5 rounded ${wkLabor > LABOR_TARGET ? 'text-op-bad bg-op-bad/10' : 'text-accent-green bg-accent-green/10'}">${fmtPct(wkLabor)}</span>` : ''}
+          <span class="text-[13px] font-bold tabular-nums ${wkDiffPos ? 'text-op-good' : 'text-op-bad'}">${wkDiffPos ? '+' : '−'}${fmtDollar(Math.abs(wkDiff))}</span>
+          ${wkLabor != null ? `<span class="text-[11px] font-bold tabular-nums px-1.5 py-0.5 rounded ${wkLabor > LABOR_TARGET ? 'text-op-bad bg-op-bad/10' : 'text-op-good bg-op-good/10'}">${fmtPct(wkLabor)}</span>` : ''}
         </div>
       </div>`;
 
@@ -12200,11 +12343,11 @@
       const pct = d.budget > 0 ? Math.round(d.sales / d.budget * 100) : null;
       const barW = pct != null ? Math.min(100, Math.max(0, pct)) : 0;
       const barCls = pct == null ? 'bg-[rgba(255,255,255,0)]'
-        : pct >= 100 ? 'bg-accent-green'
+        : pct >= 100 ? 'bg-op-good'
         : pct >= 80 ? 'bg-op-warn'
         : 'bg-op-bad';
       const pctCls = pct == null ? 'text-opl-inkDimmer dark:text-op-inkDimmer'
-        : pct >= 100 ? 'text-accent-green bg-accent-green/10'
+        : pct >= 100 ? 'text-op-good bg-op-good/10'
         : pct >= 80 ? 'text-op-warn bg-op-warn/10'
         : 'text-op-bad bg-op-bad/10';
 
@@ -12246,7 +12389,7 @@
             </div>
           </div>
           <div class="flex flex-col items-end gap-1 flex-shrink-0 min-w-[80px]">
-            ${d.hasSales ? `<span class="text-[12.5px] font-bold tabular-nums ${diffPos ? 'text-accent-green' : 'text-op-bad'}">${diffPos ? '+' : '−'}${fmtDollar(Math.abs(diff))}</span>` : '<span class="text-[12.5px] text-opl-inkDimmer dark:text-op-inkDimmer">—</span>'}
+            ${d.hasSales ? `<span class="text-[12.5px] font-bold tabular-nums ${diffPos ? 'text-op-good' : 'text-op-bad'}">${diffPos ? '+' : '−'}${fmtDollar(Math.abs(diff))}</span>` : '<span class="text-[12.5px] text-opl-inkDimmer dark:text-op-inkDimmer">—</span>'}
             ${pct != null && d.hasSales ? `<span class="text-[10.5px] font-bold tabular-nums px-1.5 py-0.5 rounded ${pctCls}">${pct}%</span>` : ''}
           </div>
         </div>`;
@@ -12256,7 +12399,7 @@
     const totPos = totDiff >= 0;
     const totPct = totBudget > 0 ? Math.round(totSales / totBudget * 100) : null;
     const totPctCls = totPct == null ? 'text-opl-inkDimmer dark:text-op-inkDimmer'
-      : totPct >= 100 ? 'text-accent-green bg-accent-green/10'
+      : totPct >= 100 ? 'text-op-good bg-op-good/10'
       : totPct >= 80 ? 'text-op-warn bg-op-warn/10'
       : 'text-op-bad bg-op-bad/10';
 
@@ -12268,7 +12411,7 @@
           <div class="mt-0.5 text-[11.5px] text-opl-inkDim dark:text-op-inkDim tabular-nums">vs <b class="text-opl-ink dark:text-op-ink font-semibold">${fmtDollar(totBudget)}</b> · ${reportedDays} of ${sorted.length} days reported</div>
         </div>
         <div class="flex flex-col items-end gap-1 flex-shrink-0 min-w-[80px]">
-          <span class="text-[13px] font-bold tabular-nums ${totPos ? 'text-accent-green' : 'text-op-bad'}">${totPos ? '+' : '−'}${fmtDollar(Math.abs(totDiff))}</span>
+          <span class="text-[13px] font-bold tabular-nums ${totPos ? 'text-op-good' : 'text-op-bad'}">${totPos ? '+' : '−'}${fmtDollar(Math.abs(totDiff))}</span>
           ${totPct != null ? `<span class="text-[10.5px] font-bold tabular-nums px-1.5 py-0.5 rounded ${totPctCls}">${totPct}%</span>` : ''}
         </div>
       </div>`;
@@ -12283,8 +12426,13 @@
   }
 
   // ── Shared Chart-tab palette + helpers ──────────────────────────────
+  // Canvas paints take a string, not a CSS variable, so the brand accent is
+  // read from the theme at render time: Halloween re-points it to pumpkin.
+  const isHalloween = () => document.documentElement.classList.contains('halloween');
+  const accentRgba = (a) => isHalloween() ? `rgba(255,122,26,${a})` : `rgba(34,197,94,${a})`;
+  window.accentRgba = accentRgba;
   const CHART_COLORS = {
-    tw: '#22c55e',       // This Week — green (current)
+    get tw() { return isHalloween() ? '#ff7a1a' : '#22c55e'; },  // This Week — brand accent (current)
     lw: '#f59e0b',       // Last Week — amber
     ly: '#8b5cf6',       // Last Year — violet
     bg: '#cbd5e1',       // Budget — neutral gray (dashed)
@@ -12316,10 +12464,10 @@
       const ca = chart.chartArea;
       ctx.save();
       // Green band behind the day
-      ctx.fillStyle = 'rgba(34,197,94,0.07)';
+      ctx.fillStyle = accentRgba(0.07);
       ctx.fillRect(xPos - half, ca.top, half * 2, ca.bottom - ca.top);
       // Dashed vertical line through today
-      ctx.strokeStyle = 'rgba(34,197,94,0.55)';
+      ctx.strokeStyle = accentRgba(0.55);
       ctx.setLineDash([3, 3]);
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -12329,7 +12477,7 @@
       // "TODAY" label, anchored just above the chart area
       ctx.setLineDash([]);
       ctx.font = '700 9px Geist, system-ui, sans-serif';
-      ctx.fillStyle = '#22c55e';
+      ctx.fillStyle = CHART_COLORS.tw;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
       ctx.fillText('TODAY', xPos, Math.max(0, ca.top - 12));
@@ -12352,7 +12500,7 @@
 
     const statTile = (label, big, delta, deltaPos) => {
       const deltaCls = delta == null ? 'text-opl-inkDimmer dark:text-op-inkDimmer'
-        : deltaPos ? 'text-accent-green' : 'text-op-bad';
+        : deltaPos ? 'text-op-good' : 'text-op-bad';
       return `
         <div class="rounded-[10px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] px-3 py-2.5">
           <div class="text-[10px] font-bold uppercase tracking-[0.06em] text-opl-inkDim dark:text-op-inkDim">${escapeHtml(label)}</div>
@@ -12477,7 +12625,7 @@
       // Last Week — solid amber.
       { label: 'Last Week', data: lastWeekData, borderColor: CHART_COLORS.lw, backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3, pointHoverRadius: 5, tension: 0.3, fill: false, spanGaps: true, order: 2 },
       // This Week — solid green with subtle area fill (on top).
-      { label: 'This Week', data: salesData, borderColor: CHART_COLORS.tw, backgroundColor: 'rgba(34,197,94,0.12)', borderWidth: 2.4, pointRadius: 3.5, pointHoverRadius: 6, tension: 0.3, fill: true, order: 1 },
+      { label: 'This Week', data: salesData, borderColor: CHART_COLORS.tw, backgroundColor: accentRgba(0.12), borderWidth: 2.4, pointRadius: 3.5, pointHoverRadius: 6, tension: 0.3, fill: true, order: 1 },
     ];
 
     if (dailySalesChart) {
@@ -12662,7 +12810,7 @@
           data: {
             labels,
             datasets: [
-              { label: 'This Day', data: curSeries, borderColor: '#3BB54A', backgroundColor: 'rgba(59,181,74,0.15)', borderWidth: 2, tension: 0.3, fill: true, pointRadius: 3 },
+              { label: 'This Day', data: curSeries, borderColor: isHalloween() ? '#ff7a1a' : '#3BB54A', backgroundColor: isHalloween() ? 'rgba(255,122,26,0.15)' : 'rgba(59,181,74,0.15)', borderWidth: 2, tension: 0.3, fill: true, pointRadius: 3 },
               { label: 'Last Week', data: lwSeries, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.08)', borderWidth: 2, borderDash: [5, 4], tension: 0.3, fill: false, pointRadius: 3 },
             ],
           },
@@ -12908,7 +13056,7 @@
 
     el('store-detail-metrics').innerHTML = `
       <section class="relative overflow-hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 lg:p-6 transition-colors">
-        <div class="pointer-events-none absolute inset-0" style="background:radial-gradient(120% 80% at 100% 0%, rgba(34,197,94,0.12), transparent 60%)"></div>
+        <div class="pointer-events-none absolute inset-0" style="background:radial-gradient(120% 80% at 100% 0%, rgb(var(--accent-green) / 0.12), transparent 60%)"></div>
         <div class="relative">
           <div class="flex items-center justify-between gap-2.5">
             <span class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">${escapeHtml(wkLbl)} · ${escapeHtml(shortName(storeName))}</span>
@@ -12921,18 +13069,18 @@
           <div class="mt-3 flex items-start justify-between gap-4">
             <div class="min-w-0">
               <div class="font-geist font-bold tabular-nums tracking-tight leading-none text-4xl sm:text-5xl text-opl-ink dark:text-op-ink truncate">${hasMetrics || wkSales > 0 ? fmtDollar(wkSales) : '—'}</div>
-              ${wkDelta != null ? `<div class="mt-2.5 text-sm"><span class="font-semibold ${wkDelta >= 0 ? 'text-accent-green' : 'text-op-bad'}">${wkDelta >= 0 ? '+' : '−'}${fmtDollar(Math.abs(wkDelta))}</span> <span class="text-base font-semibold text-opl-ink dark:text-op-ink">vs ${fmtDollar(wkBudget)}</span></div>` : ''}
+              ${wkDelta != null ? `<div class="mt-2.5 text-sm"><span class="font-semibold ${wkDelta >= 0 ? 'text-op-good' : 'text-op-bad'}">${wkDelta >= 0 ? '+' : '−'}${fmtDollar(Math.abs(wkDelta))}</span> <span class="text-base font-semibold text-opl-ink dark:text-op-ink">vs ${fmtDollar(wkBudget)}</span></div>` : ''}
             </div>
             <div class="text-right flex-shrink-0">
               <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Pace</div>
-              <div class="mt-1 font-geist font-extrabold tabular-nums leading-none text-4xl sm:text-5xl tracking-tight ${wkAhead ? 'text-accent-green' : 'text-op-warn'}">${wkPct != null ? wkPct + '%' : '—'}</div>
+              <div class="mt-1 font-geist font-extrabold tabular-nums leading-none text-4xl sm:text-5xl tracking-tight ${wkAhead ? 'text-op-good' : 'text-op-warn'}">${wkPct != null ? wkPct + '%' : '—'}</div>
               <div class="mt-1.5 text-[11px] text-opl-inkDim dark:text-op-inkDim">${daysReported} of ${daysInWeek} days</div>
             </div>
           </div>
 
           <div class="mt-4">
             <div class="h-2.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
-              <div class="h-full rounded-full transition-[width] duration-500 ${wkAhead ? 'bg-accent-green' : 'bg-op-warn'}" style="width:${wkBarW}%"></div>
+              <div class="h-full rounded-full transition-[width] duration-500 ${wkAhead ? 'bg-op-good' : 'bg-op-warn'}" style="width:${wkBarW}%"></div>
             </div>
             <div class="mt-2 flex items-baseline justify-between text-[13px] text-opl-inkDim dark:text-op-inkDim">
               <span>$0</span>
@@ -13813,7 +13961,7 @@
       pending:      { label:'Pending',      pill:'bg-op-warn/15 text-op-warn' },
       under_review: { label:'Under Review', pill:'bg-accent-blue/15 text-accent-blue' },
       on_hold:      { label:'On Hold',      pill:'bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.07)] text-opl-inkDim dark:text-op-inkDim' },
-      ordered:      { label:'Ordered',      pill:'bg-accent-green/15 text-accent-green' },
+      ordered:      { label:'Ordered',      pill:'bg-op-good/15 text-op-good' },
     };
 
     let srItemSeq     = 0;
@@ -14043,7 +14191,7 @@
         });
         const data = await resp.json();
         if (!data.ok) throw new Error(data.error || 'Failed');
-        statusEl.innerHTML = '<span class="text-accent-green dark:text-accent-green font-semibold">✓ Request submitted!</span>';
+        statusEl.innerHTML = '<span class="text-op-good dark:text-op-good font-semibold">✓ Request submitted!</span>';
         // Reset
         el('sr-notes').value = '';
         document.getElementById('sr-pri-normal').checked = true;
@@ -14083,7 +14231,7 @@
         const pct      = b.budget > 0 ? Math.min(100, Math.round((b.spent/b.budget)*100)) : 0;
         const over     = b.remaining < 0;
         const barColor = pct >= 100 ? '#ef4444' : pct >= 80 ? '#f59e0b' : '#22c55e';
-        const bigCls   = over ? 'text-op-bad' : pct >= 80 ? 'text-op-warn' : 'text-accent-green';
+        const bigCls   = over ? 'text-op-bad' : pct >= 80 ? 'text-op-warn' : 'text-op-good';
         return `<div class="flex-shrink-0 bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-2xl p-4 w-56">
           <div class="text-[13.5px] font-extrabold text-opl-ink dark:text-op-ink">${b.label}</div>
           <div class="text-[11px] text-opl-inkDim dark:text-op-inkDim">${monthName} Supply Budget</div>
@@ -14815,11 +14963,11 @@
       const totRem = totBud - totSpent;
       const totPct = totBud > 0 ? Math.round((totSpent / totBud) * 100) : 0;
       const heroBar = totPct >= 100 ? '#ef4444' : totPct >= 80 ? '#f59e0b' : '#22c55e';
-      const heroRemCls = totRem < 0 ? 'text-op-bad' : 'text-accent-green';
+      const heroRemCls = totRem < 0 ? 'text-op-bad' : 'text-op-good';
       const heroRemTxt = totRem >= 0 ? `${fmtSRMoney(totRem)} left` : `${fmtSRMoney(Math.abs(totRem))} over`;
       const unsetNote = unsetCount > 0 ? ` · ${unsetCount} store${unsetCount === 1 ? '' : 's'} need${unsetCount === 1 ? 's' : ''} a budget` : '';
       const heroHtml = `<section class="relative overflow-hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5">
-        <div class="pointer-events-none absolute inset-0" style="background:radial-gradient(120% 80% at 100% 0%, rgba(34,197,94,0.10), transparent 60%)"></div>
+        <div class="pointer-events-none absolute inset-0" style="background:radial-gradient(120% 80% at 100% 0%, rgb(var(--accent-green) / 0.10), transparent 60%)"></div>
         <div class="relative">
           <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Supply spend · ${monthName} ${srBudgetYear} · all stores</div>
           <div class="mt-2 font-geist font-extrabold tabular-nums tracking-tight leading-none text-3xl sm:text-4xl text-opl-ink dark:text-op-ink">${fmtSRMoney(totSpent)} <span class="text-base font-semibold text-opl-inkDim dark:text-op-inkDim">of ${fmtSRMoney(totBud)} budgeted</span></div>
@@ -14833,14 +14981,14 @@
       </section>`;
 
       // ── Per-store cards (usage-first) ──
-      const badgeCls = { ok: 'text-accent-green bg-accent-green/15', warn: 'text-op-warn bg-op-warn/15', over: 'text-op-bad bg-op-bad/15', unset: 'text-opl-inkDim dark:text-op-inkDim bg-[rgba(20,16,8,0.05)] dark:bg-[rgba(255,255,255,0.05)]' };
+      const badgeCls = { ok: 'text-op-good bg-op-good/15', warn: 'text-op-warn bg-op-warn/15', over: 'text-op-bad bg-op-bad/15', unset: 'text-opl-inkDim dark:text-op-inkDim bg-[rgba(20,16,8,0.05)] dark:bg-[rgba(255,255,255,0.05)]' };
       const cards = budgets.map(b => {
         const has = b.budget > 0;
         const rawPct = has ? Math.round((b.spent / b.budget) * 100) : null;
         const barPct = has ? Math.min(100, rawPct) : 0;
         const sev = !has ? 'unset' : (rawPct >= 100 ? 'over' : (rawPct >= 80 ? 'warn' : 'ok'));
         const barColor = sev === 'over' ? '#ef4444' : sev === 'warn' ? '#f59e0b' : '#22c55e';
-        const bigCls = sev === 'over' ? 'text-op-bad' : sev === 'warn' ? 'text-op-warn' : (has ? 'text-accent-green' : 'text-opl-inkDim dark:text-op-inkDim');
+        const bigCls = sev === 'over' ? 'text-op-bad' : sev === 'warn' ? 'text-op-warn' : (has ? 'text-op-good' : 'text-opl-inkDim dark:text-op-inkDim');
         let bigVal, bigUnit, meta;
         if (!has) { bigVal = fmtSRMoney(b.spent); bigUnit = 'spent'; meta = 'Set a monthly budget to track usage →'; }
         else if (b.remaining >= 0) { bigVal = fmtSRMoney(b.remaining); bigUnit = 'left'; meta = `${fmtSRMoney(b.spent)} spent of ${fmtSRMoney(b.budget)}`; }
@@ -16101,7 +16249,7 @@
 
     return `
       <section class="relative overflow-hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 lg:p-6 transition-colors">
-        <div class="pointer-events-none absolute inset-0" style="background:radial-gradient(120% 80% at 100% 0%, rgba(34,197,94,0.12), transparent 60%)"></div>
+        <div class="pointer-events-none absolute inset-0" style="background:radial-gradient(120% 80% at 100% 0%, rgb(var(--accent-green) / 0.12), transparent 60%)"></div>
         <div class="relative">
           <div class="flex items-center justify-between gap-2.5">
             <span class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">${escapeHtml(wkLbl)} · All Stores</span>
@@ -16114,18 +16262,18 @@
           <div class="mt-3 flex items-start justify-between gap-4">
             <div class="min-w-0">
               <div class="font-geist font-bold tabular-nums tracking-tight leading-none text-4xl sm:text-5xl text-opl-ink dark:text-op-ink truncate">${t.totalSales > 0 ? fmtDollar(t.totalSales) : '—'}</div>
-              ${delta != null ? `<div class="mt-2.5 text-sm"><span class="font-semibold ${delta >= 0 ? 'text-accent-green' : 'text-op-bad'}">${delta >= 0 ? '+' : '−'}${fmtDollar(Math.abs(delta))}</span> <span class="text-base font-semibold text-opl-ink dark:text-op-ink">vs ${fmtDollar(t.totalBudget)}</span></div>` : ''}
+              ${delta != null ? `<div class="mt-2.5 text-sm"><span class="font-semibold ${delta >= 0 ? 'text-op-good' : 'text-op-bad'}">${delta >= 0 ? '+' : '−'}${fmtDollar(Math.abs(delta))}</span> <span class="text-base font-semibold text-opl-ink dark:text-op-ink">vs ${fmtDollar(t.totalBudget)}</span></div>` : ''}
             </div>
             <div class="text-right flex-shrink-0">
               <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Pace</div>
-              <div class="mt-1 font-geist font-extrabold tabular-nums leading-none text-4xl sm:text-5xl tracking-tight ${ahead ? 'text-accent-green' : 'text-op-warn'}">${pct != null ? pct + '%' : '—'}</div>
+              <div class="mt-1 font-geist font-extrabold tabular-nums leading-none text-4xl sm:text-5xl tracking-tight ${ahead ? 'text-op-good' : 'text-op-warn'}">${pct != null ? pct + '%' : '—'}</div>
               <div class="mt-1.5 text-[11px] text-opl-inkDim dark:text-op-inkDim">${t.daysReported} of ${t.daysInWeek} days</div>
             </div>
           </div>
 
           <div class="mt-4">
             <div class="h-2.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
-              <div class="h-full rounded-full transition-[width] duration-500 ${ahead ? 'bg-accent-green' : 'bg-op-warn'}" style="width:${barW}%"></div>
+              <div class="h-full rounded-full transition-[width] duration-500 ${ahead ? 'bg-op-good' : 'bg-op-warn'}" style="width:${barW}%"></div>
             </div>
             <div class="mt-2 flex items-baseline justify-between text-[13px] text-opl-inkDim dark:text-op-inkDim">
               <span>$0</span>
@@ -16161,11 +16309,11 @@
       const diffPos = diff >= 0;
       const barW = pct != null ? Math.min(100, Math.max(0, pct)) : 0;
       const barCls = pct == null ? 'bg-[rgba(255,255,255,0)]'
-        : pct >= 100 ? 'bg-accent-green'
+        : pct >= 100 ? 'bg-op-good'
         : pct >= 80 ? 'bg-op-warn'
         : 'bg-op-bad';
       const pctCls = pct == null ? 'text-opl-inkDimmer dark:text-op-inkDimmer'
-        : pct >= 100 ? 'text-accent-green bg-accent-green/10'
+        : pct >= 100 ? 'text-op-good bg-op-good/10'
         : pct >= 80 ? 'text-op-warn bg-op-warn/10'
         : 'text-op-bad bg-op-bad/10';
       const onClick = `onclick="showStoreDetail(${JSON.stringify(s.store).replace(/"/g, '&quot;')})"`;
@@ -16182,7 +16330,7 @@
             </div>
           </div>
           <div class="flex flex-col items-end gap-1 flex-shrink-0 min-w-[80px]">
-            <span class="text-[12.5px] font-bold tabular-nums ${diffPos ? 'text-accent-green' : 'text-op-bad'}">${diffPos ? '+' : '−'}${fmtDollar(Math.abs(diff))}</span>
+            <span class="text-[12.5px] font-bold tabular-nums ${diffPos ? 'text-op-good' : 'text-op-bad'}">${diffPos ? '+' : '−'}${fmtDollar(Math.abs(diff))}</span>
             <span class="text-[10.5px] font-bold tabular-nums px-1.5 py-0.5 rounded ${pctCls}">${pct != null ? pct + '%' : '—'}</span>
           </div>
         </div>`;
@@ -16192,7 +16340,7 @@
     const totalPos = totalDiff >= 0;
     const totalPct = t.totalBudget > 0 ? Math.round(t.totalSales / t.totalBudget * 100) : null;
     const totalPctCls = totalPct == null ? 'text-opl-inkDimmer dark:text-op-inkDimmer'
-      : totalPct >= 100 ? 'text-accent-green bg-accent-green/10'
+      : totalPct >= 100 ? 'text-op-good bg-op-good/10'
       : totalPct >= 80 ? 'text-op-warn bg-op-warn/10'
       : 'text-op-bad bg-op-bad/10';
 
@@ -16206,7 +16354,7 @@
           </div>
         </div>
         <div class="flex flex-col items-end gap-1 flex-shrink-0 min-w-[80px]">
-          <span class="text-[13px] font-bold tabular-nums ${totalPos ? 'text-accent-green' : 'text-op-bad'}">${totalPos ? '+' : '−'}${fmtDollar(Math.abs(totalDiff))}</span>
+          <span class="text-[13px] font-bold tabular-nums ${totalPos ? 'text-op-good' : 'text-op-bad'}">${totalPos ? '+' : '−'}${fmtDollar(Math.abs(totalDiff))}</span>
           <span class="text-[10.5px] font-bold tabular-nums px-1.5 py-0.5 rounded ${totalPctCls}">${totalPct != null ? totalPct + '%' : '—'}</span>
         </div>
       </div>`;
@@ -16333,7 +16481,7 @@
       { label: 'Budget',    data: budgetData, borderColor: CHART_COLORS.bg, backgroundColor: 'transparent', borderWidth: 1.6, borderDash: [5, 4], pointRadius: 2.5, pointHoverRadius: 4, tension: 0.25, fill: false, order: 4 },
       { label: 'Last Year', data: lyData,     borderColor: CHART_COLORS.ly, backgroundColor: 'transparent', borderWidth: 2,   pointRadius: 3,   pointHoverRadius: 5, tension: 0.3,  fill: false, spanGaps: true, order: 3 },
       { label: 'Last Week', data: lwData,     borderColor: CHART_COLORS.lw, backgroundColor: 'transparent', borderWidth: 2,   pointRadius: 3,   pointHoverRadius: 5, tension: 0.3,  fill: false, spanGaps: true, order: 2 },
-      { label: 'This Week', data: salesData,  borderColor: CHART_COLORS.tw, backgroundColor: 'rgba(34,197,94,0.12)', borderWidth: 2.4, pointRadius: 3.5, pointHoverRadius: 6, tension: 0.3, fill: true, order: 1 },
+      { label: 'This Week', data: salesData,  borderColor: CHART_COLORS.tw, backgroundColor: accentRgba(0.12), borderWidth: 2.4, pointRadius: 3.5, pointHoverRadius: 6, tension: 0.3, fill: true, order: 1 },
     ];
 
     if (asAllStoresChart) {
@@ -17704,7 +17852,7 @@
       const deltaStr = delta == null ? '—' : (delta >= 0 ? '+' : '−') + '$' + Math.abs(delta).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       const action = (off && m.cloverNet != null)
         ? `<button onclick="runSrrResnapshotMonth('${m.yearMonth}')" class="px-2.5 py-1 text-xs font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] rounded-md">Re-snapshot</button>`
-        : (delta != null && Math.abs(delta) <= 50 ? '<span class="text-xs text-accent-green">✓</span>' : '');
+        : (delta != null && Math.abs(delta) <= 50 ? '<span class="text-xs text-op-good">✓</span>' : '');
       html += `<tr class="border-b border-gray-50 dark:border-gray-700/50">
         <td class="px-3 py-2 text-gray-700 dark:text-gray-200 font-medium">${escapeHtml(monthLabel(m.yearMonth))}</td>
         <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-200">${fmt$(m.cloverNet)}</td>
@@ -19045,7 +19193,7 @@
         ${th('impressions', 'Impr', 'text-right')}
         ${th('clicks', 'Clicks', 'text-right')}
         ${th('ctr', 'CTR')}</tr></thead><tbody>`;
-    const body = mkList.length ? mkList.map((c, i) => { const sel = mkState.sel.has(String(c.id)); return `<tr id="mk-row-${i}" onclick="mkToggleSel('${c.id}')" class="border-t border-[rgba(20,16,8,0.08)] dark:border-op-border cursor-pointer ${sel ? 'bg-[rgba(59,181,74,0.10)] dark:bg-[rgba(59,181,74,0.14)]' : 'hover:bg-[rgba(20,16,8,0.03)] dark:hover:bg-[rgba(255,255,255,0.03)]'}" style="${sel ? 'box-shadow: inset 3px 0 0 #3BB54A;' : ''}">
+    const body = mkList.length ? mkList.map((c, i) => { const sel = mkState.sel.has(String(c.id)); return `<tr id="mk-row-${i}" onclick="mkToggleSel('${c.id}')" class="border-t border-[rgba(20,16,8,0.08)] dark:border-op-border cursor-pointer ${sel ? 'mk-sel bg-[rgba(59,181,74,0.10)] dark:bg-[rgba(59,181,74,0.14)]' : 'hover:bg-[rgba(20,16,8,0.03)] dark:hover:bg-[rgba(255,255,255,0.03)]'}">
         <td class="px-4 py-2 text-gray-700 dark:text-gray-200 max-w-xs truncate" title="${mkEsc(c.name)}"><span class="text-opl-inkDim dark:text-op-inkDim mr-1">${sel ? '✓' : '›'}</span>${mkEsc(c.name)} <span class="text-[11px] text-opl-inkDim dark:text-op-inkDim">· ${MK_OBJLABEL[c.fam]}</span></td>
         <td class="px-4 py-2 text-[13px]">${mkStoreCell(c.store)}</td>
         <td class="px-4 py-2 text-right text-[12px] text-opl-inkDim dark:text-op-inkDim whitespace-nowrap tabular-nums">${mkDate(c.createdTime)}</td>
@@ -19505,9 +19653,9 @@
   // shades than the bar, because #22c55e / #f59e0b / #ef4444 on white measure
   // 2.3 / 2.1 / 3.8:1; these measure 5.02 / 4.92 / 5.44.
   function spPct(n, t) { return t > 0 ? n / t * 100 : 100; }
-  function spBarCls(p) { return p >= 100 ? 'bg-accent-green' : p < 30 ? 'bg-op-bad' : 'bg-accent-amber'; }
+  function spBarCls(p) { return p >= 100 ? 'bg-op-good' : p < 30 ? 'bg-op-bad' : 'bg-accent-amber'; }
   function spTxtCls(p) {
-    return p >= 100 ? 'text-[#15803d] dark:text-accent-green'
+    return p >= 100 ? 'text-[#15803d] dark:text-op-good'
       : p < 30 ? 'text-opl-bad dark:text-op-bad' : 'text-[#a16207] dark:text-accent-amber';
   }
   function spDay(ymd) {
@@ -19957,7 +20105,7 @@
       }).catch(() => {});
     }
     if (fail === 0) {
-      show(`✓ Sent ${ok} photo${ok === 1 ? '' : 's'} to marketing. Thank you!`, 'text-accent-green');
+      show(`✓ Sent ${ok} photo${ok === 1 ? '' : 's'} to marketing. Thank you!`, 'text-op-good');
       spClearFiles();
       el('sp-files').value = ''; el('sp-thumbs').innerHTML = ''; el('sp-note').value = '';
     } else {
@@ -20096,7 +20244,7 @@
     try { id = await ctPersistDraft(); } catch (e) { return show((e && e.message) || 'Save failed', 'text-op-bad'); }
     if (id == null) return show('Save the draft first.', 'text-op-bad');
     const ok = await ctSchedule(id);
-    if (ok) { ctResetComposer(); show('✓ Scheduled.', 'text-accent-green'); setTimeout(() => st.classList.add('hidden'), 2500); ctLoadDrafts(); }
+    if (ok) { ctResetComposer(); show('✓ Scheduled.', 'text-op-good'); setTimeout(() => st.classList.add('hidden'), 2500); ctLoadDrafts(); }
   }
   window.ctScheduleFromComposer = ctScheduleFromComposer;
 
@@ -20150,7 +20298,7 @@
           <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Date &amp; time (ET)</label>
           <input id="cts-when" type="datetime-local" value="${def}" min="${localNow(new Date())}" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 mb-4 focus:outline-none focus:ring-1 focus:ring-accent-green">
           <label class="flex items-center gap-2.5 mb-2 cursor-pointer">
-            <input id="cts-live" type="checkbox" checked style="accent-color:#22c55e;width:16px;height:16px">
+            <input id="cts-live" type="checkbox" checked style="accent-color:rgb(var(--accent-green));width:16px;height:16px">
             <span class="text-[13px] text-opl-ink dark:text-op-ink">Publish <strong>LIVE</strong> to the Facebook Page</span>
           </label>
           <p id="cts-note" class="text-[11px] text-op-warn mb-4">⚠ Goes public automatically at the scheduled time.</p>
@@ -20207,7 +20355,7 @@
       }).join('');
       const storeBoxes = STORES.map(s => {
         const code = s.split('/')[0], name = s.slice(s.indexOf(' ') + 1);
-        return `<label class="flex items-center gap-2 text-[13px] text-opl-ink dark:text-op-ink cursor-pointer"><input type="checkbox" class="cts-flow-store" value="${code}" checked style="accent-color:#22c55e;width:15px;height:15px"> ${escapeHtml(name)}</label>`;
+        return `<label class="flex items-center gap-2 text-[13px] text-opl-ink dark:text-op-ink cursor-pointer"><input type="checkbox" class="cts-flow-store" value="${code}" checked style="accent-color:rgb(var(--accent-green));width:15px;height:15px"> ${escapeHtml(name)}</label>`;
       }).join('');
       const ov = document.createElement('div');
       ov.className = 'fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/50';
@@ -20259,7 +20407,7 @@
       const r = await fetch(`${WORKER_BASE}?action=thumbnail-generate`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: picked.prompt, quality: picked.quality, post_type: el('ct-thumb-type') ? el('ct-thumb-type').value : '' }) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.ok) throw new Error((d.detail && d.detail.message) || d.detail || d.error || 'Generation failed');
-      show('✓ Cover generated.', 'text-accent-green');
+      show('✓ Cover generated.', 'text-op-good');
       setTimeout(() => st && st.classList.add('hidden'), 3000);
       ctLoadThumbs();
     } catch (e) {
@@ -21161,7 +21309,7 @@
       const replied = c.status === 'replied';
       const ignored = c.status === 'ignored';
       const badge = replied
-        ? '<span class="text-[10px] font-bold uppercase tracking-wide text-accent-green bg-accent-green/10 border border-accent-green/40 rounded px-1.5 py-0.5">Replied</span>'
+        ? '<span class="text-[10px] font-bold uppercase tracking-wide text-op-good bg-op-good/10 border border-op-good/40 rounded px-1.5 py-0.5">Replied</span>'
         : ignored
         ? '<span class="text-[10px] font-bold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim border border-[rgba(20,16,8,0.15)] dark:border-op-border rounded px-1.5 py-0.5">Dismissed</span>'
         : '';
@@ -21224,7 +21372,7 @@
       });
       const d = await r.json();
       if (!r.ok || !d.ok) throw new Error(d.error || 'Post failed');
-      fbcSay('Replied.', 'text-accent-green');
+      fbcSay('Replied.', 'text-op-good');
       fbcLoad();
     } catch (e) { fbcSay((e && e.message) || 'Post failed', 'text-op-bad'); }
   }
@@ -21257,9 +21405,9 @@
         const first = errs[0] || {};
         fbcSay(`Checked ${d.posts || 0} post${d.posts === 1 ? '' : 's'} — ${errs.length} failed. ${first.error || 'Unknown error'}`, 'text-op-bad');
       } else if (d.ingested) {
-        fbcSay(`${d.ingested} new comment${d.ingested === 1 ? '' : 's'} from ${d.posts || 0} posts.`, 'text-accent-green');
+        fbcSay(`${d.ingested} new comment${d.ingested === 1 ? '' : 's'} from ${d.posts || 0} posts.`, 'text-op-good');
       } else {
-        fbcSay(`Checked ${d.posts || 0} post${d.posts === 1 ? '' : 's'} across ${d.pages || 0} page${d.pages === 1 ? '' : 's'} — ${d.seen || 0} comments seen, nothing new.`, 'text-accent-green');
+        fbcSay(`Checked ${d.posts || 0} post${d.posts === 1 ? '' : 's'} across ${d.pages || 0} page${d.pages === 1 ? '' : 's'} — ${d.seen || 0} comments seen, nothing new.`, 'text-op-good');
       }
       fbcLoad();
     } catch (e) { fbcSay((e && e.message) || 'Refresh failed', 'text-op-bad'); }
@@ -22094,7 +22242,7 @@
   //  very likely to come out blank.
   // ═══════════════════════════════════════════════════════════════
 
-  const CT_COLORS = { cur: CHART_COLORS.tw, prv: CHART_COLORS.lw };
+  const CT_COLORS = { get cur() { return CHART_COLORS.tw; }, prv: CHART_COLORS.lw };
   const CT_MOVERS = 12;          // rows in the movers strip
   const CT_MAX_LINES = 6;        // Trend's ceiling: past six, CVD readers cannot separate hues
   // The same six the dataviz validator cleared against #101826, #0a0a0a and
@@ -23026,7 +23174,7 @@
       g += `<path d="${ctSpline(r, 0.3)}" fill="none" stroke="${CT_COLORS.prv}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`; });
     runs(cur).forEach(r => {
       if (r.length < 2) return;
-      g += `<path d="${ctSpline(r, 0.3)} L ${r[r.length - 1][0].toFixed(1)} ${(M.t + ph).toFixed(1)} L ${r[0][0].toFixed(1)} ${(M.t + ph).toFixed(1)} Z" fill="rgba(34,197,94,0.12)" stroke="none"/>`
+      g += `<path d="${ctSpline(r, 0.3)} L ${r[r.length - 1][0].toFixed(1)} ${(M.t + ph).toFixed(1)} L ${r[0][0].toFixed(1)} ${(M.t + ph).toFixed(1)} Z" style="fill:rgb(var(--accent-green) / .12)" stroke="none"/>`
          + `<path d="${ctSpline(r, 0.3)}" fill="none" stroke="${CT_COLORS.cur}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>`;
     });
     // Markers carry a 2px surface ring so they stay legible where lines cross.
@@ -23255,8 +23403,8 @@
     const line = c => `<span class="ct-lgs" style="display:inline-block;width:14px;height:3px;border-radius:2px;background:${c}"></span>`;
     const box = c => `<span class="ct-lgs" style="display:inline-block;width:11px;height:11px;border-radius:3px;background:${c};border:1px solid rgba(127,127,127,.35)"></span>`;
     const R = {
-      vsLines: `<div class="ct-lgr">${line(CT_COLORS.cur)}<span><b>Green is ${AL}, amber is ${BL}</b> — the two ranges you picked, in the same two colours and the same card as the Sales Trend chart on the dashboard. The x-axis runs <i>inside</i> both, ${U} by ${U}, matched from each range's own first ${U}, so it shows <b>where</b> the difference came from rather than only that there was one. The bars underneath repeat that comparison for every category, on one shared scale.</span></div>`,
-      vsClick: `<div class="ct-lgr">${box('rgba(34,197,94,.14)')}<span><b>Click category rows to chart them</b> — one row charts that category alone; click more and the card charts them <b>combined</b>, as one total. Click a row again to drop it, or <b>Show all</b> for every category. A row's ▲▼ figure is that category against <b>${BL}</b>; the two bar lengths say the same thing, so the reading never rests on colour alone, and the comparator is spelled out on every row (<b>vs $…</b>).</span></div>`,
+      vsLines: `<div class="ct-lgr">${line(CT_COLORS.cur)}<span><b>${isHalloween() ? 'Orange' : 'Green'} is ${AL}, amber is ${BL}</b> — the two ranges you picked, in the same two colours and the same card as the Sales Trend chart on the dashboard. The x-axis runs <i>inside</i> both, ${U} by ${U}, matched from each range's own first ${U}, so it shows <b>where</b> the difference came from rather than only that there was one. The bars underneath repeat that comparison for every category, on one shared scale.</span></div>`,
+      vsClick: `<div class="ct-lgr">${box('rgb(var(--accent-green) / .14)')}<span><b>Click category rows to chart them</b> — one row charts that category alone; click more and the card charts them <b>combined</b>, as one total. Click a row again to drop it, or <b>Show all</b> for every category. A row's ▲▼ figure is that category against <b>${BL}</b>; the two bar lengths say the same thing, so the reading never rests on colour alone, and the comparator is spelled out on every row (<b>vs $…</b>).</span></div>`,
       vsNone: `<div class="ct-lgr"><span class="ct-lgs" style="display:inline-block;width:14px;height:3px;background:repeating-linear-gradient(90deg,#cbd5e1 0,#cbd5e1 4px,transparent 4px,transparent 7px)"></span><span><b>No budget line, and no last-year line.</b> The dashboard card has both; neither exists per category. Budget is stored per store per day with no category dimension, and a last-year category line would need year-old snapshots. Drawing either would mean inventing it.</span></div>`,
       trend: `<div class="ct-lgr">${line(ctHue(0))}<span><b>A coloured line is one category</b>, and its colour is fixed to it for the whole window. Six is the ceiling — past it no colourblind reader can separate the hues — so <b>Grid</b> and <b>Table</b> are where every category shows at once. Click a Grid panel to choose which six.</span></div>`,
       grid: `<div class="ct-lgr">${line(ctInkDim())}<span><b>A Grid sparkline shows shape, not size.</b> On <b>Own</b> scale each panel runs between its own high and low — <b>the baseline is not zero</b> — because a category moving between $70k and $80k is a flat line drawn from zero. The number above it carries the magnitude. Switch <b>Scale</b> to <b>Shared</b> when you want heights to be comparable.</span></div>`,
@@ -23545,7 +23693,7 @@
   function _annStatus(msg, type) {
     const s = el('ann-status'); if (!s) return;
     s.textContent = msg || '';
-    s.className = 'text-xs ' + (type === 'error' ? 'text-op-bad' : type === 'ok' ? 'text-accent-green font-semibold' : 'text-opl-inkDim dark:text-op-inkDim');
+    s.className = 'text-xs ' + (type === 'error' ? 'text-op-bad' : type === 'ok' ? 'text-op-good font-semibold' : 'text-opl-inkDim dark:text-op-inkDim');
   }
   async function loadAnnouncementForm() {
     try {
@@ -23671,14 +23819,14 @@
     const cAhead = cPace != null && cPace >= 100;
     const cBarW = cPace != null ? Math.min(100, Math.max(0, cPace)) : 0;
     const cBarColor = cPace == null ? 'var(--tw-clr,rgb(var(--op-inkDim)))' : (cAhead ? '#22c55e' : (cPace >= 95 ? '#f59e0b' : '#ef4444'));
-    const cVarColor = cVar == null ? 'text-opl-inkDim dark:text-op-inkDim' : (cVar >= 0 ? 'text-accent-green' : 'text-op-bad');
+    const cVarColor = cVar == null ? 'text-opl-inkDim dark:text-op-inkDim' : (cVar >= 0 ? 'text-op-good' : 'text-op-bad');
     const cVarSign = cVar != null && cVar >= 0 ? '+' : '−';
     const tile = (lab, val) => `<div class="rounded-[11px] bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.08)] dark:border-op-border px-2 py-2.5 text-center">
       <div class="text-[9.5px] font-bold uppercase tracking-[0.05em] text-opl-inkDim dark:text-op-inkDim">${lab}</div>
       <div class="mt-1 text-[15px] font-bold tabular-nums text-opl-ink dark:text-op-ink">${val}</div></div>`;
 
     let html = `<section class="relative overflow-hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5">
-      <div class="pointer-events-none absolute inset-0" style="background:radial-gradient(120% 80% at 100% 0%, rgba(34,197,94,0.12), transparent 60%)"></div>
+      <div class="pointer-events-none absolute inset-0" style="background:radial-gradient(120% 80% at 100% 0%, rgb(var(--accent-green) / 0.12), transparent 60%)"></div>
       <div class="relative">
         <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">All Stores · ${escapeHtml(wrsRangeLabel())}</div>
         <div class="mt-2 font-geist font-extrabold tabular-nums tracking-tight leading-none text-4xl text-opl-ink dark:text-op-ink">${fmt$0(cNet)}</div>
@@ -23709,7 +23857,7 @@
       const barW = pace != null ? Math.min(100, Math.max(0, pace)) : 0;
       const barColor = pace == null ? 'rgb(var(--op-inkDimmer))' : (ahead ? '#22c55e' : (pace >= 95 ? '#f59e0b' : '#ef4444'));
       const vDollar = r.t.varianceDollar != null ? r.t.varianceDollar : (bud ? net - bud : null);
-      const vColor = vDollar == null ? 'text-opl-inkDim dark:text-op-inkDim' : (vDollar >= 0 ? 'text-accent-green' : 'text-op-bad');
+      const vColor = vDollar == null ? 'text-opl-inkDim dark:text-op-inkDim' : (vDollar >= 0 ? 'text-op-good' : 'text-op-bad');
       const vSign = vDollar != null && vDollar >= 0 ? '+' : '−';
       const meta = [
         r.t.transactions ? `${fmtInt(r.t.transactions)} txns` : null,
@@ -24399,13 +24547,13 @@
     const sPace = sBud > 0 ? (sNet / sBud) * 100 : null;
     const sBarW = sPace != null ? Math.min(100, Math.max(0, sPace)) : 0;
     const sBarColor = sPace == null ? 'rgb(var(--op-inkDimmer))' : (sPace >= 100 ? '#22c55e' : (sPace >= 95 ? '#f59e0b' : '#ef4444'));
-    const sVarColor = sVar == null ? 'text-opl-inkDim dark:text-op-inkDim' : (sVar >= 0 ? 'text-accent-green' : 'text-op-bad');
+    const sVarColor = sVar == null ? 'text-opl-inkDim dark:text-op-inkDim' : (sVar >= 0 ? 'text-op-good' : 'text-op-bad');
     const sVarSign = sVar != null && sVar >= 0 ? '+' : '−';
     const dateRange = dates.length ? `${dates[0]} – ${dates[dates.length - 1]}` : '';
     const chipS = (l, v) => `<div class="rounded-[11px] bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.08)] dark:border-op-border px-2 py-2.5 text-center"><div class="text-[9px] font-bold uppercase tracking-[0.05em] text-opl-inkDim dark:text-op-inkDim">${l}</div><div class="mt-1 text-[14px] font-bold tabular-nums text-opl-ink dark:text-op-ink">${fmtK(v || 0)}</div></div>`;
 
     const headerHtml = `<section class="relative overflow-hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5">
-      <div class="pointer-events-none absolute inset-0" style="background:radial-gradient(120% 80% at 100% 0%, rgba(34,197,94,0.12), transparent 60%)"></div>
+      <div class="pointer-events-none absolute inset-0" style="background:radial-gradient(120% 80% at 100% 0%, rgb(var(--accent-green) / 0.12), transparent 60%)"></div>
       <div class="relative">
         <div class="flex items-center justify-between gap-2">
           <div class="flex items-center gap-2 min-w-0">
@@ -24428,7 +24576,7 @@
     const profitHtml = `<div class="grid grid-cols-4 gap-2 mt-2.5">
       ${pcell('Net Sales', fmtK(itemTotals.netSales || 0))}
       ${pcell('Ext Cost', pHasCost ? fmtK(itemTotals.cost) : '—')}
-      ${pcell('Gross Profit', pHasCost ? fmtK(itemTotals.grossProfit) : '—', pHasCost ? 'text-accent-green' : 'text-opl-inkDim dark:text-op-inkDim')}
+      ${pcell('Gross Profit', pHasCost ? fmtK(itemTotals.grossProfit) : '—', pHasCost ? 'text-op-good' : 'text-opl-inkDim dark:text-op-inkDim')}
       ${pcell('GPM %', itemTotals.gpmPct != null ? fmtPct(itemTotals.gpmPct) : '—')}
     </div>`;
 
@@ -24461,7 +24609,7 @@
     const maxNet = Math.max(1, ...cats.map(c => c.netSales || 0));
     const gpmBadge = (g) => {
       if (g == null) return '';
-      const cls = g >= 45 ? 'text-accent-green bg-accent-green/15' : (g >= 30 ? 'text-op-warn bg-op-warn/15' : 'text-op-bad bg-op-bad/15');
+      const cls = g >= 45 ? 'text-op-good bg-op-good/15' : (g >= 30 ? 'text-op-warn bg-op-warn/15' : 'text-op-bad bg-op-bad/15');
       return `<span class="text-[10.5px] font-extrabold px-1.5 py-0.5 rounded-full whitespace-nowrap ${cls}">GPM ${Math.round(g)}%</span>`;
     };
     let cardsHtml = `<h3 class="text-[11px] font-semibold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim mt-5 mb-3 px-0.5">By category · all L2</h3><div class="space-y-1.5">`;
@@ -34782,23 +34930,25 @@
   //  DARK MODE
   // ═══════════════════════════════════════════════════════════════
   // ── Theme ───────────────────────────────────────────────────────
-  // Three themes ('light' | 'dark' | 'oled'), two classes. See the pre-paint
+  // Four themes ('light' | 'dark' | 'oled' | 'halloween'); oled and halloween are additive to dark. See the pre-paint
   // boot script in <head> for why, and the :root / html.oled blocks in the
   // first <style> for the token values.
   // Browser/PWA chrome tint. Light and dark both keep brand green; only pure
   // black needs the bar to disappear along with the page.
-  const THEME_BAR_COLOR = { light: '#3BB54A', dark: '#3BB54A', oled: '#000000' };
+  const THEME_BAR_COLOR = { light: '#3BB54A', dark: '#3BB54A', oled: '#000000', halloween: '#ff7a1a' };
 
   function currentTheme() {
     const root = document.documentElement;
     if (!root.classList.contains('dark')) return 'light';
+    if (root.classList.contains('halloween')) return 'halloween';
     return root.classList.contains('oled') ? 'oled' : 'dark';
   }
 
   // The dark flavour the two-way sidebar switch returns to. Read from storage
   // rather than the DOM so it survives a trip through light mode.
   function preferredDark() {
-    return localStorage.getItem('darkFlavor') === 'oled' ? 'oled' : 'dark';
+    const f = localStorage.getItem('darkFlavor');
+    return f === 'oled' || f === 'halloween' ? f : 'dark';
   }
 
   // Colours that CSS variables cannot reach: canvas paints (Chart.js ticks and
@@ -34822,6 +34972,10 @@
       chartText: '#a8a8a8', chartGrid: 'rgba(255,255,255,0.14)', chartGridStrong: 'rgba(255,255,255,0.22)',
       dialogBg: '#0a0a0a', dialogFg: '#f2f2f2', dialogDim: '#a8a8a8', dialogBorder: 'rgba(255,255,255,0.14)',
     },
+    halloween: {
+      chartText: '#b8a48c', chartGrid: 'rgba(255,170,100,0.12)', chartGridStrong: 'rgba(255,170,100,0.2)',
+      dialogBg: '#161009', dialogFg: '#f6eee3', dialogDim: '#b8a48c', dialogBorder: 'rgba(255,138,40,0.24)',
+    },
   };
   function themeColors() { return THEME_COLORS[currentTheme()]; }
   window.themeColors = themeColors;
@@ -34830,6 +34984,7 @@
     const root = document.documentElement;
     root.classList.toggle('dark', theme !== 'light');
     root.classList.toggle('oled', theme === 'oled');
+    root.classList.toggle('halloween', theme === 'halloween');
 
     localStorage.setItem('darkMode', theme !== 'light');
     // Only a dark choice updates the remembered flavour — switching to light
@@ -34877,7 +35032,7 @@
     toggle.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle.click(); } };
   }
 
-  // The three-way picker on the Accessibility page. Real radiogroup
+  // The theme picker on the Accessibility page. Real radiogroup
   // semantics: one tab stop for the group, arrow keys move between options
   // and select as they go, which is what a screen reader user expects from
   // role="radio" — and this is the page where that has to be right.
@@ -37670,18 +37825,18 @@
   // badly behind, amber when behind, green once at or over budget.
   function lpPaceColour(pct) {
     if (pct == null) return 'text-opl-inkDim dark:text-op-inkDim';
-    if (pct >= 100) return 'text-accent-green';
+    if (pct >= 100) return 'text-op-good';
     return pct < 30 ? 'text-op-bad' : 'text-accent-amber';
   }
   function lpPaceBar(pct) {
     if (pct == null) return 'bg-[rgba(20,16,8,0.15)] dark:bg-[rgba(255,255,255,0.15)]';
-    if (pct >= 100) return 'bg-accent-green';
+    if (pct >= 100) return 'bg-op-good';
     return pct < 30 ? 'bg-op-bad' : 'bg-accent-amber';
   }
   function lpDelta(actual, budget) {
     if (!budget) return '';
     const d = actual - budget;
-    const cls = d >= 0 ? 'text-accent-green' : 'text-op-bad';
+    const cls = d >= 0 ? 'text-op-good' : 'text-op-bad';
     return `<span class="font-semibold ${cls}">${d >= 0 ? '+' : '−'}${fmtDollar(Math.abs(d)).slice(1)}</span>`
          + `<span class="text-opl-inkDim dark:text-op-inkDim"> vs ${fmtDollar(budget)}</span>`;
   }
@@ -38471,7 +38626,7 @@
       <label class="flex items-center gap-2.5 rounded-[8px] border border-[rgba(20,16,8,0.10)] dark:border-op-border
                     bg-opl-panelHi dark:bg-[rgba(255,255,255,0.03)] px-3 py-2.5 cursor-pointer
                     hover:border-accent-green/40 transition-colors">
-        <input type="checkbox" value="${code}" class="${which}-store-cb" style="accent-color:#22c55e">
+        <input type="checkbox" value="${code}" class="${which}-store-cb" style="accent-color:rgb(var(--accent-green))">
         <span class="text-sm font-medium text-opl-ink dark:text-op-ink">${name}</span>
         <span class="ml-auto text-[10px] tabular-nums text-opl-inkDim dark:text-op-inkDimmer">${code}</span>
       </label>`).join('');
@@ -38849,7 +39004,7 @@
     const m = el('edit-approval-msg');
     m.textContent = text;
     m.className = 'text-xs mt-2 ' + (kind === 'err'
-      ? 'text-[#c0392b] dark:text-[#f87171]' : 'text-[#166534] dark:text-accent-green');
+      ? 'text-[#c0392b] dark:text-[#f87171]' : 'text-[#166534] dark:text-op-good');
     m.classList.remove('hidden');
   }
 
@@ -39049,7 +39204,7 @@
         <span class="flex items-center gap-3 text-xs text-opl-inkDim dark:text-op-inkDim">
           ${['none', 'view', 'edit'].map(lv => `<label class="flex items-center gap-1.5 cursor-pointer">
             <input type="radio" name="assoc-page-${p.id}" value="${lv}" class="assoc-m-page" data-page="${p.id}"
-                   style="accent-color:#22c55e" ${((pages[p.id] || 'none') === lv) ? 'checked' : ''}>${lv[0].toUpperCase() + lv.slice(1)}
+                   style="accent-color:rgb(var(--accent-green))" ${((pages[p.id] || 'none') === lv) ? 'checked' : ''}>${lv[0].toUpperCase() + lv.slice(1)}
           </label>`).join('')}
         </span>
       </div>`).join('');
