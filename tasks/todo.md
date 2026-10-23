@@ -35,7 +35,11 @@ Property, as in the Whatnot feeder (this repo is public).
       feeder's channel stops projecting). I had reported "yesterday may be missing: the email ends at 10-21".
       Wrong: auction numbers are sequential (Indy East BND…32–36 = 10-17..10-21) and the zip lists Battle
       Creek's not-yet-ended 10-23 auction, so no auction ended on 10-22
-- [ ] PR; Brian: new Apps Script project in bhoward@bargainlane.com, retire the Drive one
+- [x] PR #356. Brian set up the Apps Script project in bhoward@bargainlane.com (2026-10-23). Verified in prod
+      D1: backfill posted the 10-21, 10-22 and 10-23 emails oldest first at 13:46 UTC; each date carries the
+      newest email's figure (BL16 10-18 now $248.82, was $240.83 from the Drive file; BL14 10-19 $204.50 and
+      BL16 10-19..21 filled). daily_sales.auction = auction + Whatnot (BL16 10-21: POS 3,980.52 + 628.63 =
+      4,609.15, which the retjg MCP reports as netSales)
 
 # Friday retail auto-draft (2026-10-21)
 
