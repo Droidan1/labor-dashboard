@@ -127,7 +127,7 @@ Then confirm Clover still answers — `sales-diag` re-fetches live:
 
 **C — rotate `SNAPSHOT_SECRET`**, using the dual-accept now deployed in code:
 1. `npx wrangler secret put SNAPSHOT_SECRET_NEXT` — both values now work
-2. Update `CONFIG.SNAPSHOT_SECRET` in `scripts/auction-drive-ingest.gs`. Watch for `legacy-secret-in-use` in `npx wrangler tail` — while that line still appears, something hasn't moved. Silence for a full day means the nightly feeder has migrated.
+2. Update the `SNAPSHOT_SECRET` Script Property in both Apps Script feeders (`scripts/auction-email-ingest.gs`, `scripts/whatnot-recap-ingest.gs`). Watch for `legacy-secret-in-use` in `npx wrangler tail` — while that line still appears, something hasn't moved. Silence for a full day means the nightly feeder has migrated.
 3. `npx wrangler secret put SNAPSHOT_SECRET` (new value), then `npx wrangler secret delete SNAPSHOT_SECRET_NEXT`
 
 Verify any step with `?action=secret-check`, which reports `current` / `next` without doing anything.
