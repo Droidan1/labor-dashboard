@@ -36,11 +36,11 @@ new tokens automatically compile when used in `index.html`.
 
 ### 2.1 Colors
 
-Three themes, two classes. Dark is primary; light is the secondary mode
-controlled by the `.dark` class on `<html>`; **pure black is additive** —
-`<html class="dark oled">` keeps `dark` on so every `dark:` utility still
-matches and every `isDark()` check still answers yes, and `oled` only
-retints.
+Four themes, two classes. Dark is primary; light is the secondary mode
+controlled by the `.dark` class on `<html>`; **pure black and Halloween are
+additive** — `<html class="dark oled">` / `<html class="dark halloween">`
+keep `dark` on so every `dark:` utility still matches and every `isDark()`
+check still answers yes, and `oled` / `halloween` only retint.
 
 The `op-*` tokens are **CSS variables**, not literals. `tailwind.config.js`
 declares them as `rgb(var(--op-x) / <alpha-value>)`; the values live in
@@ -101,6 +101,43 @@ darker ground can only raise contrast (gray-400 goes 7.01 → 7.80), so
 overriding `dark:text-gray-*` is churn. **Grey backgrounds and borders
 do**, via the `html.oled .dark\:…` layer next to the variables; that
 selector is (0,2,1) and beats Tailwind's (0,2,0) with no `!important`.
+
+**Halloween (`html.halloween`)** — the same tokens re-pointed to warm blacks,
+plus the brand accent. Each person picks it in Settings → Accessibility; it
+is a regular choice, not seasonal. Ratios are on bg / panel / panelHi.
+
+| Token | Value | Contrast |
+|---|---|---|
+| `op-bg` | `#0c0907` | |
+| `op-panel` | `#161009` | |
+| `op-panelHi` | `#21170e` | |
+| `op-ink` | `#f6eee3` (bone) | 17.3 / 16.4 / 15.3 |
+| `op-inkDim` | `#b8a48c` | 8.3 / 7.9 / 7.3 |
+| `op-inkDimmer` | `#9c8971` | 5.9 / 5.6 / 5.2 |
+| `op-sidebar` | `#080604` | |
+| `op-border` / `borderHi` | `rgba(255,138,40,0.13)` / `0.24` | |
+| `--accent-green` | `255 122 26` (#ff7a1a, pumpkin) | 7.6 / 7.2 / 6.8 |
+
+🔑 **Brand accent vs semantic green.** `accent-green` is the BRAND accent
+(titles, active nav, primary buttons, focus rings, selected tabs, the This
+Week chart series) and is a variable, `rgb(var(--accent-green) / <alpha-value>)`,
+so Halloween can re-point it. "Good" — ahead of budget, a positive delta, ok,
+pass, live — is `op-good` / literal `#22c55e` and **never** retints: an
+orange "ahead" next to an amber "close" cannot be told apart. When you write a
+green, decide which one it is:
+
+- Brand → `text-accent-green` etc., or `rgb(var(--accent-green))` in a
+  `<style>` block. Canvas (Chart.js, plugins) cannot read a variable: use
+  `CHART_COLORS.tw` or `accentRgba(a)`, which read the theme at render time.
+- Semantic → `text-op-good` / `bg-op-good`, or the literal.
+- The older brand spelling `#3BB54A` (the `bg-[#3BB54A] hover:bg-[#32a040]`
+  primary buttons) is retinted by `html.halloween .bg-\[\#3BB54A\]` override
+  rules, not by the variable, so the other themes keep it exactly.
+
+Set dressing lives on `body::before` (cobweb + moon glow, `z-index:-1`, behind
+the panels) and `body::after` (a bat flock crossing every 30 s, off under
+`prefers-reduced-motion` and in print). `scripts/browser-halloween-theme.mjs`
+pins all of this, and that the other three themes are unchanged.
 
 **Operator light (`opl-*`)**
 | Token | Hex |

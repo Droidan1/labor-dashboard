@@ -1,3 +1,36 @@
+# Halloween theme (2026-10-23)
+
+**Ask (Brian):** a Halloween theme users can pick: orange and black, spooky vibes, preview first.
+**Design (stated, not asked):** a fourth theme, additive to dark like pure black (`<html class="dark halloween">`).
+op-* re-pointed to warm blacks; the BRAND accent (`accent-green`, now `rgb(var(--accent-green))` in
+tailwind.config.js) re-pointed to pumpkin #ff7a1a. Semantic "ahead / +$" sites moved from accent-green to
+`op-good`, so pace keeps green/amber/red (orange "ahead" next to amber "close" is unreadable). Cobweb +
+moon glow (body::before, behind panels) and a bat flock every 30 s (body::after, off for reduced motion).
+
+- [x] Theme CSS, boot script, applyTheme/currentTheme/preferredDark, THEME_COLORS, picker option
+- [x] 37 semantic accent-green sites → op-good (+ light `.text-op-good` → #166534, same as accent)
+- [x] Brand chrome literals → var: sidebar active, bottom-nav active/submit, hero glow ×5, swipe/ptr hints
+- [x] Real dashboard rendered (desktop/phone, all themes); contrast sweep: Halloween 0 new failures
+- [x] Preview for review: https://claude.ai/artifact/K2r7sWVheykfAemDixkMQW
+- [x] Brian's review: "Looks good. Keep bats every 30s and leave it as a regular theme choice."
+- [x] Sweep: 124 brand `#22c55e`/`rgba(34,197,94,a)` literals → `rgb(var(--accent-green)…)` (identical in the
+      other themes); #3BB54A buttons, #5fd170 tab text, refresh/PTR bars, theme switch, confirm OK → Halloween
+      override rules; charts via `CHART_COLORS.tw` getter + `accentRgba()`. Semantic greens (ok, pass, live,
+      ahead, health, OB buy strip, level badges, legends of semantic rows) left literal on purpose
+- [x] scripts/browser-halloween-theme.mjs: 42 pass on the branch, 15 fail on main's build
+- [x] Other browser checks: today-eastern, submit-photo-targets, content-video, channel-matrix, sidebar-scroll
+      pass; mobile-menu's contrast sweeps pass in all three old themes (its 5 associate-menu failures are
+      identical on main)
+- [x] Fresh-eyes review. Taken: (1) 37 more semantic sites were still brand (budget-card bars, daily ≥100%
+      pills, All Stores weekly, Ordered pill, success messages, ✓ marks) → op-good; my first pass only caught
+      ternaries on one line; (2) Sign Studio's ok pill used the brand --ss-accent → own semantic green;
+      (3) the light `.text-op-good` retint also lifts the Labor page's existing op-good text 2.28 → 7.13:1:
+      kept, intentional, pinned; (4) the check never rendered an "ahead" chain: AHEAD fixture added,
+      52 assertions, a reverted split fails 6 and a reverted ss pill fails 1; (5) leftover brand bits
+      (focus rings, file buttons, PTR spinner, #5fd170 tab text) → Halloween overrides
+- [x] CACHE_NAME v287 + shell-cache fixture; npm test 10952/10952; browser-sign-studio's 3 download-event
+      failures and mobile-menu's 5 associate-menu failures are identical on main (Mac Chrome / stale fixture)
+
 # Online auction feed: Drive folder → Looker email (2026-10-23)
 
 **Ask (Brian):** the auction results no longer land in the Drive folder; they come by email now, like the

@@ -57,7 +57,10 @@ module.exports = {
         },
         // Selectable accents (README)
         accent: {
-          green: '#22c55e',
+          // The BRAND accent, a variable for the same reason op-* are: the
+          // Halloween theme re-points it to pumpkin in index.html. "Good"
+          // (ahead of budget, +$ deltas) is `op-good`, which never retints.
+          green: 'rgb(var(--accent-green) / <alpha-value>)', // #22c55e
           emerald: '#10b981',
           lime: '#b5ff3c',
           blue: '#3b82f6',

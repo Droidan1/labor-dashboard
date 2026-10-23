@@ -229,6 +229,18 @@ how one gets CREATED.
    the change.
 </rules>
 
+### Recurred (2026-10-23, Halloween theme): a contrast table with one row I never measured
+
+The Halloween CSS block opens with a contrast table. I measured ink, inkDim and pumpkin, then
+nudged inkDimmer from `#8f7d68` to `#9c8971` and wrote its row (5.6 / 5.3 / 4.9) from memory of
+the old value. Measured before writing DESIGN.md, it is 5.9 / 5.6 / 5.2. No harm this time (the
+guess was low), but a guessed 4.9 next to measured numbers reads as measured.
+
+<rules>
+8. **A number in a comment is re-measured after the value under it changes.** Re-run the
+   measurement as the last step before committing, not when the comment was first written.
+</rules>
+
 ## The third one today: my escalation lost a seven-second race (2026-09-21) · rule 6: re-read a PR's state before pushing to it (recurred 2026-09-25) · rule 7: push only verified work, because a merge can come before the verification (2026-09-28)
 
 Same trap as the entry below, and as 2026-09-18's. This time I did everything that entry
