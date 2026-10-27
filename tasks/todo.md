@@ -15,6 +15,9 @@ BL14 18.50% vs 15.09%, BL16 13.31% vs 12.76%. Planning under-projected the same 
 - [x] worker.js: both handlers select `auction`, actual sales = `total + auction`
 - [x] npm test 11048/11048 (126 suites)
 - [ ] Brian: merge, then deploy the worker from main (frontend unchanged, no CACHE_NAME bump needed)
+      ⚠️ A deploy run before the merge (18:55Z, version `7b3bbf9a`) shipped main WITHOUT this fix, and with
+      PR #358's worker. Brian applied migration-083 about ten minutes later; columns and both new queries verified in prod.
+      See lessons.md 2026-10-27.
 - [ ] After deploy: `retjg labor --grain w --from 2026-10-18 --to 2026-10-24` shows BL1 actualSales 88,340.21
 
 **Review:** daily refresh needs nothing new: the page reads D1 on every load and sw.js never caches the API,
@@ -67,7 +70,9 @@ a `schedule_error` that says so, alerts, and Retry sends Google only.
 - [x] npm test 11036/11036; browser content-video 57, content-buffer-cap 54, submit-video 88; the sweep's other
       failures (associate-price-scan 3, inventory-delete 9, inventory-receiver 2, sign-studio 3) are identical
       on main's build
-- [ ] PR; then migration-083 → worker deploy (fresh clone, byte-verify) → merge → a test post to one GBP store
+- [x] Merged (#358). Worker deployed 2026-10-27 18:55Z (`7b3bbf9a`), ahead of its migration by accident;
+      migration-083 applied by Brian ~10 min later, columns + draft-list/sync queries verified read-only in prod
+- [ ] A test post to one GBP store
 
 # Halloween theme (2026-10-23)
 
