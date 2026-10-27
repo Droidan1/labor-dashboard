@@ -1,3 +1,19 @@
+# Weekly Sales Digest: count live sales in net sales (2026-10-27)
+
+**Ask (Labor live-sales session):** the Sunday digest summed `daily_sales.total` (till only) and set it
+against a budget that includes live sales. Same gap as the Labor page (`claude/labor-live-sales`, 9c0eae4).
+
+- [x] Digest still sent: prod cron `0 11 * * 1` (wrangler.toml) → `dispatchWeeklyDigest`; manual
+      `POST ?action=send-weekly-digest`. Prod `notification_log`: 6 sends every Sunday through 2026-10-25
+- [x] Prod, week ending 2026-10-24 (read-only): Coliseum read 88% of budget, real 112%; Battle Creek 114% → 140%;
+      Indy East 121% → 126%. South Bend and Dupont unchanged
+- [x] `buildWeeklyDigestData`: this week's and last week's sums now `total + COALESCE(auction,0)`
+- [x] Kept `total IS NOT NULL`: widening it would set a day's full budget against its live sales alone. Prod has
+      no live sales on a NULL-total day since 2026-06-01 (all four live stores checked), so it drops nothing
+- [x] scripts/test-weekly-digest.mjs drives `worker.fetch` and reads the Resend body: fails on main
+      (Coliseum $7,000 / 83%), passes here. npm test 11050/11050 (127 suites)
+- [ ] Brian: worker deploy (backward-compatible, query-only); next digest Sun 2026-11-01
+
 # Google Business Profile posts through Buffer (2026-10-27)
 
 **Ask (Brian):** start Google Business Profile posting for the three profiles (Coliseum, Dupont, South Bend).

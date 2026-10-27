@@ -7233,14 +7233,18 @@ async function buildWeeklyDigestData(env, startDate, endDate) {
   const priorStartStr = priorStart.toISOString().slice(0, 10);
   const priorEndStr   = priorEnd.toISOString().slice(0, 10);
 
+  // Sales are till + live sales (`total` + `auction`), the figure the budget is
+  // set against; `total` alone is the till only and read every live-selling
+  // store low. `total IS NOT NULL` stays: a day the till never reported is left
+  // out whole, budget included, rather than set against its live sales alone.
   const [{ results: thisWeek }, { results: priorWeek }] = await Promise.all([
     env.DB.prepare(
-      `SELECT store, ROUND(SUM(total),2) AS sales, ROUND(SUM(budget),2) AS budget,
+      `SELECT store, ROUND(SUM(total + COALESCE(auction,0)),2) AS sales, ROUND(SUM(budget),2) AS budget,
               SUM(order_count) AS orders
        FROM daily_sales WHERE date >= ? AND date <= ? AND total IS NOT NULL GROUP BY store`
     ).bind(startDate, endDate).all(),
     env.DB.prepare(
-      `SELECT store, ROUND(SUM(total),2) AS sales
+      `SELECT store, ROUND(SUM(total + COALESCE(auction,0)),2) AS sales
        FROM daily_sales WHERE date >= ? AND date <= ? AND total IS NOT NULL GROUP BY store`
     ).bind(priorStartStr, priorEndStr).all(),
   ]);
