@@ -11,9 +11,10 @@
 // deliberately ignored — it holds whatever rate the source sheet hardcoded
 // ($14.40 on some tabs, $15.00 on others). One case seeds a nonsense 0.99 in
 // that column and pins that it never reaches the wire.
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadWorker, makeEnv, ctx, req, storesIn } from './lib/worker-harness.mjs';
+import { loadWorker, makeEnv, ctx, req, storesIn, applyMigrationAlters } from './lib/worker-harness.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -216,6 +217,42 @@ async function raw(env, qs, user = 'u-su') {
   const { body } = await raw(env, 'from=2026-07-26&to=2026-08-01');
   eq(body.grain, 'w', 'omitting grain gives weekly — how the sheet is read today');
   eq(body.periods.length, 1, 'and it really did bucket weekly');
+}
+
+// ══ 12. Live sales count as actual sales, from the morning they land ═════
+// 🛑 daily_sales.total is the till only (retail + bins); live sales (online
+// auction + Whatnot) sit in daily_sales.auction. The budget is set against
+// till + live, and so was the payroll sheet this page replaced — so reading
+// `total` alone understated every live-selling store and overstated its
+// labour %: Coliseum's week ending 2026-10-24 read 17.42% against a real
+// 13.72%. Driven through the real ingest, so the test is the daily path:
+// the feeder posts yesterday's live sales, and the page reads them on its
+// next load with nothing else to run.
+{
+  const { db, env } = makeEnv(repo);
+  db.exec(fs.readFileSync(path.join(repo, 'migration-015.sql'), 'utf8'));
+  applyMigrationAlters(db, repo);
+  env.SNAPSHOT_SECRET = 'feeder-secret';
+  db.exec('DELETE FROM daily_sales'); seed(db);
+
+  const before = (await raw(env, 'grain=w&from=2026-07-26&to=2026-08-01')).body.periods[0];
+  eq(before.actualSales, 37000, 'precondition: till only, before the live sales land');
+
+  const ing = await worker.fetch(req('/?action=ingest', { method: 'POST', secret: 'feeder-secret', body: {
+    channel: 'auction', source_file: 'test.zip',
+    rows: [{ store: 'BL1', date: '2026-07-31', total: 3000, count: 40 }],
+  } }), env, ctx);
+  eq(ing.status, 200, 'the morning ingest is accepted');
+
+  const w = (await raw(env, 'grain=w&from=2026-07-26&to=2026-08-01')).body.periods[0];
+  eq(w.actualSales, 40000, 'actual sales = till 37,000 + live 3,000');
+  eq(w.byStore.BL1.actualSales, 40000, 'in the per-store breakdown too');
+  // 270 x 15 / 40000. Till-only would give 10.9459.
+  eq(w.actualLaborPct, 10.125, 'and the labour % is on till + live');
+  eq(w.budgetSales, 33000, 'the budget is untouched');
+
+  const d = (await raw(env, 'grain=d&from=2026-07-31&to=2026-07-31')).body.periods[0];
+  eq(d.actualSales, 18000, 'the day itself: 15,000 till + 3,000 live');
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed`);

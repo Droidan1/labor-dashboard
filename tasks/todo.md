@@ -14,6 +14,32 @@ against a budget that includes live sales. Same gap as the Labor page (`claude/l
       (Coliseum $7,000 / 83%), passes here. npm test 11050/11050 (127 suites)
 - [ ] Brian: worker deploy (backward-compatible, query-only); next digest Sun 2026-11-01
 
+# Labor page: actual sales now include live sales (2026-10-27)
+
+**Ask (Brian):** make sure the Labor tab's actual sales come from the app and pick up live sales every day.
+**Found:** till sales were already from the app (every labor-store day since June has a Clover snapshot), but
+`?action=labor` and `?action=labor-plan` summed `daily_sales.total` only, which is the till. Live sales
+(`daily_sales.auction`, from the ~2 AM ingest) were never added, while the budget is set against till + live
+and the payroll sheet the page replaced counted them (its BL1 week ending 08-01 read $73,255; app net $73,005,
+till only $65,454). Week ending 2026-10-24 on prod: BL1 showed 17.42% labor vs 13.72% with live sales,
+BL14 18.50% vs 15.09%, BL16 13.31% vs 12.76%. Planning under-projected the same stores.
+
+- [x] scripts/test-labor-endpoint.mjs case 12: drives the real `?action=ingest`, then `?action=labor`
+      (week, per-store, day, labour %). 4 assertions fail on main
+- [x] scripts/test-labor-plan.mjs case 7b: moving $6k/week of BL1 from till to live leaves the signed-off
+      plan unchanged (730 / 721 / +9). 5 assertions fail on main (rec 669, delta −53)
+- [x] worker.js: both handlers select `auction`, actual sales = `total + auction`
+- [x] npm test 11048/11048 (126 suites)
+- [ ] Brian: merge, then deploy the worker from main (frontend unchanged, no CACHE_NAME bump needed)
+      ⚠️ A deploy run before the merge (18:55Z, version `7b3bbf9a`) shipped main WITHOUT this fix, and with
+      PR #358's worker. Brian applied migration-083 about ten minutes later; columns and both new queries verified in prod.
+      See lessons.md 2026-10-27.
+- [ ] After deploy: `retjg labor --grain w --from 2026-10-18 --to 2026-10-24` shows BL1 actualSales 88,340.21
+
+**Review:** daily refresh needs nothing new: the page reads D1 on every load and sw.js never caches the API,
+so live sales show the morning they are ingested. Not changed: the weekly digest email
+(`buildWeeklyDigestData`, worker.js:7238) compares till-only sales to the budget, the same gap. Fixed in PR #360 (entry above).
+
 # Google Business Profile posts through Buffer (2026-10-27)
 
 **Ask (Brian):** start Google Business Profile posting for the three profiles (Coliseum, Dupont, South Bend).
@@ -60,7 +86,9 @@ a `schedule_error` that says so, alerts, and Retry sends Google only.
 - [x] npm test 11036/11036; browser content-video 57, content-buffer-cap 54, submit-video 88; the sweep's other
       failures (associate-price-scan 3, inventory-delete 9, inventory-receiver 2, sign-studio 3) are identical
       on main's build
-- [ ] PR; then migration-083 → worker deploy (fresh clone, byte-verify) → merge → a test post to one GBP store
+- [x] Merged (#358). Worker deployed 2026-10-27 18:55Z (`7b3bbf9a`), ahead of its migration by accident;
+      migration-083 applied by Brian ~10 min later, columns + draft-list/sync queries verified read-only in prod
+- [ ] A test post to one GBP store
 
 # Halloween theme (2026-10-23)
 

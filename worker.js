@@ -22117,9 +22117,12 @@ export default {
         }), { headers: corsJson });
       }
 
+      // Actual sales are till + live sales (`total` + `auction`), the figure
+      // the budget is set against. `total` alone is the till only, and read
+      // that way every live-selling store's labour % came out high.
       const ph = stores.map(() => "?").join(",");
       const q = await env.DB.prepare(
-        `SELECT store, date, budget, total, budget_labor_hours, labor_hours
+        `SELECT store, date, budget, total, auction, budget_labor_hours, labor_hours
            FROM daily_sales
           WHERE date >= ? AND date <= ? AND store IN (${ph})
           ORDER BY date`
@@ -22141,7 +22144,7 @@ export default {
         if (!key) { invalidDateRows++; continue; }
         let b = buckets.get(key);
         if (!b) { b = Object.assign(blank(), { key, byStore: {} }); buckets.set(key, b); }
-        const bs = Number(r.budget) || 0, as = Number(r.total) || 0;
+        const bs = Number(r.budget) || 0, as = (Number(r.total) || 0) + (Number(r.auction) || 0);
         const bh = Number(r.budget_labor_hours) || 0, ah = Number(r.labor_hours) || 0;
         add(b, bs, as, bh, ah);
         add(b.byStore[r.store] || (b.byStore[r.store] = blank()), bs, as, bh, ah);
@@ -22206,9 +22209,10 @@ export default {
       start.setUTCDate(start.getUTCDate() - (LABOR_TREND_LOOKBACK_WEEKS * 7 + 6));
       const rangeFrom = start.toISOString().slice(0, 10);
 
+      // Actual sales are till + live sales, as in ?action=labor above.
       const ph = stores.map(() => "?").join(",");
       const q = await env.DB.prepare(
-        `SELECT store, date, budget, total, budget_labor_hours, labor_hours
+        `SELECT store, date, budget, total, auction, budget_labor_hours, labor_hours
            FROM daily_sales
           WHERE date >= ? AND date <= ? AND store IN (${ph})
           ORDER BY date`
@@ -22223,7 +22227,7 @@ export default {
         if (!weeks) { weeks = new Map(); byStoreWeeks.set(r.store, weeks); }
         let w = weeks.get(key);
         if (!w) { w = { weekEnd: key, budgetSales: 0, actualSales: 0, budgetHours: 0, actualHours: 0, missingDays: 0 }; weeks.set(key, w); }
-        const as = Number(r.total) || 0, ah = Number(r.labor_hours) || 0;
+        const as = (Number(r.total) || 0) + (Number(r.auction) || 0), ah = Number(r.labor_hours) || 0;
         w.budgetSales += Number(r.budget) || 0;
         w.budgetHours += Number(r.budget_labor_hours) || 0;
         w.actualSales += as;
