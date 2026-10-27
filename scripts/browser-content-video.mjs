@@ -201,7 +201,7 @@ for (const dark of [true, false]) {
     await page.waitForTimeout(300);
     const card = await text(page, '#ct-drafts');
     check(/South Bend · Clip 0:45 · Reel/.test(card), `[${t}] the board's card says Clip 0:45 · Reel (${card.slice(0, 100)})`);
-    check(/South Bend · 2 photos · Friday retail/.test(card), `[${t}] the retail auto-draft's card says Friday retail`);
+    check(/South Bend · 2 photos · \+ Google · Friday retail/.test(card), `[${t}] the retail auto-draft's card says + Google and Friday retail (${card.slice(0, 160)})`);
     // Editing a draft whose video the picker doesn't list: shown, selected, removable.
     await page.evaluate(() => window.ctEditDraft(6));
     await page.waitForTimeout(500);
@@ -209,6 +209,25 @@ for (const dark of [true, false]) {
     check(/Store walk · 3:20 · posts as a Facebook video/.test(await text(page, '#ct-preview-foot')), `[${t}] and previewed`);
     await page.evaluate(() => window.ctPickVideo(3));
     check(!(await hidden(page, '#ct-cover-section')), `[${t}] and it can be unselected (the photo pickers come back)`);
+    // ── "Also post to Google" (Brian, 2026-10-27) ──
+    await page.evaluate(() => { window.ctSetTab('compose'); window.ctResetComposer(); document.getElementById('ct-store').value = 'BL2'; window.ctOnStoreChange(); });
+    await page.waitForTimeout(500);
+    check(!(await hidden(page, '#ct-google-row')) && await page.evaluate(() => document.getElementById('ct-google').checked), `[${t}] South Bend: the switch shows, on by default`);
+    const gr = await page.evaluate(RATIO, '#ct-google-row span span');
+    check(gr >= 4.5, `[${t}] its hint clears AA (${gr}:1)`);
+    await page.evaluate(() => { window.ctPickThumb(5); window.ctTogglePhoto(101); });
+    check(/also on Google/.test(await text(page, '#ct-preview-foot')), `[${t}] the preview says it also goes to Google`);
+    await page.click('#ct-google');
+    check(!/also on Google/.test(await text(page, '#ct-preview-foot')), `[${t}] switched off, it doesn't`);
+    // Await the save itself: it resets the composer AFTER the request, so a pick made before
+    // it finishes is wiped (the status text can't be waited on — it still says the last save).
+    await page.evaluate(async () => { window.__saved = null; await window.ctSaveDraft(); });
+    check((await page.evaluate(() => window.__saved)).google === false, `[${t}] and saves google: false`);
+    await page.evaluate(() => window.ctPickVideo(11));
+    check(await hidden(page, '#ct-google-row'), `[${t}] a video post hides the switch (Google takes no video)`);
+    await page.evaluate(() => { window.ctResetComposer(); document.getElementById('ct-store').value = 'BL14'; window.ctOnStoreChange(); });
+    await page.waitForTimeout(400);
+    check(await hidden(page, '#ct-google-row'), `[${t}] Battle Creek (no Google listing): no switch`);
     check(errs.length === 0, `[${t}] no page errors (${errs.join(' | ').slice(0, 200)})`);
   });
 }

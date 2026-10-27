@@ -1,3 +1,31 @@
+# Google Business Profile posts through Buffer (2026-10-27)
+
+**Ask (Brian):** start Google Business Profile posting for the three profiles (Coliseum, Dupont, South Bend).
+**Decisions (Brian, asked):** a per-post "Also post to Google" switch, on by default; the cover graphic is
+Google's one image (first photo when a draft has no cover); no button.
+**Design (stated, not asked):** Google is a second destination of the same draft, sent after Facebook through
+the same guarded hand-off. Each publish-log row now records its channel and service, so a retry sends only
+the destination that is missing. Google takes no video, so video drafts and stores without a listing never
+offer it. Hashtags are dropped from Google's text (1,500-char cap). A Google failure after Facebook posted is
+a `schedule_error` that says so, alerts, and Retry sends Google only.
+
+- [x] Channel map verified (Buffer metadata + Google Maps listings): BL1 Coliseum, BL4 Dupont, BL2 South Bend
+- [x] migration-083: `marketing_drafts.google`, `marketing_publish_log.channel_id` + `service` (all nullable;
+      legacy log rows count as Facebook)
+- [x] worker: `bufferGoogleWanted/Text/Check`, `bufferHandOff` per channel, `publishDraftViaBuffer` FB → Google,
+      sync + reaper + reconcile check every destination, `google_url` on drafts, `draft-save` stores the switch,
+      `draft-schedule` runs the Google check before accepting
+- [x] app: switch under the caption (BL1/BL2/BL4, photo posts only), preview "also on Google", card
+      "+ Google" and a "Google ↗" link; autosave/edit/rehydrate keep the choice
+- [x] scripts/test-buffer-google.mjs: 65 pass on the branch, fails on main. test-buffer-publish /
+      test-bin-photo-autodraft pinned to `google: 0` where they test Facebook alone
+- [x] browser-content-video: switch shown/hidden, AA contrast both themes, saves `google: false`;
+      browser-content-buffer-cap expectation now carries "+ Google". (A race in my own new check: it didn't
+      await the save, so the save's reset wiped the next pick. Fixed by awaiting ctSaveDraft.)
+- [x] CACHE_NAME v288 + shell-cache fixture; npm test 11019/11019 (126 suites)
+- [ ] Fresh-eyes review
+- [ ] PR; then migration-083 → worker deploy (fresh clone, byte-verify) → merge → a test post to one GBP store
+
 # Halloween theme (2026-10-23)
 
 **Ask (Brian):** a Halloween theme users can pick: orange and black, spooky vibes, preview first.

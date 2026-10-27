@@ -131,7 +131,7 @@ for (const dark of [true, false]) {
 
     // ── The over-limit auto-draft in the Drafts lane ──
     const lane = await text(page, '#ct-drafts');
-    check(/12 photos · remove 3 to post/.test(lane), `[${t}] the 12-photo draft says to remove 3 (${lane.slice(0, 120)})`);
+    check(/12 photos · \+ Google · remove 3 to post/.test(lane), `[${t}] the 12-photo draft says to remove 3 (${lane.slice(0, 120)})`);
     check(!/(^|[^0-9])2 photos · remove/.test(lane), `[${t}] the 2-photo draft carries no warning`);
     const warn = await page.evaluate(() => [...document.querySelectorAll('#ct-drafts div')].find(d => /remove 3 to post/.test(d.textContent) && !d.children.length)?.className || '');
     check(/text-opl-bad/.test(warn), `[${t}] the warning is in the bad colour`);

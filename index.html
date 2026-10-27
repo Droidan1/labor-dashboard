@@ -4678,6 +4678,12 @@
               <p id="ct-ai-note" class="hidden text-[11px] text-opl-inkDim dark:text-op-inkDim mt-1">✨ AI-drafted — edit as needed.</p>
             </div>
 
+            <label id="ct-google-row" class="hidden flex items-start gap-2.5 cursor-pointer">
+              <input id="ct-google" type="checkbox" checked onchange="ctGoogleChanged()" class="mt-0.5 w-4 h-4 accent-[#3BB54A]">
+              <span class="text-sm text-opl-ink dark:text-op-ink">Also post to Google
+                <span class="block text-xs text-opl-inkDim dark:text-op-inkDim">The store's Google listing gets the cover and the caption, without hashtags.</span></span>
+            </label>
+
             <div class="flex items-center gap-3">
               <button id="ct-save-draft" onclick="ctSaveDraft()" class="px-5 py-2.5 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] rounded-xl transition-colors">Save draft</button>
               <button id="ct-schedule-btn" onclick="ctScheduleFromComposer()" class="px-4 py-2.5 text-sm font-semibold rounded-xl border border-[rgba(20,16,8,0.14)] dark:border-op-border text-opl-ink dark:text-op-ink hover:border-accent-green/50 transition-colors">Schedule…</button>
@@ -20147,6 +20153,10 @@
   // (2026-10-19) to have the admin pick the 9 rather than the app dropping any, so the
   // picker stops at 9 and a draft that already has more says how many to remove.
   const CT_MAX_PHOTOS = 9;
+  // Stores whose Google listing is connected in Buffer: mirrors BUFFER_GOOGLE_CHANNELS in
+  // worker.js (the worker decides; this only decides whether to show the switch).
+  const CT_GOOGLE_STORES = ['BL1', 'BL2', 'BL4'];
+  let ctGoogle = true;         // "Also post to Google" (Brian, 2026-10-27: per post, on by default)
   let ctVideos = [];           // this store's finished videos (?action=marketing-videos)
   let ctSelVideo = null;       // a video post is ONE video, no cover, no photos
   let ctFlowWeeks = null;      // cached retail-week ranges (marketing_flow) for foldering photos
@@ -20209,7 +20219,7 @@
   function ctSaveLocal() {
     try {
       localStorage.setItem(CT_LS, JSON.stringify({
-        store: el('ct-store') ? el('ct-store').value : '', thumb: ctSelThumb, photos: [...ctSelPhotos], video: ctSelVideo,
+        store: el('ct-store') ? el('ct-store').value : '', thumb: ctSelThumb, photos: [...ctSelPhotos], video: ctSelVideo, google: ctGoogle,
         topic: el('ct-topic') ? el('ct-topic').value : '', caption: el('ct-caption') ? el('ct-caption').value : '',
         type: ctPostType, captionSource: ctCaptionSource, editing: ctEditingId,
       }));
@@ -20227,6 +20237,7 @@
     if (!video && !ctSelThumb) throw new Error('Pick a cover thumbnail, or a video.');
     if (!video && !ctSelPhotos.size) throw new Error('Select at least one photo.');
     const body = { store, thumbnail_id: video ? null : ctSelThumb, photo_ids: video ? [] : [...ctSelPhotos], video_id: video ? ctSelVideo : null,
+                   google: ctGoogleApplies() ? ctGoogle : undefined,
                    caption: el('ct-caption').value.trim(), caption_source: ctCaptionSource, topic: (el('ct-topic') ? el('ct-topic').value.trim() : ''), post_type: ctPostType };
     if (ctEditingId) body.id = ctEditingId;
     const r = await fetch(`${WORKER_BASE}?action=draft-save`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -20456,7 +20467,7 @@
     });
   }
 
-  function ctOnStoreChange() { ctMarkDirty(); ctRenderPreview(); ctLoadPhotos().then(() => ctRenderPreview()); }
+  function ctOnStoreChange() { ctMarkDirty(); ctUpdateGoogleRow(); ctRenderPreview(); ctLoadPhotos().then(() => { ctUpdateGoogleRow(); ctRenderPreview(); }); }
   window.ctOnStoreChange = ctOnStoreChange;
 
   // Post-type toggle chips (replaces the old <select>). All reads/writes go through ctPostType.
@@ -20520,7 +20531,8 @@
       const bits = [];
       if (ctSelThumb) bits.push('Cover');
       if (nPhotos) bits.push(nPhotos + ' bin photo' + (nPhotos === 1 ? '' : 's'));
-      foot.textContent = bits.length ? bits.join(' + ') + ' · carousel post' : 'Add a cover to preview';
+      foot.textContent = (bits.length ? bits.join(' + ') + ' · carousel post' : 'Add a cover to preview')
+        + (bits.length && ctGoogleApplies() && ctGoogle ? ' · also on Google' : '');
     }
     ctUpdateCaptionUI();
   }
@@ -20613,6 +20625,7 @@
     ctSelThumb = s.thumb || null;
     ctSelPhotos = new Set((s.photos || []).map(Number));
     ctSelVideo = ctVideos.some(v => v.id === s.video) ? s.video : null;
+    ctGoogle = s.google !== false;
     ctPostType = s.type || 'bin_preview';
     ctCaptionSource = s.captionSource || 'manual';
     if (el('ct-topic')) el('ct-topic').value = s.topic || '';
@@ -20809,7 +20822,20 @@
     el('ct-cover-section')?.classList.toggle('hidden', on);
     el('ct-photos-section')?.classList.toggle('hidden', on);
     el('ct-video-mode-note')?.classList.toggle('hidden', !on);
+    ctUpdateGoogleRow();
   }
+  // The switch shows only where it can do something: a store with a Google listing, and a
+  // photo post (Google takes no video).
+  function ctGoogleApplies() {
+    const store = el('ct-store') ? el('ct-store').value : '';
+    return CT_GOOGLE_STORES.includes(store) && ctSelVideo == null;
+  }
+  function ctUpdateGoogleRow() {
+    el('ct-google-row')?.classList.toggle('hidden', !ctGoogleApplies());
+    if (el('ct-google')) el('ct-google').checked = ctGoogle;
+  }
+  function ctGoogleChanged() { ctGoogle = !!el('ct-google')?.checked; ctRenderPreview(); ctMarkDirty(); }
+  window.ctGoogleChanged = ctGoogleChanged;
 
   async function ctPickVideo(id) {
     if (ctSelVideo === id) { ctSelVideo = null; }
@@ -21193,7 +21219,7 @@
   window.ctDeleteSelectedPhotos = ctDeleteSelectedPhotos;
 
   function ctResetComposer() {
-    ctEditingId = null; ctSelThumb = null; ctSelPhotos = new Set(); ctSelVideo = null; ctCaptionSource = 'manual'; ctPostType = 'bin_preview'; ctDirty = false;
+    ctEditingId = null; ctSelThumb = null; ctSelPhotos = new Set(); ctSelVideo = null; ctGoogle = true; ctCaptionSource = 'manual'; ctPostType = 'bin_preview'; ctDirty = false;
     ctOpenFolder = null; ctPhotoDelMode = false; ctPhotoDel = new Set();
     ctClearLocal();
     if (el('ct-caption')) el('ct-caption').value = '';
@@ -21482,6 +21508,7 @@
       meta = (dr.post_url ? 'Live' : 'Posted') + ' · ' + escapeHtml(ctStoreLabel(dr.store));
       metaClass = 'text-accent-green';
       actions = (dr.post_url ? `<a href="${escapeHtml(dr.post_url)}" target="_blank" rel="noopener" class="shrink-0 text-[11px] font-semibold text-accent-blue px-1">View ↗</a>` : '')
+        + (dr.google_url ? `<a href="${escapeHtml(dr.google_url)}" target="_blank" rel="noopener" class="shrink-0 text-[11px] font-semibold text-accent-blue px-1">Google ↗</a>` : '')
         + `<button onclick="ctDeleteDraft(${dr.id})" aria-label="Delete record" class="shrink-0 text-[11px] font-semibold text-opl-bad dark:text-[#f87171] px-1">Delete</button>`;
     } else if (kind === 'scheduled') {
       if (dr.status === 'schedule_error') {
@@ -21517,7 +21544,8 @@
       const what = dr.video_id
         ? `${dr.video_type === 'clip' ? 'Clip' : 'Store walk'}${dr.video_duration_ms ? ' ' + ctMmss(dr.video_duration_ms) : ''} · ${dr.video_type === 'clip' ? 'Reel' : 'video'}`
         : nPhotos + ' photo' + (nPhotos === 1 ? '' : 's');
-      meta = escapeHtml(ctStoreLabel(dr.store)) + ' · ' + escapeHtml(what) + (dr.origin === 'flow' ? ' · from Flow' : dr.origin === 'retail' ? ' · Friday retail' : '')
+      const toGoogle = !dr.video_id && dr.google !== 0 && CT_GOOGLE_STORES.includes(dr.store);
+      meta = escapeHtml(ctStoreLabel(dr.store)) + ' · ' + escapeHtml(what) + (toGoogle ? ' · + Google' : '') + (dr.origin === 'flow' ? ' · from Flow' : dr.origin === 'retail' ? ' · Friday retail' : '')
         + (over > 0 ? ` · remove ${over} to post` : '');
       metaClass = over > 0 ? 'font-semibold text-opl-bad dark:text-[#f87171]' : 'text-opl-inkDim dark:text-op-inkDim';
       actions = `<button onclick="ctPublishDraft(${dr.id})" class="shrink-0 text-[11px] font-semibold text-white bg-accent-blue rounded-md px-2 py-0.5">Publish</button>`
@@ -21665,6 +21693,7 @@
     ctSelThumb = d.thumbnail_id || null;
     ctSelPhotos = new Set((d.photo_ids || []).map(Number));
     ctSelVideo = d.video_id || null;
+    ctGoogle = d.google !== 0;   // NULL (never set) is on
     // Its video may be older than the 50 the picker lists: show it anyway, selected, so
     // it can be seen and unselected rather than leaving the pickers hidden around nothing.
     if (ctSelVideo != null && !ctVideos.some(v => v.id === ctSelVideo)) {

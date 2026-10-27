@@ -16052,11 +16052,11 @@ const BUFFER_SETTLE_MS = 5 * 60 * 1000;                 // how long a fresh post
 // later.
 // Returns { ok, post|null } or an error.
 //
-// A VIDEO is matched on more than its URL: Buffer converts video and may re-host it, so
-// its `source` may not be ours any more (unverified; review 2026-10-19). A video post
-// also matches as the one live video on that channel, with this exact caption (a video
-// post must have one), made within 10 minutes of the attempt, that no other draft has
-// already claimed.
+// A VIDEO (and a Google post's single image) is matched on more than its URL: Buffer
+// converts video and may re-host it, so its `source` may not be ours any more
+// (unverified; review 2026-10-19). Such a post also matches as the one live asset of
+// that type on that channel, with this exact text (both require text), made within 10
+// minutes of the attempt, that no other draft has already claimed.
 async function bufferFindEarlierPost(env, priors, sentNow, draftId) {
   for (const p of priors.filter(x => x.buffer_post_id)) {
     const r = await bufferGql(env, "query PostStatus($id: PostId!) { post(input: { id: $id }) { id status } }", { id: String(p.buffer_post_id) });
@@ -16077,10 +16077,13 @@ async function bufferFindEarlierPost(env, priors, sentNow, draftId) {
     const want = key(sent);
     let hit = nodes.find(p => BUFFER_LIVE.includes(p.status) && key({ ch: sent.ch, assets: (p.assets || []).map(a => a && a.source), text: p.text }) === want);
     const caption = String(sent.text || "").trim();
-    if (!hit && sent.video && caption) {
+    // Loose match for a single re-hostable asset: a video (Buffer transcodes), or the one
+    // image of a Google post (unverified whether Buffer keeps our URL there).
+    const loose = sent.loose || (sent.video ? "video" : null);
+    if (!hit && loose && caption) {
       for (const p of nodes) {
         const as = p.assets || [];
-        if (!BUFFER_LIVE.includes(p.status) || as.length !== 1 || !as[0] || as[0].type !== "video") continue;
+        if (!BUFFER_LIVE.includes(p.status) || as.length !== 1 || !as[0] || as[0].type !== loose) continue;
         if (String(p.text || "").trim() !== caption) continue;
         if (!(new Date(p.createdAt).getTime() <= at + 10 * 60 * 1000)) continue;
         const claimed = await env.DB.prepare("SELECT 1 FROM marketing_publish_log WHERE buffer_post_id = ? AND draft_id <> ? LIMIT 1").bind(String(p.id), draftId).first();
@@ -16101,28 +16104,75 @@ async function bufferFindEarlierPost(env, priors, sentNow, draftId) {
   return { ok: true, post: null };
 }
 
-async function publishDraftViaBuffer(env, { draftId, published }) {
-  if (!env.DB) return { ok: false, error: "Storage not configured (DB)", status: 500 };
-  const draft = await env.DB.prepare("SELECT * FROM marketing_drafts WHERE id = ?").bind(draftId).first();
-  if (!draft) return { ok: false, error: "Draft not found", status: 404 };
+// ── Destinations ─────────────────────────────────────────────────────────────
+// A draft goes to the store's Facebook Page and, when its "Also post to Google" switch is
+// on (default on), to the store's Google Business Profile (Brian, 2026-10-27). Each
+// destination is its own guarded hand-off with its own log rows (channel_id), so a retry
+// skips the ones already done and never posts a second copy to either.
+// Google listings connected in Buffer (mapped 2026-10-27 from each channel's Maps link:
+// 820 N Coliseum Blvd, 704 E Dupont Rd, South Bend). Battle Creek and Indy East have none.
+const BUFFER_GOOGLE_CHANNELS = {
+  BL1: "6ac7ddf26a5c39ccb6548d88", BL4: "6ac7ddf26a5c39ccb6548d8b", BL2: "6ac7ddf26a5c39ccb6548d8a",
+};
+const BUFFER_GOOGLE_TEXT_MAX = 1500;   // Google's limit (Buffer's API would take more and Google would refuse it)
+const BUFFER_GOOGLE_IMAGE_TYPE = /^image\/(jpeg|jpg|png)$/i;   // no WebP on Google
+const PHONE_NUMBER = /(?:\+?1[\s.-]?)?\(?\b\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/;
+
+// What goes to Google: the caption without its hashtags (they do nothing on a listing),
+// and ONE image — the cover (Brian), else the first photo. Video posts don't go: Google
+// takes no video. Returns null (not wanted), { error }, or { text, imageUrl }.
+function bufferGoogleWanted(draft) {
   const store = String(draft.store || "").toUpperCase();
-  const channelId = BUFFER_FACEBOOK_CHANNELS[store];
-  if (!channelId) return { ok: false, error: `No Buffer Facebook channel mapped for store ${store}`, status: 400 };
-  const target = await env.DB.prepare("SELECT page_id, page_name FROM facebook_page_targets WHERE store = ?").bind(store).first().catch(() => null);
-  const pageId = target ? String(target.page_id) : null;
+  return !!BUFFER_GOOGLE_CHANNELS[store] && !draft.video_id && draft.google !== 0;
+}
+function bufferGoogleText(caption) {
+  return String(caption || "")
+    .split("\n").filter(line => !/^\s*(#[\p{L}\p{N}_]+\s*)+$/u.test(line)).join("\n")   // drop hashtag-only lines
+    .replace(/\s#[\p{L}\p{N}_]+/gu, "")                                                   // and stray inline tags
+    .replace(/\n{3,}/g, "\n\n").trim();
+}
+async function bufferGoogleCheck(env, draft, chk) {
+  if (!bufferGoogleWanted(draft)) return null;
+  const text = bufferGoogleText(chk.text);
+  if (!text) return { error: "Google: add a caption (the Google post is the caption without its hashtags)" };
+  if (text.length > BUFFER_GOOGLE_TEXT_MAX) return { error: `Google: the caption is ${text.length} characters without hashtags; Google takes ${BUFFER_GOOGLE_TEXT_MAX}. Shorten it, or turn off "Also post to Google"` };
+  if (PHONE_NUMBER.test(text)) return { error: 'Google: posts can\'t contain a phone number. Remove it, or turn off "Also post to Google"' };
+  const pick = chk.images.find(i => i.kind === "t") || chk.images[0];
+  if (!pick) return { error: "Google: the post needs a cover or a photo" };
+  if (!BUFFER_GOOGLE_IMAGE_TYPE.test(String(pick.row.content_type || ""))) return { error: `Google takes JPEG or PNG; image #${pick.row.id} is ${pick.row.content_type}` };
+  return { text, imageUrl: bufferImageUrl(env, pick.kind, pick.row) };
+}
 
-  const chk = await bufferDraftCheck(env, draft);
-  if (chk.error) return { ok: false, error: chk.error, status: 400 };
-  // A store walk posts as a normal Facebook video; a clip as a Reel (Brian, 2026-10-19).
-  const assets = chk.video ? [{ video: { url: bufferVideoUrl(env, chk.video) } }]
-    : chk.images.map(({ kind, row }) => ({ image: { url: bufferImageUrl(env, kind, row) } }));
-  const fbType = chk.video && chk.video.video_type === "clip" ? "reel" : "post";
-  const sentNow = { ch: channelId, assets: assets.map(a => (a.image || a.video).url), text: chk.text, video: !!chk.video };
+// Rows from before migration-083 have no channel_id: they are the store's Facebook hand-off.
+const LOG_CHANNEL_SQL = "COALESCE(channel_id, ?)";
+async function bufferTargetDone(env, draftId, channelId, fbChannelId, statuses) {
+  const row = await env.DB.prepare(
+    `SELECT 1 FROM marketing_publish_log WHERE draft_id = ? AND ${LOG_CHANNEL_SQL} = ?
+        AND (post_id IS NOT NULL OR buffer_post_id IS NOT NULL) AND status IN (${statuses.map(() => "?").join(",")}) LIMIT 1`
+  ).bind(draftId, fbChannelId, channelId, ...statuses).first();
+  return !!row;
+}
+// Every destination this draft has, and whether each is done. For the scheduler's reconcile
+// and reaper, which must not call a draft posted when only Facebook is.
+async function bufferDestinationsDone(env, draft, live) {
+  const store = String(draft.store || "").toUpperCase();
+  const fb = BUFFER_FACEBOOK_CHANNELS[store];
+  if (!fb) return false;
+  const statuses = live ? ["published", "queued"] : ["published", "queued", "staged"];
+  const channels = [fb, ...(bufferGoogleWanted(draft) ? [BUFFER_GOOGLE_CHANNELS[store]] : [])];
+  for (const ch of channels) if (!(await bufferTargetDone(env, draft.id, ch, fb, statuses))) return false;
+  return true;
+}
 
-  // 1. An earlier attempt with an unknown outcome may already have made this post.
+// ONE guarded hand-off to ONE channel (unchanged from the Facebook-only version except
+// that every log row now names its channel). Returns { ok, post, live, adopted } or an error.
+async function bufferHandOff(env, { draftId, store, pageId, fbChannelId, service, channelId, text, assets, metadata, published, loose }) {
+  const sentNow = { ch: channelId, assets: assets.map(a => (a.image || a.video).url), text, video: loose === "video", loose };
+  // 1. An earlier attempt to THIS channel with an unknown outcome may already have made it.
   const priors = (await env.DB.prepare(
-    "SELECT id, buffer_post_id, created_at, response FROM marketing_publish_log WHERE draft_id = ? AND status IN ('handing','unconfirmed') ORDER BY id"
-  ).bind(draftId).all()).results || [];
+    `SELECT id, buffer_post_id, created_at, response FROM marketing_publish_log
+      WHERE draft_id = ? AND ${LOG_CHANNEL_SQL} = ? AND status IN ('handing','unconfirmed') ORDER BY id`
+  ).bind(draftId, fbChannelId, channelId).all()).results || [];
   let post = null;
   if (priors.length) {
     const found = await bufferFindEarlierPost(env, priors, sentNow, draftId);
@@ -16142,8 +16192,8 @@ async function publishDraftViaBuffer(env, { draftId, published }) {
   // 2. Record the hand-off, and exactly what it sends, BEFORE making it. If this write
   //    fails, nothing is sent: a hand-off with no record is the one a retry can't find.
   const mark = await env.DB.prepare(
-    "INSERT INTO marketing_publish_log (draft_id, store, page_id, status, created_at, response) VALUES (?,?,?,'handing',?,?)"
-  ).bind(draftId, store, pageId, new Date().toISOString(), JSON.stringify(sentNow)).run();
+    "INSERT INTO marketing_publish_log (draft_id, store, page_id, status, created_at, response, channel_id, service) VALUES (?,?,?,'handing',?,?,?,?)"
+  ).bind(draftId, store, service === "facebook" ? pageId : null, new Date().toISOString(), JSON.stringify(sentNow), channelId, service).run();
   const markId = mark.meta && mark.meta.last_row_id;
   const settle = (status, fields = {}) => env.DB.prepare(
     "UPDATE marketing_publish_log SET status=?, buffer_post_id=COALESCE(?, buffer_post_id), response=? WHERE id=?"
@@ -16151,7 +16201,7 @@ async function publishDraftViaBuffer(env, { draftId, published }) {
 
   // 3. Hand it over (or adopt the one Buffer already has).
   if (!post) {
-    const input = { channelId, text: chk.text, schedulingType: "automatic", mode: published ? "shareNow" : "addToQueue", metadata: { facebook: { type: fbType } }, assets };
+    const input = { channelId, text, schedulingType: "automatic", mode: published ? "shareNow" : "addToQueue", metadata, assets };
     if (!published) input.saveToDraft = true;   // staged: lands as a Buffer draft for marketing (never adopted: see `live`)
     const r = await bufferGql(env,
       "mutation CreatePost($input: CreatePostInput!) { createPost(input: $input) { __typename ... on PostActionSuccess { post { id status } } ... on MutationError { message } } }",
@@ -16170,10 +16220,9 @@ async function publishDraftViaBuffer(env, { draftId, published }) {
     post = cp.post;
   }
 
-  // 4. 'queued' until syncBufferPosts sees Buffer send it; post_id/post_url arrive then.
-  //    Only once Buffer's id is recorded are the earlier attempts resolved: until then
-  //    they keep their earlier window open for a retry's look-up. Buffer already has the
-  //    post, so a failed write must not report failure: retry once, then carry on.
+  // 4. 'queued' until syncBufferPosts sees Buffer send it. Only once Buffer's id is
+  //    recorded are the earlier attempts resolved. Buffer already has the post, so a
+  //    failed write must not report failure: retry once, then carry on.
   const done = { buffer_post_id: String(post.id), response: JSON.stringify(post) };
   let settled = false;
   try { await settle(live ? "queued" : "staged", done); settled = true; }
@@ -16181,15 +16230,74 @@ async function publishDraftViaBuffer(env, { draftId, published }) {
   if (settled && adopted) {
     for (const p of priors) await env.DB.prepare("UPDATE marketing_publish_log SET status='superseded' WHERE id=?").bind(p.id).run().catch(() => {});
   }
+  return { ok: true, post, live, adopted };
+}
+
+async function publishDraftViaBuffer(env, { draftId, published }) {
+  if (!env.DB) return { ok: false, error: "Storage not configured (DB)", status: 500 };
+  const draft = await env.DB.prepare("SELECT * FROM marketing_drafts WHERE id = ?").bind(draftId).first();
+  if (!draft) return { ok: false, error: "Draft not found", status: 404 };
+  const store = String(draft.store || "").toUpperCase();
+  const channelId = BUFFER_FACEBOOK_CHANNELS[store];
+  if (!channelId) return { ok: false, error: `No Buffer Facebook channel mapped for store ${store}`, status: 400 };
+  const target = await env.DB.prepare("SELECT page_id, page_name FROM facebook_page_targets WHERE store = ?").bind(store).first().catch(() => null);
+  const pageId = target ? String(target.page_id) : null;
+
+  // Everything checked before anything is sent: a post Google would refuse is refused
+  // here, while someone is watching, rather than half-posted.
+  const chk = await bufferDraftCheck(env, draft);
+  if (chk.error) return { ok: false, error: chk.error, status: 400 };
+  const g = await bufferGoogleCheck(env, draft, chk);
+  if (g && g.error) return { ok: false, error: g.error, status: 400 };
+
+  // A store walk posts as a normal Facebook video; a clip as a Reel (Brian, 2026-10-19).
+  const fbAssets = chk.video ? [{ video: { url: bufferVideoUrl(env, chk.video) } }]
+    : chk.images.map(({ kind, row }) => ({ image: { url: bufferImageUrl(env, kind, row) } }));
+  const fbType = chk.video && chk.video.video_type === "clip" ? "reel" : "post";
+  const common = { draftId, store, pageId, fbChannelId: channelId, published };
+  const doneStatuses = published ? ["published", "queued"] : ["published", "queued", "staged"];
+
+  // Facebook first. It is the post; Google is the copy.
+  let fb = null;
+  if (!(await bufferTargetDone(env, draftId, channelId, channelId, doneStatuses))) {
+    fb = await bufferHandOff(env, { ...common, service: "facebook", channelId, text: chk.text, assets: fbAssets,
+      metadata: { facebook: { type: fbType } }, loose: chk.video ? "video" : null });
+    if (!fb.ok) return fb;
+  }
+  let gr = null, googleError = null;
+  if (g) {
+    const gch = BUFFER_GOOGLE_CHANNELS[store];
+    if (!(await bufferTargetDone(env, draftId, gch, channelId, doneStatuses))) {
+      gr = await bufferHandOff(env, { ...common, service: "googlebusiness", channelId: gch, text: g.text,
+        assets: [{ image: { url: g.imageUrl } }], metadata: { google: { type: "whats_new" } }, loose: "image" });
+      if (!gr.ok) googleError = gr.error || "Buffer refused it";
+    }
+  }
+
+  const live = fb ? fb.live : published;
   const now = new Date().toISOString();
-  const next = live ? "published" : "approved";
-  try { await env.DB.prepare("UPDATE marketing_drafts SET status=?, updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=?").bind(next, now, live ? now : null, draftId).run(); }
-  catch (_) { try { await env.DB.prepare("UPDATE marketing_drafts SET status=?, updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=?").bind(next, now, live ? now : null, draftId).run(); } catch (_) {} }
+  const setStatus = async (status, error) => {
+    const q = () => env.DB.prepare("UPDATE marketing_drafts SET status=?, schedule_error=?, claimed_at=NULL, updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=?")
+      .bind(status, error, now, status === "published" || status === "schedule_error" ? now : null, draftId).run();
+    try { await q(); } catch (_) { try { await q(); } catch (_) {} }
+  };
+  if (googleError) {
+    // Facebook is out; Google is not. Say so on the card (Retry sends it to Google only:
+    // Facebook is done and is skipped) and tell the superusers, as any failure does.
+    const msg = `Posted to Facebook. Google: ${googleError}. Retry sends it to Google only.`;
+    await setStatus("schedule_error", msg.slice(0, 300));
+    try { await dispatchScheduleFailureAlert(env, draftId, msg); } catch (_) {}
+  } else {
+    await setStatus(live ? "published" : "approved", null);
+  }
+  const fbPost = fb && fb.post;
   return {
-    ok: true, published: live, page: { id: pageId, name: target ? target.page_name : null },
-    postId: null, postUrl: null, photos: chk.images.length, video: chk.video ? chk.video.id : null, bufferPostId: String(post.id),
-    note: adopted ? "Buffer already had this post from an earlier attempt, so no second copy was made."
-      : live ? "Sent to Buffer. It posts to the store's Facebook Page within a minute."
+    ok: true, published: live, partial: !!googleError, page: { id: pageId, name: target ? target.page_name : null },
+    postId: null, postUrl: null, photos: chk.images.length, video: chk.video ? chk.video.id : null,
+    bufferPostId: fbPost ? String(fbPost.id) : null, google: g ? (googleError ? "failed" : gr ? "sent" : "already") : "off",
+    note: googleError ? `Sent to Facebook. Google failed: ${googleError}. Retry from the card sends it to Google only.`
+      : fb && fb.adopted ? "Buffer already had this post from an earlier attempt, so no second copy was made."
+      : live ? `Sent to Buffer. It posts to the store's Facebook Page${g ? " and Google listing" : ""} within a minute.`
       : "Saved as a Buffer draft. Schedule it in Buffer to post it.",
   };
 }
@@ -16210,26 +16318,28 @@ async function syncBufferPosts(env, now, window) {
   const failDraft = async (row, status, reason) => {
     await env.DB.prepare("UPDATE marketing_publish_log SET status=?, response=? WHERE id=? AND status='queued'")
       .bind(status, String(reason).slice(0, 2000), row.id).run().catch(() => {});
-    await failSchedule(env, row.draft_id, reason, nowIso, true);
+    // Say which destination failed: a draft can have a Facebook and a Google hand-off.
+    const where = row.service === "googlebusiness" ? "Google: " : "";
+    await failSchedule(env, row.draft_id, where + reason, nowIso, true);
   };
 
   if (window === "older") {
     // 'unconfirmed', not 'error': Buffer may still send it, so a Retry looks first.
     const stale = await env.DB.prepare(
-      "SELECT id, draft_id FROM marketing_publish_log WHERE status='queued' AND buffer_post_id IS NOT NULL AND created_at < ? LIMIT 20"
+      "SELECT id, draft_id, service FROM marketing_publish_log WHERE status='queued' AND buffer_post_id IS NOT NULL AND created_at < ? LIMIT 20"
     ).bind(new Date(nowMs - H48).toISOString()).all().catch(() => ({ results: [] }));
     for (const row of (stale.results || [])) { await failDraft(row, "unconfirmed", "Buffer never confirmed it posted (48 h)"); out.expired++; }
   }
 
   const due = (await env.DB.prepare(
-    "SELECT id, draft_id, buffer_post_id, created_at, response FROM marketing_publish_log WHERE status='queued' AND buffer_post_id IS NOT NULL AND created_at >= ? AND created_at < ? ORDER BY id LIMIT 50"
+    "SELECT id, draft_id, buffer_post_id, created_at, response, service FROM marketing_publish_log WHERE status='queued' AND buffer_post_id IS NOT NULL AND created_at >= ? AND created_at < ? ORDER BY id LIMIT 50"
   ).bind(new Date(from).toISOString(), new Date(to).toISOString()).all().catch(() => ({ results: [] }))).results || [];
   if (!due.length) return out;
 
   const since = new Date(Math.min(...due.map(r => new Date(r.created_at).getTime())) - 120000).toISOString();
   const list = await bufferGql(env,
     "query Recent($org: OrganizationId!, $ch: [ChannelId!], $since: DateTime!) { posts(first: 100, input: { organizationId: $org, filter: { channelIds: $ch, createdAt: { start: $since } } }) { edges { node { id status externalLink error { message } } } } }",
-    { org: BUFFER_ORG_ID, ch: [...new Set(Object.values(BUFFER_FACEBOOK_CHANNELS))], since });
+    { org: BUFFER_ORG_ID, ch: [...new Set([...Object.values(BUFFER_FACEBOOK_CHANNELS), ...Object.values(BUFFER_GOOGLE_CHANNELS)])], since });
   if (!list.ok) { out.errors++; return out; }   // try again next pass (and never hammer a 429)
   const byId = new Map(((list.data.posts && list.data.posts.edges) || []).map(e => e && e.node).filter(Boolean).map(p => [String(p.id), p]));
 
@@ -16449,6 +16559,19 @@ async function processScheduledPosts(env, now) {
         ? await env.DB.prepare("SELECT status FROM marketing_publish_log WHERE draft_id=? AND created_at >= ? AND (post_id IS NOT NULL OR buffer_post_id IS NOT NULL) AND status IN ('published','staged','queued') ORDER BY id DESC LIMIT 1").bind(row.id, row.claimed_at).first()
         : await alreadyPosted(row.id, row.publish_live !== 0);
     } catch (e) { out.skipped++; continue; }   // leave it stuck, never re-post blind
+    // Through Buffer a draft can have two destinations. Facebook done and Google not is
+    // not "posted": say so on the card, where Retry sends it to Google only.
+    if (done && env.BUFFER_API_KEY) {
+      let all = true;
+      try {
+        const d = await env.DB.prepare("SELECT id, store, video_id, google FROM marketing_drafts WHERE id=?").bind(row.id).first();
+        all = !d || await bufferDestinationsDone(env, d, done.status !== 'staged');
+      } catch (e) { out.skipped++; continue; }
+      if (!all) {
+        await failSchedule(env, row.id, 'Posted to Facebook; Google did not finish. Retry sends it to Google only.', nowIso, true);
+        out.reaped++; continue;
+      }
+    }
     if (done && done.status === 'staged') {
       await env.DB.prepare("UPDATE marketing_drafts SET status='approved', updated_at=? WHERE id=? AND status='publishing'").bind(nowIso, row.id).run().catch(() => {});
     } else if (done) {
@@ -16478,8 +16601,16 @@ async function processScheduledPosts(env, now) {
     ).bind(nowIso, row.id).run();
     if (!claim.meta || claim.meta.changes !== 1) { out.skipped++; continue; }
     // 5. Reconcile-before-publish — the only guard against an ambiguous-outcome duplicate.
+    // Through Buffer the publisher itself skips every destination already done and looks
+    // before re-sending one with an unknown outcome, so the reconcile asks for ALL of them:
+    // Facebook done must not stop Google being tried.
     let prior;
-    try { prior = await alreadyPosted(row.id, row.publish_live !== 0); }
+    try {
+      if (env.BUFFER_API_KEY) {
+        const d = await env.DB.prepare("SELECT id, store, video_id, google FROM marketing_drafts WHERE id=?").bind(row.id).first();
+        prior = d && await bufferDestinationsDone(env, d, row.publish_live !== 0) ? { post_id: "all" } : null;
+      } else prior = await alreadyPosted(row.id, row.publish_live !== 0);
+    }
     catch (e) {
       // Cannot tell whether it already went out: put it back and say why, rather than risk a second post.
       await env.DB.prepare("UPDATE marketing_drafts SET status='scheduled', claimed_at=NULL, next_attempt_at=?, schedule_error=? WHERE id=?")
@@ -18832,6 +18963,8 @@ export default {
         // A video post is ONE video and nothing else (Buffer takes no images beside a
         // video on Facebook), from the same store's finished uploads.
         const videoId = (b.video_id != null && b.video_id !== "") ? parseInt(b.video_id, 10) : null;
+        // "Also post to Google": true/false from the composer; absent (an older page) keeps what is stored.
+        const google = b.google === true ? 1 : b.google === false ? 0 : null;
         if (videoId != null) {
           if (!Number.isInteger(videoId)) return new Response(JSON.stringify({ error: "Invalid video" }), { status: 400, headers: corsJson });
           if (thumbnailId || photoIds.length) return new Response(JSON.stringify({ error: "A video post carries no cover or photos. Remove them, or the video." }), { status: 400, headers: corsJson });
@@ -18850,8 +18983,8 @@ export default {
           // the flag alone, so later uploads keep landing. (SET reads the OLD row.)
           const res = await env.DB.prepare(
             `UPDATE marketing_drafts SET store=?, thumbnail_id=?, photo_ids=?, video_id=?, caption=?, caption_source=?, topic=?, post_type=?,
-                    photos_curated = CASE WHEN COALESCE(photo_ids, '[]') = ? THEN photos_curated ELSE 1 END, updated_at=? WHERE id=?`
-          ).bind(store, thumbnailId, JSON.stringify(photoIds), videoId, caption, captionSource, topic, postType, JSON.stringify(photoIds), now, id).run();
+                    photos_curated = CASE WHEN COALESCE(photo_ids, '[]') = ? THEN photos_curated ELSE 1 END, google = COALESCE(?, google), updated_at=? WHERE id=?`
+          ).bind(store, thumbnailId, JSON.stringify(photoIds), videoId, caption, captionSource, topic, postType, JSON.stringify(photoIds), google, now, id).run();
           if (!res.meta || res.meta.changes === 0) return new Response(JSON.stringify({ error: "Draft not found" }), { status: 404, headers: corsJson });
           // A scheduled post must always have an image or a video; an edit that removes them auto-unschedules it.
           if (cur && cur.status === "scheduled" && !thumbnailId && !photoIds.length && !videoId) {
@@ -18860,9 +18993,9 @@ export default {
           return new Response(JSON.stringify({ ok: true, id }), { headers: corsJson });
         }
         const res = await env.DB.prepare(
-          `INSERT INTO marketing_drafts (store, thumbnail_id, photo_ids, video_id, caption, caption_source, topic, post_type, status, created_by, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?, 'draft', ?, ?, ?)`
-        ).bind(store, thumbnailId, JSON.stringify(photoIds), videoId, caption, captionSource, topic, postType, (currentUser && currentUser.email) || null, now, now).run();
+          `INSERT INTO marketing_drafts (store, thumbnail_id, photo_ids, video_id, google, caption, caption_source, topic, post_type, status, created_by, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?, 'draft', ?, ?, ?)`
+        ).bind(store, thumbnailId, JSON.stringify(photoIds), videoId, google, caption, captionSource, topic, postType, (currentUser && currentUser.email) || null, now, now).run();
         return new Response(JSON.stringify({ ok: true, id: res.meta && res.meta.last_row_id }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
@@ -18874,7 +19007,8 @@ export default {
       if (!isAdminSecret && !canAccessInventory(currentUser)) return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
       if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
       const status = String(url.searchParams.get("status") || "").trim().toLowerCase();
-      let q = "SELECT d.*, (SELECT pl.post_url FROM marketing_publish_log pl WHERE pl.draft_id = d.id AND pl.post_url IS NOT NULL ORDER BY pl.id DESC LIMIT 1) AS post_url," +
+      let q = "SELECT d.*, (SELECT pl.post_url FROM marketing_publish_log pl WHERE pl.draft_id = d.id AND pl.post_url IS NOT NULL ORDER BY COALESCE(pl.service, 'facebook') = 'googlebusiness', pl.id DESC LIMIT 1) AS post_url," +
+        " (SELECT pl.post_url FROM marketing_publish_log pl WHERE pl.draft_id = d.id AND pl.service = 'googlebusiness' AND pl.post_url IS NOT NULL ORDER BY pl.id DESC LIMIT 1) AS google_url," +
         " v.video_type AS video_type, v.duration_ms AS video_duration_ms FROM marketing_drafts d LEFT JOIN marketing_videos v ON v.id = d.video_id WHERE 1=1";
       const binds = [];
       if (status && status !== "all") { q += " AND d.status = ?"; binds.push(status); }
@@ -19134,7 +19268,7 @@ export default {
         const b = await request.json();
         const id = parseInt(b.id, 10);
         if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
-        const draft = await env.DB.prepare("SELECT store, status, thumbnail_id, photo_ids, video_id, caption FROM marketing_drafts WHERE id=?").bind(id).first();
+        const draft = await env.DB.prepare("SELECT store, status, thumbnail_id, photo_ids, video_id, google, caption FROM marketing_drafts WHERE id=?").bind(id).first();
         if (!draft) return new Response(JSON.stringify({ error: "Draft not found" }), { status: 404, headers: corsJson });
         if (draft.status === "published" || draft.status === "publishing") return new Response(JSON.stringify({ error: "That post is already publishing or published" }), { status: 409, headers: corsJson });
         let pids = []; try { pids = JSON.parse(draft.photo_ids || "[]"); } catch (_) {}
@@ -19144,6 +19278,8 @@ export default {
         if (env.BUFFER_API_KEY) {
           const chk = await bufferDraftCheck(env, draft);
           if (chk.error) return new Response(JSON.stringify({ error: chk.error }), { status: 400, headers: corsJson });
+          const g = await bufferGoogleCheck(env, draft, chk);
+          if (g && g.error) return new Response(JSON.stringify({ error: g.error }), { status: 400, headers: corsJson });
         }
         const when = etWallClockToUtc(b.et_wall_clock, b.tz);
         if (!when) return new Response(JSON.stringify({ error: "Invalid date/time" }), { status: 400, headers: corsJson });
@@ -19248,6 +19384,7 @@ export default {
         return new Response(JSON.stringify({
           ok: true, published: r.published, page: r.page,
           post_id: r.postId, post_url: r.postUrl, photos: r.photos, note: r.note,
+          google: r.google, partial: !!r.partial,
         }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
