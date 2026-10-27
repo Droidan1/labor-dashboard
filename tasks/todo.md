@@ -30,11 +30,13 @@ BL14 18.50% vs 15.09%, BL16 13.31% vs 12.76%. Planning under-projected the same 
       plan unchanged (730 / 721 / +9). 5 assertions fail on main (rec 669, delta −53)
 - [x] worker.js: both handlers select `auction`, actual sales = `total + auction`
 - [x] npm test 11048/11048 (126 suites)
-- [ ] Brian: merge, then deploy the worker from main (frontend unchanged, no CACHE_NAME bump needed)
+- [x] Merged (#359), and deployed from main `085234b` together with #360 (weekly digest): worker `1b51a0d2`,
+      2026-10-27 19:15Z, using a command that checked the commit, the live version and both fixes before deploying
       ⚠️ A deploy run before the merge (18:55Z, version `7b3bbf9a`) shipped main WITHOUT this fix, and with
       PR #358's worker. Brian applied migration-083 about ten minutes later; columns and both new queries verified in prod.
       See lessons.md 2026-10-27.
-- [ ] After deploy: `retjg labor --grain w --from 2026-10-18 --to 2026-10-24` shows BL1 actualSales 88,340.21
+- [x] After deploy: `retjg labor` week ending 10-24 showed BL1 actualSales 88,340.21 / 13.72% on 3 consecutive passes
+      (19:15:31–19:16:02Z) and again at 19:16:29; every store matches its Retail Summary net; Planning uses it
 
 **Review:** daily refresh needs nothing new: the page reads D1 on every load and sw.js never caches the API,
 so live sales show the morning they are ingested. Not changed: the weekly digest email
