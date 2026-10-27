@@ -1,3 +1,51 @@
+# Google Business Profile posts through Buffer (2026-10-27)
+
+**Ask (Brian):** start Google Business Profile posting for the three profiles (Coliseum, Dupont, South Bend).
+**Decisions (Brian, asked):** a per-post "Also post to Google" switch, on by default; the cover graphic is
+Google's one image (first photo when a draft has no cover); no button.
+**Design (stated, not asked):** Google is a second destination of the same draft, sent after Facebook through
+the same guarded hand-off. Each publish-log row now records its channel and service, so a retry sends only
+the destination that is missing. Google takes no video, so video drafts and stores without a listing never
+offer it. Hashtags are dropped from Google's text (1,500-char cap). A Google failure after Facebook posted is
+a `schedule_error` that says so, alerts, and Retry sends Google only.
+
+- [x] Channel map verified (Buffer metadata + Google Maps listings): BL1 Coliseum, BL4 Dupont, BL2 South Bend
+- [x] migration-083: `marketing_drafts.google`, `marketing_publish_log.channel_id` + `service` (all nullable;
+      legacy log rows count as Facebook)
+- [x] worker: `bufferGoogleWanted/Text/Check`, `bufferHandOff` per channel, `publishDraftViaBuffer` FB → Google,
+      sync + reaper + reconcile check every destination, `google_url` on drafts, `draft-save` stores the switch,
+      `draft-schedule` runs the Google check before accepting
+- [x] app: switch under the caption (BL1/BL2/BL4, photo posts only), preview "also on Google", card
+      "+ Google" and a "Google ↗" link; autosave/edit/rehydrate keep the choice
+- [x] scripts/test-buffer-google.mjs: 65 pass on the branch, fails on main. test-buffer-publish /
+      test-bin-photo-autodraft pinned to `google: 0` where they test Facebook alone
+- [x] browser-content-video: switch shown/hidden, AA contrast both themes, saves `google: false`;
+      browser-content-buffer-cap expectation now carries "+ Google". (A race in my own new check: it didn't
+      await the save, so the save's reset wiped the next pick. Fixed by awaiting ctSaveDraft.)
+- [x] CACHE_NAME v288 + shell-cache fixture; npm test 11019/11019 (126 suites)
+- [x] Fresh-eyes review: 11 findings, 9 fixed, each with a test that fails on d279f11 (13 worker assertions,
+      4 browser): (1) on the schedule a Google rule no longer stops Facebook: it goes, and the card says what
+      Google needs (a draft scheduled before Google existed was never checked; manual publish still refuses
+      up front); (2) a partial publish alerted "Publish failed — HTTP 200": now "Posted to Facebook only" +
+      the note; (3) a Google-only retry racing a sync Facebook failure overwrote it as published: the final
+      status write is now guarded on `status='publishing'`; (4) a staged run adopting a live Facebook post
+      sent Google as a Buffer draft yet marked the draft published: Google now follows Facebook's real
+      liveness; (5) "#1 deal" / "#BargainLane is…" were cut from Google's text: only tag lines and a line's
+      trailing tags go; (6) the Google check no longer blocks a Facebook-only retry once Google is done;
+      (7) the Graph-path `alreadyPosted` ignored service: Facebook rows only now; (8) "done" was by channel
+      id, so a Page reconnected in Buffer would re-post: now by service; (9) the card's View link could be
+      Google's: Facebook only now
+- [x] Not fixed, by design: (10) rolling the worker back to main's with a partial draft on the board would
+      re-post Facebook on that draft's Retry (main's publisher has no per-destination skip) → in the PR's
+      deploy notes; (11) the Google loose match rests on Buffer's shape: CHECKED read-only against two real
+      Google posts already on Coliseum's channel (made by hand, Oct 23 + 26): asset type `image`, image
+      re-hosted on Buffer's S3 (so the loose match is what applies), text kept verbatim
+- [x] Prod read-only: no BL1/BL2/BL4 drafts are scheduled, so finding (1) touches nothing today
+- [x] npm test 11036/11036; browser content-video 57, content-buffer-cap 54, submit-video 88; the sweep's other
+      failures (associate-price-scan 3, inventory-delete 9, inventory-receiver 2, sign-studio 3) are identical
+      on main's build
+- [ ] PR; then migration-083 → worker deploy (fresh clone, byte-verify) → merge → a test post to one GBP store
+
 # Halloween theme (2026-10-23)
 
 **Ask (Brian):** a Halloween theme users can pick: orange and black, spooky vibes, preview first.

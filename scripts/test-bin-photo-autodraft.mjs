@@ -48,7 +48,8 @@ function makeEnv({ apiKey = null, caption = 'A generated caption 🔥 #BargainLa
       post_type TEXT, status TEXT, origin TEXT, auto_week TEXT, flow_fiscal_year TEXT,
       flow_retail_week INTEGER, created_by TEXT, created_at TEXT, updated_at TEXT, published_at TEXT,
       photos_curated INTEGER NOT NULL DEFAULT 0,    -- migration-079
-      video_id INTEGER);                            -- migration-081
+      video_id INTEGER,                             -- migration-081
+      google INTEGER);                              -- migration-083
     CREATE UNIQUE INDEX uq_drafts_auto_week ON marketing_drafts(store, auto_week) WHERE origin = 'photos';
     CREATE TABLE marketing_flow (fiscal_year TEXT, retail_week INTEGER, week_start TEXT, week_end TEXT,
       special_event TEXT, weekly_theme TEXT, product_focus TEXT, dd_loyalty TEXT);

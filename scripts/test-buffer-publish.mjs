@@ -116,9 +116,10 @@ async function setup({ key = 'buffer-test-key' } = {}) {
     return Number(r.lastInsertRowid);
   };
   const draft = (fields) => {
-    const f = { store: 'BL2', status: 'draft', caption: 'Fresh bins at South Bend', thumbnail_id: null, photo_ids: [], ...fields };
-    const r = db.prepare(`INSERT INTO marketing_drafts (store, thumbnail_id, photo_ids, caption, caption_source, status, created_at, updated_at)
-                          VALUES (?,?,?,?,'ai',?,?,?)`).run(f.store, f.thumbnail_id, JSON.stringify(f.photo_ids), f.caption, f.status, new Date().toISOString(), new Date().toISOString());
+    // google: 0 — this suite is the Facebook guard; Google destinations are test-buffer-google.mjs.
+    const f = { store: 'BL2', status: 'draft', caption: 'Fresh bins at South Bend', thumbnail_id: null, photo_ids: [], google: 0, ...fields };
+    const r = db.prepare(`INSERT INTO marketing_drafts (store, thumbnail_id, photo_ids, caption, caption_source, status, created_at, updated_at, google)
+                          VALUES (?,?,?,?,'ai',?,?,?,?)`).run(f.store, f.thumbnail_id, JSON.stringify(f.photo_ids), f.caption, f.status, new Date().toISOString(), new Date().toISOString(), f.google);
     const id = Number(r.lastInsertRowid);
     for (const [k, v] of Object.entries(fields)) {
       if (['scheduled_at', 'publish_live', 'publish_attempts', 'claimed_at'].includes(k)) db.prepare(`UPDATE marketing_drafts SET ${k}=? WHERE id=?`).run(v, id);
@@ -677,7 +678,8 @@ for (const via of ['publish', 'schedule', 'cron-backoff']) {
   const s = await setup();
   const id = s.draft({ photo_ids: [await s.photo()], status: 'scheduled', scheduled_at: ago(60e3), publish_live: 1 });
   const realPrepare = s.env.DB.prepare.bind(s.env.DB);
-  s.env.DB.prepare = sql => (/COALESCE\(post_id, buffer_post_id\)/.test(sql) ? realPrepare('SELECT no_such_column FROM marketing_publish_log') : realPrepare(sql));
+  // Both forms of the "already posted?" read: the Graph path's, and the per-destination one Buffer uses.
+  s.env.DB.prepare = sql => (/COALESCE\(post_id, buffer_post_id\)|AND COALESCE\(service, 'facebook'\) = \?\s+AND \(post_id IS NOT NULL/.test(sql) ? realPrepare('SELECT no_such_column FROM marketing_publish_log') : realPrepare(sql));
   await tick(s.env, '* * * * *');
   eq(creates(), 0, '🛑 the reconcile cannot read the log, so nothing is posted');
   eq(s.row(id).status, 'scheduled', 'the post waits');
