@@ -1,3 +1,21 @@
+## My deploy command shipped someone else's worker without its migration (2026-10-27)
+
+I gave Brian `git switch main && git pull && git diff --stat origin/main -- worker.js && npx wrangler deploy`
+for the Labor fix, with "merge first" in the prose above it. He ran it before the branch was pushed. The
+command could not tell: the diff check compares main with origin/main, which pass trivially after a pull.
+So it deployed `main` as it was. That `main` was missing the Labor fix and carried PR #358's merged-but-undeployed Google-posts
+worker, whose `migration-083` was not in prod. Content Studio's draft list, saves and publishing broke
+until he ran the migration about ten minutes later. Nothing was scheduled, so no post was lost.
+
+### The rule
+A deploy command I hand over must fail on its own when its precondition is false. Prose does not count:
+1. Assert the change is IN what will deploy: `grep -q '<symbol unique to the fix>' worker.js || exit 1`.
+2. Assert nothing ELSE is waiting: diff `worker.js` against the version actually live
+   (`npx wrangler deployments list`, then the commit that produced it), not against `origin/main`. Any other
+   commit in that range means another PR's deploy is pending, and its `migration-*.sql` must be checked
+   in prod read-only first (`pragma_table_info`).
+3. Chain with `&&` so a failed assert stops the deploy.
+
 ## "No HUB login" meant never signed in, not no account, and I told Brian to invite him (2026-10-18)
 
 Asked to add ryan@retjg.com to the Executive Summary, I couldn't read prod `users`, so I asked
