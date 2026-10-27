@@ -186,6 +186,26 @@ async function plan(env, qs = `week=${WEEK}`, user = 'u-su') {
   eq(denied.status, 403, 'naming another store is refused');
 }
 
+// ══ 7b. Live sales are actual sales ═════════════════════════════════════
+// The signed-off PROD figures are the sheet's Total NS, which counted live
+// sales (online auction + Whatnot). The app keeps those in a separate
+// `auction` column, so moving part of each week from till to live must leave
+// the plan exactly where it was. Reading `total` alone dropped them: here
+// Coliseum trended 6.95% under budget instead of 1.50% over, and its
+// recommendation fell from 730 hours to 669.
+{
+  const { db, env } = makeEnv(repo);
+  db.exec('DELETE FROM daily_sales'); seed(db);
+  db.prepare(`UPDATE daily_sales SET total = total - 6000, auction = 6000
+               WHERE store = 'BL1' AND date IN (${TRAIL.map(() => '?').join(',')})`).run(...TRAIL);
+  const p = (await plan(env)).body.byStore.BL1;
+  eq(p.weeksUsed[3].actualSales, 73255, 'the newest week counts till + live');
+  eq(p.weightedVariancePct, 1.50, 'the weighted variance is the signed-off one');
+  eq(p.recommendedHours, 730, 'RECOMMENDED hours unchanged');
+  eq(p.trendingHours, 721, 'TRENDING hours unchanged');
+  eq(p.deltaHours, 9, 'delta unchanged');
+}
+
 // ══ 8. Holland is off this page ═════════════════════════════════════════
 {
   const { db, env } = makeEnv(repo);
