@@ -254,5 +254,97 @@ for (const store of ['BL1', 'BL4', 'BL2']) {
   eq(s.row(a.id).google, 1, 'switched back on');
 }
 
+// ── 9. Review fixes (2026-10-27) ────────────────────────────────────────────
+// 🛑 On the schedule nobody is watching: a Google rule (a draft scheduled before Google
+// existed was never checked for it) must not stop Facebook going out on time.
+for (const [what, cover, caption, re] of [
+  ['a WebP cover', ['image/webp', 'webp'], undefined, /^Posted to Facebook\. Google: Google takes JPEG or PNG/],
+  ['a caption that is only hashtags', undefined, '#OnlyHashtags #Nothing', /^Posted to Facebook\. Google: add a caption/],
+]) {
+  const s = await setup();
+  const c = await s.cover(...(cover || [])), p = await s.photo();
+  const id = s.draft({ thumbnail_id: c, photo_ids: [p], ...(caption ? { caption } : {}), status: 'scheduled', scheduled_at: ago(60e3), publish_live: 1 });
+  await tick(s.env);
+  eq(creates().map(i => i.channelId), [FB.BL1], `🛑 scheduled, ${what}: Facebook still goes on time`);
+  eq(s.row(id).status, 'schedule_error', `and the card shows Google as failed (${what})`);
+  ok(re.test(s.row(id).schedule_error || ''), `and says what Google needs (${s.row(id).schedule_error})`);
+}
+// A Facebook-only retry is not blocked by a Google rule when Google is already done.
+{
+  const s = await setup();
+  const id = s.draft({ thumbnail_id: await s.cover(), photo_ids: [await s.photo()], caption: 'Call (260) 555-0142 for hours', status: 'schedule_error' });
+  s.db.prepare(`INSERT INTO marketing_publish_log (draft_id, store, status, created_at, buffer_post_id, channel_id, service) VALUES (?, 'BL1', 'queued', ?, 'g00000000000000000000gb1', ?, 'googlebusiness')`).run(id, ago(60e3), GBP.BL1);
+  s.db.prepare(`INSERT INTO marketing_publish_log (draft_id, store, status, created_at, buffer_post_id, channel_id, service) VALUES (?, 'BL1', 'error', ?, 'g00000000000000000000fb1', ?, 'facebook')`).run(id, ago(60e3), FB.BL1);
+  const r = await publish(s.env, id);
+  eq(r.status, 200, 'Google done, Facebook failed: Retry is not refused for a Google rule');
+  eq(creates().map(i => i.channelId), [FB.BL1], 'and it sends Facebook only');
+}
+// 🛑 A Page reconnected in Buffer gets a new channel id; its earlier post is still this
+// draft's Facebook post, so a Google-only retry must not post Facebook again.
+{
+  const s = await setup();
+  const id = s.draft({ thumbnail_id: await s.cover(), photo_ids: [await s.photo()], status: 'schedule_error' });
+  s.db.prepare(`INSERT INTO marketing_publish_log (draft_id, store, status, created_at, buffer_post_id, channel_id, service) VALUES (?, 'BL1', 'queued', ?, 'g00000000000000000000fb1', 'an-old-channel-id', 'facebook')`).run(id, ago(60e3));
+  await publish(s.env, id);
+  eq(creates().map(i => i.channelId), [GBP.BL1], '🛑 Facebook done under an old channel id: Retry sends Google only');
+}
+// 🛑 A staged run that adopts a LIVE Facebook post marks the draft published, so Google goes live too.
+{
+  const s = await setup();
+  const id = s.draft({ thumbnail_id: await s.cover(), photo_ids: [await s.photo()] });
+  fail = b => (/createPost/.test(b.query) && b.variables.input.channelId === FB.BL1 ? 'LOST' : null);
+  await publish(s.env, id);   // live; Facebook's answer is lost, Buffer has it
+  fail = null;
+  s.db.prepare("UPDATE marketing_publish_log SET created_at=? WHERE draft_id=? AND status='handing'").run(ago(6 * 60e3), id);
+  calls = [];
+  await worker.fetch(req('/?action=publish-draft', { user: 'u-admin', method: 'POST', body: { draft_id: id, published: false } }), s.env, ctx);
+  const g = creates().filter(i => i.channelId === GBP.BL1);
+  eq(creates().filter(i => i.channelId === FB.BL1).length, 0, 'the staged run adopts the live Facebook post');
+  ok(g.length === 1 && g[0].mode === 'shareNow' && !g[0].saveToDraft, `🛑 and Google goes live with it, not as a Buffer draft (${JSON.stringify(g.map(x => [x.mode, x.saveToDraft]))})`);
+  eq(s.row(id).status, 'published', 'the draft is published');
+}
+// 🛑 The sync fails the Facebook hand-off while a Google-only retry is in flight: the
+// failure stays on the card; the retry must not overwrite it as published.
+{
+  const s = await setup();
+  const id = s.draft({ thumbnail_id: await s.cover(), photo_ids: [await s.photo()], status: 'schedule_error' });
+  s.db.prepare(`INSERT INTO marketing_publish_log (draft_id, store, status, created_at, buffer_post_id, channel_id, service) VALUES (?, 'BL1', 'queued', ?, 'g00000000000000000000fb1', ?, 'facebook')`).run(id, ago(60e3), FB.BL1);
+  fail = b => {
+    if (/createPost/.test(b.query) && b.variables.input.channelId === GBP.BL1) {
+      s.db.prepare("UPDATE marketing_publish_log SET status='error' WHERE draft_id=? AND service='facebook'").run(id);
+      s.db.prepare("UPDATE marketing_drafts SET status='schedule_error', schedule_error='Buffer couldn''t post it: Page token expired' WHERE id=?").run(id);
+    }
+    return null;
+  };
+  await publish(s.env, id);
+  fail = null;
+  eq(s.row(id).status, 'schedule_error', '🛑 a Facebook failure seen mid-retry is not overwritten as published');
+  ok(/Page token expired/.test(s.row(id).schedule_error || ''), 'and its reason stays on the card');
+}
+// Without BUFFER_API_KEY (the Graph path) a Google copy alone is not "posted".
+{
+  const s = await setup();
+  delete s.env.BUFFER_API_KEY;
+  const id = s.draft({ thumbnail_id: await s.cover(), photo_ids: [await s.photo()], status: 'publishing', publish_attempts: 1, publish_live: 1 });
+  s.db.prepare(`INSERT INTO marketing_publish_log (draft_id, store, status, created_at, buffer_post_id, channel_id, service) VALUES (?, 'BL1', 'queued', ?, 'g00000000000000000000gb1', ?, 'googlebusiness')`).run(id, ago(60e3), GBP.BL1);
+  await tick(s.env);
+  ok(s.row(id).status !== 'published', `the reaper does not call a Google-only draft posted (${s.row(id).status})`);
+}
+// The card's View link is Facebook's; a Google link alone is only "Google ↗".
+{
+  const s = await setup();
+  const id = s.draft({ thumbnail_id: await s.cover(), photo_ids: [await s.photo()], status: 'schedule_error' });
+  s.db.prepare(`INSERT INTO marketing_publish_log (draft_id, store, status, created_at, buffer_post_id, post_url, channel_id, service) VALUES (?, 'BL1', 'published', ?, 'g00000000000000000000gb1', 'https://business.google.com/posts/x', ?, 'googlebusiness')`).run(id, ago(60e3), GBP.BL1);
+  const d = (await json(await worker.fetch(req('/?action=drafts&status=all', { user: 'u-admin' }), s.env, ctx))).drafts.find(x => x.id === id);
+  eq([d.post_url, d.google_url], [null, 'https://business.google.com/posts/x'], 'only Google has a link: the card has no Facebook View link');
+}
+// A hashtag used as a word stays; tag lines and a line's trailing tags go.
+{
+  const s = await setup();
+  await publish(s.env, s.draft({ thumbnail_id: await s.cover(), photo_ids: [await s.photo()],
+    caption: 'Our #1 deal of the week!\n#BargainLane is the place to be #deals #shop\n\n#Coliseum #NewArrivals' }));
+  eq(creates()[1].text, 'Our #1 deal of the week!\n#BargainLane is the place to be', 'Google text keeps "#1" and a tag used as a word');
+}
+
 console.log(`\n${assertions - failures} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

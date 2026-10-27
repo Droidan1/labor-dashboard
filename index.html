@@ -21778,6 +21778,12 @@
       return;
     }
     const j = (resp && resp.j) || {};
+    if (j.ok) {
+      // Sent, but the card isn't Published: Facebook went and Google didn't (the card
+      // says Retry sends Google only), or it was staged as a Buffer draft.
+      await uiAlert(j.note || 'Sent to Buffer.', { title: j.partial ? 'Posted to Facebook only' : 'Sent to Buffer' });
+      return;
+    }
     const extra = j.detail && j.detail.message ? ` — ${j.detail.message}` : '';
     await uiAlert(`Couldn’t publish: ${j.error || ('HTTP ' + (resp ? resp.status : '?'))}${extra}`, { title: 'Publish failed' });
   }

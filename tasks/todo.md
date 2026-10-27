@@ -23,7 +23,27 @@ a `schedule_error` that says so, alerts, and Retry sends Google only.
       browser-content-buffer-cap expectation now carries "+ Google". (A race in my own new check: it didn't
       await the save, so the save's reset wiped the next pick. Fixed by awaiting ctSaveDraft.)
 - [x] CACHE_NAME v288 + shell-cache fixture; npm test 11019/11019 (126 suites)
-- [ ] Fresh-eyes review
+- [x] Fresh-eyes review: 11 findings, 9 fixed, each with a test that fails on d279f11 (13 worker assertions,
+      4 browser): (1) on the schedule a Google rule no longer stops Facebook: it goes, and the card says what
+      Google needs (a draft scheduled before Google existed was never checked; manual publish still refuses
+      up front); (2) a partial publish alerted "Publish failed — HTTP 200": now "Posted to Facebook only" +
+      the note; (3) a Google-only retry racing a sync Facebook failure overwrote it as published: the final
+      status write is now guarded on `status='publishing'`; (4) a staged run adopting a live Facebook post
+      sent Google as a Buffer draft yet marked the draft published: Google now follows Facebook's real
+      liveness; (5) "#1 deal" / "#BargainLane is…" were cut from Google's text: only tag lines and a line's
+      trailing tags go; (6) the Google check no longer blocks a Facebook-only retry once Google is done;
+      (7) the Graph-path `alreadyPosted` ignored service: Facebook rows only now; (8) "done" was by channel
+      id, so a Page reconnected in Buffer would re-post: now by service; (9) the card's View link could be
+      Google's: Facebook only now
+- [x] Not fixed, by design: (10) rolling the worker back to main's with a partial draft on the board would
+      re-post Facebook on that draft's Retry (main's publisher has no per-destination skip) → in the PR's
+      deploy notes; (11) the Google loose match rests on Buffer's shape: CHECKED read-only against two real
+      Google posts already on Coliseum's channel (made by hand, Oct 23 + 26): asset type `image`, image
+      re-hosted on Buffer's S3 (so the loose match is what applies), text kept verbatim
+- [x] Prod read-only: no BL1/BL2/BL4 drafts are scheduled, so finding (1) touches nothing today
+- [x] npm test 11036/11036; browser content-video 57, content-buffer-cap 54, submit-video 88; the sweep's other
+      failures (associate-price-scan 3, inventory-delete 9, inventory-receiver 2, sign-studio 3) are identical
+      on main's build
 - [ ] PR; then migration-083 → worker deploy (fresh clone, byte-verify) → merge → a test post to one GBP store
 
 # Halloween theme (2026-10-23)

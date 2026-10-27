@@ -74,6 +74,9 @@ function mocks({ who, PHOTOS, DRAFTS, dark }) {
       case 'marketing-photos': return J({ ok: true, photos: PHOTOS });
       case 'flow-calendar': return J({ ok: true, weeks: [], segments: [] });
       case 'content-setting': return J({ ok: true, value: null });
+      // Facebook went, Google refused (the worker's partial answer); the card is schedule_error.
+      case 'publish-draft': { const d = DRAFTS.find(x => x.id === 8); d.status = 'schedule_error'; d.schedule_error = 'Posted to Facebook. Google: Location suspended. Retry sends it to Google only.';
+        return J({ ok: true, published: true, partial: true, google: 'failed', note: 'Sent to Facebook. Google failed: Location suspended. Retry from the card sends it to Google only.' }); }
       default: return J({ error: 'Forbidden' }, 403);
     }
   };
@@ -152,6 +155,17 @@ for (const dark of [true, false]) {
     check(/Too many photos/.test(dlg) && /keep your best 9/.test(dlg), `[${t}] Publish explains: keep your best 9`);
     check(!(await page.evaluate(() => window.__calls.includes('publish-draft'))), `🛑 [${t}] and never calls publish-draft`);
     await shot(page, `cap-publish-${t}`);
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => document.querySelectorAll('.ui-dialog-backdrop, [data-ui-dialog]').forEach(n => n.remove()));
+
+    // A partial publish (Facebook out, Google refused) says so, not "Publish failed — HTTP 200".
+    await page.evaluate(() => { window.ctPublishDraft(8); });
+    await page.waitForTimeout(300);
+    await page.getByRole('button', { name: 'Publish live' }).click();
+    await page.waitForTimeout(500);
+    const pdlg = await page.evaluate(() => document.body.innerText);
+    check(/Posted to Facebook only/.test(pdlg) && /Google failed: Location suspended/.test(pdlg), `[${t}] a partial publish says Facebook went and why Google didn't`);
+    check(!/Publish failed|HTTP 200/.test(pdlg), `[${t}] and does not call it a failed publish`);
     await page.keyboard.press('Escape');
     await page.evaluate(() => document.querySelectorAll('.ui-dialog-backdrop, [data-ui-dialog]').forEach(n => n.remove()));
 

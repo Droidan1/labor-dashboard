@@ -679,7 +679,7 @@ for (const via of ['publish', 'schedule', 'cron-backoff']) {
   const id = s.draft({ photo_ids: [await s.photo()], status: 'scheduled', scheduled_at: ago(60e3), publish_live: 1 });
   const realPrepare = s.env.DB.prepare.bind(s.env.DB);
   // Both forms of the "already posted?" read: the Graph path's, and the per-destination one Buffer uses.
-  s.env.DB.prepare = sql => (/COALESCE\(post_id, buffer_post_id\)|AND COALESCE\(channel_id, \?\) = \?\s+AND \(post_id IS NOT NULL/.test(sql) ? realPrepare('SELECT no_such_column FROM marketing_publish_log') : realPrepare(sql));
+  s.env.DB.prepare = sql => (/COALESCE\(post_id, buffer_post_id\)|AND COALESCE\(service, 'facebook'\) = \?\s+AND \(post_id IS NOT NULL/.test(sql) ? realPrepare('SELECT no_such_column FROM marketing_publish_log') : realPrepare(sql));
   await tick(s.env, '* * * * *');
   eq(creates(), 0, '🛑 the reconcile cannot read the log, so nothing is posted');
   eq(s.row(id).status, 'scheduled', 'the post waits');
