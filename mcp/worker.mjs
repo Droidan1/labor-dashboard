@@ -1,4 +1,6 @@
-// retjg-mcp — a read-only MCP server over the RETJG HUB reporting API.
+// retjg-mcp — an MCP server over the RETJG HUB reporting API. Read-only, except one
+// tool (update_supply_request, mcp/writes.mjs) offered only to Claude's static-key
+// connector, which acts for MCP_KEY_USER.
 //
 // Two ways in (phase 2a, 2026-10-13):
 //   - Claude's custom connector sends a fixed `Authorization: Bearer <MCP_KEY>` (phase 1).
@@ -20,6 +22,7 @@ import { authorize, agentIdentity, admitted, AGENT_ROLES, SCOPES, ALLOWED_CLIENT
 // The tools come from QUERIES in cli/reporting.mjs, the table the retjg CLI's
 // commands come from too, so the two surfaces cannot drift.
 import { QUERIES, READING_RULES, UsageError, QueryError, checkArgs, inputSchema, runQuery } from '../cli/reporting.mjs';
+import { WRITE_TOOLS, updateSupplyRequest } from './writes.mjs';
 
 // Two eras of MCP. 2025 clients open with `initialize` and agree one of these
 // (newest first: an unknown requested version is answered with the newest)…
@@ -30,13 +33,14 @@ const LEGACY_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26'];
 // to `initialize` (the spec's example does; the Python SDK falls back only then).
 const MODERN_VERSIONS = ['2026-07-28'];
 const P = 'io.modelcontextprotocol/';
-const SERVER_INFO = { name: 'retjg-hub', title: 'RETJG HUB sales, labor and inventory', version: '1.3.0' };
+const SERVER_INFO = { name: 'retjg-hub', title: 'RETJG HUB sales, labor and inventory', version: '1.4.0' };
 const CAPABILITIES = { tools: { listChanged: false } };
 // How long a 2026 client may reuse server/discover and tools/list. Short, because a
 // deploy that changes QUERIES should reach clients within minutes. 'private': this caller
 // only, never a shared cache.
 const CACHE = { ttlMs: 300_000, cacheScope: 'private' };
-const INSTRUCTIONS = 'Read-only sales, Retail Summary, labor and inventory data for the Bargain Lane stores in RETJG HUB. '
+const INSTRUCTIONS = 'Sales, Retail Summary, labor and inventory data for the Bargain Lane stores in RETJG HUB. '
+  + 'Every tool only reads, except update_supply_request where it is offered. '
   + 'Call list_stores for store ids. Dates are YYYY-MM-DD, Eastern time; yesterday is the latest complete day. '
   + 'Before drawing conclusions from the numbers:\n'
   + READING_RULES.map(r => '- ' + r).join('\n');
@@ -86,7 +90,7 @@ export default {
     // Claude's fixed key, compared before anything else. 🛑 `env.MCP_KEY &&` is
     // load-bearing: sameKey('', '') is true, so an unset key would open this to anyone.
     if (url.pathname === '/mcp' && env.MCP_KEY && await sameKey(presentedKey(request), env.MCP_KEY)) {
-      return serveMcp(request, env);
+      return serveMcp(request, env, { writeAs: env.MCP_KEY_USER || null });
     }
 
     // Without the OAuth store this is exactly phase 1.
@@ -117,7 +121,9 @@ async function oauthMcp(request, env, ctx) {
     return insufficientScope(ctx.auth, ['mcp:read']);
   }
   console.log(JSON.stringify({ event: 'mcp_oauth_call', user: p.userId, client: ctx.auth && ctx.auth.clientId }));
-  return serveMcp(request, env);
+  // 🛑 Never writes: the consent screen promises "read-only access" and the scope is
+  // mcp:read. A write over OAuth needs its own scope and a new consent first.
+  return serveMcp(request, env, { writeAs: null });
 }
 
 // Every refresh re-asks the main worker who this is (≤ 1 hour after a demotion or a
@@ -140,7 +146,8 @@ async function recheckOnRefresh({ grantType, props, env }) {
 }
 
 // The MCP protocol itself, after whichever authentication let the request in.
-async function serveMcp(request, env) {
+// caller.writeAs: the RETJG HUB user id the write tools act for, or null (read-only).
+async function serveMcp(request, env, caller) {
   if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405, { Allow: 'POST' });
 
   let msg;
@@ -162,14 +169,14 @@ async function serveMcp(request, env) {
   // A notification (no id) or a response (no method) is acknowledged, not answered.
   if (!('method' in msg) || !('id' in msg)) return new Response(null, { status: 202 });
 
-  if (!modern) return answer(msg, () => handle(msg.method, msg.params || {}, env));
-  return serveModern(request, msg, params, env);
+  if (!modern) return answer(msg, () => handle(msg.method, msg.params || {}, env, caller));
+  return serveModern(request, msg, params, env, caller);
 }
 
 // MCP 2026-07-28 (modelcontextprotocol.io/specification/2026-07-28): no initialize,
 // the version and capabilities in every request's _meta, the method and tool name
 // repeated in headers, and every result marked resultType "complete".
-async function serveModern(request, msg, params, env) {
+async function serveModern(request, msg, params, env, caller) {
   const refuse = (code, message, data, status = 400) =>
     json({ jsonrpc: '2.0', id: msg.id, error: { code, message, ...(data && { data }) } }, status);
   const meta = params._meta || {};
@@ -201,7 +208,7 @@ async function serveModern(request, msg, params, env) {
   if (msg.method !== 'tools/list' && msg.method !== 'tools/call') {
     return refuse(-32601, `Method not found: ${msg.method}`, null, 404);
   }
-  return answer(msg, async () => ({ resultType: 'complete', ...await handle(msg.method, params, env),
+  return answer(msg, async () => ({ resultType: 'complete', ...await handle(msg.method, params, env, caller),
     ...(msg.method === 'tools/list' && CACHE), ...serverInfo }));
 }
 
@@ -240,7 +247,10 @@ async function tokenClient(request) {
 
 const hasCredential = (request) => !!(request.headers.get('Authorization') || request.headers.get('X-API-Key'));
 
-async function handle(method, params, env) {
+// Both halves are needed: who to act for, and the key the main worker's agent door wants.
+const canWrite = (env, caller) => !!(caller && caller.writeAs && env.AGENT_WRITE_KEY);
+
+async function handle(method, params, env, caller) {
   if (method === 'initialize') {
     const asked = params.protocolVersion;
     return {
@@ -251,13 +261,19 @@ async function handle(method, params, env) {
     };
   }
   if (method === 'ping') return {};
-  if (method === 'tools/list') return { tools: TOOLS };
+  if (method === 'tools/list') return { tools: canWrite(env, caller) ? [...TOOLS, ...WRITE_TOOLS] : TOOLS };
   if (method === 'tools/call') {
     const query = QUERIES.find(q => q.name === params.name);
-    if (!query) throw new RpcError(-32602, `Unknown tool: ${params.name}`);
+    // A write tool this caller is not offered is unknown to it, as in tools/list.
+    const writeTool = !query && canWrite(env, caller) && WRITE_TOOLS.find(t => t.name === params.name);
+    if (!query && !writeTool) throw new RpcError(-32602, `Unknown tool: ${params.name}`);
     try {
-      const args = checkArgs(query, params.arguments ?? {});
-      const out = await runQuery(query, args, (p) => report(env, p));
+      const out = writeTool
+        ? await updateSupplyRequest(params.arguments ?? {}, {
+          read: (p) => report(env, p),
+          write: (action, body) => agentWrite(env, caller.writeAs, action, body),
+        })
+        : await runQuery(query, checkArgs(query, params.arguments ?? {}), (p) => report(env, p));
       const text = JSON.stringify(out);
       if (text.length > MAX_RESULT_CHARS) {
         throw new ToolError(`This answer is ${Math.round(text.length / 1000)}k characters, too large for one tool result. `
@@ -289,6 +305,26 @@ async function report(env, params) {
   if (!res.ok) throw new ToolError(`The reporting API answered ${res.status}: ${body?.error || 'no detail'}`);
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new ToolError('The reporting API returned an unexpected response.');
   return body;
+}
+
+// One change through the main worker's agent door (worker.js AGENT_WRITE_ACTIONS),
+// as user `userId`; the main worker re-checks that they are an active superuser.
+// AGENT_WRITE_KEY goes upstream only, like REPORTING_API_KEY.
+async function agentWrite(env, userId, action, body) {
+  let res;
+  try {
+    res = await env.API.fetch(new Request(`https://api.retjghub.com/?action=${encodeURIComponent(action)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'X-Agent-Write-Key': env.AGENT_WRITE_KEY, 'X-Agent-User': userId },
+      body: JSON.stringify(body),
+    }));
+  } catch (e) {
+    throw new ToolError(`RETJG HUB could not be reached: ${e.message}`);
+  }
+  let out = null;
+  try { out = JSON.parse(await res.text()); } catch {}
+  if (!res.ok || !out || out.ok !== true) throw new ToolError(`RETJG HUB refused the change (${res.status}): ${out?.error || 'no detail'}`);
+  return out;
 }
 
 // The key as the caller sent it. Claude's connector form takes a raw header, and

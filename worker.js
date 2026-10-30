@@ -9423,7 +9423,7 @@ function buildStatusUpdateEmailHtml({ store, oldStatus, newStatus, note, request
         <div style="font-size:16px;font-weight:700;color:${color};">${label}</div>
       </div>
     </div>
-    ${note ? `<div style="background:#0f172a;border-radius:8px;padding:14px 16px;"><div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Note from Admin</div><div style="font-size:14px;color:#e2e8f0;">${note}</div></div>` : ''}
+    ${note ? `<div style="background:#0f172a;border-radius:8px;padding:14px 16px;"><div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Note from Admin</div><div style="font-size:14px;color:#e2e8f0;">${_esc(note)}</div></div>` : ''}
   </div>
   <div style="background:#0f172a;border-radius:0 0 12px 12px;padding:16px 28px;text-align:center;">
     <div style="font-size:12px;color:#475569;">RETJG HUB · Supply Requests</div>
@@ -14942,6 +14942,22 @@ async function getAuthUser(request, env) {
   return user;
 }
 
+// The person an agent write acts for (X-Agent-User, from retjg-mcp), shaped as
+// getAuthUser shapes a superuser. null for anyone else: the agent door is superuser
+// only, so there are no grants or page lists to resolve. A database error throws,
+// so an outage is never read as "not a superuser".
+async function getAgentWriteUser(env, userId) {
+  if (!env.DB) throw new Error('DB not configured');
+  if (!userId) return null;
+  const user = await env.DB.prepare(
+    `SELECT id, email, role, stores, status, name, pages, (pin_hash IS NOT NULL) AS is_associate
+     FROM users WHERE id = ? AND status = 'active'`
+  ).bind(userId).first();
+  if (!user || user.role !== 'superuser' || user.is_associate) return null;
+  const { results: biz } = await env.DB.prepare('SELECT id FROM businesses WHERE active = 1').all();
+  return { ...user, stores: null, pages: {}, is_associate: false, grants: [], allBusinessIds: (biz || []).map(b => b.id) };
+}
+
 // ── Grants ──────────────────────────────────────────────────────────────────
 // A grant is: this person, in this business, with this role, over these units.
 // A user may hold several. `superuser` deliberately holds NONE — it is a flag
@@ -18002,10 +18018,40 @@ export default {
     // (admin tooling, cron callbacks, backfill scripts).
     const isAdminSecret = hasSnapshotSecret(request, env);
     let currentUser = null;
+    // ── Agent writes (2026-10-30) ─────────────────────────────────────────
+    // Brian: his agent marks a supply request ordered and records its cost, so the
+    // store manager is told it was ordered. retjg-mcp holds AGENT_WRITE_KEY and names
+    // the person it acts for in X-Agent-User; that person is currentUser for this one
+    // request, so the page's own handler runs: its superuser check, its history row
+    // (recorded as that person), its push + email to the requester, its budget alert.
+    //
+    // 🛑 Its own key, never MORNING_BRIEFING_KEY: the Chief of Staff tool and the
+    // retjg CLI hold that one too, and it stays read-only.
+    // 🛑 Only these actions, PATCH only, at "/" with no parameter but `action` (a
+    // request falls through the whole route chain, so a route above the handler that
+    // is chosen by anything else must not get a superuser), and only an active
+    // superuser who is not an associate, read from D1 on every write.
+    const AGENT_WRITE_ACTIONS = new Set(["supply-request-status", "supply-request-fulfillment"]);
+    const agentWrite = AGENT_WRITE_ACTIONS.has(url.searchParams.get("action")) && request.headers.has("X-Agent-Write-Key");
+    if (agentWrite) {
+      const refuse = (status, error) => new Response(JSON.stringify({ error }), { status, headers: corsJson });
+      if (request.method !== "PATCH") return refuse(405, "Method not allowed");
+      // The same value as the shared reporting key would hand every holder of that key this door.
+      if (!env.AGENT_WRITE_KEY || env.AGENT_WRITE_KEY === env.MORNING_BRIEFING_KEY) return refuse(503, "Endpoint not configured");
+      if (!timingSafeEqualStr(request.headers.get("X-Agent-Write-Key"), env.AGENT_WRITE_KEY)) return refuse(401, "Unauthorized");
+      if (url.pathname !== "/" || [...url.searchParams.keys()].some(k => k !== "action")) return refuse(400, "Unsupported parameter");
+      try {
+        currentUser = await getAgentWriteUser(env, (request.headers.get("X-Agent-User") || "").trim());
+      } catch (e) {
+        return refuse(503, "User lookup failed");
+      }
+      if (!currentUser) return refuse(403, "X-Agent-User is not an active superuser");
+      console.log(JSON.stringify({ agent_write: url.searchParams.get("action"), user: currentUser.id }));
+    }
     // reportingReadThrough: already authenticated by MORNING_BRIEFING_KEY at the
     // reporting gate, GET only, one of the REPORTING_READ_THROUGH reads. It carries no user,
     // so the business gate below skips it and allowedStores(null) is chain-wide.
-    if (!isAdminSecret && !reportingReadThrough) {
+    else if (!isAdminSecret && !reportingReadThrough) {
       currentUser = await getAuthUser(request, env);
       if (!currentUser) {
         return new Response(JSON.stringify({ error: "Unauthorized", code: "NO_SESSION" }), {

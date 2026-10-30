@@ -7,6 +7,8 @@
 # Secrets (never in this file — the repo is public):
 #   MCP_KEY            what Claude sends as "Authorization: Bearer <key>"
 #   REPORTING_API_KEY  the main worker's MORNING_BRIEFING_KEY, used upstream
+#   AGENT_WRITE_KEY    the main worker's AGENT_WRITE_KEY, for update_supply_request only
+#                      (without it, every caller is read-only)
 # KV OAUTH_KV: the OAuth library's store (grants, hashed tokens, encrypted props).
 # Without the binding the worker behaves exactly as phase 1 (static key only).
 name = "retjg-mcp"
@@ -18,6 +20,12 @@ compatibility_flags = ["global_fetch_strictly_public"]
 workers_dev = false
 
 routes = [{ pattern = "mcp.retjghub.com", custom_domain = true }]
+
+# The RETJG HUB user Claude's static key (MCP_KEY) acts for when it writes: Brian.
+# The main worker re-checks on every write that this is an active superuser.
+# OAuth callers never write (their consent screen says read-only).
+[vars]
+MCP_KEY_USER = "usr_superuser_001"
 
 # The main worker, called directly rather than over the public hostname.
 [[services]]

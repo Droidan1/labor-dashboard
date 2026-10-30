@@ -65,7 +65,13 @@ trimmed; a query with `next` reads every page, run once in `runQuery`). Two surf
     never do (Brian, 2026-10-14), because the data path reads every store. Only ChatGPT and Claude can be clients. Every hourly refresh re-checks the account via the main worker's
     `agent-identity`; a demotion revokes, an outage does not. `@cloudflare/workers-oauth-provider` (pinned
     1.2.3) runs the protocol and stores grants in the `OAUTH_KV` namespace.
-  Either way it reads through the main worker by service binding with its own `REPORTING_API_KEY`. Deploy it
+  Either way it reads through the main worker by service binding with its own `REPORTING_API_KEY`.
+  **One write (2026-10-30):** `update_supply_request` (`mcp/writes.mjs`) sets a supply request's status, cost
+  and invoice number through the page's own handlers, so the store manager gets the usual email. Offered ONLY
+  to Claude's static key, acting as `MCP_KEY_USER` (Brian, a var in `mcp/wrangler.toml`); OAuth stays read-only
+  (its consent says so). It goes upstream with a separate secret, `AGENT_WRITE_KEY` (same value on both
+  workers), to the main worker's agent door (`AGENT_WRITE_ACTIONS` in `worker.js`): PATCH, those two actions,
+  active non-associate superuser only. Without `AGENT_WRITE_KEY` on retjg-mcp, nobody is offered it. Deploy it
   with `npx wrangler deploy -c <repo>/mcp/wrangler.toml` (dry-run first: ~282 KiB, bindings `API` and
   `OAUTH_KV`). 🛑 A bare `npx wrangler deploy` from the repo root deploys the MAIN worker.
   🛑 Every retjg-mcp deploy is a mixed-rollout risk: a client that settled on 2026-07-28 with a new instance
