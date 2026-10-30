@@ -41,7 +41,7 @@ newest-first and stops at a watermark.
 - [x] cli/reporting.mjs: get_whatnot_shows, get_whatnot_items, get_whatnot_products + one reading rule
 - [x] scripts/test-whatnot.mjs: 63 assertions. It crashes on main (no whatnot-sync). test-reporting-read-through.mjs
       pins the 3 reads keyed = superuser (407 pass). The MCP suites now pin 25 tools
-- [x] npm test: 11174 assertions across 128 suites, all pass
+- [x] npm test: 11271 assertions across 129 suites, all pass (rebased on #361; its supply-write suite now pins 25 reads)
 - [ ] Brian: token, `wrangler secret put WHATNOT_API_TOKEN`, migration-084, worker + MCP deploy, then first sync
 
 **Review**

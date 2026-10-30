@@ -96,7 +96,7 @@ const patches = (from) => upstream.slice(from).filter(u => u.method === 'PATCH')
 {
   const names = (e) => rpc('tools/list', {}, e).then(b => b.result.tools.map(t => t.name));
   const all = await names(env);
-  eq(all.length, 23, 'static key + MCP_KEY_USER + AGENT_WRITE_KEY → the 22 reads and the write');
+  eq(all.length, 26, 'static key + MCP_KEY_USER + AGENT_WRITE_KEY → the 25 reads and the write');
   eq(all.at(-1), 'update_supply_request', 'the write tool is listed last');
   const t = (await rpc('tools/list')).result.tools.at(-1);
   eq(t.annotations, { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }, 'and marked as a write');
@@ -114,7 +114,7 @@ const patches = (from) => upstream.slice(from).filter(u => u.method === 'PATCH')
     body: JSON.stringify({ jsonrpc: '2.0', id: id++, method, params: method === 'tools/call' ? { name: 'update_supply_request', arguments: { requestId: R1, status: 'ordered' } } : {} }),
   }), env, { props: { userId: 'u-su', role: 'superuser', email: 'bhoward@bargainlane.com' }, auth: { scope: ['mcp:read'], clientId: 'chatgpt' } }).then(x => x.json());
   const ol = await oauth('tools/list');
-  eq(ol.result?.tools?.length, 22, 'an OAuth superuser is offered the 22 reads only');
+  eq(ol.result?.tools?.length, 25, 'an OAuth superuser is offered the 25 reads only');
   ok(ol.result?.tools?.every(x => x.annotations.readOnlyHint === true), 'all read-only');
   eq((await oauth('tools/call')).error?.code, -32602, 'and cannot call the write');
   eq(row(R1).status, 'pending', 'R1 untouched so far');
@@ -280,7 +280,7 @@ const patches = (from) => upstream.slice(from).filter(u => u.method === 'PATCH')
   }), e, ctx).then(r => r.json());
   const list = await modern('tools/list');
   eq(list.result?.tools?.at(-1)?.name, 'update_supply_request', '2026 era: the static key is offered the write');
-  eq((await modern('tools/list', {}, { ...env, MCP_KEY_USER: '' })).result?.tools?.length, 22, '2026 era: and not without MCP_KEY_USER');
+  eq((await modern('tools/list', {}, { ...env, MCP_KEY_USER: '' })).result?.tools?.length, 25, '2026 era: and not without MCP_KEY_USER');
   const res = await modern('tools/call', { name: 'update_supply_request', arguments: { requestId: R3, status: 'ordered' } });
   await settle();
   eq([res.result?.resultType, JSON.parse(res.result?.content?.[0]?.text || '{}').after?.status], ['complete', 'ordered'], '2026 era: the write runs');
