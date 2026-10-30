@@ -1,3 +1,37 @@
+# MCP: agents mark a supply request ordered, with its cost (2026-10-30)
+
+**Ask (Brian):** an agent sees the stores' supply requests (already on the MCP: get_supply_requests /
+get_supply_request / get_supply_budgets), reminds him to order, and once he has ordered (it reads his email)
+puts in the cost and changes the status so the store manager is told.
+
+**Design:** one MCP-only write tool, `update_supply_request` (status, cost, invoice number, note). It calls the
+app's OWN two superuser handlers (`supply-request-status`, `supply-request-fulfillment`), so history, the
+manager's push + email and the 80% budget alert behave exactly as when Brian clicks Save.
+- New main-worker door, separate from the reporting key: PATCH + `X-Agent-Write-Key` (new secret
+  `AGENT_WRITE_KEY`, held only by retjg-mcp) + `X-Agent-User` (a user id). Only those two actions; the user must be
+  an active, non-associate superuser, re-read from D1 on every write. History records that user.
+- MORNING_BRIEFING_KEY stays read-only: Chief of Staff and the CLI cannot write.
+- Only Claude's static-key connector gets the tool (acting as `MCP_KEY_USER`). OAuth (ChatGPT) stays read-only:
+  its consent screen says "read-only access" and its scope is `mcp:read`.
+- Order: status first, then cost, so the 80% budget alert counts the request as ordered.
+
+- [x] worker.js: agent write door (AGENT_WRITE_ACTIONS) + getAgentWriteUser
+- [x] mcp/: update_supply_request, listed only when the caller can write; instructions no longer say read-only
+- [x] scripts/test-agent-supply-write.mjs: real MCP → real main worker over sqlite (writes, refusals, gate).
+      79 assertions; crashes at the first write against main's worker.js (clean worktree). npm test 11141/11141 (128 suites)
+- [x] Fresh-eyes review: access control sound (every route between the session gate and the handlers is chosen by a
+      literal action). Fixed what it found: agent text reached unescaped HTML (invoice_number in both detail panels,
+      raw inside value="…"; note in the manager's email) → escaped at all three, invoiceNumber limited to
+      [A-Za-z0-9 #._/-] starting alnum/# (also no CSV formula); AGENT_WRITE_KEY equal to MORNING_BRIEFING_KEY → 503;
+      same status alone → refused, not a silent no-op; a failed read-back after saving is not an error; retry advice
+      keeps the note; managerNotified no longer claims delivery. Tests added for each + 2026-07-28 path + D1-outage 503
+- [x] Mutations in a scratch worktree (email escape, equal-key check, invoice check, panel escape): each caught
+- [x] scripts/browser-supply-invoice-escape.mjs (system Chrome, both themes): 11/11; on main's index.html 8 fail
+      (dark: the injected onerror RAN). sw.js CACHE_NAME v288 → v289. npm test 11159/11159 (128 suites)
+- [x] retjg-mcp dry run: main 311.84 KiB → branch 319.60 KiB; bindings OAUTH_KV, API, MCP_KEY_USER
+- [ ] Push + PR (waiting on Brian's OK)
+- [ ] Brian: secrets + deploys (main worker first, then retjg-mcp)
+
 # Weekly Sales Digest: count live sales in net sales (2026-10-27)
 
 **Ask (Labor live-sales session):** the Sunday digest summed `daily_sales.total` (till only) and set it
