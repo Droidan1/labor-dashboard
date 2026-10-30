@@ -29,8 +29,14 @@ manager's push + email and the 80% budget alert behave exactly as when Brian cli
 - [x] scripts/browser-supply-invoice-escape.mjs (system Chrome, both themes): 11/11; on main's index.html 8 fail
       (dark: the injected onerror RAN). sw.js CACHE_NAME v288 → v289. npm test 11159/11159 (128 suites)
 - [x] retjg-mcp dry run: main 311.84 KiB → branch 319.60 KiB; bindings OAUTH_KV, API, MCP_KEY_USER
-- [ ] Push + PR (waiting on Brian's OK)
-- [ ] Brian: secrets + deploys (main worker first, then retjg-mcp)
+- [x] PR #361, merged 2026-10-30 as 490cb99 (no commit left on the branch)
+- [x] AGENT_WRITE_KEY on clover-sales-api + retjg-mcp (one value per run; Brian ran it twice, both set together)
+- [x] Main worker e739d4f9 from a clean detached worktree of 490cb99 (1155.06 KiB = dry run). Live: a wrong
+      agent key → plain 401 (old code: NO_SESSION), 3 consecutive passes; signed-out reads still NO_SESSION
+- [x] retjg-mcp 1181ad58 (319.66 KiB = dry run, MCP_KEY_USER bound). Live with the static key: 1.4.0, 23 tools,
+      update_supply_request readOnlyHint false, 2026-07-28 discover lists it; 3 consecutive passes
+- [ ] Not verified: a real write end to end (key match + usr_superuser_001). No no-op path exists without a prod
+      write; Brian's first use proves it, and a mismatch fails closed (401/403 in the tool's answer)
 
 # Weekly Sales Digest: count live sales in net sales (2026-10-27)
 
