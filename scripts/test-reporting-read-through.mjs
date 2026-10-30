@@ -8,7 +8,8 @@
 // Viewer, Schedule Sale, Bin Dump, Receiver, Mark Out of Stock — not Opportunity Buys)
 // three Supply Request reads (2026-10-15: requests, one request, budgets) and the
 // receipt archive summed per item plus the app's own per-item record (2026-10-16:
-// item-sales, item-lines).
+// item-sales, item-lines), and three Whatnot reads (2026-10-30: whatnot-shows,
+// whatnot-items from the D1 mirror; whatnot-products live from Whatnot, GET only).
 //
 // 🔑 The strongest check is a DIFFERENTIAL: for every action, the key's answer
 // must equal a superuser session's answer byte for byte. That proves the key
@@ -62,7 +63,7 @@ for (const s of STORES) for (const [j, date] of days.entries()) {
 }
 
 // The Inventory pages' tables, a few real rows each, and Clover's item list for BL2.
-for (const m of ['002', '011', '058', '062', '063', '064', '065', '078']) db.exec(fs.readFileSync(path.join(repo, `migration-${m}.sql`), 'utf8'));
+for (const m of ['002', '011', '015', '058', '062', '063', '064', '065', '078', '084']) db.exec(fs.readFileSync(path.join(repo, `migration-${m}.sql`), 'utf8'));
 applyMigrationAlters(db, repo);
 const ago = (h) => new Date(Date.now() - h * 3600e3).toISOString();
 db.prepare(`INSERT INTO sale_schedules (schedule_group, store, item_id, item_name, discount_kind, discount_value,
@@ -117,6 +118,31 @@ globalThis.fetch = async (u, init) => {
   return new Response(JSON.stringify({ elements: firstItems ? CLOVER_ITEMS : [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 };
 
+// Whatnot (2026-10-30): one ended BL1 show with its analytics, one order and one item, and the
+// recap's row for the day, so whatnot-shows and whatnot-items compare real payloads.
+db.exec(`INSERT INTO whatnot_shows (id, title, status, scheduled_start_at, started_at, show_date, store, updated_at, synced_at)
+           VALUES ('sh-1', 'Morning apparel', 'ended', '2026-10-02T14:00:00Z', '2026-10-02T14:05:00Z', '2026-10-02', 'BL1', 'u', 't');
+         INSERT INTO whatnot_show_analytics (show_id, calculation_status, sales, buyers, fetched_at) VALUES ('sh-1', 'CALCULATED', 18, 1, 't');
+         INSERT INTO whatnot_orders (id, show_id, status, transaction_type, created_at, order_date, subtotal, items_synced, synced_at)
+           VALUES ('o-1', 'sh-1', 'completed', 'auction', '2026-10-02T14:20:00.000Z', '2026-10-02', 18, 1, 't');
+         INSERT INTO whatnot_order_items (id, order_id, show_id, product_id, title, quantity, unit_price, synced_at)
+           VALUES ('oi-1', 'o-1', 'sh-1', 'p-1', 'Carhartt jacket', 1, 18, 't');
+         INSERT INTO whatnot_products (id, title, category_name, found, synced_at) VALUES ('p-1', 'Carhartt jacket', 'Men''s Outerwear', 1, 't');
+         INSERT INTO channel_sales (channel, store, date, total, count, ingested_at) VALUES ('whatnot', 'BL1', '2026-10-02', 18, 1, 't');`);
+env.WHATNOT_API_TOKEN = 'wn_pat_tk_test';
+{
+  const prior = globalThis.fetch;
+  globalThis.fetch = async (u, init) => {
+    const s = String(u);
+    if (!s.startsWith('https://api.whatnot.com/seller-api/rest/v2/')) return prior(u, init);
+    const p = new URL(s).pathname.replace('/seller-api/rest/v2', '');
+    const body = p === '/products' ? { data: [{ id: 'p-1', title: 'Carhartt jacket', category: { id: 'c1', name: "Men's Outerwear" } }], next_cursor: null }
+      : p === '/products/p-1/variants' ? { data: [{ id: 'v-1', sku: 'CJ-L', selected_options: [{ name: 'Size', value: 'L' }], pricing: { buy_it_now: { price: { amount: '24.00', currency: 'USD' } } }, inventory: { available_quantity: 3 } }], next_cursor: null }
+      : null;
+    return new Response(JSON.stringify(body || { type: 'not-found' }), { status: body ? 200 : 404, headers: { 'Content-Type': 'application/json' } });
+  };
+}
+
 const ACTIONS = {
   'weekly-summary':      '?action=weekly-summary&from=2026-09-27&to=2026-10-03',
   'weekly-store-detail': '?action=weekly-store-detail&store=BL2&from=2026-09-27&to=2026-10-03',
@@ -140,6 +166,10 @@ const ACTIONS = {
   // Item sales from the receipt archive (2026-10-16)
   'item-sales':          '?action=item-sales&from=2026-10-01&to=2026-10-03',
   'item-lines':          '?action=item-lines&from=2026-10-01&to=2026-10-03',
+  // Whatnot (2026-10-30)
+  'whatnot-shows':       '?action=whatnot-shows&from=2026-10-01&to=2026-10-03',
+  'whatnot-items':       '?action=whatnot-items&from=2026-10-01&to=2026-10-03',
+  'whatnot-products':    '?action=whatnot-products&limit=5',
 };
 
 const fetchW = (r) => worker.fetch(r, env, ctx);
@@ -219,6 +249,12 @@ for (const [action, q] of Object.entries(ACTIONS)) {
   eq(JSON.stringify(sb?.budgets?.filter(b => b.store === 'BL1').map(b => [b.budget, b.spent, b.remaining])), '[[250,84.5,165.5]]', 'supply-budgets through the key: BL1\'s October budget, spend and remainder');
   const is = await bodyOf(await fetchW(withKey(ACTIONS['item-sales'])));
   eq(JSON.stringify(is?.items?.map(i => [i.store, i.code, i.units, i.sales])), '[["BL1","BL-50038-1_5",3,4.5]]', 'item-sales through the key: the paid order\'s units, not the voided one\'s');
+  const ws2 = await bodyOf(await fetchW(withKey(ACTIONS['whatnot-shows'])));
+  eq(JSON.stringify([ws2?.shows?.map(x => [x.storeId, x.analytics?.sales, x.items?.units]), ws2?.days?.map(d => d.status)]), '[[["BL1",18,1]],["match"]]', 'whatnot-shows through the key: the show, its analytics, and the recap cross-check');
+  const wi = await bodyOf(await fetchW(withKey(ACTIONS['whatnot-items'])));
+  eq(JSON.stringify(wi?.categories?.map(c => [c.category, c.units, c.sales])), '[["Men\'s Outerwear",1,18]]', 'whatnot-items through the key: sold by Whatnot category');
+  const wp = await bodyOf(await fetchW(withKey(ACTIONS['whatnot-products'])));
+  eq(JSON.stringify(wp?.products?.map(x => [x.title, x.available, x.variants?.[0]?.buyItNowPrice])), '[["Carhartt jacket",3,24]]', 'whatnot-products through the key: live, with variant price and quantity');
   const il = await bodyOf(await fetchW(withKey(ACTIONS['item-lines'])));
   eq(JSON.stringify(il?.items?.map(i => [i.store, i.name, i.l2, i.source, i.net])), '[["BL2","Brass lamp","Home","clover-category",7.5]]', 'item-lines through the key: the record, with how the item was filed');
   const sum = (k) => (ml?.months || []).reduce((s, m) => s + (m[k] || 0), 0);

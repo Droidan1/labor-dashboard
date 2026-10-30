@@ -30,6 +30,7 @@ crons = ["55 3 * * *", "* * * * *", "0 11 * * 1", "0 * * * *", "30 10 * * *"]
 # now Worker secrets and MUST NOT be added back.
 #   bash scripts/migrate-secrets.sh      # one-time move of existing values
 #   npx wrangler secret put BL1_API_TOKEN [--env staging]   # to rotate one
+#   npx wrangler secret put WHATNOT_API_TOKEN   # Whatnot Seller API PAT (wn_pat_tk_…), read-only scopes (migration-084)
 # Merchant IDs stay here on purpose: they are account identifiers, not
 # credentials (they appear in Clover URLs and on receipts), and keeping them
 # visible documents which store maps to which account.
