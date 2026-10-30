@@ -1,3 +1,57 @@
+# Whatnot Seller API + MCP (2026-10-30)
+
+**Ask (Brian):** add the Whatnot API and MCP to RETJG HUB (docs: developers.whatnot.com).
+**Decided (Brian, 2026-10-30):** read-only first build covering item-level sales, show analytics and
+product/inventory reads. The recap email stays the source of live-sales dollars, and the API cross-checks it and
+alerts on a disagreement. MCP means both: Whatnot tools in the Hub's own MCP, plus setup steps for Whatnot's
+hosted MCP (mcp.whatnot.com). It is one Whatnot seller account for both locations.
+
+**API facts (docs, 2026-10-30):** REST `https://api.whatnot.com/seller-api/rest/v2`, Bearer personal access
+token `wn_pat_tk_…` (account owner makes it in the dashboard, with scopes and an expiry), 10 req/s per seller per
+app with `Retry-After` on 429, cursor pagination (`limit` ≤ 50, `next_cursor`, `reverse`). Webhooks are per
+developer app (not a PAT), so the Hub polls. There are no date filters on /orders or /shows: the sync pages
+newest-first and stops at a watermark.
+
+**Design**
+- Token: secret `WHATNOT_API_TOKEN`. Scopes: `read:orders`, `read:shows`, `read:reports`, `read:inventory`.
+  NOT `read:customers`: no buyer data is stored or needed (buyer counts come from show analytics).
+- migration-084 (additive, new tables only): `whatnot_shows`, `whatnot_show_analytics`, `whatnot_orders`,
+  `whatnot_order_items`, `whatnot_products`, `whatnot_sync`.
+- `syncWhatnot(env)` rides the hourly `0 * * * *` cron in its own `waitUntil`. It reads ended shows
+  (and their analytics until calculated), orders newest-first back to 3 days before the newest stored (status
+  changes), items for orders not yet itemised, and products for unseen product ids (for the category). A
+  backfill cursor continues older pages to 2026-07-01, under a per-run budget of API calls, paced under 10/s.
+- Store = the recap feeder's rule (scripts/whatnot-recap-ingest.gs): show start before 3:30 PM ET → BL1
+  (Fort Wayne = Coliseum), else BL14 (Battle Creek). One function, and orders with no show are unattributed.
+- Cross-check: for each store-day with every show's analytics calculated, Σ analytics `sales` vs the
+  recap's `channel_sales` whatnot total. A gap ≥ $1 pushes superusers once per store-day. It never writes
+  `channel_sales` or `daily_sales`.
+- Reads (GET, `bl`, financial, keyed read-through): `whatnot-shows` (shows + analytics + per-store-day
+  cross-check + sync status), `whatnot-items` (items sold, rolled up by Whatnot category), and `whatnot-products`
+  (a live page of products with variant price and available quantity). POST `whatnot-sync` is for superusers only
+  (manual run).
+- MCP/CLI: `get_whatnot_shows`, `get_whatnot_items`, `get_whatnot_products` in cli/reporting.mjs QUERIES.
+
+**Plan**
+- [x] migration-084.sql: six new tables, additive. Whatnot orders also carry `order_date` (Eastern) to date profile-shop sales
+- [x] worker.js: Whatnot client (≥120 ms between calls, 429 → Retry-After ×3, 400-call budget per run), syncWhatnot
+      (shows → analytics → order head → items → products → backfill), whatnotStoreFor, cross-check + one push per gap
+- [x] worker.js: whatnot-shows / whatnot-items / whatnot-products (GET) + whatnot-sync (POST, superuser);
+      ACTION_BUSINESS `bl`; REPORTING_READ_THROUGH + `cursor` param; hourly cron hook in its own waitUntil
+- [x] cli/reporting.mjs: get_whatnot_shows, get_whatnot_items, get_whatnot_products + one reading rule
+- [x] scripts/test-whatnot.mjs: 63 assertions. It crashes on main (no whatnot-sync). test-reporting-read-through.mjs
+      pins the 3 reads keyed = superuser (407 pass). The MCP suites now pin 25 tools
+- [x] npm test: 11174 assertions across 128 suites, all pass
+- [ ] Brian: token, `wrangler secret put WHATNOT_API_TOKEN`, migration-084, worker + MCP deploy, then first sync
+
+**Review**
+- Fixed by the test, not the first draft: a pending store-day reported `diff` −30 (API not final), which reads as a gap.
+  diff is now null until the day can be compared. The cross-check took "today" from the real clock; it now takes it
+  from the run's `now`.
+- Not verified, because there is no token yet: whether Whatnot's analytics `sales` is the same figure as the recap's
+  "gross". If it is not, every day reads `gap` and the first sync pushes once per store-day of the last week. The
+  first sync after deploy settles it.
+- Live auction items may come through with no product category (Uncategorized). That is only knowable on real data.
 # MCP: agents mark a supply request ordered, with its cost (2026-10-30)
 
 **Ask (Brian):** an agent sees the stores' supply requests (already on the MCP: get_supply_requests /

@@ -5289,6 +5289,10 @@ const ACTION_BUSINESS = new Map([
   ["transactions", "bl"],
   ["item-sales", "bl"],
   ["item-lines", "bl"],
+  ["whatnot-shows", "bl"],
+  ["whatnot-items", "bl"],
+  ["whatnot-products", "bl"],
+  ["whatnot-sync", "bl"],
   ["update-clover-item", "bl"],
   ["update-user", "bl"],
   ["video", "bl"],
@@ -16412,6 +16416,378 @@ async function syncBufferPosts(env, now, window) {
   return out;
 }
 
+// ─── Whatnot Seller API (2026-10-30) ─────────────────────────────────────────
+// Brian (2026-10-30): pull Whatnot into the Hub through the Seller API, read-only: every
+// item sold per show, show analytics, and products. The Bargain Lane Live recap email
+// (scripts/whatnot-recap-ingest.gs) STAYS the source of live-sales dollars; this mirror
+// cross-checks it and never writes channel_sales or daily_sales.
+//
+// REST, Bearer personal access token (WHATNOT_API_TOKEN, `wn_pat_tk_…`), 10 requests a
+// second per seller per app, cursor paging (limit ≤ 50, newest first by default). /orders and
+// /shows take no date filter, so each pass pages newest-first and stops at a watermark.
+// Webhooks need a developer app, not a token, so the Hub polls on the hourly cron.
+//
+// 🔒 No buyer data: the token has no read:customers scope and nothing here stores a buyer.
+const WHATNOT_API = "https://api.whatnot.com/seller-api/rest/v2";
+const WHATNOT_PAGE = 50;                // the API's maximum page size
+const WHATNOT_MIN_GAP_MS = 120;         // ≤ ~8 calls a second, under the 10/s limit
+const WHATNOT_RUN_BUDGET = 400;         // API calls per hourly run; the rest waits an hour
+const WHATNOT_ORDER_OVERLAP_MS = 3 * 864e5; // re-read 3 days of orders, so a cancel lands
+// The recap feeder's rule (LOCATION_TO_STORE there): the recap files a show by its start
+// time, before 3:30 PM Eastern = Fort Wayne, which is Coliseum (BL1), never Dupont; later =
+// Battle Creek (BL14). 🛑 One copy here; change it with the feeder, or the cross-check
+// compares two different splits of the same shows.
+const WHATNOT_FW_CUTOFF_MIN = 15 * 60 + 30;
+const WHATNOT_STORES = ["BL1", "BL14"];
+
+class WhatnotBudgetError extends Error {}
+class WhatnotHttpError extends Error {
+  constructor(status, message) { super(message); this.status = status; }
+}
+
+// "12.50" + currency → 12.5, or null. Every Bargain Lane amount is USD.
+const wnMoney = (m) => {
+  if (!m || m.amount == null || m.amount === "") return null;
+  const n = Number(m.amount);
+  return Number.isFinite(n) ? roundCents(n) : null;
+};
+const wnNum = (v) => (v == null || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
+// Whatnot timestamps → one ISO spelling, so MAX() and < compare instants, not strings.
+const wnIso = (v) => { const t = Date.parse(v || ""); return Number.isFinite(t) ? new Date(t).toISOString() : null; };
+
+const WHATNOT_ET_FMT = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+});
+// ISO instant → { date: Eastern YYYY-MM-DD, minutes: Eastern minutes after midnight }.
+function whatnotEt(iso) {
+  const t = Date.parse(iso || "");
+  if (!Number.isFinite(t)) return null;
+  const p = {};
+  for (const part of WHATNOT_ET_FMT.formatToParts(new Date(t))) p[part.type] = part.value;
+  return { date: `${p.year}-${p.month}-${p.day}`, minutes: (parseInt(p.hour, 10) % 24) * 60 + parseInt(p.minute, 10) };
+}
+function whatnotStoreFor(iso) {
+  const et = whatnotEt(iso);
+  if (!et) return { store: null, date: null };
+  return { date: et.date, store: et.minutes < WHATNOT_FW_CUTOFF_MIN ? "BL1" : "BL14" };
+}
+
+// Sequential, paced, budgeted GETs. 429 → wait Retry-After (Whatnot sends it) and retry,
+// at most 3 times. 404 → null (a deleted listing, a show of another seller).
+function whatnotClient(env, { budget = WHATNOT_RUN_BUDGET } = {}) {
+  let calls = 0, nextAt = 0;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  async function get(path, params = {}) {
+    const url = new URL(WHATNOT_API + path);
+    for (const [k, v] of Object.entries(params)) if (v != null && v !== "") url.searchParams.set(k, String(v));
+    for (let attempt = 0; ; attempt++) {
+      if (calls >= budget) throw new WhatnotBudgetError(`Whatnot call budget (${budget}) reached`);
+      const wait = nextAt - Date.now();
+      if (wait > 0) await sleep(wait);
+      calls++;
+      nextAt = Date.now() + WHATNOT_MIN_GAP_MS;
+      const res = await fetch(url.toString(), {
+        headers: { Authorization: `Bearer ${env.WHATNOT_API_TOKEN}`, Accept: "application/json" },
+      });
+      if (res.status === 429 && attempt < 3) {
+        const ra = Number(res.headers.get("Retry-After"));
+        await sleep(Math.max(Number.isFinite(ra) ? ra * 1000 : 1000 * 2 ** attempt, 250) + Math.random() * 250);
+        continue;
+      }
+      // The window is spent: hold off until it resets rather than earn a 429.
+      if (res.headers.get("RateLimit-Remaining") === "0") {
+        const reset = Number(res.headers.get("RateLimit-Reset"));
+        if (Number.isFinite(reset) && reset > 0) nextAt = Math.max(nextAt, Date.now() + Math.min(reset, 10) * 1000);
+      }
+      if (res.status === 404) return null;
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new WhatnotHttpError(res.status, `Whatnot GET ${path} → ${res.status} ${text.slice(0, 200)}`);
+      }
+      return res.json();
+    }
+  }
+  return { get, get calls() { return calls; } };
+}
+
+// The tables exist (migration-084). Until they do, the sync and the reads say so.
+async function whatnotReady(env) {
+  const row = await env.DB.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'whatnot_sync'").first();
+  return !!row;
+}
+async function whatnotState(env, key) {
+  const row = await env.DB.prepare("SELECT value FROM whatnot_sync WHERE key = ?").bind(key).first();
+  return row ? row.value : null;
+}
+function whatnotSetState(env, key, value, at) {
+  return env.DB.prepare(
+    "INSERT INTO whatnot_sync (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+  ).bind(key, value, at);
+}
+
+function whatnotShowRow(env, s, at) {
+  const { store, date } = whatnotStoreFor(s.scheduled_start_at);
+  // started_at/show_date/store are left alone once analytics has set them from the real start.
+  return env.DB.prepare(
+    `INSERT INTO whatnot_shows (id, title, status, scheduled_start_at, show_date, store, updated_at, synced_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET title = excluded.title, status = excluded.status,
+       scheduled_start_at = excluded.scheduled_start_at, updated_at = excluded.updated_at, synced_at = excluded.synced_at,
+       show_date = CASE WHEN whatnot_shows.started_at IS NULL THEN excluded.show_date ELSE whatnot_shows.show_date END,
+       store     = CASE WHEN whatnot_shows.started_at IS NULL THEN excluded.store     ELSE whatnot_shows.store END`
+  ).bind(String(s.id), s.title ?? null, s.status ?? null, s.scheduled_start_at ?? null, date, store, s.updated_at ?? null, at);
+}
+
+function whatnotOrderRow(env, o, at) {
+  const a = o.amounts || {};
+  const et = whatnotEt(o.created_at);
+  // 🔒 o.buyer is deliberately not read.
+  return env.DB.prepare(
+    `INSERT INTO whatnot_orders (id, show_id, status, transaction_type, created_at, order_date, updated_at,
+                                 subtotal, shipping, tax, total, discount, currency, items_synced, synced_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+     ON CONFLICT(id) DO UPDATE SET show_id = excluded.show_id, status = excluded.status,
+       transaction_type = excluded.transaction_type, updated_at = excluded.updated_at,
+       subtotal = excluded.subtotal, shipping = excluded.shipping, tax = excluded.tax, total = excluded.total,
+       discount = excluded.discount, currency = excluded.currency, synced_at = excluded.synced_at`
+  ).bind(String(o.id), o.show_id ?? null, o.status ?? null, o.transaction_type ?? null, wnIso(o.created_at) || at, et ? et.date : null,
+    o.updated_at ?? null, wnMoney(a.subtotal), wnMoney(a.shipping), wnMoney(a.tax), wnMoney(a.total),
+    wnMoney(a.applied_discount && a.applied_discount.amount), (a.total && a.total.currency) || (a.subtotal && a.subtotal.currency) || null, at);
+}
+
+// Ended shows, newest first. Stops at the first page the database already holds unchanged,
+// so after the first run this is one call an hour.
+async function syncWhatnotShows(env, api, at, out) {
+  let cursor = null;
+  for (let page = 0; page < 40; page++) {
+    const body = await api.get("/shows", { status: "ended", limit: WHATNOT_PAGE, cursor, reverse: true });
+    const shows = (body && body.data) || [];
+    if (!shows.length) break;
+    const known = await env.DB.prepare(
+      `SELECT id, updated_at FROM whatnot_shows WHERE id IN (${shows.map(() => "?").join(",")})`
+    ).bind(...shows.map(s => String(s.id))).all();
+    const have = new Map((known.results || []).map(r => [r.id, r.updated_at]));
+    const fresh = shows.filter(s => have.get(String(s.id)) !== (s.updated_at ?? null) || !have.has(String(s.id)));
+    if (fresh.length) await env.DB.batch(fresh.map(s => whatnotShowRow(env, s, at)));
+    out.shows += fresh.length;
+    if (!fresh.length || !body.next_cursor) break;
+    cursor = body.next_cursor;
+  }
+}
+
+// Analytics until it is calculated (sales comes back non-null), newest show first.
+async function syncWhatnotAnalytics(env, api, at, out) {
+  const { results } = await env.DB.prepare(
+    `SELECT s.id FROM whatnot_shows s LEFT JOIN whatnot_show_analytics a ON a.show_id = s.id
+      WHERE s.status = 'ended' AND (a.show_id IS NULL OR (a.sales IS NULL AND COALESCE(a.calculation_status, '') <> 'WILL_NOT_BE_CALCULATED'))
+      ORDER BY COALESCE(s.started_at, s.scheduled_start_at) DESC LIMIT 40`
+  ).all();
+  for (const { id } of results || []) {
+    const a = await api.get(`/analytics/shows/${encodeURIComponent(id)}`);
+    if (!a) continue;
+    const stmts = [env.DB.prepare(
+      `INSERT OR REPLACE INTO whatnot_show_analytics (show_id, calculation_status, sales, estimated_earnings, orders_count,
+         average_order_value, giveaway_orders_count, giveaway_spend, impressions, clickthrough_rate, buyers,
+         first_time_buyers, returning_buyers, stream_minutes, max_concurrent_viewers, total_views, distinct_viewers,
+         average_rating, fetched_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(id, a.calculation_status ?? null, wnMoney(a.sales), wnMoney(a.estimated_earnings), wnNum(a.orders_count),
+      wnMoney(a.average_order_value), wnNum(a.giveaway_orders_count), wnMoney(a.giveaway_spend), wnNum(a.show_impression_count),
+      wnNum(a.show_clickthrough_rate), wnNum(a.buyers_count), wnNum(a.first_time_buyers_count), wnNum(a.returning_buyers_count),
+      wnNum(a.stream_minutes), wnNum(a.max_concurrent_viewers), wnNum(a.total_views), wnNum(a.distinct_viewers_count),
+      wnNum(a.average_rating), at)];
+    // The real start, once known, decides the store and day, as it does in the recap.
+    if (a.start_time) {
+      const { store, date } = whatnotStoreFor(a.start_time);
+      if (store) stmts.push(env.DB.prepare("UPDATE whatnot_shows SET started_at = ?, show_date = ?, store = ? WHERE id = ?").bind(a.start_time, date, store, id));
+    }
+    await env.DB.batch(stmts);
+    out.analytics++;
+  }
+}
+
+// Orders. HEAD: newest first, down to 3 days before the newest already stored (so status
+// changes land). The first run reads one page and hands the past to the BACKFILL, which reads
+// oldest first, a slice per run, until it reaches where the head started.
+async function syncWhatnotOrders(env, api, at, out) {
+  const newest = (await env.DB.prepare("SELECT MAX(created_at) AS t FROM whatnot_orders").first())?.t || null;
+  const stopBefore = newest ? new Date(Date.parse(newest) - WHATNOT_ORDER_OVERLAP_MS).toISOString() : null;
+  let cursor = null;
+  for (let page = 0; page < 40; page++) {
+    const body = await api.get("/orders", { limit: WHATNOT_PAGE, cursor, reverse: true });
+    const orders = (body && body.data) || [];
+    if (orders.length) await env.DB.batch(orders.map(o => whatnotOrderRow(env, o, at)));
+    out.orders += orders.length;
+    if (!newest) {
+      // First run: the backfill takes everything older than this page.
+      const oldest = (orders.length && wnIso(orders[orders.length - 1].created_at)) || at;
+      await whatnotSetState(env, "orders_backfill", JSON.stringify({ cursor: null, until: oldest }), at).run();
+      break;
+    }
+    const oldestHere = orders.length ? wnIso(orders[orders.length - 1].created_at) : null;
+    if (!body.next_cursor || !oldestHere || oldestHere < stopBefore) break;
+    cursor = body.next_cursor;
+  }
+}
+
+async function syncWhatnotBackfill(env, api, at, out, maxPages = 10) {
+  const raw = await whatnotState(env, "orders_backfill");
+  if (!raw) return;
+  const bf = JSON.parse(raw);
+  if (bf.done) return;
+  for (let page = 0; page < maxPages; page++) {
+    let body;
+    try {
+      body = await api.get("/orders", { limit: WHATNOT_PAGE, cursor: bf.cursor, reverse: false });
+    } catch (e) {
+      // An expired cursor (422): start the backfill over from the oldest order. Every write
+      // is an upsert, so re-reading costs calls, never data.
+      if (e instanceof WhatnotHttpError && e.status === 422 && bf.cursor) {
+        await whatnotSetState(env, "orders_backfill", JSON.stringify({ cursor: null, until: bf.until, restarted: at }), at).run();
+        out.backfill = "restarted";
+        return;
+      }
+      throw e;
+    }
+    const orders = ((body && body.data) || []).filter(o => !bf.until || (wnIso(o.created_at) || "") < bf.until);
+    if (orders.length) await env.DB.batch(orders.map(o => whatnotOrderRow(env, o, at)));
+    out.orders += orders.length;
+    const reached = !body || !body.next_cursor || orders.length < ((body && body.data) || []).length;
+    bf.cursor = reached ? null : body.next_cursor;
+    if (reached) bf.done = at;
+    await whatnotSetState(env, "orders_backfill", JSON.stringify(bf), at).run();
+    if (reached) break;
+  }
+  out.backfill = bf.done ? "done" : "in progress";
+}
+
+// Items for every order not yet itemised, newest first. An order is marked only in the same
+// batch that writes its items, so a run cut short by the budget never marks one half-read.
+async function syncWhatnotItems(env, api, at, out) {
+  const { results } = await env.DB.prepare(
+    "SELECT id, show_id FROM whatnot_orders WHERE items_synced = 0 ORDER BY created_at DESC LIMIT 300"
+  ).all();
+  for (const o of results || []) {
+    const items = [];
+    let cursor = null;
+    for (let page = 0; page < 10; page++) {
+      const body = await api.get(`/orders/${encodeURIComponent(o.id)}/items`, { limit: WHATNOT_PAGE, cursor });
+      items.push(...((body && body.data) || []));
+      if (!body || !body.next_cursor) break;
+      cursor = body.next_cursor;
+    }
+    const stmts = items.map(i => env.DB.prepare(
+      `INSERT OR REPLACE INTO whatnot_order_items (id, order_id, show_id, product_id, variant_id, sku, title, quantity,
+         unit_price, price_includes_tax, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(String(i.id), o.id, o.show_id, i.product_id ?? null, i.variant_id ?? null,
+      (i.purchased_item && i.purchased_item.sku) || null, (i.purchased_item && i.purchased_item.title) || null,
+      wnNum(i.quantity), wnMoney(i.unit_price), i.price_includes_tax == null ? null : (i.price_includes_tax ? 1 : 0), at));
+    stmts.push(env.DB.prepare("UPDATE whatnot_orders SET items_synced = 1 WHERE id = ?").bind(o.id));
+    await env.DB.batch(stmts);
+    out.items += items.length;
+  }
+}
+
+// One read per product an item names, for its Whatnot category. A 404 (deleted listing) is
+// remembered as found = 0 and not asked again.
+async function syncWhatnotProducts(env, api, at, out) {
+  const { results } = await env.DB.prepare(
+    `SELECT DISTINCT i.product_id AS id FROM whatnot_order_items i
+      WHERE i.product_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM whatnot_products p WHERE p.id = i.product_id) LIMIT 200`
+  ).all();
+  for (const { id } of results || []) {
+    const p = await api.get(`/products/${encodeURIComponent(id)}`);
+    await env.DB.prepare(
+      `INSERT OR REPLACE INTO whatnot_products (id, title, category_id, category_name, external_id, found, updated_at, synced_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(id, p ? (p.title ?? null) : null, p && p.category ? (p.category.id ?? null) : null,
+      p && p.category ? (p.category.name ?? null) : null, p ? (p.external_id ?? null) : null, p ? 1 : 0, p ? (p.updated_at ?? null) : null, at).run();
+    out.products++;
+  }
+}
+
+// The cross-check, per store-day: Σ show analytics `sales` against the recap's whatnot row in
+// channel_sales. status: match | gap (≥ $1 apart) | pending (a show's analytics not calculated
+// yet, or the day is today) | no_recap (the recap row has not arrived; the recap's own
+// reconcile covers that). A rehearsal or private show (WILL_NOT_BE_CALCULATED) counts as $0.
+async function whatnotCrossCheck(env, from, to, stores, today = getETToday().dateStr) {
+  const inList = stores.map(() => "?").join(",");
+  if (!stores.length) return [];
+  const [api, recap] = await env.DB.batch([
+    env.DB.prepare(
+      `SELECT s.store, s.show_date AS date, COUNT(*) AS shows,
+              SUM(CASE WHEN a.sales IS NULL AND COALESCE(a.calculation_status, '') <> 'WILL_NOT_BE_CALCULATED' THEN 1 ELSE 0 END) AS pending,
+              ROUND(COALESCE(SUM(a.sales), 0), 2) AS sales
+         FROM whatnot_shows s LEFT JOIN whatnot_show_analytics a ON a.show_id = s.id
+        WHERE s.status = 'ended' AND s.show_date BETWEEN ? AND ? AND s.store IN (${inList})
+        GROUP BY s.store, s.show_date`).bind(from, to, ...stores),
+    env.DB.prepare(
+      `SELECT store, date, total FROM channel_sales WHERE channel = 'whatnot' AND date BETWEEN ? AND ? AND store IN (${inList})`
+    ).bind(from, to, ...stores),
+  ]);
+  const days = new Map();
+  for (const r of api.results || []) days.set(r.store + "|" + r.date, { store: r.store, date: r.date, shows: r.shows, apiSales: r.sales, pendingShows: r.pending, recap: null });
+  for (const r of recap.results || []) {
+    const k = r.store + "|" + r.date;
+    const d = days.get(k) || { store: r.store, date: r.date, shows: 0, apiSales: 0, pendingShows: 0 };
+    d.recap = r.total == null ? null : roundCents(Number(r.total));
+    days.set(k, d);
+  }
+  return [...days.values()].map(d => {
+    // diff only where the two can be compared: a pending day's API figure is not final.
+    const pending = d.date >= today || d.pendingShows > 0;
+    const diff = pending || d.recap == null ? null : roundCents(d.apiSales - d.recap);
+    const status = pending ? "pending" : d.recap == null ? "no_recap" : Math.abs(diff) >= 1 ? "gap" : "match";
+    return { ...d, diff, status };
+  }).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.store < b.store ? -1 : 1));
+}
+
+// The last 7 complete days, once a run. A gap is pushed once per store-day, all in ONE push.
+async function whatnotCrossCheckAlert(env, at) {
+  const today = whatnotEt(at).date, to = addDaysYmd(today, -1), from = addDaysYmd(to, -6);
+  const rows = await whatnotCrossCheck(env, from, to, WHATNOT_STORES, today);
+  const gaps = rows.filter(r => r.status === "gap");
+  const fresh = [];
+  for (const g of gaps) if ((await whatnotState(env, `xcheck:${g.store}:${g.date}`)) == null) fresh.push(g);
+  if (!fresh.length) return { checked: rows.length, gaps: gaps.length, pushed: 0 };
+  const money = (n) => "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const line = (g) => `${STORE_LABELS[g.store] || g.store} ${g.date.slice(5).replace("-", "/")}: API ${money(g.apiSales)} vs recap ${money(g.recap)}`;
+  const push = await pushSuperusers(env, {
+    title: fresh.length === 1 ? "Whatnot API and recap disagree" : `Whatnot API and recap disagree on ${fresh.length} days`,
+    body: fresh.slice(0, 4).map(line).join("\n") + (fresh.length > 4 ? `\n+${fresh.length - 4} more` : ""),
+    tag: "whatnot-xcheck",
+  });
+  await env.DB.batch(fresh.map(g => whatnotSetState(env, `xcheck:${g.store}:${g.date}`, String(g.diff), at)));
+  return { checked: rows.length, gaps: gaps.length, pushed: fresh.length, sent: push.sent };
+}
+
+// The hourly run (and POST ?action=whatnot-sync). Each step is bounded; a run that hits the
+// call budget stops where it is and the next hour carries on.
+async function syncWhatnot(env, { now = new Date(), budget } = {}) {
+  if (!env.DB || !env.WHATNOT_API_TOKEN) return { skipped: "no DB or WHATNOT_API_TOKEN" };
+  if (!(await whatnotReady(env))) return { skipped: "migration-084 not applied" };
+  const at = now.toISOString();
+  const api = whatnotClient(env, { budget });
+  const out = { shows: 0, analytics: 0, orders: 0, items: 0, products: 0, backfill: null, complete: true };
+  try {
+    await syncWhatnotShows(env, api, at, out);
+    await syncWhatnotAnalytics(env, api, at, out);
+    await syncWhatnotOrders(env, api, at, out);
+    await syncWhatnotItems(env, api, at, out);
+    await syncWhatnotProducts(env, api, at, out);
+    await syncWhatnotBackfill(env, api, at, out);
+  } catch (e) {
+    if (e instanceof WhatnotBudgetError) out.complete = false;
+    else { out.complete = false; out.error = String((e && e.message) || e).slice(0, 300); }
+  }
+  out.calls = api.calls;
+  try { out.crossCheck = await whatnotCrossCheckAlert(env, at); }
+  catch (e) { out.crossCheckError = String((e && e.message) || e).slice(0, 200); }
+  await whatnotSetState(env, "last_run", JSON.stringify({ at, ...out }), at).run();
+  return out;
+}
+
 async function publishDraft(env, { draftId, published, token, unattended }) {
   if (env.BUFFER_API_KEY) return publishDraftViaBuffer(env, { draftId, published, unattended });
   if (!env.DB || !env.MEDIA) return { ok: false, error: "Storage not configured (DB/MEDIA)", status: 500 };
@@ -17142,6 +17518,10 @@ export default {
     // L2/L3 rollup): the receipt archive summed per item, and the app's own per-item
     // record with how each item was filed. D1 reads only; the financial gate and
     // allowedStores() still apply to sessions.
+    //
+    // whatnot-shows, whatnot-items and whatnot-products joined 2026-10-30 (Brian: Whatnot in the
+    // Hub and its MCP). The first two read the D1 mirror; whatnot-products reads Whatnot live
+    // (GET only, one page). `cursor` is that page token. whatnot-sync (POST) is NOT here.
     const REPORTING_READ_THROUGH = new Set([
       "weekly-summary", "weekly-store-detail", "weekly-t13", "category-series", "category-hours",
       "labor", "labor-plan",
@@ -17149,6 +17529,7 @@ export default {
       "truck-list", "mos-list",
       "supply-requests", "supply-request", "supply-budgets",
       "item-sales", "item-lines",
+      "whatnot-shows", "whatnot-items", "whatnot-products",
     ]);
     // 🛑 And only the parameters those handlers read. A read-through
     // request falls through the whole route chain to its handler, so any route
@@ -17158,7 +17539,7 @@ export default {
     // whatever is later added above them, instead of by where code happens to sit.
     const READ_THROUGH_PARAMS = new Set([
       "action", "key", "from", "to", "store", "level", "grain", "week", "year", "end", "endWeek", "weeks",
-      "offset", "filter", "months", "limit", "id", "status", "month",
+      "offset", "filter", "months", "limit", "id", "status", "month", "cursor",
     ]);
     const reportingAction = url.searchParams.get("action");
     const reportingKeyGiven = request.headers.has("X-API-Key") || url.searchParams.has("key");
@@ -30197,6 +30578,169 @@ export default {
       }), { headers: corsJson });
     }
 
+    // ─── Whatnot (2026-10-30): the Seller API mirror, read-only ──
+    //    GET  ?action=whatnot-shows&from&to[&store]   shows + analytics + the recap cross-check
+    //    GET  ?action=whatnot-items&from&to[&store]   items sold, by Whatnot category
+    //    GET  ?action=whatnot-products[&limit][&cursor]  one page of products, live from Whatnot
+    //    POST ?action=whatnot-sync                    run the hourly sync now (superuser)
+    // Store = whatnotStoreFor (the recap's split: BL1 before 3:30 PM Eastern, else BL14). A
+    // cancelled order counts nowhere. An order sold outside a show (profile shop) has no store:
+    // it is listed only when every store is asked for by someone who sees every store.
+    if (url.searchParams.get("action") === "whatnot-sync" && request.method === "POST") {
+      const guard = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { superuserOnly: true });
+      if (guard) return guard;
+      return new Response(JSON.stringify(await syncWhatnot(env, { now: new Date() })), { headers: corsJson });
+    }
+    if (["whatnot-shows", "whatnot-items"].includes(url.searchParams.get("action")) && request.method === "GET") {
+      const action = url.searchParams.get("action");
+      const range = itemRangeScope(url, currentUser, corsJson);
+      if (range.response) return range.response;
+      if (!(await whatnotReady(env))) {
+        return new Response(JSON.stringify({ error: "Whatnot is not set up yet (migration-084 not applied)" }), { status: 503, headers: corsJson });
+      }
+      const { from, to } = range;
+      const stores = range.stores.filter(s => WHATNOT_STORES.includes(s));
+      const lastRun = await whatnotState(env, "last_run");
+      const sync = { connected: !!env.WHATNOT_API_TOKEN, lastRun: lastRun ? JSON.parse(lastRun) : null };
+      const inList = stores.map(() => "?").join(",") || "NULL";
+      const NOT_CANCELLED = "COALESCE(o.status, '') NOT LIKE '%cancel%'";
+
+      if (action === "whatnot-shows") {
+        const rows = stores.length ? (await env.DB.prepare(
+          `WITH sh AS (SELECT * FROM whatnot_shows WHERE status = 'ended' AND show_date BETWEEN ? AND ? AND store IN (${inList})),
+                ord AS (SELECT o.show_id, COUNT(*) AS orders, SUM(CASE WHEN o.items_synced = 0 THEN 1 ELSE 0 END) AS pending,
+                               ROUND(COALESCE(SUM(o.subtotal), 0), 2) AS subtotal
+                          FROM whatnot_orders o JOIN sh ON sh.id = o.show_id WHERE ${NOT_CANCELLED} GROUP BY o.show_id),
+                it AS (SELECT i.show_id, SUM(COALESCE(i.quantity, 1)) AS units,
+                              ROUND(COALESCE(SUM(i.unit_price * COALESCE(i.quantity, 1)), 0), 2) AS sales
+                         FROM whatnot_order_items i JOIN sh ON sh.id = i.show_id JOIN whatnot_orders o ON o.id = i.order_id
+                        WHERE ${NOT_CANCELLED} GROUP BY i.show_id)
+           SELECT sh.id, sh.title, sh.store, sh.show_date, COALESCE(sh.started_at, sh.scheduled_start_at) AS start_at,
+                  a.calculation_status, a.sales, a.estimated_earnings, a.orders_count, a.average_order_value, a.buyers,
+                  a.first_time_buyers, a.returning_buyers, a.giveaway_orders_count, a.giveaway_spend, a.impressions,
+                  a.clickthrough_rate, a.stream_minutes, a.max_concurrent_viewers, a.total_views, a.distinct_viewers, a.average_rating,
+                  ord.orders, ord.pending, ord.subtotal, it.units, it.sales AS item_sales
+             FROM sh LEFT JOIN whatnot_show_analytics a ON a.show_id = sh.id
+                     LEFT JOIN ord ON ord.show_id = sh.id LEFT JOIN it ON it.show_id = sh.id
+            ORDER BY start_at`).bind(from, to, ...stores).all()).results || [] : [];
+        const shows = rows.map(r => ({
+          showId: r.id, title: r.title, storeId: r.store, date: r.show_date, startAt: r.start_at,
+          analytics: r.calculation_status == null && r.sales == null ? null : {
+            calculationStatus: r.calculation_status, sales: r.sales, estimatedEarnings: r.estimated_earnings,
+            orders: r.orders_count, averageOrderValue: r.average_order_value, buyers: r.buyers,
+            firstTimeBuyers: r.first_time_buyers, returningBuyers: r.returning_buyers,
+            giveawayOrders: r.giveaway_orders_count, giveawaySpend: r.giveaway_spend, impressions: r.impressions,
+            clickthroughRate: r.clickthrough_rate, streamMinutes: r.stream_minutes, maxConcurrentViewers: r.max_concurrent_viewers,
+            totalViews: r.total_views, distinctViewers: r.distinct_viewers, averageRating: r.average_rating,
+          },
+          orders: { count: r.orders || 0, subtotal: r.subtotal || 0, itemsPending: r.pending || 0 },
+          items: { units: r.units || 0, sales: r.item_sales || 0 },
+        }));
+        const sum = (f) => roundCents(shows.reduce((s, x) => s + (Number(f(x)) || 0), 0));
+        return new Response(JSON.stringify({
+          ok: true, from, to, stores, shows,
+          totals: { shows: shows.length, sales: sum(x => x.analytics && x.analytics.sales),
+            estimatedEarnings: sum(x => x.analytics && x.analytics.estimatedEarnings),
+            orders: sum(x => x.orders.count), units: sum(x => x.items.units), itemSales: sum(x => x.items.sales) },
+          days: await whatnotCrossCheck(env, from, to, stores),
+          sync,
+        }), { headers: corsJson });
+      }
+
+      // whatnot-items: one row per item line sold, rolled up below.
+      const chainWide = !url.searchParams.get("store") && allowedStores(currentUser) === null;
+      const SELECT_ITEM = `SELECT COALESCE(p.category_name, 'Uncategorized') AS category, p.found, i.product_id, i.title, i.sku,
+                                  COALESCE(i.quantity, 1) AS qty, COALESCE(i.unit_price, 0) AS price, o.transaction_type`;
+      const [inShows, offShow, pending] = await env.DB.batch([
+        env.DB.prepare(`${SELECT_ITEM}, s.store, s.show_date AS date
+            FROM whatnot_shows s JOIN whatnot_order_items i ON i.show_id = s.id JOIN whatnot_orders o ON o.id = i.order_id
+            LEFT JOIN whatnot_products p ON p.id = i.product_id
+           WHERE s.show_date BETWEEN ? AND ? AND s.store IN (${inList}) AND ${NOT_CANCELLED}`).bind(from, to, ...stores),
+        env.DB.prepare(`${SELECT_ITEM}, NULL AS store, o.order_date AS date
+            FROM whatnot_orders o JOIN whatnot_order_items i ON i.order_id = o.id
+            LEFT JOIN whatnot_products p ON p.id = i.product_id
+           WHERE ? = 1 AND o.show_id IS NULL AND o.order_date BETWEEN ? AND ? AND ${NOT_CANCELLED}`).bind(chainWide ? 1 : 0, from, to),
+        env.DB.prepare(`SELECT COUNT(*) AS n FROM whatnot_orders o LEFT JOIN whatnot_shows s ON s.id = o.show_id
+           WHERE o.items_synced = 0 AND ${NOT_CANCELLED}
+             AND ((s.show_date BETWEEN ? AND ? AND s.store IN (${inList})) OR (? = 1 AND o.show_id IS NULL AND o.order_date BETWEEN ? AND ?))`)
+          .bind(from, to, ...stores, chainWide ? 1 : 0, from, to),
+      ]);
+      const lines = [...(inShows.results || []), ...(offShow.results || [])];
+      const cats = new Map(), items = new Map();
+      let unlookedUp = 0;
+      for (const l of lines) {
+        const sales = Number(l.qty) * Number(l.price);
+        if (l.product_id && l.found == null) unlookedUp++;
+        const c = cats.get(l.category) || { category: l.category, lines: 0, units: 0, sales: 0 };
+        c.lines++; c.units += Number(l.qty); c.sales += sales; cats.set(l.category, c);
+        const k = l.category + "\u0000" + (l.title || "") + "\u0000" + (l.sku || "");
+        const it = items.get(k) || { category: l.category, title: l.title, sku: l.sku, lines: 0, units: 0, sales: 0,
+          firstDate: l.date, lastDate: l.date, stores: new Set(), auction: 0, buyItNow: 0 };
+        it.lines++; it.units += Number(l.qty); it.sales += sales;
+        if (l.date < it.firstDate) it.firstDate = l.date;
+        if (l.date > it.lastDate) it.lastDate = l.date;
+        it.stores.add(l.store || "unattributed");
+        if (l.transaction_type === "auction") it.auction++; else if (l.transaction_type) it.buyItNow++;
+        items.set(k, it);
+      }
+      const fin = (x) => ({ ...x, sales: roundCents(x.sales), avgPrice: x.units ? roundCents(x.sales / x.units) : null });
+      const categories = [...cats.values()].map(fin).sort((a, b) => b.sales - a.sales || a.category.localeCompare(b.category));
+      const ITEM_CAP = 2000;
+      const allItems = [...items.values()].map(x => fin({ ...x, stores: [...x.stores].sort() }))
+        .sort((a, b) => b.sales - a.sales || String(a.title).localeCompare(String(b.title)));
+      return new Response(JSON.stringify({
+        ok: true, from, to, stores, unattributedIncluded: chainWide,
+        totals: { lines: lines.length, units: categories.reduce((s, c) => s + c.units, 0), sales: roundCents(categories.reduce((s, c) => s + c.sales, 0)) },
+        categories, items: allItems.slice(0, ITEM_CAP), itemsTruncated: allItems.length > ITEM_CAP, itemCount: allItems.length,
+        coverage: { ordersNotItemised: (pending.results && pending.results[0] && pending.results[0].n) || 0, categoryNotLookedUp: unlookedUp },
+        sync,
+      }), { headers: corsJson });
+    }
+    if (url.searchParams.get("action") === "whatnot-products" && request.method === "GET") {
+      if (!env.WHATNOT_API_TOKEN) {
+        return new Response(JSON.stringify({ error: "Whatnot is not connected (WHATNOT_API_TOKEN is not set)" }), { status: 503, headers: corsJson });
+      }
+      const limitRaw = url.searchParams.get("limit");
+      const limit = limitRaw == null ? 20 : parseInt(limitRaw, 10);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
+        return new Response(JSON.stringify({ error: "limit must be 1 to 50" }), { status: 400, headers: corsJson });
+      }
+      const cursor = url.searchParams.get("cursor") || null;
+      if (cursor && cursor.length > 2048) return new Response(JSON.stringify({ error: "cursor is too long" }), { status: 400, headers: corsJson });
+      const api = whatnotClient(env, { budget: 1 + limit * 3 });
+      try {
+        const body = await api.get("/products", { limit, cursor, reverse: true });
+        const products = [];
+        for (const p of (body && body.data) || []) {
+          const variants = [];
+          let vc = null;
+          for (let page = 0; page < 3; page++) {
+            const vb = await api.get(`/products/${encodeURIComponent(p.id)}/variants`, { limit: WHATNOT_PAGE, cursor: vc });
+            variants.push(...((vb && vb.data) || []));
+            if (!vb || !vb.next_cursor) break;
+            vc = vb.next_cursor;
+          }
+          const vs = variants.map(v => ({
+            variantId: v.id, sku: v.sku || null,
+            options: (v.selected_options || []).map(o => `${o.name}: ${o.value}`).join(" / ") || null,
+            buyItNowPrice: wnMoney(v.pricing && v.pricing.buy_it_now && v.pricing.buy_it_now.price),
+            auctionStartPrice: wnMoney(v.pricing && v.pricing.auction && v.pricing.auction.start_price),
+            available: v.inventory && v.inventory.available_quantity != null ? Number(v.inventory.available_quantity) : null,
+          }));
+          products.push({
+            productId: p.id, title: p.title, category: p.category ? (p.category.name || null) : null,
+            externalId: p.external_id || null, createdAt: p.created_at || null, updatedAt: p.updated_at || null,
+            available: vs.some(v => v.available != null) ? vs.reduce((s, v) => s + (v.available || 0), 0) : null,
+            variants: vs,
+          });
+        }
+        return new Response(JSON.stringify({ ok: true, products, nextCursor: (body && body.next_cursor) || null }), { headers: corsJson });
+      } catch (e) {
+        const status = e instanceof WhatnotHttpError ? e.status : null;
+        return new Response(JSON.stringify({ error: "Whatnot request failed", whatnotStatus: status, detail: String((e && e.message) || e).slice(0, 200) }), { status: 502, headers: corsJson });
+      }
+    }
+
     // ─── Item sales: units and sales per ITEM, from the receipt archive ──
     //    GET ?action=item-sales&from=YYYY-MM-DD&to=YYYY-MM-DD[&store=BL1]
     // The one per-line record with history (payment_archive_items, banked nightly with
@@ -30790,6 +31334,10 @@ export default {
       ctx.waitUntil(ingestFacebookComments(env, {}).then(r => console.log("fb-comment-ingest:", JSON.stringify(r))).catch(e => console.error("fb-comment-ingest threw:", (e && e.stack) || e)));
       ctx.waitUntil(syncBufferPosts(env, new Date(), "older").then(r => console.log("buffer-sync older:", JSON.stringify(r))).catch(e => console.error("buffer-sync threw:", (e && e.stack) || e)));
       ctx.waitUntil(abortStaleVideoUploads(env, new Date()).catch(e => console.error("video-upload cleanup threw:", (e && e.stack) || e)));
+      // Whatnot Seller API mirror (read-only; cross-checks the recap, never writes live sales).
+      ctx.waitUntil(syncWhatnot(env, { now: new Date() })
+        .then(r => { if (!r.skipped) console.log("whatnot-sync:", JSON.stringify(r)); })
+        .catch(e => console.error("whatnot-sync threw:", (e && e.stack) || e)));
       return;
     }
 
