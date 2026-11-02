@@ -1,3 +1,89 @@
+# Live Sales business — phase 1: add it, move no money (2026-11-02)
+
+**Ask (Brian):** plan and build phase 1 of moving live sales (online auction + Whatnot) out of Bargain Lane into
+their own business. **Decided (2026-10-30):** superuser + admins only; all five preview-B pages; per-show rows from
+the Whatnot API, headline totals from the recap. Plan: `~/.claude/plans/sparkling-baking-balloon.md`.
+**Correction:** BL2 is South Bend (Dupont is BL4, no live sales); BL1 also has occasional auctions.
+
+- [x] migration-085: `live` business, units `live-BL1/BL2/BL14/BL16` (code = store), admin grants (033 shape)
+- [x] worker: `["live-sales","live"]` + `GET ?action=live-sales&from&to[&store]` (400 → 503 → unit scope; one batch:
+      live channel rows with parsed meta, coverage, Bargain Lane's auction column + override flag, Whatnot shows with
+      lost = cancelled + failed). `whatnot-*` stay on `bl` until phase 2. Wrote its own show query rather than
+      extracting from `whatnot-shows`, so that endpoint is byte-for-byte untouched
+- [x] index.html: five `#page-live-*` pages + scoped `.lv` styles (dark via `op-*` vars, so OLED/Halloween retint),
+      `lv*` module (one fetch for range + comparison, store change re-renders), nav/menu/bottom bar, router guard +
+      FINANCIAL_PAGES, `dashboardPageFor('live')`, picker card "already in Bargain Lane's total" (never summed,
+      reporting stays "1 of 2"), `liveMtd` in bargainLaneFigures; CACHE_NAME v290; DESIGN.md §3.2
+- [x] Tests: new test-live-sales.mjs (50, crashes on main); test-business-gate / -nav-registry / -landing-businesses
+      extended; test-today-auction-reads allows the new month-to-date read (it skips today)
+- [x] Browser: new browser-live-sales.mjs (111: totals, second render, one request, picker, old worker, contrast
+      ≥ 4.5:1 light/dark/OLED × desktop/phone, opaque sticky column); browser-mobile-menu live case passes
+- [ ] Brian: worker deploy → merge → migration-085 (staging, then prod with rule-7 confirmation)
+
+**Review**
+- `npm test`: 11,252 assertions / 129 suites; only test-briefing-margin fails, and it fails on main too (seeds
+  "yesterday and the two days before", which crosses a week boundary on a Monday).
+- browser-mobile-menu: 5 associate assertions fail on main too (associates are shown a Submit tab). Not touched here.
+- Both browser checks now pre-dismiss the passkey prompt, which a Mac's Chrome shows (Touch ID) and which swallowed
+  every click.
+
+# Live Sales page — feasibility + previews (2026-10-30)
+
+**Ask (Brian):** a "Live Sales" business or sales channel in the Hub holding what the boss's "Bargain Lane Live"
+dashboard shows (KPIs, daily sales by location, breakdown by location and show type, show mix, a per-show table,
+paid promotion), plus refunds, returns, support cases and carrier adjustments as cards, from the Whatnot API or
+webhooks. Previews first.
+
+**Checked against prod (read-only):** the Hub's recap rows reproduce that dashboard's October figures exactly
+($108,328 · 70 shows · 9,514 items · 3,693 shipments · 606 new buyers · Fort Wayne $65,493 / Battle Creek $42,835),
+so it is built from the same "Bargain Lane Live recap" email.
+
+**Recap vs Whatnot, explained (15:00Z run, orders for 10/27–29):** Whatnot `sales` = Σ order subtotals minus
+`cancelled`+`failed`, to the cent on every store-day with orders (e.g. BL1 10/28: 3,398 − 225 = 3,173). The recap
+sits inside [net, net + cancelled/failed] (3,297): it is gross at the end-of-show summary, so it keeps items that
+fail or are cancelled AFTER it. October: recap $108,328 vs Whatnot $107,025 (−1.2%); show types split 48/22 exactly
+as the boss's dashboard. ⚠️ The #362 cross-check flags any gap ≥ $1, so it pushes on most days by design; the
+right rule is "gap only when recap is outside [net, net + cancelled/failed]".
+
+**Where each piece comes from**
+| Piece | Source | State |
+|---|---|---|
+| Sales, items, shipments, new buyers, shows, daily by location | recap (`channel_sales` whatnot + meta) | have it |
+| Per-show rows (time, title, type, start price) | recap per-show lines (feeder keeps only sums today) or Whatnot shows+analytics | feeder change, or API now |
+| Viewers (every show, not only promoted) | analytics `distinct_viewers` | have it |
+| Cancelled after the show | orders `cancelled`/`failed`; analytics `sales` excludes cancellations | have it |
+| Refunds, carrier adjustments, tips | `seller_financial_report` ledger (ORDER_REFUND, CARRIER_ADJUSTMENT(_REFUND), TIP) | token needs `write:reports` |
+| New followers per show | `analytics_livestreams_report` (`new_followers`) | token needs `write:reports` |
+| Returns | none: Whatnot books a return as a refund | not separable |
+| Support cases | none in API or webhooks | not available |
+| Promotion spend / sales | none in API; Whatnot's end-of-show email only | needs an email source |
+| Webhooks | orders/shows/shipments/products only; need a developer app + public URL | add nothing here |
+
+**Decided (Brian, 2026-10-30): Live Sales becomes its own business, and live sales come OUT of Bargain Lane**
+(preview B's placement). Today live money is folded into Bargain Lane everywhere — `netSales = total + auction`
+(~45 worker refs, ~94 in index.html), labor % (`labor_pct*(total+auction)`), the Sheet budget, the Executive
+Summary, the landing roll-up and the MCP reading rules — so the split is its own project: new business first,
+then a cutover that removes live from Bargain Lane in one release so nothing counts it twice or drops it.
+Both channels move (Brian, 2026-10-30): online auction AND Whatnot. October: Whatnot $108,328 (BL1, BL14) +
+auction $8,018 (BL2 $1,505, BL14 $3,472, BL16 $3,041), so Live Sales spans 4 stores and 2 channels.
+Open: does the budget sheet carry a separate live budget?
+
+**Previews (gitignored, real figures):** `_preview/live-sales-a-page-in-bargain-lane.html`,
+`_preview/live-sales-b-own-business.html`. Generator outside the repo (scratchpad `live-preview/`). Contrast
+measured in both themes, desktop and phone: min 4.8:1. Location colours validated (dataviz): `#3b82f6`, `#d97706`.
+
+- [x] Feasibility per metric (spec `x-artifact-schemas` report columns, webhook topics)
+- [x] Two previews in the app's design, both themes, phone width
+- [x] Brian: placement = B, its own business (2026-10-30)
+- [ ] Brian: whether per-show rows come from the recap (exact match) or Whatnot (net)
+- [x] Brian: auction AND Whatnot move (2026-10-30)
+- [x] Preview B reworked for both channels: hero split Whatnot/online auction, 4 store cards (channel tiles), daily
+      chart stacked by channel, by-store split bars, Online auction page (by store + every auction). B colours by
+      CHANNEL, A by location (same validated pair). Contrast min 4.8:1 over 40 theme/width/store/page combinations
+- [ ] Brian: live budget source
+- [ ] Brian: add `write:reports` to the Whatnot token (unblocks refunds, adjustments, tips, followers)
+- [ ] Promotion: ask the recap tool's owner to add promo lines, or route Whatnot's end-of-show emails to a feeder
+
 # Whatnot Seller API + MCP (2026-10-30)
 
 **Ask (Brian):** add the Whatnot API and MCP to RETJG HUB (docs: developers.whatnot.com).

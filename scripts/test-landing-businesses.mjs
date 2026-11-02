@@ -114,6 +114,25 @@ for (const [user, role] of [['u-mgr1','manager'], ['u-mgr2','manager'],
      'a granted-but-unconnected business is still connected:false (card stays inert)');
 }
 
+// ── 5b · Live Sales (migration-085): superuser and admins, never managers ───
+{
+  db.exec(fs.readFileSync(path.join(repo, 'migration-085.sql'), 'utf8'));
+  const su = await authMe(env, 'u-su');
+  const live = (su.body.businesses || []).find(b => b.id === 'live');
+  ok(live && live.name === 'Live Sales' && live.unitNoun === 'store' && live.unitCount === 4 && live.connected === true,
+     `superuser sees Live Sales with its 4 stores, got ${JSON.stringify(live)}`);
+  const ad = await authMe(env, 'u-admin');
+  ok((ad.body.businesses || []).some(b => b.id === 'live'), 'an active admin is granted Live Sales by migration-085');
+  for (const user of ['u-mgr1', 'u-mgr2']) {
+    const r = await authMe(env, user);
+    ok(!(r.body.businesses || []).some(b => b.id === 'live'), `${user} (manager) does not get Live Sales in phase 1`);
+  }
+  const before = db.prepare("SELECT COUNT(*) c FROM user_grants").get().c;
+  db.exec(fs.readFileSync(path.join(repo, 'migration-085.sql'), 'utf8'));
+  ok(db.prepare("SELECT COUNT(*) c FROM user_grants").get().c === before, 'migration-085 is idempotent');
+  db.prepare("UPDATE businesses SET active = 0 WHERE id = 'live'").run();   // so section 6 still isolates ecom
+}
+
 // ── 6 · An inactive business disappears entirely ────────────────────────────
 {
   db.prepare("UPDATE businesses SET active = 0 WHERE id = 'ecom'").run();

@@ -254,7 +254,8 @@ V1 "comfortable" density:
   - Associate: a tab for Bin Dump / MOS / Price Scan / Sign Studio when
     they hold that page and no dashboard, then Menu. **Buy** sits after
     Price Scan for one who can print (`psCanPrint`): it opens Price Scan's
-    Buy sheet. E-Commerce: eBay Cases · Menu.
+    Buy sheet. E-Commerce: eBay Cases · Menu. Live Sales: Overview ·
+    Shows · Auction · Money · Menu (Promotion is on the Menu).
 
   Tabs mirror the sidebar (`vis('nav-…')`). The lit tab is **derived**:
   the page's own visible tab, Dashboard for the two detail pages,

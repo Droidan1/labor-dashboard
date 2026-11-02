@@ -1241,6 +1241,29 @@
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
           <span class="nav-label">eBay Cases</span>
         </div>
+        <!-- Live Sales (migration-085, phase 1): its five pages. Shown by applyRoleUI only
+             for an account holding Live Sales; applyBusinessNav keeps them out of every
+             other business. -->
+        <div id="nav-live-overview" class="hidden nav-item" data-page="live-overview" data-menu-section="Live Sales" onclick="navigateToPage('live-overview')">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span>
+          <span class="nav-label">Overview</span>
+        </div>
+        <div id="nav-live-shows" class="hidden nav-item" data-page="live-shows" data-menu-section="Live Sales" onclick="navigateToPage('live-shows')">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.49M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14"/></svg></span>
+          <span class="nav-label">Whatnot Shows</span>
+        </div>
+        <div id="nav-live-auction" class="hidden nav-item" data-page="live-auction" data-menu-section="Live Sales" onclick="navigateToPage('live-auction')">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 13l-7.5 7.5a2.12 2.12 0 0 1-3-3L11 10"/><path d="M16 16l6-6"/><path d="M8 8l6-6"/><path d="M9 7l8 8"/><path d="M21 11l-8-8"/></svg></span>
+          <span class="nav-label">Online Auction</span>
+        </div>
+        <div id="nav-live-promotion" class="hidden nav-item" data-page="live-promotion" data-menu-section="Live Sales" onclick="navigateToPage('live-promotion')">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg></span>
+          <span class="nav-label">Promotion</span>
+        </div>
+        <div id="nav-live-money" class="hidden nav-item" data-page="live-money" data-menu-section="Live Sales" onclick="navigateToPage('live-money')">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></span>
+          <span class="nav-label">Money Back</span>
+        </div>
         <!-- Inventory. A group rather than an item, the same shape as Marketing and
              Merchandising above: Add Item / Inventory Viewer / Schedule Sale were three
              collapsed cards and a modal inside one #page-inventory, and the four floor
@@ -1393,6 +1416,19 @@
            the only tab that business had. -->
       <button id="bn-ebay-cases" data-tab="ebay-cases" aria-label="eBay Cases" onclick="navigateToPage('ebay-cases')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
         <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span class="bn-lb">eBay Cases</span>
+      </button>
+      <!-- Live Sales' bar: Overview · Shows · Auction · Money · Menu. Promotion is on the Menu. -->
+      <button id="bn-live-overview" data-tab="live-overview" aria-label="Live Sales" onclick="navigateToPage('live-overview')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><span class="bn-lb">Overview</span>
+      </button>
+      <button id="bn-live-shows" data-tab="live-shows" aria-label="Whatnot Shows" onclick="navigateToPage('live-shows')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.49M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14"/></svg><span class="bn-lb">Shows</span>
+      </button>
+      <button id="bn-live-auction" data-tab="live-auction" aria-label="Online Auction" onclick="navigateToPage('live-auction')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 13l-7.5 7.5a2.12 2.12 0 0 1-3-3L11 10"/><path d="M16 16l6-6"/><path d="M8 8l6-6"/><path d="M9 7l8 8"/><path d="M21 11l-8-8"/></svg><span class="bn-lb">Auction</span>
+      </button>
+      <button id="bn-live-money" data-tab="live-money" aria-label="Money Back" onclick="navigateToPage('live-money')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg><span class="bn-lb">Money</span>
       </button>
       <button id="bn-submit-photos" data-tab="submit-photos" onclick="navigateToPage('submit-photos')" aria-label="Submit photos" class="bn-tab hidden flex-1 flex-col items-center font-semibold">
         <span class="bn-submit-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span><span class="bn-lb">Submit</span>
@@ -6586,6 +6622,246 @@
         </details>
       </div>
     </div><!-- end #page-ebay-cases -->
+
+    <!-- ══ Live Sales (its own business, phase 1) ═════════════════════════════
+         migration-085 + ?action=live-sales. Five pages share one module (lvInit),
+         one fetch and one scoped style block. Phase 1 moves no money: every figure
+         here is ALSO inside Bargain Lane's totals until the phase-2 cutover, and the
+         Overview says so. Colour is set on .lv (the page), never inherited (§4.8
+         trap 3); dark values read the op-* variables so pure black and Halloween
+         retint them. Blue/amber are the two channels and are fills only, never text. -->
+    <style>
+      .lv { --lv-panel:#ffffff; --lv-panelHi:#fafaf6; --lv-ink:#14110a; --lv-dim:#6b6453; --lv-dimmer:#9c9484;
+            --lv-hair:rgba(20,16,8,.10); --lv-border:rgba(20,16,8,.18); --lv-card:rgba(20,16,8,.08); --lv-track:rgba(20,16,8,.06);
+            --lv-brand:#166534; --lv-good:#166534; --lv-warn:#92400e; --lv-bad:#c0392b;
+            --lv-w:#3b82f6; --lv-a:#d97706; --lv-live:#8b5cf6; color:var(--lv-ink); }
+      .dark .lv { --lv-panel:rgb(var(--op-panel)); --lv-panelHi:rgb(var(--op-panelHi)); --lv-ink:rgb(var(--op-ink));
+            --lv-dim:rgb(var(--op-inkDim)); --lv-dimmer:rgb(var(--op-inkDimmer)); --lv-hair:rgba(255,255,255,.09);
+            --lv-border:var(--op-borderHi); --lv-card:var(--op-border); --lv-track:rgba(255,255,255,.06);
+            --lv-brand:rgb(var(--accent-green)); --lv-good:#22c55e; --lv-warn:#f59e0b; --lv-bad:#f87171; }
+      .lv .lv-card { background:var(--lv-panel); border:1px solid var(--lv-card); border-radius:16px; padding:20px; }
+      .lv .lv-eyebrow { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.1em; color:var(--lv-dim); }
+      .lv .lv-big { font-weight:700; font-variant-numeric:tabular-nums; letter-spacing:-.02em; font-size:44px; line-height:1.05; margin-top:6px; }
+      .lv .lv-delta { font-size:14px; margin-top:6px; color:var(--lv-dim); }
+      .lv .lv-up { color:var(--lv-good); font-weight:600; } .lv .lv-down { color:var(--lv-bad); font-weight:600; }
+      .lv .lv-hero { display:grid; grid-template-columns:1.25fr 1fr; gap:16px; }
+      .lv .lv-facts { display:flex; gap:22px; margin-top:16px; flex-wrap:wrap; }
+      .lv .lv-facts .v { font-size:18px; font-weight:600; font-variant-numeric:tabular-nums; }
+      .lv .lv-facts .l { font-size:12px; color:var(--lv-dim); }
+      .lv .lv-tiles { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
+      .lv .lv-tile { border-radius:10px; border:1px solid rgb(var(--accent-green) / .20); background:rgb(var(--accent-green) / .10); padding:12px 14px; }
+      .lv .lv-tile .l { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--lv-brand); }
+      .lv .lv-tile .v { font-size:22px; font-weight:700; font-variant-numeric:tabular-nums; margin-top:4px; }
+      .lv .lv-tile .s, .lv .lv-sub { font-size:12px; color:var(--lv-dim); margin-top:2px; }
+      .lv .lv-chsplit { margin-top:14px; display:flex; flex-direction:column; gap:2px; max-width:520px; }
+      .lv .lv-chrow { display:flex; align-items:center; gap:8px; font-size:13px; }
+      .lv .lv-chrow .amt { margin-left:auto; font-weight:600; font-variant-numeric:tabular-nums; }
+      .lv .lv-chrow .n { color:var(--lv-dim); font-size:12px; min-width:74px; text-align:right; font-variant-numeric:tabular-nums; }
+      .lv .lv-also { margin-top:12px; font-size:12px; color:var(--lv-dim); }
+      .lv .lv-sec { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin:4px 2px 0; }
+      .lv .lv-sec h2 { margin:0; font-size:15px; font-weight:600; }
+      .lv .lv-sec span { font-size:13px; color:var(--lv-dim); }
+      .lv .lv-mbgrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(176px,1fr)); gap:10px; }
+      .lv .lv-mb { background:var(--lv-panel); border:1px solid var(--lv-card); border-radius:12px; padding:14px; display:flex; flex-direction:column; gap:6px; min-height:132px; }
+      .lv .lv-mb .l { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.08em; color:var(--lv-dim); }
+      .lv .lv-mb .v { font-size:22px; font-weight:700; font-variant-numeric:tabular-nums; }
+      .lv .lv-mb .v.none { color:var(--lv-dim); font-weight:500; }
+      .lv .lv-mb .s { font-size:12px; color:var(--lv-dim); line-height:1.35; }
+      .lv .lv-chip { align-self:flex-start; margin-top:auto; font-size:10px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; padding:3px 8px; border-radius:999px; border:1px solid; white-space:nowrap; }
+      .lv .lv-chip.ok { color:var(--lv-good); border-color:rgba(34,197,94,.45); background:rgba(34,197,94,.08); }
+      .lv .lv-chip.need { color:var(--lv-warn); border-color:rgba(245,158,11,.40); background:rgba(245,158,11,.12); }
+      .lv .lv-chip.no { color:var(--lv-dim); border-color:var(--lv-dimmer); background:transparent; }
+      .lv .lv-panel { background:var(--lv-panel); border:1px solid var(--lv-card); border-radius:14px; overflow:hidden; color:var(--lv-ink); }
+      .lv .lv-bar { background:var(--lv-panelHi); border-bottom:1px solid var(--lv-hair); padding:13px 18px; display:flex; flex-wrap:wrap; gap:10px 14px; align-items:center; }
+      .lv .lv-bar .t { font-size:15px; font-weight:600; }
+      .lv .lv-bar .lab { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:var(--lv-dim); }
+      .lv .lv-bar .r { margin-left:auto; display:flex; gap:8px; align-items:center; }
+      .lv .lv-status { padding:10px 18px 0; font-size:13px; color:var(--lv-dim); }
+      .lv .lv-body { padding:14px 18px 18px; }
+      .lv .lv-legend { border-top:1px solid var(--lv-hair); padding:10px 18px; font-size:12px; color:var(--lv-dim); display:flex; flex-wrap:wrap; gap:6px 18px; }
+      .lv .lv-k { display:inline-flex; align-items:center; gap:6px; }
+      .lv .lv-sw { width:10px; height:10px; border-radius:3px; display:inline-block; flex:0 0 10px; }
+      .lv .lv-seg { display:inline-flex; border:1px solid var(--lv-border); border-radius:8px; overflow:hidden; }
+      .lv .lv-seg button { background:none; border:0; padding:5px 10px; font-size:12px; cursor:pointer; color:var(--lv-dim); min-height:32px; }
+      .lv .lv-seg button[aria-pressed="true"] { background:rgb(var(--accent-green)); color:#06210f; font-weight:600; }
+      .lv .lv-row2 { display:grid; grid-template-columns:1.7fr 1fr; gap:16px; }
+      .lv .lv-chart { position:relative; }
+      .lv .lv-chart svg { display:block; width:100%; height:auto; overflow:visible; }
+      .lv .lv-chart .ax { fill:var(--lv-dim); font-size:11px; font-variant-numeric:tabular-nums; }
+      .lv .lv-chart .gr { stroke:var(--lv-hair); stroke-width:1; }
+      .lv .lv-tip { position:absolute; pointer-events:none; background:var(--lv-panelHi); border:1px solid var(--lv-border); border-radius:10px; padding:8px 10px; font-size:12px; min-width:190px; display:none; z-index:5; color:var(--lv-ink); }
+      .lv .lv-tip .tr { display:flex; justify-content:space-between; gap:12px; font-variant-numeric:tabular-nums; }
+      .lv .lv-tip .tr span:first-child { display:inline-flex; align-items:center; gap:6px; color:var(--lv-dim); }
+      .lv .lv-brk h3 { margin:2px 0 10px; font-size:13px; font-weight:600; }
+      .lv .lv-brk-row { margin-bottom:12px; }
+      .lv .lv-brk-top { display:flex; justify-content:space-between; gap:10px; font-size:14px; font-weight:500; }
+      .lv .lv-brk-top .amt { font-variant-numeric:tabular-nums; font-weight:600; }
+      .lv .lv-track { height:6px; border-radius:999px; background:var(--lv-track); overflow:hidden; margin:6px 0 4px; }
+      .lv .lv-fill { height:100%; border-radius:999px; }
+      .lv .lv-split { display:flex; gap:2px; height:6px; margin:6px 0 4px; min-width:4px; }
+      .lv .lv-split i { display:block; height:100%; border-radius:999px; }
+      .lv .lv-scroll { overflow-x:auto; }
+      .lv table.lv-dt { border-collapse:separate; border-spacing:0; width:100%; font-variant-numeric:tabular-nums; font-size:13px; color:var(--lv-ink); }
+      .lv .lv-dt th { position:sticky; top:0; height:34px; padding:0 10px; background:var(--lv-panelHi); color:var(--lv-dim); font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; text-align:left; border-bottom:1px solid var(--lv-hair); white-space:nowrap; z-index:1; }
+      .lv .lv-dt td { height:42px; padding:0 10px; border-bottom:1px solid var(--lv-hair); white-space:nowrap; }
+      .lv .lv-dt .num { text-align:right; }
+      .lv .lv-dt .stick { position:sticky; left:0; background:var(--lv-panel); z-index:2; }   /* trap 2: opaque */
+      .lv .lv-dt th.stick { background:var(--lv-panelHi); z-index:3; }
+      .lv .lv-dt .dim { color:var(--lv-dim); }
+      .lv .lv-dt tr:last-child td { border-bottom:0; }
+      .lv .lv-dt tr.tot td, .lv .lv-dt tr.tot td.stick { font-weight:700; background:var(--lv-panelHi); }
+      .lv .lv-lvl { display:inline-block; font-size:10px; font-weight:700; letter-spacing:.06em; padding:2px 6px; border-radius:6px; border:1px solid var(--lv-dimmer); color:var(--lv-dim); }
+      .lv .lv-lvl.bags { border-color:rgba(139,92,246,.6); }
+      .lv .lv-mini { display:inline-block; height:6px; border-radius:999px; background:var(--lv-live); vertical-align:middle; margin-right:8px; }
+      .lv .lv-more { display:flex; justify-content:center; padding:12px; border-top:1px solid var(--lv-hair); }
+      .lv .lv-btn { min-height:36px; padding:0 14px; border-radius:10px; border:1px solid var(--lv-border); background:var(--lv-panel); color:var(--lv-ink); cursor:pointer; font-size:13px; font-weight:600; }
+      .lv .lv-mix { display:grid; grid-template-columns:repeat(auto-fit,minmax(380px,1fr)); }
+      .lv .lv-mix > div { border-right:1px solid var(--lv-hair); border-bottom:1px solid var(--lv-hair); overflow-x:auto; margin-bottom:-1px; }
+      .lv .lv-mix > div:last-child { border-right:0; }
+      .lv .lv-mix h3 { margin:0; padding:12px 18px 4px; font-size:13px; font-weight:600; }
+      .lv .lv-promo { display:grid; grid-template-columns:repeat(6,1fr); }
+      .lv .lv-promo > div { padding:14px 18px; border-right:1px solid var(--lv-hair); }
+      .lv .lv-promo > div:last-child { border-right:0; }
+      .lv .lv-promo .v { font-size:20px; font-weight:700; color:var(--lv-dim); margin-top:4px; }
+      .lv .lv-note { margin:14px 18px 0; padding:10px 12px; border-radius:10px; border:1px solid rgba(245,158,11,.40); background:rgba(245,158,11,.12); font-size:13px; color:var(--lv-ink); }
+      .lv .lv-note b { color:var(--lv-warn); }
+      .lv .lv-err { padding:16px 18px; border-radius:14px; border:1px solid var(--lv-bad); background:var(--lv-panel); color:var(--lv-ink); font-size:14px; }
+      .lv .lv-err b { color:var(--lv-bad); }
+      .lv .lv-locs { display:grid; grid-template-columns:repeat(2,1fr); gap:16px; }
+      .lv .lv-loc-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+      .lv .lv-loc-name { font-family:'Lilita One', cursive; font-size:24px; letter-spacing:.02em; }
+      .lv .lv-loc-code { font-size:12px; color:var(--lv-dim); margin-left:6px; }
+      .lv .lv-pill { display:inline-flex; padding:4px 10px; border-radius:999px; font-size:11px; font-weight:600; border:1px solid var(--lv-border); color:var(--lv-dim); white-space:nowrap; }
+      .lv .lv-loc-mid { display:flex; justify-content:space-between; align-items:flex-end; gap:12px; margin-top:10px; }
+      .lv .lv-loc-total { font-size:32px; font-weight:700; font-variant-numeric:tabular-nums; letter-spacing:-.02em; }
+      .lv .lv-ctiles { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:14px; }
+      .lv .lv-ctile { border-radius:10px; border:1px solid var(--lv-card); background:var(--lv-panelHi); padding:10px 12px; }
+      .lv .lv-ctile .l { display:flex; align-items:center; gap:6px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--lv-dim); }
+      .lv .lv-ctile .v { font-size:17px; font-weight:700; font-variant-numeric:tabular-nums; margin-top:4px; }
+      .lv .lv-ctile .v.none { color:var(--lv-dim); font-weight:500; font-size:14px; }
+      .lv .lv-foot { display:flex; justify-content:flex-end; gap:16px; margin-top:12px; }
+      .lv .lv-link { color:var(--lv-brand); font-size:13px; font-weight:600; background:none; border:0; cursor:pointer; padding:8px 0; min-height:40px; }
+      .lv .lv-spark { width:120px; height:44px; flex:0 0 120px; }
+      .lv .lv-select { height:36px; border-radius:10px; border:1px solid var(--lv-border); background:var(--lv-panel); color:var(--lv-ink); padding:0 10px; font-size:13px; font-weight:500; }
+      .lv .lv-stack > * + * { margin-top:16px; }
+      @media (max-width:1023px) {
+        .lv .lv-hero, .lv .lv-row2, .lv .lv-locs { grid-template-columns:1fr; }
+        .lv .lv-big { font-size:38px; }
+        .lv .lv-mbgrid { grid-template-columns:repeat(2,1fr); }
+        .lv .lv-mix { grid-template-columns:1fr; }
+        .lv .lv-mix > div { border-right:0; }
+        .lv .lv-mix .lv-mini { display:none; }
+        .lv .lv-mix td:first-child { white-space:normal; }
+        .lv .lv-promo { grid-template-columns:repeat(2,1fr); }
+        .lv .lv-promo > div { border-bottom:1px solid var(--lv-hair); }
+        .lv .lv-promo > div:nth-child(even) { border-right:0; }
+      }
+    </style>
+
+    <div id="page-live-overview" class="hidden lv">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-3 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-6xl mx-auto flex items-end justify-between gap-4 flex-wrap">
+          <div>
+            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Live Sales</h1>
+            <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Whatnot shows and the online auction · also counted in Bargain Lane until the split</p>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <select class="lv-select lv-range" aria-label="Date range" onchange="lvSetRange(this.value)"></select>
+            <select class="lv-select lv-store" aria-label="Store" onchange="lvSetStore(this.value)"></select>
+            <span class="lv-updated text-[11px] text-opl-inkDim dark:text-op-inkDim"></span>
+            <button type="button" onclick="lvRefresh()" class="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-ink dark:text-op-ink hover:border-accent-green/50 transition">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+              Refresh
+            </button>
+          </div>
+        </div>
+      </div>
+      <div id="lv-overview-body" class="max-w-6xl mx-auto px-4 sm:px-6 pt-4 pb-6 lv-stack"></div>
+    </div><!-- end #page-live-overview -->
+
+    <div id="page-live-shows" class="hidden lv">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-3 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-6xl mx-auto flex items-end justify-between gap-4 flex-wrap">
+          <div>
+            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Whatnot Shows</h1>
+            <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Every ended show, newest first</p>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <select class="lv-select lv-range" aria-label="Date range" onchange="lvSetRange(this.value)"></select>
+            <select class="lv-select lv-store" aria-label="Store" onchange="lvSetStore(this.value)"></select>
+            <span class="lv-updated text-[11px] text-opl-inkDim dark:text-op-inkDim"></span>
+            <button type="button" onclick="lvRefresh()" class="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-ink dark:text-op-ink hover:border-accent-green/50 transition">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+              Refresh
+            </button>
+          </div>
+        </div>
+      </div>
+      <div id="lv-shows-body" class="max-w-6xl mx-auto px-4 sm:px-6 pt-4 pb-6 lv-stack"></div>
+    </div><!-- end #page-live-shows -->
+
+    <div id="page-live-auction" class="hidden lv">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-3 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-6xl mx-auto flex items-end justify-between gap-4 flex-wrap">
+          <div>
+            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Online Auction</h1>
+            <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Results from the online auction feed, by store and day</p>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <select class="lv-select lv-range" aria-label="Date range" onchange="lvSetRange(this.value)"></select>
+            <select class="lv-select lv-store" aria-label="Store" onchange="lvSetStore(this.value)"></select>
+            <span class="lv-updated text-[11px] text-opl-inkDim dark:text-op-inkDim"></span>
+            <button type="button" onclick="lvRefresh()" class="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-ink dark:text-op-ink hover:border-accent-green/50 transition">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+              Refresh
+            </button>
+          </div>
+        </div>
+      </div>
+      <div id="lv-auction-body" class="max-w-6xl mx-auto px-4 sm:px-6 pt-4 pb-6 lv-stack"></div>
+    </div><!-- end #page-live-auction -->
+
+    <div id="page-live-promotion" class="hidden lv">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-3 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-6xl mx-auto flex items-end justify-between gap-4 flex-wrap">
+          <div>
+            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Promotion</h1>
+            <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Paid promotion on Whatnot</p>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <select class="lv-select lv-range" aria-label="Date range" onchange="lvSetRange(this.value)"></select>
+            <select class="lv-select lv-store" aria-label="Store" onchange="lvSetStore(this.value)"></select>
+            <span class="lv-updated text-[11px] text-opl-inkDim dark:text-op-inkDim"></span>
+            <button type="button" onclick="lvRefresh()" class="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-ink dark:text-op-ink hover:border-accent-green/50 transition">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+              Refresh
+            </button>
+          </div>
+        </div>
+      </div>
+      <div id="lv-promotion-body" class="max-w-6xl mx-auto px-4 sm:px-6 pt-4 pb-6 lv-stack"></div>
+    </div><!-- end #page-live-promotion -->
+
+    <div id="page-live-money" class="hidden lv">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-3 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-6xl mx-auto flex items-end justify-between gap-4 flex-wrap">
+          <div>
+            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Money Back</h1>
+            <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">What came off the gross after the show</p>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <select class="lv-select lv-range" aria-label="Date range" onchange="lvSetRange(this.value)"></select>
+            <select class="lv-select lv-store" aria-label="Store" onchange="lvSetStore(this.value)"></select>
+            <span class="lv-updated text-[11px] text-opl-inkDim dark:text-op-inkDim"></span>
+            <button type="button" onclick="lvRefresh()" class="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-ink dark:text-op-ink hover:border-accent-green/50 transition">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+              Refresh
+            </button>
+          </div>
+        </div>
+      </div>
+      <div id="lv-money-body" class="max-w-6xl mx-auto px-4 sm:px-6 pt-4 pb-6 lv-stack"></div>
+    </div><!-- end #page-live-money -->
 
     <!-- ══ Labor ══════════════════════════════════════════════════════════
          Replaces the Retail Payroll Planning sheet. Planning recommends next
@@ -13491,7 +13767,8 @@
     // unrecognised. Every role in production is unaffected.
     const FINANCIAL_PAGES = ['dashboard', 'weekly-summary', 'store-detail',
                              'all-stores-detail', 'inventory-add', 'inventory-viewer',
-                             'inventory-sale', 'supply-request', 'labor'];
+                             'inventory-sale', 'supply-request', 'labor',
+                             'live-overview', 'live-shows', 'live-auction', 'live-promotion', 'live-money'];
     if (FINANCIAL_PAGES.includes(page) && !canSeeFinancials(currentUser)) return;
 
     // Guard admin-only pages
@@ -13567,6 +13844,10 @@
     // render the shell for someone the API then 403s.
     if (page === 'ebay-cases') {
       if (!userBusinesses(currentUser).some(b => b.id === 'ecom')) return;
+    }
+    // Live Sales' pages belong to that business, on the same terms as eBay Cases.
+    if (page.startsWith('live-')) {
+      if (!userBusinesses(currentUser).some(b => b.id === 'live')) return;
     }
     // Guard superuser-only pages
     if (page === 'admin-settings') {
@@ -13654,6 +13935,9 @@
     }
     if (page === 'ebay-cases') {
       if (typeof initEbayCases === 'function') initEbayCases();
+    }
+    if (page.startsWith('live-')) {
+      if (typeof lvInit === 'function') lvInit(page);
     }
     if (page === 'users') {
       loadUsers();
@@ -36819,6 +37103,381 @@
   }
   window.initEbayCases = initEbayCases;
 
+  // ═══ Live Sales — its own business, phase 1 (migration-085 + ?action=live-sales) ═══
+  // Five pages, one module. One fetch covers the chosen range AND its comparison window;
+  // a store change re-renders from memory. Phase 1 moves no money: everything here is also
+  // inside Bargain Lane's totals until the phase-2 cutover, and the Overview says so.
+  // Headline Whatnot dollars are the recap's (gross at Whatnot's end-of-show summary);
+  // per-show rows are Whatnot's API (net of every cancelled or failed order).
+  const LV_PAGE = { 'live-overview': 'overview', 'live-shows': 'shows', 'live-auction': 'auction', 'live-promotion': 'promotion', 'live-money': 'money' };
+  const LV_RANGES = [['mtd', 'This month'], ['lm', 'Last month'], ['l7', 'Last 7 days'], ['l30', 'Last 30 days']];
+  const LV_CH = { whatnot: { name: 'Whatnot', color: 'var(--lv-w)' }, auction: { name: 'Online auction', color: 'var(--lv-a)' } };
+  const LV_SLOTS = ['Morning (before 10:30)', 'Midday (10:30–1:00)', 'Afternoon (1:00–3:30)', 'Evening (3:30 on)'];
+  const LV_DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const LV_DOWL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const LV_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const lvState = { page: 'overview', range: 'mtd', store: 'all', type: 'all', showAll: false, view: 'chart',
+                    data: null, dataKey: null, loading: false, error: null, loadedAt: null };
+  const lvEsc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const lvInt = (n) => n == null ? '—' : Math.round(n).toLocaleString('en-US');   // fmtInt(null) prints '0'
+  const lvMoney = (n) => n == null ? '—' : fmtDollar(n);
+  const lvK = (n) => n >= 1000 ? '$' + (n / 1000).toFixed(n % 1000 ? 1 : 0).replace(/\.0$/, '') + 'K' : '$' + n;
+  const lvAdd = (s, n) => { const d = new Date(s + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+  const lvDay = (s) => new Date(s + 'T12:00:00Z');
+  const lvLabel = (s) => { const d = lvDay(s); return `${LV_DOW[d.getUTCDay()]} ${LV_MON[d.getUTCMonth()]} ${d.getUTCDate()}`; };
+  const lvShort = (s) => { const d = lvDay(s); return `${LV_MON[d.getUTCMonth()]} ${d.getUTCDate()}`; };
+  const lvSpan = (a, b) => a === b ? lvShort(a) : `${lvShort(a)} – ${lvShort(b)}`;
+  const lvEtTime = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' });
+  const lvEtParts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: 'numeric', hour12: false });
+
+  // The window a preset covers, and the window it is compared with. Complete days only: the
+  // newest day is yesterday (the recap and the auction results land the morning after).
+  function lvWindow(key) {
+    const today = getETTodayStr(), y = lvAdd(today, -1);
+    const mStart = (s) => s.slice(0, 8) + '01';
+    const mEnd = (s) => { const d = lvDay(mStart(s)); d.setUTCMonth(d.getUTCMonth() + 1); d.setUTCDate(0); return d.toISOString().slice(0, 10); };
+    const days = (a, b) => Math.round((lvDay(b) - lvDay(a)) / 864e5) + 1;
+    if (key === 'l7' || key === 'l30') {
+      const n = key === 'l7' ? 7 : 30, from = lvAdd(y, -(n - 1));
+      return { from, to: y, cFrom: lvAdd(from, -n), cTo: lvAdd(from, -1), label: LV_RANGES.find(r => r[0] === key)[1], cmpLabel: `the ${n} days before` };
+    }
+    // This month — except on the 1st, when it has no complete day yet and shows last month.
+    if (key === 'mtd' && today.slice(8) !== '01') {
+      const from = mStart(today), pm = mStart(lvAdd(from, -1));
+      const cTo = [lvAdd(pm, days(from, y) - 1), mEnd(pm)].sort()[0];
+      return { from, to: y, cFrom: pm, cTo, label: lvSpan(from, y), cmpLabel: lvSpan(pm, cTo) };
+    }
+    const from = mStart(lvAdd(mStart(today), -1)), to = mEnd(from), pm = mStart(lvAdd(from, -1));
+    return { from, to, cFrom: pm, cTo: mEnd(pm), label: `${LV_MON[lvDay(from).getUTCMonth()]} ${from.slice(0, 4)}`, cmpLabel: LV_MON[lvDay(pm).getUTCMonth()] };
+  }
+
+  async function lvLoad(force) {
+    const w = lvWindow(lvState.range), key = w.cFrom + '|' + w.to;
+    if (!force && lvState.data && lvState.dataKey === key) return lvRender();
+    lvState.loading = true; lvState.error = null; lvRender();
+    try {
+      const res = await fetch(WORKER_BASE + `?action=live-sales&from=${w.cFrom}&to=${w.to}`, { credentials: 'include' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.ok) {
+        lvState.error = body.code === 'UNCLASSIFIED_ACTION' ? 'The server has not been updated for Live Sales yet.'
+          : res.status === 503 ? 'Live Sales is not set up yet.'
+          : (body.error || `HTTP ${res.status}`);
+      } else {
+        lvState.data = body; lvState.dataKey = key; lvState.loadedAt = new Date();
+        if (lvState.store !== 'all' && !(body.units || []).some(u => u.code === lvState.store)) lvState.store = 'all';
+      }
+    } catch (e) {
+      lvState.error = e && e.message ? e.message : String(e);
+    }
+    lvState.loading = false;
+    lvRender();
+  }
+
+  // Shows from the API, with what the tables group by. Type and start price are read off the
+  // title, as the boss's dashboard does: "bag" in the title is Bags, everything else Apparel.
+  function lvPrepShow(s) {
+    const iso = s.startAt;
+    const p = Object.fromEntries(lvEtParts.formatToParts(new Date(iso)).map(x => [x.type, x.value]));
+    const mins = (+p.hour % 24) * 60 + (+p.minute);
+    const price = (String(s.title || '').match(/\$\s?(\d+)\s*Starts/i) || [])[1];
+    return { ...s, mins, time: lvEtTime.format(new Date(iso)), dow: lvDay(s.date).getUTCDay(),
+      type: /bag/i.test(s.title || '') ? 'Bags' : 'Apparel', price: price ? `$${price} Starts` : 'Other',
+      slot: mins < 630 ? 0 : mins < 780 ? 1 : mins < 930 ? 2 : 3, ready: s.sales != null };
+  }
+  function lvSelect() {
+    const d = lvState.data, w = lvWindow(lvState.range);
+    const inStore = (s) => lvState.store === 'all' || s === lvState.store;
+    const inR = (x, a, b) => x >= a && x <= b;
+    const rows = (d.channels || []).filter(r => inStore(r.store));
+    const shows = (d.shows || []).filter(s => inStore(s.store)).map(lvPrepShow);
+    return {
+      w, units: (d.units || []).filter(u => inStore(u.code)),
+      recap: rows.filter(r => r.channel === 'whatnot' && inR(r.date, w.from, w.to)),
+      auc: rows.filter(r => r.channel === 'auction' && inR(r.date, w.from, w.to)),
+      recapPrev: rows.filter(r => r.channel === 'whatnot' && inR(r.date, w.cFrom, w.cTo)),
+      aucPrev: rows.filter(r => r.channel === 'auction' && inR(r.date, w.cFrom, w.cTo)),
+      shows: shows.filter(s => inR(s.date, w.from, w.to)),
+      allRows: d.channels || [], allShows: (d.shows || []).map(lvPrepShow),
+    };
+  }
+  function lvWk(recap) {
+    const sum = (f) => recap.reduce((n, r) => n + (Number(f(r)) || 0), 0), m = (r) => r.meta || {};
+    return { sales: sum(r => r.total), shows: sum(r => r.count), items: sum(r => m(r).items), ship: sum(r => m(r).shipments),
+             nb: sum(r => m(r).new_buyers), days: new Set(recap.filter(r => r.count > 0).map(r => r.date)).size };
+  }
+  // An auction row with no total is unknown, not a $0 auction day, so it counts nowhere.
+  const lvAk = (rows) => { const auc = rows.filter(r => r.total != null);
+    return { sales: auc.reduce((n, r) => n + Number(r.total), 0), lots: auc.reduce((n, r) => n + (Number(r.count) || 0), 0), days: new Set(auc.map(r => r.date)).size }; };
+  // Like-for-like only: a change is shown when the Hub holds both channels for the whole
+  // comparison window, otherwise it says which data starts too late.
+  function lvCompare(x) {
+    const cov = lvState.data.coverage || [];
+    for (const c of ['whatnot', 'auction']) {
+      const v = cov.find(r => r.channel === c);
+      if (v && v.first > x.w.cFrom) return { pct: null, why: `the Hub's ${LV_CH[c].name} data starts ${lvShort(v.first)}` };
+    }
+    const cur = lvWk(x.recap).sales + lvAk(x.auc).sales, prev = lvWk(x.recapPrev).sales + lvAk(x.aucPrev).sales;
+    return prev > 0 ? { pct: cur / prev - 1 } : { pct: null, why: 'no live sales in that window' };
+  }
+  // Recap gross minus Whatnot's total, per store-day where every show has Whatnot's figures.
+  function lvLostAfter(x) {
+    let amt = 0, items = 0, compared = 0, all = 0;
+    for (const r of x.recap) {
+      if (!(r.count > 0) || r.total == null) continue;
+      all++;
+      const day = x.shows.filter(s => s.date === r.date && s.store === r.store);
+      if (!day.length || !day.every(s => s.ready)) continue;
+      compared++;
+      amt += r.total - day.reduce((n, s) => n + s.sales, 0);
+      items += ((r.meta && r.meta.items) || 0) - day.reduce((n, s) => n + (s.orders || 0), 0);
+    }
+    return { amt, items, compared, all };
+  }
+  const lvUnitName = (code) => ((lvState.data && lvState.data.units.find(u => u.code === code)) || {}).name || code;
+
+  function lvHero(x) {
+    const k = lvWk(x.recap), a = lvAk(x.auc), total = k.sales + a.sales, c = lvCompare(x);
+    const delta = c.pct != null
+      ? `<span class="${c.pct >= 0 ? 'lv-up' : 'lv-down'}">${c.pct >= 0 ? '+' : '−'}${Math.abs(c.pct * 100).toFixed(0)}%</span> vs ${lvEsc(x.w.cmpLabel)}`
+      : `vs ${lvEsc(x.w.cmpLabel)}: not shown, ${lvEsc(c.why)}`;
+    const liveDays = new Set([...x.auc.map(r => r.date), ...x.recap.filter(r => r.count > 0).map(r => r.date)]).size;
+    const split = [['whatnot', k.sales, `${lvInt(k.shows)} shows`], ['auction', a.sales, `${lvInt(a.lots)} lots`]].map(([ch, v, n]) =>
+      `<div class="lv-chrow"><span class="lv-sw" style="background:${LV_CH[ch].color}"></span><span>${LV_CH[ch].name}</span><span class="amt">${fmtDollar(v)}</span><span class="n">${n}</span></div>
+       <div class="lv-track"><div class="lv-fill" style="width:${total ? v / total * 100 : 0}%;background:${LV_CH[ch].color}"></div></div>`).join('');
+    const perItem = k.items ? k.sales / k.items : null, aov = k.ship ? k.sales / k.ship : null;
+    return `<div class="lv-hero">
+      <div class="lv-card"><div class="lv-eyebrow">Live sales · ${lvEsc(x.w.label)}</div>
+        <div class="lv-big">${fmtDollar(total)}</div><div class="lv-delta">${delta}</div>
+        <div class="lv-chsplit">${split}</div>
+        <div class="lv-facts"><div><div class="v">${lvInt(k.days)}</div><div class="l">show days</div></div><div><div class="v">${lvInt(a.days)}</div><div class="l">auction days</div></div>
+          <div><div class="v">${liveDays ? fmtDollar(total / liveDays) : '—'}</div><div class="l">per live day</div></div></div>
+        <div class="lv-also">Also counted in Bargain Lane's totals until live sales move out of it.</div></div>
+      <div class="lv-card lv-tiles">
+        <div class="lv-tile"><div class="l">Items sold</div><div class="v">${lvInt(k.items)}</div><div class="s">${perItem ? fmtDollar(perItem) + ' per item · Whatnot' : '—'}</div></div>
+        <div class="lv-tile"><div class="l">Shipments</div><div class="v">${lvInt(k.ship)}</div><div class="s">${aov ? fmtDollar(aov) + ' avg order · ' + (k.items / k.ship).toFixed(1) + ' items' : '—'}</div></div>
+        <div class="lv-tile"><div class="l">New buyers</div><div class="v">${lvInt(k.nb)}</div><div class="s">${k.ship ? Math.round(k.nb / k.ship * 100) + '% of shipments' : '—'}</div></div>
+        <div class="lv-tile"><div class="l">Auction lots</div><div class="v">${lvInt(a.lots)}</div><div class="s">${a.lots ? fmtDollar(a.sales / a.lots) + ' per lot' : '—'}</div></div>
+      </div></div>`;
+  }
+
+  function lvSpark(vals) {
+    const W = 120, H = 44, max = Math.max(...vals, 1);
+    const pts = vals.map((v, i) => [i / Math.max(1, vals.length - 1) * (W - 8) + 4, H - 6 - (v / max) * (H - 12)]);
+    const d = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' '), last = pts[pts.length - 1];
+    return `<svg class="lv-spark" viewBox="0 0 ${W} ${H}" aria-hidden="true"><path d="${d} L${last[0]},${H} L4,${H} Z" fill="var(--lv-live)" opacity=".1"/><path d="${d}" fill="none" stroke="var(--lv-live)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/><circle cx="${last[0]}" cy="${last[1]}" r="4" fill="var(--lv-live)" stroke="var(--lv-panel)" stroke-width="2"/></svg>`;
+  }
+  function lvLast(code, x) {
+    const sh = x.allShows.filter(s => s.store === code).sort((a, b) => (a.date + String(a.mins).padStart(4, '0')).localeCompare(b.date + String(b.mins).padStart(4, '0'))).pop();
+    const au = x.allRows.filter(r => r.channel === 'auction' && r.store === code).map(r => r.date).sort().pop();
+    if (sh && (!au || sh.date >= au)) return `Last show ${lvShort(sh.date)} · ${sh.time}`;
+    return au ? `Last auction ${lvShort(au)}` : 'No activity in range';
+  }
+  function lvStores(x) {
+    return `<div class="lv-locs">${x.units.map(u => {
+      const k = lvWk(x.recap.filter(r => r.store === u.code)), a = lvAk(x.auc.filter(r => r.store === u.code));
+      const vals = []; for (let d = x.w.from; d <= x.w.to; d = lvAdd(d, 1)) vals.push([...x.recap, ...x.auc].filter(r => r.store === u.code && r.date === d).reduce((n, r) => n + (Number(r.total) || 0), 0));
+      const tile = (ch, v, n) => `<div class="lv-ctile"><div class="l"><span class="lv-sw" style="background:${LV_CH[ch].color}"></span>${LV_CH[ch].name}</div><div class="v${v ? '' : ' none'}">${v ? fmtDollar(v) : 'none'}</div><div class="lv-sub">${n}</div></div>`;
+      return `<div class="lv-card"><div class="lv-loc-head"><div><span class="lv-loc-name">${lvEsc(u.name)}</span><span class="lv-loc-code">${lvEsc(u.code)}</span></div><span class="lv-pill">${lvEsc(lvLast(u.code, x))}</span></div>
+        <div class="lv-loc-mid"><div><div class="lv-eyebrow">${lvEsc(x.w.label)}</div><div class="lv-loc-total">${k.days || a.days ? fmtDollar(k.sales + a.sales) : '—'}</div></div>${lvSpark(vals)}</div>
+        <div class="lv-ctiles">${tile('whatnot', k.sales, k.shows ? `${k.shows} shows · ${lvInt(k.items)} items` : 'no shows')}${tile('auction', a.sales, a.lots ? `${a.days} days · ${lvInt(a.lots)} lots` : 'no auctions')}</div>
+        <div class="lv-foot">${k.shows ? `<button class="lv-link" onclick="lvGoto('live-shows','${u.code}')">Whatnot shows →</button>` : ''}${a.lots ? `<button class="lv-link" onclick="lvGoto('live-auction','${u.code}')">Auctions →</button>` : ''}</div></div>`;
+    }).join('')}</div>`;
+  }
+
+  // Daily sales, stacked by channel. Inline SVG to the dataviz marks: bars ≤ 24px, 4px rounded
+  // data end, 2px surface gap between segments, hairline solid grid, legend + table view.
+  function lvDaily(x) {
+    const rows = [];
+    for (let d = x.w.from; d <= x.w.to; d = lvAdd(d, 1)) {
+      const w = x.recap.filter(r => r.date === d), a = x.auc.filter(r => r.date === d);
+      const v = [w.reduce((n, r) => n + (Number(r.total) || 0), 0), a.reduce((n, r) => n + (Number(r.total) || 0), 0)];
+      rows.push({ d, v, n: [w.reduce((n, r) => n + (r.count || 0), 0), a.reduce((n, r) => n + (r.count || 0), 0)], tot: v[0] + v[1] });
+    }
+    return rows;
+  }
+  function lvChartPanel(x) {
+    const view = lvState.view;
+    const table = () => `<div class="lv-scroll" style="max-height:360px;overflow:auto"><table class="lv-dt"><thead><tr><th class="stick">Day</th><th class="num">Whatnot</th><th class="num">Online auction</th><th class="num">Total</th></tr></thead><tbody>
+      ${lvDaily(x).map(r => `<tr><td class="stick">${lvLabel(r.d)}</td>${r.v.map(v => `<td class="num">${v ? fmtDollar(v) : '<span class="dim">none</span>'}</td>`).join('')}<td class="num">${fmtDollar(r.tot)}</td></tr>`).join('')}</tbody></table></div>`;
+    return `<div class="lv-panel"><div class="lv-bar"><span class="t">Daily sales</span><span class="lab">gross, stacked by channel</span>
+      <div class="r"><div class="lv-seg" role="group" aria-label="Chart or table"><button onclick="lvSetView('chart')" aria-pressed="${view === 'chart'}">Chart</button><button onclick="lvSetView('table')" aria-pressed="${view === 'table'}">Table</button></div></div></div>
+      <div class="lv-body">${view === 'chart' ? '<div class="lv-chart" id="lv-chart"></div>' : table()}</div>
+      <div class="lv-legend"><span class="lv-k"><span class="lv-sw" style="background:var(--lv-w)"></span>Whatnot</span><span class="lv-k"><span class="lv-sw" style="background:var(--lv-a)"></span>Online auction</span><span>Source: the Bargain Lane Live recap email and the online auction results feed</span></div></div>`;
+  }
+  function lvDrawChart(x) {
+    const host = el('lv-chart'); if (!host) return;
+    const rows = lvDaily(x), cols = [LV_CH.whatnot.color, LV_CH.auction.color], names = ['Whatnot', 'Online auction'];
+    const W = Math.max(300, host.clientWidth), H = 240, pl = 44, pb = 26, pt = 10;
+    const max = Math.max(...rows.map(r => r.tot), 1), step = max > 4000 ? 2000 : max > 2000 ? 1000 : 500, top = Math.ceil(max / step) * step;
+    const y = (v) => pt + (H - pt - pb) * (1 - v / top), slot = (W - pl) / rows.length, bw = Math.min(24, slot * 0.62);
+    const seg = (x0, y0, y1, round) => { const r = round ? Math.min(4, (y0 - y1) / 2, bw / 2) : 0;
+      return `M${x0},${y0} V${y1 + r} Q${x0},${y1} ${x0 + r},${y1} H${x0 + bw - r} Q${x0 + bw},${y1} ${x0 + bw},${y1 + r} V${y0} Z`; };
+    let bars = '', hits = '', xl = '', grid = '';
+    for (let t = 0; t <= top; t += step) grid += `<line class="gr" x1="${pl}" x2="${W}" y1="${y(t)}" y2="${y(t)}"/><text class="ax" x="${pl - 8}" y="${y(t) + 4}" text-anchor="end">${t ? lvK(t) : '$0'}</text>`;
+    rows.forEach((r, i) => {
+      const x0 = pl + i * slot + (slot - bw) / 2; let base = H - pb;
+      const segs = [0, 1].filter(j => r.v[j] > 0);
+      segs.forEach((j, k) => { const y0 = base - (k ? 2 : 0), y1 = base - (H - pt - pb) * (r.v[j] / top);
+        if (y0 - y1 > 0.5) bars += `<path d="${seg(x0, y0, y1, k === segs.length - 1)}" fill="${cols[j]}"/>`; base = y1; });
+      hits += `<rect x="${pl + i * slot}" y="${pt}" width="${slot}" height="${H - pt - pb}" fill="transparent" data-i="${i}"/>`;
+      const dn = lvDay(r.d).getUTCDate();
+      if (rows.length <= 14 || dn === 1 || dn % 5 === 0) xl += `<text class="ax" x="${pl + i * slot + slot / 2}" y="${H - 8}" text-anchor="middle">${dn}</text>`;
+    });
+    host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Daily live sales by channel">${grid}${bars}${xl}${hits}</svg><div class="lv-tip"></div>`;
+    const tip = host.querySelector('.lv-tip');
+    host.querySelectorAll('rect[data-i]').forEach(rc => {
+      rc.addEventListener('pointerenter', () => {
+        const r = rows[+rc.dataset.i];
+        tip.innerHTML = `<div style="font-weight:600;margin-bottom:4px">${lvLabel(r.d)}</div>${[0, 1].map(j => `<div class="tr"><span><span class="lv-sw" style="background:${cols[j]}"></span>${names[j]}</span><span>${r.v[j] ? `${fmtDollar(r.v[j])} · ${r.n[j]} ${j ? 'lots' : 'shows'}` : 'none'}</span></div>`).join('')}<div class="tr"><span>Total</span><span><b>${fmtDollar(r.tot)}</b></span></div>`;
+        tip.style.display = 'block';
+        const sx = (+rc.getAttribute('x') + slot / 2) / W * host.clientWidth;
+        tip.style.left = Math.min(host.clientWidth - 200, Math.max(0, sx - 100)) + 'px'; tip.style.top = '0px';
+      });
+      rc.addEventListener('pointerleave', () => { tip.style.display = 'none'; });
+    });
+  }
+
+  function lvBreakdown(x) {
+    const by = x.units.map(u => ({ u, w: lvWk(x.recap.filter(r => r.store === u.code)), a: lvAk(x.auc.filter(r => r.store === u.code)) }))
+      .map(o => ({ ...o, tot: o.w.sales + o.a.sales })).sort((p, q) => q.tot - p.tot);
+    const max = Math.max(...by.map(o => o.tot), 1), ready = x.shows.filter(s => s.ready);
+    const types = ['Apparel', 'Bags'].map(t => { const g = ready.filter(s => s.type === t);
+      return { t, n: g.length, sales: g.reduce((n, s) => n + s.sales, 0), items: g.reduce((n, s) => n + (s.orders || 0), 0) }; });
+    const maxT = Math.max(...types.map(o => o.sales), 1), pending = x.shows.length - ready.length;
+    return `<div class="lv-panel"><div class="lv-bar"><span class="t">Breakdown</span></div><div class="lv-body lv-brk">
+      <h3>By store</h3>${by.map(o => `<div class="lv-brk-row"><div class="lv-brk-top"><span>${lvEsc(o.u.name)}</span><span class="amt">${fmtDollar(o.tot)}</span></div>
+        <div class="lv-split" style="width:${Math.max(o.tot / max * 100, 0.5)}%">${o.w.sales ? `<i style="flex:${o.w.sales};background:var(--lv-w)"></i>` : ''}${o.a.sales ? `<i style="flex:${o.a.sales};background:var(--lv-a)"></i>` : ''}</div>
+        <div class="lv-sub">${o.w.sales ? `Whatnot ${fmtDollar(o.w.sales)} · ${o.w.shows} shows` : 'No Whatnot shows'} · ${o.a.sales ? `auction ${fmtDollar(o.a.sales)} · ${lvInt(o.a.lots)} lots` : 'no auctions'}</div></div>`).join('')}
+      <h3 style="margin-top:16px">By show type (Whatnot)</h3>${types.map(o => `<div class="lv-brk-row"><div class="lv-brk-top"><span>${o.t}</span><span class="amt">${fmtDollar(o.sales)}</span></div>
+        <div class="lv-track"><div class="lv-fill" style="width:${o.sales / maxT * 100}%;background:var(--lv-live)"></div></div>
+        <div class="lv-sub">${o.n} shows · ${lvInt(o.items)} items · ${o.items ? fmtDollar(o.sales / o.items) : '—'} per item</div></div>`).join('')}
+      </div><div class="lv-legend"><span class="lv-k"><span class="lv-sw" style="background:var(--lv-w)"></span>Whatnot</span><span class="lv-k"><span class="lv-sw" style="background:var(--lv-a)"></span>Online auction</span>
+      <span>Show type comes from the title: "bag" means Bags, everything else Apparel. Type figures are Whatnot's${pending ? `; ${pending} shows still loading` : ''}.</span></div></div>`;
+  }
+
+  function lvAuction(x, full) {
+    const by = x.units.map(u => { const g = x.auc.filter(r => r.store === u.code);
+      return { u, ...lvAk(g), last: g.length ? g[g.length - 1].date : null }; }).filter(o => o.days);   // no auctions → no row, never $0.00
+    const t = lvAk(x.auc), max = Math.max(...by.map(o => o.sales), 1);
+    const rows = by.map(o => `<tr><td class="stick">${lvEsc(o.u.name)}</td><td class="num">${o.days}</td><td class="num">${lvInt(o.lots)}</td>
+      <td><span class="lv-mini" style="width:${Math.round(o.sales / max * 64)}px;background:var(--lv-a)"></span>${fmtDollar(o.sales)}</td>
+      <td class="num">${o.lots ? fmtDollar(o.sales / o.lots) : '<span class="dim">—</span>'}</td><td>${o.last ? lvLabel(o.last) : ''}</td></tr>`).join('');
+    const each = full ? x.auc.slice().sort((a, b) => (b.date + b.store).localeCompare(a.date + a.store)).map(r => `<tr><td class="stick">${lvLabel(r.date)}</td><td>${lvEsc(lvUnitName(r.store))}</td>
+      <td class="num">${lvInt(r.count)}</td><td class="num">${lvMoney(r.total)}</td><td class="num">${r.count && r.total != null ? fmtDollar(r.total / r.count) : '—'}</td></tr>`).join('') : '';
+    return `<div class="lv-panel"><div class="lv-bar"><span class="t">Online auction</span><span class="lab">${fmtDollar(t.sales)} · ${lvInt(t.lots)} lots · ${t.days} auction days</span></div>
+      <div class="lv-scroll"><table class="lv-dt"><thead><tr><th class="stick">Store</th><th class="num">Auction days</th><th class="num">Lots</th><th>Sales</th><th class="num">$/lot</th><th>Last auction</th></tr></thead>
+        <tbody>${rows || '<tr><td class="stick dim" colspan="6">No online auctions in this range</td></tr>'}<tr class="tot"><td class="stick">Total</td><td class="num">${t.days}</td><td class="num">${lvInt(t.lots)}</td><td>${fmtDollar(t.sales)}</td><td class="num">${t.lots ? fmtDollar(t.sales / t.lots) : '—'}</td><td></td></tr></tbody></table></div>
+      ${full ? `<div class="lv-bar" style="border-top:1px solid var(--lv-hair)"><span class="lab">Every auction, newest first</span></div><div class="lv-scroll"><table class="lv-dt"><thead><tr><th class="stick">Date</th><th>Store</th><th class="num">Lots</th><th class="num">Sales</th><th class="num">$/lot</th></tr></thead><tbody>${each || '<tr><td class="stick dim" colspan="5">No auctions in this range</td></tr>'}</tbody></table></div>` : ''}
+      <div class="lv-legend"><span>Source: the auction results feed. Results land a few days after an auction, so the newest days fill in late. The feed has sales and lot counts per store and day: no lot detail, no refunds.</span></div></div>`;
+  }
+
+  function lvMix(x) {
+    const ready = x.shows.filter(s => s.ready);
+    const group = (keys, f) => keys.map(k => { const g = ready.filter(s => f(s) === k.v), sales = g.reduce((n, s) => n + s.sales, 0);
+      return { k: k.l, n: g.length, sales, avg: g.length ? sales / g.length : 0, items: g.reduce((n, s) => n + (s.orders || 0), 0) }; });
+    const tbl = (title, groups) => { const rs = groups.filter(g => g.n), max = Math.max(...rs.map(g => g.avg), 1);
+      return `<div><h3>${title}</h3><table class="lv-dt"><thead><tr><th>${title.replace('By ', '')}</th><th class="num">Shows</th><th>Avg per show</th><th class="num">Avg item</th></tr></thead><tbody>
+        ${rs.length ? rs.map(g => `<tr><td>${lvEsc(g.k)}</td><td class="num">${g.n}</td><td><span class="lv-mini" style="width:${Math.round(g.avg / max * 64)}px"></span>${fmtDollar(g.avg)}</td><td class="num">${g.items ? fmtDollar(g.sales / g.items) : '—'}</td></tr>`).join('') : '<tr><td class="dim" colspan="4">No Whatnot shows in this range</td></tr>'}</tbody></table></div>`; };
+    const prices = [...new Set(ready.map(s => s.price))].sort((a, b) => (parseInt(a.slice(1)) || 999) - (parseInt(b.slice(1)) || 999));
+    return `<div class="lv-panel"><div class="lv-bar"><span class="t">Whatnot show mix</span><span class="lab">average sales per show</span></div><div class="lv-mix">
+      ${tbl('By time slot', group(LV_SLOTS.map((l, v) => ({ l, v })), s => s.slot))}${tbl('By start price', group(prices.map(p => ({ l: p, v: p })), s => s.price))}
+      ${tbl('By day of week', group([1, 2, 3, 4, 5, 6, 0].map(v => ({ l: LV_DOWL[v], v })), s => s.dow))}</div>
+      <div class="lv-legend"><span>Bars share one scale within each table. Figures are Whatnot's, net of orders cancelled after the show. "Avg item" is sales per item sold.</span></div></div>`;
+  }
+
+  function lvShows(x) {
+    let list = x.shows.filter(s => lvState.type === 'all' || s.type === lvState.type)
+      .sort((a, b) => (b.date + String(b.mins).padStart(4, '0')).localeCompare(a.date + String(a.mins).padStart(4, '0')));
+    const total = list.length, ready = list.filter(s => s.ready), sum = (f) => ready.reduce((n, s) => n + (f(s) || 0), 0);
+    if (!lvState.showAll) list = list.slice(0, 25);
+    const opt = (v, t) => `<option value="${v}"${v === lvState.type ? ' selected' : ''}>${t}</option>`;
+    const d = (v) => v == null ? '<span class="dim">—</span>' : lvInt(v);
+    const rows = list.map(s => `<tr><td class="stick">${lvLabel(s.date)}</td><td>${s.time}</td><td>${lvEsc(lvUnitName(s.store))}</td><td>${lvEsc(s.title)}</td>
+      <td><span class="lv-lvl${s.type === 'Bags' ? ' bags' : ''}">${s.type.toUpperCase()}</span></td><td class="num">${d(s.orders)}</td><td class="num">${d(s.newBuyers)}</td>
+      <td class="num">${s.ready ? fmtDollar(s.sales) : '<span class="dim">loading</span>'}</td><td class="num">${s.ready && s.orders ? fmtDollar(s.sales / s.orders) : '<span class="dim">—</span>'}</td>
+      <td class="num">${d(s.viewers)}</td><td class="num">${s.lost == null ? '<span class="dim">—</span>' : `${s.lost.orders} · ${fmtDollar(s.lost.subtotal)}`}</td></tr>`).join('');
+    return `<div class="lv-panel"><div class="lv-bar"><span class="t">Whatnot shows</span><span class="lab">${total} shows, newest first</span>
+      <div class="r"><select class="lv-select" aria-label="Show type" onchange="lvSetType(this.value)">${opt('all', 'All show types')}${opt('Apparel', 'Apparel')}${opt('Bags', 'Bags')}</select></div></div>
+      <div class="lv-status">${total ? "Items, new buyers, sales and viewers are Whatnot's own figures, so they leave out orders cancelled or failed after the show." : 'No Whatnot shows at this store in this range.'}</div>
+      <div class="lv-scroll" style="margin-top:10px"><table class="lv-dt"><thead><tr><th class="stick">Date</th><th>Start</th><th>Store</th><th>Show</th><th>Type</th><th class="num">Items</th><th class="num">New buyers</th><th class="num">Sales</th><th class="num">$/item</th><th class="num">Viewers</th><th class="num">Cancelled</th></tr></thead>
+        <tbody>${rows}<tr class="tot"><td class="stick">Total</td><td></td><td></td><td>${ready.length} shows with Whatnot figures</td><td></td><td class="num">${lvInt(sum(s => s.orders))}</td><td class="num">${lvInt(sum(s => s.newBuyers))}</td><td class="num">${fmtDollar(sum(s => s.sales))}</td><td></td><td class="num">${lvInt(sum(s => s.viewers))}</td><td></td></tr></tbody></table></div>
+      ${total > 25 ? `<div class="lv-more"><button class="lv-btn" onclick="lvToggleAll()">${lvState.showAll ? 'Show newest 25' : `Show all ${total}`}</button></div>` : ''}
+      <div class="lv-legend"><span>Cancelled: orders cancelled or failed after the show, where its orders have loaded</span><span>loading: Whatnot has not sent this show's figures yet</span><span>—: not reported</span></div></div>`;
+  }
+
+  function lvMoneyBack(x, withHead) {
+    const lost = lvLostAfter(x);
+    const card = (l, v, s, chip, cls) => `<div class="lv-mb"><div class="l">${l}</div><div class="v${v === '—' ? ' none' : ''}">${v}</div><div class="s">${s}</div><span class="lv-chip ${cls}">${chip}</span></div>`;
+    return `${withHead ? '<div class="lv-sec"><h2>Money back</h2><span>What came off the Whatnot gross after the show · the auction feed has no refund data</span></div>' : ''}
+      <div class="lv-mbgrid">${[
+        card('Cancelled after the show', lost.compared ? fmtDollar(lost.amt) : '—', lost.compared ? `${lvInt(lost.items)} items failed or were cancelled after Whatnot's end-of-show summary · ${lost.compared} of ${lost.all} show days` : 'No Whatnot show days to compare in this range', 'Connected', 'ok'),
+        card('Refunds', '—', "Whatnot's financial report lists every refund", 'Needs access', 'need'),
+        card('Returns', '—', 'Whatnot books a return as a refund; it has no separate return count', 'In refunds', 'no'),
+        card('Carrier adjustments', '—', 'Charges and credits for wrong package weight or size, from the same report', 'Needs access', 'need'),
+        card('Support cases', '—', "Not in Whatnot's API or webhooks", 'Not available', 'no'),
+        card('Tips', '—', 'From the same financial report', 'Needs access', 'need')].join('')}</div>`;
+  }
+  function lvPromo() {
+    const c = (l, s) => `<div><div class="lv-eyebrow">${l}</div><div class="v">—</div><div class="lv-sub">${s}</div></div>`;
+    return `<div class="lv-panel"><div class="lv-bar"><span class="t">Paid promotion</span><div class="r"><span class="lv-chip no" style="margin:0">Not connected</span></div></div>
+      <div class="lv-note"><b>Needs a source.</b> Whatnot's API has no promotion data. These come from the promotion section of Whatnot's end-of-show email, which the Hub does not receive yet.</div>
+      <div class="lv-promo" style="margin-top:12px">${c('Promotion spend', 'Per promoted show')}${c('Sales from promotion', 'Share of all sales')}${c('Return on spend', 'Promo sales ÷ spend')}${c('Cost per new buyer', 'New buyers from promotion')}${c('Viewers', 'Promoted shows only')}${c('New followers', 'Promoted shows only')}</div></div>`;
+  }
+
+  // The app-bar controls live outside the render target (§4.8 trap 7) and are filled here.
+  function lvControls() {
+    const units = (lvState.data && lvState.data.units) || [];
+    document.querySelectorAll('.lv-range').forEach(s => {
+      s.innerHTML = LV_RANGES.map(([k, l]) => `<option value="${k}"${k === lvState.range ? ' selected' : ''}>${l}</option>`).join('');
+    });
+    document.querySelectorAll('.lv-store').forEach(s => {
+      s.innerHTML = `<option value="all">All stores</option>` + units.map(u => `<option value="${u.code}"${u.code === lvState.store ? ' selected' : ''}>${lvEsc(u.name)}</option>`).join('');
+      s.value = lvState.store;
+      s.classList.toggle('hidden', units.length < 2);
+    });
+    document.querySelectorAll('.lv-updated').forEach(s => {
+      s.textContent = lvState.loadedAt ? 'Updated ' + lvState.loadedAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
+    });
+  }
+  function lvRender() {
+    lvControls();
+    const body = el(`lv-${lvState.page}-body`);
+    if (!body) return;
+    if (lvState.loading && !lvState.data) {
+      body.innerHTML = `<div class="lv-card"><div class="skel" style="height:44px;width:60%;border-radius:8px"></div><div class="skel" style="height:14px;width:40%;margin-top:12px;border-radius:6px"></div></div>
+        <div class="lv-card"><div class="skel" style="height:160px;border-radius:8px"></div></div>`;
+      return;
+    }
+    if (lvState.error) {
+      body.innerHTML = `<div class="lv-err"><b>Couldn't load live sales.</b> ${lvEsc(lvState.error)} <button class="lv-btn" style="margin-left:8px" onclick="lvRefresh()">Retry</button></div>`;
+      return;
+    }
+    if (!lvState.data) { body.innerHTML = ''; return; }
+    const x = lvSelect();
+    const p = lvState.page;
+    body.innerHTML = p === 'overview' ? lvHero(x) + lvStores(x) + `<div class="lv-row2">${lvChartPanel(x)}${lvBreakdown(x)}</div>` + lvAuction(x, false) + lvMix(x)
+      : p === 'shows' ? lvShows(x)
+      : p === 'auction' ? lvAuction(x, true)
+      : p === 'promotion' ? lvPromo()
+      : lvMoneyBack(x, false) + `<div class="lv-card" style="font-size:14px;color:var(--lv-dim)">Refunds, carrier adjustments and tips come from Whatnot's financial report. The Hub can request it once the Whatnot token also has <b style="color:var(--lv-ink)">write:reports</b>, which only lets the Hub ask Whatnot to build a report and changes nothing on Whatnot. The online auction feed carries no refunds.</div>`;
+    if (p === 'overview' && lvState.view === 'chart') lvDrawChart(x);
+  }
+
+  function lvInit(page) { lvState.page = LV_PAGE[page] || 'overview'; lvLoad(false); }
+  window.lvInit = lvInit;
+  window.lvRefresh = () => lvLoad(true);
+  window.lvSetRange = (v) => { lvState.range = v; lvState.showAll = false; lvLoad(false); };
+  window.lvSetStore = (v) => { lvState.store = v; lvRender(); };
+  window.lvSetType = (v) => { lvState.type = v; lvRender(); };
+  window.lvSetView = (v) => { lvState.view = v; lvRender(); };
+  window.lvToggleAll = () => { lvState.showAll = !lvState.showAll; lvRender(); };
+  window.lvGoto = (page, store) => { lvState.store = store; navigateToPage(page); };
+  let lvResizeT;
+  window.addEventListener('resize', () => {
+    if (lvState.page !== 'overview' || !el('lv-chart') || typeof currentPage === 'undefined' || currentPage !== 'live-overview') return;
+    clearTimeout(lvResizeT); lvResizeT = setTimeout(() => { if (lvState.data) lvDrawChart(lvSelect()); }, 150);
+  });
+
   // ── Which business the session is currently "inside" ─────────────
   // Kept in sessionStorage, not memory: landingPageFor() is also called when a
   // modal closes (closeHourlySnapshot) and on the deep-link fallback path, so
@@ -37642,6 +38301,11 @@
     // applyBusinessNav had nothing to keep out of anyone's way in the other
     // direction — inside E-Commerce the whole sidebar simply emptied.
     'nav-ebay-cases': 'ecom',
+    'nav-live-overview': 'live',
+    'nav-live-shows': 'live',
+    'nav-live-auction': 'live',
+    'nav-live-promotion': 'live',
+    'nav-live-money': 'live',
     'nav-inventory-group': 'bl',
     'nav-inventory': 'bl',
     'nav-inventory-chev': 'bl',
@@ -37741,6 +38405,7 @@
   function dashboardPageFor(businessId) {
     if (businessId === 'bl') return 'dashboard';
     if (businessId === 'ecom') return 'ebay-cases';
+    if (businessId === 'live') return 'live-overview';
     return 'landing';
   }
 
@@ -37797,6 +38462,7 @@
     let retail = 0, bin = 0, auction = 0, orders = 0, budget = 0, reporting = 0;
     let itemsNum = 0, itemsDen = 0;
     let mtdActual = 0, mtdBudget = 0;
+    let mtdLive = 0;   // live sales (auction column) — the Live Sales card's figure, already in mtdActual
 
     for (const s of STORES) {
       const rows = allStoreData[s] || [];
@@ -37830,6 +38496,7 @@
         const d = r.date && r.date.toISOString().slice(0, 10);
         if (!d || d.slice(0, 7) !== month || d >= todayStr) continue;
         mtdActual += (r.aTotal || 0) + (r.aAuction || 0);
+        mtdLive   += (r.aAuction || 0);
         mtdBudget += (r.bTotal || 0);
       }
     }
@@ -37849,6 +38516,7 @@
       avgItems: itemsDen > 0 ? itemsNum / itemsDen : null,
       pace: budget > 0 ? (total / budget) * 100 : null,
       mtdActual: mtdActual + total,
+      liveMtd: mtdLive + auction,
       mtdBudget: mtdBudget + budget,
     };
   }
@@ -37919,7 +38587,7 @@
     // not businesses that exist. With E-Commerce live-but-feedless this reads
     // "1 of 2 reporting" — which is the honest number; counting it would claim
     // the hero total covers revenue it does not include.
-    setTxt('landing-hero-reporting', `${reporting.length} of ${biz.length} reporting`);
+    setTxt('landing-hero-reporting', `${reporting.length} of ${biz.filter(b => !({ live: 'bl' })[b.id]).length} reporting`);
     setTxt('landing-hero-budget', gBudget > 0 ? fmtDollar(gBudget) : '');
     const hb = el('landing-hero-bar');
     if (hb) {
@@ -37965,7 +38633,11 @@
     if (!wrap) return;
     wrap.innerHTML = '';
 
-    const SOURCE = { bl: 'Clover POS', ecom: 'SellerCloud' };
+    const SOURCE = { bl: 'Clover POS', ecom: 'SellerCloud', live: 'Whatnot + online auction' };
+    // 🔑 Live Sales is still INSIDE Bargain Lane (phase 1 of the split): its money is in
+    // Bargain Lane's figures above, so its card shows it but nothing adds it again, and it
+    // does not count as a business that "reports" separately.
+    const INSIDE = { live: 'bl' };
 
     biz.forEach(b => {
       const source = SOURCE[b.id] || '';
@@ -37986,6 +38658,24 @@
            </div>
            <span class="lp-pill ${b.connected ? 'lp-pill-live' : 'lp-pill-setup'} flex-shrink-0">● ${b.connected ? 'Live' : 'Setup'}</span>
          </div>`;
+
+      // A business still inside another (Live Sales, phase 1): its month to date from the
+      // parent's own figures, said to be included there, and a way in. Never summed.
+      if (INSIDE[b.id]) {
+        const parent = biz.find(x => x.id === INSIDE[b.id]);
+        const mtd = INSIDE[b.id] === 'bl' && FIGURES.bl ? fig.liveMtd : null;
+        card.insertAdjacentHTML('beforeend',
+          `<div class="lp-eyebrow mt-5">Month to date</div>
+           <div class="mt-1 text-3xl font-semibold tabular-nums text-opl-ink dark:text-op-ink">${mtd != null ? fmtDollar(mtd) : '—'}</div>
+           <div class="mt-1 text-sm text-opl-inkDim dark:text-op-inkDim">Already in ${parent ? parent.name : 'Bargain Lane'}'s total, not added again</div>
+           <div class="mt-auto pt-5 text-right">
+             <button type="button" class="lp-enter text-sm font-semibold text-accent-green hover:opacity-80 transition-opacity">Enter ${b.name} →</button>
+           </div>`);
+        const e = card.querySelector('.lp-enter');
+        if (e) e.addEventListener('click', () => enterBusiness(b.id));
+        wrap.appendChild(card);
+        return;
+      }
 
       // No figures for this business — say so, and never fall through to the
       // money block below, which is written entirely against Bargain Lane's.
@@ -38135,6 +38825,10 @@
     // rule invented here would have to be unpicked once that lands.
     const ebNav = el('nav-ebay-cases');
     if (ebNav) ebNav.classList.toggle('hidden', !userBusinesses(user).some(b => b.id === 'ecom'));
+    // Live Sales' five pages, on the same rule: holding the business.
+    const holdsLive = userBusinesses(user).some(b => b.id === 'live');
+    ['nav-live-overview', 'nav-live-shows', 'nav-live-auction', 'nav-live-promotion', 'nav-live-money']
+      .forEach(id => { const n = el(id); if (n) n.classList.toggle('hidden', !holdsLive); });
     // The three catalog pages carry the old single Inventory page's audience: admins
     // only. The GROUP wrapper they sit in is gated further down, once binDumpRoles is
     // in scope, because its audience is the union of all seven children's.
@@ -40134,6 +40828,11 @@
       gate('bn-flow', vis('nav-flow-calendar'), 'flex');
       // E-Commerce's one page. Its sidebar item exists only inside that business.
       gate('bn-ebay-cases', vis('nav-ebay-cases'), 'flex');
+      // Live Sales' bar, each tab on its sidebar item (which exists only inside that business).
+      gate('bn-live-overview', vis('nav-live-overview'), 'flex');
+      gate('bn-live-shows', vis('nav-live-shows'), 'flex');
+      gate('bn-live-auction', vis('nav-live-auction'), 'flex');
+      gate('bn-live-money', vis('nav-live-money'), 'flex');
       // Manager bar: Dashboard · Retail · Submit · Supply · Menu. Price Scan was a
       // sixth tab here until Brian moved it to the Menu (2026-09-22); that is what
       // puts two tabs either side of Submit, and so centres it.

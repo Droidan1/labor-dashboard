@@ -50,7 +50,7 @@ const srv = http.createServer((q, s) => {
 await new Promise(r => srv.listen(8096, r));
 const URL_ = 'http://127.0.0.1:8096/index.html';
 
-const BL = { id: 'bl', name: 'Bargain Lane' }, ECOM = { id: 'ecom', name: 'E-Commerce' };
+const BL = { id: 'bl', name: 'Bargain Lane' }, ECOM = { id: 'ecom', name: 'E-Commerce' }, LIVE = { id: 'live', name: 'Live Sales' };
 const STORE = ['dashboard', 'weekly-summary', 'labor', 'supply-request'];
 const MARKETING = ['marketing', 'flow-calendar', 'comments', 'content', 'submit-photos'];
 const MERCH = ['merch-scan', 'merch-signs', 'merch-coverage', 'merch-products', 'merch-velocity', 'merch-manifests', 'merch-criteria', 'merch-shelf-count'];
@@ -94,6 +94,10 @@ const EXPECT = {
   ecom: { role: 'superuser', businesses: [BL, ECOM], biz: 'ecom',
     bar: ['eBay Cases', 'Menu'],
     menu: [['E-Commerce', ['ebay-cases']], ['Account', ['@switch', 'settings', '@signout']]] },
+  // Live Sales (migration-085): four tabs + Menu; Promotion is reached from the Menu.
+  live: { role: 'superuser', businesses: [BL, ECOM, LIVE], biz: 'live',
+    bar: ['Overview', 'Shows', 'Auction', 'Money', 'Menu'],
+    menu: [['Live Sales', ['live-overview', 'live-shows', 'live-auction', 'live-promotion', 'live-money']], ['Account', ['@switch', 'settings', '@signout']]] },
 };
 
 const results = [];
@@ -122,6 +126,10 @@ async function open(key, { theme = 'dark', width = 393, height = 852 } = {}) {
       localStorage.setItem('darkMode', String(theme !== 'light'));
       localStorage.setItem('darkFlavor', theme === 'oled' ? 'oled' : 'dark');
       sessionStorage.setItem('retjg.activeBusiness', biz);
+      // A Mac's Chrome reports Touch ID, so the app offers a passkey on boot and its modal
+      // swallows every click. Dismissed as a user would ('Not now'); a Chromium without a
+      // platform authenticator never shows it.
+      localStorage.setItem('bioPromptDismissed', '1');
     } catch (e) {}
   }, { theme, biz: x.biz });
   await page.addInitScript(({ x }) => {
@@ -133,6 +141,7 @@ async function open(key, { theme = 'dark', width = 393, height = 852 } = {}) {
       // Weekly Retail renders `d.stores[s]` for every store; a bare {ok:true} throws there
       // at any width. That is the stub's fault, not the Menu's, so give it the shape.
       if (s.includes('action=weekly-summary')) return J({ ok: true, from: '2026-09-14', to: '2026-09-20', stores: {}, totals: {} });
+      if (s.includes('action=live-sales')) return J({ ok: true, units: [], channels: [], coverage: [], bl: [], shows: [], sync: {} });
       return J({ ok: true });
     };
   }, { x });
@@ -224,7 +233,7 @@ for (const key of Object.keys(EXPECT)) {
   }));
   eq(acct.av, 'DR', `${key}: avatar initials`);
   eq(acct.name, 'Dana Ruiz', `${key}: the name, not the email`);
-  check(acct.sub.includes(x.biz === 'ecom' ? 'E-Commerce' : 'Bargain Lane'), `${key}: says which business (${acct.sub})`);
+  check(acct.sub.includes({ ecom: 'E-Commerce', live: 'Live Sales' }[x.biz] || 'Bargain Lane'), `${key}: says which business (${acct.sub})`);
 
   check(errs.length === 0, `${key}: no JS errors${errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''}`);
   blocked.forEach(h => allBlocked.add(h));

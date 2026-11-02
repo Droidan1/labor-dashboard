@@ -5106,6 +5106,9 @@ const BUSINESS_AGNOSTIC_ACTIONS = new Set([
 const ACTION_BUSINESS = new Map([
   // First non-bl entry — the business gate's first real use.
   ["ebay-cases", "ecom"],
+  // Live Sales (migration-085). Phase 1 reads the same live-sales rows Bargain Lane still counts; the
+  // whatnot-* actions below stay on bl until the phase-2 cutover moves the money.
+  ["live-sales", "live"],
   ["afternoon-briefing", "bl"],
   ["associate-save", "bl"],
   ["associate-reveal-pin", "bl"],
@@ -30575,6 +30578,98 @@ export default {
       return new Response(JSON.stringify({
         ok: true, from, to, stores, items, other, net: cents(net),
         coverage: { days: days.length, firstRecord: firstBy, missing, stale },
+      }), { headers: corsJson });
+    }
+
+    // ─── Live Sales business (migration-085, phase 1), read-only ──
+    //    GET ?action=live-sales&from=YYYY-MM-DD&to=YYYY-MM-DD[&store=BLn]
+    // Everything the Live Sales pages draw, in one call: the live channel rows (online auction +
+    // Whatnot recap, with the recap's items/shipments/new buyers), each channel's coverage, Bargain
+    // Lane's own auction column for the same store-days (phase 1 moves no money, so the page can say
+    // where the two differ), and the Whatnot shows with their analytics and lost orders.
+    // The business gate decides WHETHER you reach Live Sales (ACTION_BUSINESS); this decides WHICH
+    // stores, from allowedUnits(…, "live") — superuser and admin get every store, a grant its units.
+    // `&store=` is a display filter inside that scope, never a boundary.
+    if (url.searchParams.get("action") === "live-sales" && request.method === "GET") {
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      const from = url.searchParams.get("from") || "", to = url.searchParams.get("to") || "";
+      const isYmd = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && new Date(s + "T00:00:00Z").toISOString().slice(0, 10) === s;
+      if (!isYmd(from) || !isYmd(to) || to < from) {
+        return new Response(JSON.stringify({ error: "from and to must be YYYY-MM-DD dates with from on or before to" }), { status: 400, headers: corsJson });
+      }
+      if ((Date.parse(to) - Date.parse(from)) / 864e5 + 1 > 92) {
+        return new Response(JSON.stringify({ error: "At most 92 days per request" }), { status: 400, headers: corsJson });
+      }
+      const unitRows = (await env.DB.prepare(
+        "SELECT code, name FROM business_units WHERE business_id = 'live' AND active = 1 ORDER BY code"
+      ).all()).results || [];
+      if (!unitRows.length) {
+        return new Response(JSON.stringify({ error: "Live Sales is not set up yet (migration-085 not applied)" }), { status: 503, headers: corsJson });
+      }
+      const allow = allowedUnits(currentUser, "live");   // null = every live store
+      let units = unitRows.filter(u => allow === null || allow.includes(u.code));
+      const store = (url.searchParams.get("store") || "").trim();
+      if (store) {
+        if (!unitRows.some(u => u.code === store)) {
+          return new Response(JSON.stringify({ error: `${store} is not a Live Sales store` }), { status: 400, headers: corsJson });
+        }
+        if (!units.some(u => u.code === store)) {
+          return new Response(JSON.stringify({ error: "Not your store", code: "NO_STORE_ACCESS" }), { status: 403, headers: corsJson });
+        }
+        units = units.filter(u => u.code === store);
+      }
+      const lastRun = (await whatnotReady(env)) ? await whatnotState(env, "last_run") : null;
+      const sync = { connected: !!env.WHATNOT_API_TOKEN, lastRun: lastRun ? JSON.parse(lastRun) : null };
+      const codes = units.map(u => u.code);
+      // A Live Sales grant with no stores is a real state: it answers with nothing, never everything.
+      if (!codes.length) {
+        return new Response(JSON.stringify({ ok: true, from, to, units: [], channels: [], coverage: [], bl: [], shows: [], sync }), { headers: corsJson });
+      }
+      const inList = codes.map(() => "?").join(","), chList = LIVE_CHANNELS.map(() => "?").join(",");
+      const [rows, cover, bl] = await env.DB.batch([
+        env.DB.prepare(
+          `SELECT channel, store, date, total, count, meta FROM channel_sales
+            WHERE channel IN (${chList}) AND date BETWEEN ? AND ? AND store IN (${inList}) ORDER BY date, store, channel`
+        ).bind(...LIVE_CHANNELS, from, to, ...codes),
+        env.DB.prepare(
+          `SELECT channel, MIN(date) AS first, MAX(date) AS last, MAX(ingested_at) AS ingested_at FROM channel_sales
+            WHERE channel IN (${chList}) AND store IN (${inList}) GROUP BY channel`
+        ).bind(...LIVE_CHANNELS, ...codes),
+        env.DB.prepare(
+          `SELECT store, date, auction, is_manual_override FROM daily_sales
+            WHERE date BETWEEN ? AND ? AND store IN (${inList}) AND auction IS NOT NULL ORDER BY date, store`
+        ).bind(from, to, ...codes),
+      ]);
+      const parseMeta = (m) => { if (m == null) return null; try { return JSON.parse(m); } catch (_) { return null; } };
+      let shows = [];
+      if (await whatnotReady(env)) {
+        // Lost = cancelled or failed. Whatnot's show `sales` leaves out every one of them; the recap
+        // keeps those that fell through after its end-of-show summary (Oct 2026, checked to the cent).
+        shows = ((await env.DB.prepare(
+          `WITH sh AS (SELECT * FROM whatnot_shows WHERE status = 'ended' AND show_date BETWEEN ? AND ? AND store IN (${inList})),
+                ord AS (SELECT o.show_id, COUNT(*) AS orders,
+                               SUM(CASE WHEN o.status IN ('cancelled', 'failed') THEN 1 ELSE 0 END) AS lost,
+                               ROUND(SUM(CASE WHEN o.status IN ('cancelled', 'failed') THEN COALESCE(o.subtotal, 0) ELSE 0 END), 2) AS lost_amt
+                          FROM whatnot_orders o JOIN sh ON sh.id = o.show_id GROUP BY o.show_id)
+           SELECT sh.id, sh.title, sh.store, sh.show_date, COALESCE(sh.started_at, sh.scheduled_start_at) AS start_at,
+                  a.calculation_status, a.sales, a.orders_count, a.buyers, a.first_time_buyers, a.distinct_viewers,
+                  ord.orders, ord.lost, ord.lost_amt
+             FROM sh LEFT JOIN whatnot_show_analytics a ON a.show_id = sh.id LEFT JOIN ord ON ord.show_id = sh.id
+            ORDER BY start_at`
+        ).bind(from, to, ...codes).all()).results || []).map(r => ({
+          showId: r.id, title: r.title, store: r.store, date: r.show_date, startAt: r.start_at,
+          calculationStatus: r.calculation_status ?? null, sales: r.sales ?? null, orders: r.orders_count ?? null,
+          buyers: r.buyers ?? null, newBuyers: r.first_time_buyers ?? null, viewers: r.distinct_viewers ?? null,
+          // null until that show's orders have synced — "no orders loaded" is not "nothing lost"
+          lost: r.orders == null ? null : { orders: r.lost || 0, subtotal: r.lost_amt || 0, of: r.orders },
+        }));
+      }
+      return new Response(JSON.stringify({
+        ok: true, from, to, units,
+        channels: (rows.results || []).map(r => ({ channel: r.channel, store: r.store, date: r.date, total: r.total, count: r.count, meta: parseMeta(r.meta) })),
+        coverage: cover.results || [],
+        bl: (bl.results || []).map(r => ({ store: r.store, date: r.date, auction: r.auction, manualOverride: r.is_manual_override === 1 })),
+        shows, sync,
       }), { headers: corsJson });
     }
 
