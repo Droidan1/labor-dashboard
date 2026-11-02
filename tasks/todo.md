@@ -18,7 +18,9 @@ the Whatnot API, headline totals from the recap. Plan: `~/.claude/plans/sparklin
       extended; test-today-auction-reads allows the new month-to-date read (it skips today)
 - [x] Browser: new browser-live-sales.mjs (111: totals, second render, one request, picker, old worker, contrast
       ≥ 4.5:1 light/dark/OLED × desktop/phone, opaque sticky column); browser-mobile-menu live case passes
-- [ ] Brian: worker deploy → merge → migration-085 (staging, then prod with rule-7 confirmation)
+- [x] Shipped 2026-11-02: worker 3fbd296e (100% ×3, byte-identical to 1bb5884 = main) → PR #363 merged 0d05841
+      (www index.html + sw.js v290 byte-identical to main) → migration-085 staging (1 biz, 4 units, 2 grants) and prod
+      (1 biz, 4 units, 5 admin grants; bl untouched). Brian confirmed signed in: Last month = $121,771.12 (Whatnot $113,727 + auction $8,044.12), as D1 predicted
 
 **Review**
 - `npm test`: 11,252 assertions / 129 suites; only test-briefing-margin fails, and it fails on main too (seeds
