@@ -16,6 +16,8 @@
 //   3. An old worker (403 UNCLASSIFIED_ACTION) gets a sentence, not a blank page or a throw.
 //   4. Every text node clears 4.5:1 against its composited background in light, dark and pure
 //      black, at desktop and phone width; the shows table's sticky column is opaque.
+//   6. Today's shows before the recap: listed beside the Overview total from Whatnot's orders, never
+//      added to it (the totals in 1 hold with them present), filtered by store, gone for past ranges.
 //   5. Money back fills from Whatnot's financial report (refunds, carrier adjustments, tips), honours
 //      the store filter, and says what it waits on in every other state (not set up, needs
 //      write:reports, waiting, still loading), each readable in light and dark.
@@ -75,8 +77,12 @@ const STUB = () => {
   }
   return { ok: true, units: [{ code: 'BL1', name: 'Coliseum' }, { code: 'BL14', name: 'Battle Creek' }, { code: 'BL16', name: 'Indy East' }, { code: 'BL2', name: 'South Bend' }],
     channels, coverage: [{ channel: 'auction', first: add(et, -70), last: add(et, -1) }, { channel: 'whatnot', first: add(et, -70), last: add(et, -1) }],
-    bl: [], shows, ledger, ledgerSync: { ready: true, through: new Date(Math.floor(Date.now() / 3600e3) * 3600e3).toISOString(), error: null, waitingSince: null },
-    sync: { connected: true, lastRun: null } };
+    bl: [], shows, ledger,
+    // Today: no recap yet. Two shows from Whatnot's orders, one still on air.
+    early: [{ showId: 'e-1', title: '$1 Starts : Fashion Finds', store: 'BL1', date: et, startAt: et + 'T13:30:00Z', status: 'ended', orders: 150, sales: 698 },
+            { showId: 'e-2', title: '$10 Starts : Coat Finds', store: 'BL14', date: et, startAt: et + 'T23:00:00Z', status: 'live', orders: 20, sales: 240.5 }],
+    ledgerSync: { ready: true, through: new Date(Math.floor(Date.now() / 3600e3) * 3600e3).toISOString(), error: null, waitingSince: null },
+    sync: { connected: true, lastRun: { at: new Date(Math.floor(Date.now() / 3600e3) * 3600e3).toISOString() } } };
 };
 
 async function open({ theme = 'dark', width = 1400, height = 900, live = true, worker = 'new', biz = 'live', ledgerSync = null } = {}) {
@@ -111,7 +117,8 @@ async function open({ theme = 'dark', width = 1400, height = 900, live = true, w
         if (worker === 'old') return J({ error: 'Unclassified action', code: 'UNCLASSIFIED_ACTION' }, 403);
         const q = new URL(s).searchParams, from = q.get('from'), to = q.get('to');
         return J({ ...data, from, to, channels: data.channels.filter(r => r.date >= from && r.date <= to), shows: data.shows.filter(r => r.date >= from && r.date <= to),
-          ledger: data.ledger.filter(r => r.date >= from && r.date <= to), ledgerSync: ledgerSync || data.ledgerSync });
+          ledger: data.ledger.filter(r => r.date >= from && r.date <= to), early: data.early.filter(r => r.date >= from && r.date <= to),
+          ledgerSync: ledgerSync || data.ledgerSync });
       }
       if (s.includes('action=weekly-summary')) return J({ ok: true, from: '2026-09-14', to: '2026-09-20', stores: {}, totals: {} });
       return J({ ok: true });
@@ -281,6 +288,35 @@ for (const live of [false, true]) {
   const msg = await page.evaluate(() => document.getElementById('lv-overview-body')?.innerText || '');
   check(/server has not been updated/i.test(msg) && /Retry/.test(msg), `old worker: says the server needs updating (${msg.slice(0, 80)})`);
   check(errs.length === 0, `old worker: no JS errors${errs.length ? ': ' + errs[0] : ''}`);
+  await ctx.close();
+}
+
+// ── 6. Before the recap ─────────────────────────────────────────────────────
+for (const theme of ['light', 'dark']) {
+  const { ctx, page, errs } = await open({ theme, width: 393 });
+  await go(page, 'live-overview');
+  const read = () => page.evaluate(() => { const e = document.querySelector('#lv-overview-body .lv-early');
+    return { big: document.querySelector('#lv-overview-body .lv-big')?.textContent, has: !!e, amt: e?.querySelector('.h .a')?.textContent,
+      rows: e ? e.querySelectorAll('li').length : 0, live: e ? e.querySelectorAll('.lv-chip').length : 0, text: e?.innerText || '',
+      overflow: e ? e.scrollWidth > e.clientWidth + 1 : null }; });
+  await page.evaluate(() => lvSetRange('today'));
+  await page.waitForTimeout(250);
+  let r = await read();
+  check(r.big === '—' && r.has && r.amt === '$938.50' && r.rows === 2 && r.live === 1, `${theme}: Today — total stays "—", the early block lists both shows ($938.50, one live): ${JSON.stringify(r)}`);
+  check(/before the recap/i.test(r.text) && /Not in the total above/.test(r.text) && /as of/.test(r.text), `${theme}: it says what it is and when it was read`);
+  check(r.overflow === false, `${theme}: the block fits a phone`);
+  const a = await page.evaluate(AUDIT);
+  check(a.fails.length === 0, `${theme}: overview with the early block ≥ 4.5:1 (min ${a.min})${a.fails.length ? ' FAIL ' + a.fails.join(' | ') : ''}`);
+  if (process.env.SHOTS) await page.locator('#lv-overview-body .lv-early').screenshot({ path: `${process.env.SHOTS}/early-${theme}.png` });   // eyeballing aid
+  await page.evaluate(() => lvSetStore('BL14'));
+  r = await read();
+  check(r.amt === '$240.50' && r.rows === 1, `${theme}: store filter — Battle Creek's show only (${r.amt}, ${r.rows})`);
+  await page.evaluate(() => lvSetStore('all'));
+  await page.evaluate(() => lvSetRange('lastMonth'));
+  await page.waitForTimeout(250);
+  r = await read();
+  check(!r.has, `${theme}: a past range has no early block`);
+  check(errs.length === 0, `${theme} early: no JS errors${errs.length ? ': ' + errs[0] : ''}`);
   await ctx.close();
 }
 

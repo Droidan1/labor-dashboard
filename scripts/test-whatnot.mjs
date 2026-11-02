@@ -35,6 +35,8 @@ const SHOWS = [
   // Scheduled 3:20 PM (BL1) but went live 3:40 PM (BL14): the real start decides, as in the recap.
   { id: 'sh-d', title: 'Late start', status: 'ended', scheduled_start_at: '2026-10-29T19:20:00Z', updated_at: 'u1' },
   { id: 'sh-next', title: 'Next week', status: 'scheduled', scheduled_start_at: '2026-11-04T17:00:00Z', updated_at: 'u1' },
+  // On air at NOW (11 AM Eastern, 10-30): stored so its orders have a store and a day before it ends.
+  { id: 'sh-live', title: 'Coat finds', status: 'live', scheduled_start_at: '2026-10-30T15:00:00Z', updated_at: 'u1' },
 ];
 let shDCalculated = false;
 const analyticsFor = (id) => ({
@@ -169,8 +171,11 @@ throttleNextOrders = true;
 const r1 = await runAt();
 ok(r1 && !r1.error, 'run 1 (the hourly cron) has no error: ' + JSON.stringify(r1 && (r1.error || r1.skipped)));
 eq([r1?.crossCheck?.gaps, r1?.crossCheck?.pushed], [1, 1], 'run 1: one gap (BL14 10-28), pushed');
-eq([r1.complete, r1.shows, r1.orders, r1.backfill], [true, 4, 60, 'done'], 'run 1: 4 ended shows (not the scheduled one), all 60 orders (head 50 + backfill 10), backfill done');
-ok(calls.every(c => !c.startsWith('/shows') || c.includes('status=ended')), 'shows are asked for ended only');
+eq([r1.complete, r1.shows, r1.orders, r1.backfill], [true, 5, 60, 'done'], 'run 1: 4 ended shows + the live one (not the scheduled one), all 60 orders (head 50 + backfill 10), backfill done');
+ok(calls.every(c => !c.startsWith('/shows') || /status=(ended|live)/.test(c)), 'shows are asked for ended and live only');
+eq(db.prepare("SELECT status, store, show_date FROM whatnot_shows WHERE id = 'sh-live'").get(), { status: 'live', store: 'BL1', show_date: '2026-10-30' },
+  'the live show is stored, with the store and day of its start');
+ok(!calls.includes('/analytics/shows/sh-live'), 'a live show has no analytics read (it has not ended)');
 eq(calls.filter(c => c.startsWith('/orders?')).slice(0, 2).map(c => c.includes('reverse=true')), [true, true], 'a 429 on the first /orders call is retried (same request)');
 eq(calls.filter(c => c.startsWith('/orders?') && c.includes('reverse=false')).length, 1, 'the backfill read oldest-first and stopped where the head began');
 eq(db.prepare('SELECT COUNT(*) n FROM whatnot_orders').get().n, 60, 'every order stored once');
@@ -208,7 +213,7 @@ const showsRead = async (user, q = 'from=2026-10-28&to=2026-10-29') => {
   ok(r2 && !r2.error, 'run 2 ran: ' + JSON.stringify(r2 && (r2.error || r2.skipped)));
   eq([r2?.crossCheck?.gaps, r2?.crossCheck?.pushed], [1, 0], 'run 2: the same gap is not pushed again');
   eq([r2?.items, r2?.shows, r2?.orders], [11, 0, 60], 'run 2: 11 item lines for the 10 backfilled orders (one is a 2-pack); unchanged shows; 3 days of orders re-read');
-  eq(calls.filter(c => c.startsWith('/shows')).length, 1, 'one shows call when nothing changed');
+  eq(calls.filter(c => c.startsWith('/shows')).map(c => c.match(/status=(\w+)/)[1]), ['live', 'ended'], 'when nothing changed: one call for live shows, one page of ended');
   ok(!calls.some(c => /^\/orders\/\d+\/items/.test(c) && Number(c.split('/')[2]) > 1010), 'orders already itemised are not asked for again');
   shDCalculated = true;
   const r3 = await runAt();
@@ -260,9 +265,12 @@ const showsRead = async (user, q = 'from=2026-10-28&to=2026-10-29') => {
   ok(!calls.some(c => c === '/analytics/shows/sh-a'), 'a show past 24h is not read again');
 
   // Past 24h from sh-d's start, the next run reads it once more and its day settles to a match.
+  // sh-live has ended meanwhile: Whatnot moves its updated_at, so the ended pass rewrites the row.
   NOW = new Date('2026-10-30T20:00:00Z');
+  Object.assign(SHOWS.find(x => x.id === 'sh-live'), { status: 'ended', updated_at: 'u2' });
   calls = [];
   const r5 = await runAt();
+  eq(db.prepare("SELECT status FROM whatnot_shows WHERE id = 'sh-live'").get().status, 'ended', 'the live show becomes ended once it ends');
   ok(calls.includes('/analytics/shows/sh-d'), 'run 5 reads sh-d one last time');
   eq([r5?.crossCheck?.gaps, r5?.crossCheck?.pushed], [2, 0], 'run 5: the same two gaps, nothing new pushed');
   const after = await showsRead('u-su');
