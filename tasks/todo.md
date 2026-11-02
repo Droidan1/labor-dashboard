@@ -14,7 +14,8 @@ to the cent, checked Oct 2026), labelled early, NOT added to the total; the reca
 - [x] tests: test-live-sales.mjs 56/56 (§7 new, 3 mutations caught); test-whatnot.mjs 75/75 (live show stored, then
       ended; no-live-pass mutation caught); browser-live-sales.mjs 172/172 in light/dark/OLED (8 fail on main's page);
       npm test: all but test-briefing-margin (Monday, fails identically on main)
-- [ ] Deploy: worker first (frontend reads `early` only if present), then merge
+- [x] Shipped 2026-11-02: worker 265136cd (byte-identical to d1fe099's dry-run build; 100% on 3 status passes 30 s apart),
+      PR #368 merged f6705dc; www serves its index.html + CACHE_NAME v294. No migration
 
 # Live Sales: Money back from Whatnot's financial report (2026-11-02)
 
@@ -23,7 +24,7 @@ adjustments and tips. **Correction:** per-show new followers are NOT in any repo
 (`analytics_livestreams_report` has no follower column; only `analytics_show_details_report` does, and the API can't
 request it). Followers exist only as a daily, account-wide count (`analytics_overview_report`): left out, offer later.
 
-- [ ] Brian: token with `write:reports` (edit, or new token + `wrangler secret put WHATNOT_API_TOKEN`)
+- [x] Brian: token with `write:reports` (edited 2026-11-02; the 2 PM run's report request succeeded)
 - [x] migration-086: `whatnot_ledger` (ledger_transaction_id PK, type, completed_at + Eastern date, signed amount,
       order_id, show_id). Refund, carrier-adjustment and tip rows only; no buyer name, state or message
 - [x] worker: client gains POST; `syncWhatnotLedger` after analytics in the hourly sync, catching its own errors.
@@ -42,8 +43,10 @@ request it). Followers exist only as a daily, account-wide count (`analytics_ove
       test-briefing-margin, which fails identically on main (Monday week boundary)
 - [x] Shipped 2026-11-02: worker 045e811a (byte-identical to 19b9f15's dry-run build; 100% on 3 status passes 30 s apart),
       migration-086 on staging + prod (re-run on both: no-op), PR #367 merged af81c18; www serves its index.html + CACHE_NAME v293
-- [ ] Verify the first real report run: `whatnot_sync` key `ledger` gains a run id, then a cursor + `last.rows`.
-      Unverified until then: the report file's format (plain/gzip, where report_url points)
+- [x] First real report (2 PM run): completed in ~6 s; plain CSV on S3 (token correctly not sent), all 32 columns,
+      microsecond UTC times parse; 107 kept rows in the first window (Jun 26 – Jul 26)
+- [ ] Confirm the backfill landed in prod D1: `whatnot_sync` key `ledger` has a cursor near today + `last.rows`
+      (one 31-day window per hourly run; caught up ≈ 8 PM EST Nov 2)
 
 # Associates: Supply Request as a grantable page (2026-11-02)
 
