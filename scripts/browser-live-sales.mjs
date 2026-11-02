@@ -16,6 +16,9 @@
 //   3. An old worker (403 UNCLASSIFIED_ACTION) gets a sentence, not a blank page or a throw.
 //   4. Every text node clears 4.5:1 against its composited background in light, dark and pure
 //      black, at desktop and phone width; the shows table's sticky column is opaque.
+//   5. Money back fills from Whatnot's financial report (refunds, carrier adjustments, tips), honours
+//      the store filter, and says what it waits on in every other state (not set up, needs
+//      write:reports, waiting, still loading), each readable in light and dark.
 // The figures are made up: this repo is public.
 let chromium;
 try {
@@ -53,9 +56,12 @@ const b = await chromium.launch({ executablePath: CHROME });
 const STUB = () => {
   const et = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
   const add = (s, n) => { const d = new Date(s + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
-  const channels = [], shows = [];
+  const channels = [], shows = [], ledger = [];
   for (let i = 1; i <= 70; i++) {
     const d = add(et, -i);
+    if (i % 3 === 1) ledger.push({ date: d, store: 'BL1', type: 'ORDER_REFUND', amount: -10, n: 1 }, { date: d, store: 'BL1', type: 'ORDER_REFUND_SHIPPING_COSTS', amount: -2, n: 1 });
+    if (i % 5 === 2) ledger.push({ date: d, store: null, type: 'CARRIER_ADJUSTMENT', amount: -4.5, n: 1 }, { date: d, store: null, type: 'CARRIER_ADJUSTMENT_REFUND', amount: 1.25, n: 1 });
+    if (i % 4 === 1) ledger.push({ date: d, store: 'BL14', type: 'TIP', amount: 3, n: 1 });
     channels.push({ channel: 'whatnot', store: 'BL1', date: d, total: 1000 + i, count: 2, meta: { items: 100 + i, shipments: 40, new_buyers: 5 } });
     shows.push({ showId: 's1-' + i, title: '$1 Starts : Fashion Finds', store: 'BL1', date: d, startAt: d + 'T12:30:00Z', calculationStatus: 'GENERATED', sales: 480 + i, orders: 50, buyers: 20, newBuyers: 3, viewers: 300, lost: { orders: 1, subtotal: 9, of: 51 } });
     shows.push({ showId: 's2-' + i, title: '$5 Starts : Bag Deals', store: 'BL1', date: d, startAt: d + 'T15:00:00Z', calculationStatus: 'GENERATED', sales: 500, orders: 45, buyers: 18, newBuyers: 2, viewers: 250, lost: null });
@@ -69,10 +75,11 @@ const STUB = () => {
   }
   return { ok: true, units: [{ code: 'BL1', name: 'Coliseum' }, { code: 'BL14', name: 'Battle Creek' }, { code: 'BL16', name: 'Indy East' }, { code: 'BL2', name: 'South Bend' }],
     channels, coverage: [{ channel: 'auction', first: add(et, -70), last: add(et, -1) }, { channel: 'whatnot', first: add(et, -70), last: add(et, -1) }],
-    bl: [], shows, sync: { connected: true, lastRun: null } };
+    bl: [], shows, ledger, ledgerSync: { ready: true, through: new Date(Math.floor(Date.now() / 3600e3) * 3600e3).toISOString(), error: null, waitingSince: null },
+    sync: { connected: true, lastRun: null } };
 };
 
-async function open({ theme = 'dark', width = 1400, height = 900, live = true, worker = 'new', biz = 'live' } = {}) {
+async function open({ theme = 'dark', width = 1400, height = 900, live = true, worker = 'new', biz = 'live', ledgerSync = null } = {}) {
   const phone = width < 1024;
   const ctx = await b.newContext({ viewport: { width, height }, isMobile: phone, hasTouch: phone, deviceScaleFactor: phone ? 2 : 1 });
   const page = await ctx.newPage();
@@ -90,7 +97,7 @@ async function open({ theme = 'dark', width = 1400, height = 900, live = true, w
       localStorage.setItem('bioPromptDismissed', '1');
     } catch (e) {}
   }, { theme, biz });
-  await page.addInitScript(({ live, worker, stub }) => {
+  await page.addInitScript(({ live, worker, stub, ledgerSync }) => {
     const data = (new Function('return (' + stub + ')()'))();
     window.__lvCalls = [];
     window.fetch = async (u) => {
@@ -103,12 +110,13 @@ async function open({ theme = 'dark', width = 1400, height = 900, live = true, w
         window.__lvCalls.push(s);
         if (worker === 'old') return J({ error: 'Unclassified action', code: 'UNCLASSIFIED_ACTION' }, 403);
         const q = new URL(s).searchParams, from = q.get('from'), to = q.get('to');
-        return J({ ...data, from, to, channels: data.channels.filter(r => r.date >= from && r.date <= to), shows: data.shows.filter(r => r.date >= from && r.date <= to) });
+        return J({ ...data, from, to, channels: data.channels.filter(r => r.date >= from && r.date <= to), shows: data.shows.filter(r => r.date >= from && r.date <= to),
+          ledger: data.ledger.filter(r => r.date >= from && r.date <= to), ledgerSync: ledgerSync || data.ledgerSync });
       }
       if (s.includes('action=weekly-summary')) return J({ ok: true, from: '2026-09-14', to: '2026-09-20', stores: {}, totals: {} });
       return J({ ok: true });
     };
-  }, { live, worker, stub: STUB.toString() });
+  }, { live, worker, stub: STUB.toString(), ledgerSync });
   await page.goto(URL_, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => !document.getElementById('app')?.classList.contains('hidden'), { timeout: 8000 }).catch(() => {});
   await page.waitForTimeout(300);
@@ -274,6 +282,53 @@ for (const live of [false, true]) {
   check(/server has not been updated/i.test(msg) && /Retry/.test(msg), `old worker: says the server needs updating (${msg.slice(0, 80)})`);
   check(errs.length === 0, `old worker: no JS errors${errs.length ? ': ' + errs[0] : ''}`);
   await ctx.close();
+}
+
+// ── 5. Money back: Whatnot's financial report ───────────────────────────────
+{
+  const cards = (page) => page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#lv-money-body .lv-mb')].map(c =>
+    [c.querySelector('.l').textContent, { v: c.querySelector('.v').textContent, s: c.querySelector('.s').textContent, chip: c.querySelector('.lv-chip').textContent }])));
+  const note = (page) => page.evaluate(() => document.querySelector('#lv-money-body > .lv-card')?.innerText || '');
+  const { ctx, page, errs } = await open();
+  await go(page, 'live-money');
+  await page.evaluate(() => lvSetRange('last7'));
+  await page.waitForTimeout(250);
+  let c = await cards(page);
+  // i = 1..6: refunds at i = 1, 4 (10 + 2 shipping each); carrier at i = 2 (−4.50, +1.25); tips at BL14 i = 1, 5.
+  check(c.Refunds.v === '$24.00' && /^2 refunds issued/.test(c.Refunds.s) && c.Refunds.chip === 'Connected', `refunds: ${JSON.stringify(c.Refunds)}`);
+  check(c['Carrier adjustments'].v === '$3.25' && /Net charge/.test(c['Carrier adjustments'].s) && /1 charge, 1 credit/.test(c['Carrier adjustments'].s), `carrier: ${JSON.stringify(c['Carrier adjustments'])}`);
+  check(c.Tips.v === '$6.00' && /^2 tips/.test(c.Tips.s), `tips: ${JSON.stringify(c.Tips)}`);
+  check(/dated the day each was issued/.test(await note(page)), 'the note says where the figures come from');
+  await page.evaluate(() => lvSetStore('BL14'));
+  c = await cards(page);
+  check(c.Refunds.v === '$0.00' && /^0 refunds/.test(c.Refunds.s), `BL14: no BL1 refunds (${c.Refunds.v})`);
+  check(c['Carrier adjustments'].v === '—' && c['Carrier adjustments'].chip === 'All stores only', `BL14: carrier adjustments are All stores only (${JSON.stringify(c['Carrier adjustments'])})`);
+  check(c.Tips.v === '$6.00', `BL14: its tips stay (${c.Tips.v})`);
+  check(errs.length === 0, `money back: no JS errors${errs.length ? ': ' + errs[0] : ''}`);
+  await ctx.close();
+
+  const old = new Date(Date.now() - 40 * 864e5).toISOString();
+  const STATES = [
+    ['not set up', { ready: false, through: null, error: null }, 'Not set up', /does not read/],
+    ['no scope', { ready: true, through: null, error: 'needs write:reports' }, 'Needs access', /needs write:reports/],
+    ['waiting', { ready: true, through: null, error: null }, 'Waiting', /first financial report/],
+    ['backfilling', { ready: true, through: old, error: null }, 'Loading', /loaded through/],
+  ];
+  for (const [name, ledgerSync, chip, why] of STATES) {
+    for (const theme of ['light', 'dark']) {
+      const { ctx, page, errs } = await open({ theme, ledgerSync });
+      await go(page, 'live-money');
+      await page.evaluate(() => lvSetRange('last7'));
+      await page.waitForTimeout(250);
+      const k = await cards(page);
+      check(k.Refunds.v === '—' && k.Refunds.chip === chip && why.test(k.Refunds.s) && k.Tips.v === '—', `${name}/${theme}: ${JSON.stringify(k.Refunds)}`);
+      if (name === 'no scope') check(/write:reports/.test(await note(page)), `${name}/${theme}: the note explains write:reports`);
+      const a = await page.evaluate(AUDIT);
+      check(a.fails.length === 0, `${name}/${theme}: text ≥ 4.5:1 (min ${a.min})${a.fails.length ? ' FAIL ' + a.fails.join(' | ') : ''}`);
+      check(errs.length === 0, `${name}/${theme}: no JS errors${errs.length ? ': ' + errs[0] : ''}`);
+      await ctx.close();
+    }
+  }
 }
 
 await b.close();

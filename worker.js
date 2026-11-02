@@ -16503,12 +16503,12 @@ function whatnotStoreFor(iso) {
   return { date: et.date, store: et.minutes < WHATNOT_FW_CUTOFF_MIN ? "BL1" : "BL14" };
 }
 
-// Sequential, paced, budgeted GETs. 429 → wait Retry-After (Whatnot sends it) and retry,
+// Sequential, paced, budgeted calls. 429 → wait Retry-After (Whatnot sends it) and retry,
 // at most 3 times. 404 → null (a deleted listing, a show of another seller).
 function whatnotClient(env, { budget = WHATNOT_RUN_BUDGET } = {}) {
   let calls = 0, nextAt = 0;
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-  async function get(path, params = {}) {
+  async function send(method, path, params = {}, body) {
     const url = new URL(WHATNOT_API + path);
     for (const [k, v] of Object.entries(params)) if (v != null && v !== "") url.searchParams.set(k, String(v));
     for (let attempt = 0; ; attempt++) {
@@ -16517,9 +16517,9 @@ function whatnotClient(env, { budget = WHATNOT_RUN_BUDGET } = {}) {
       if (wait > 0) await sleep(wait);
       calls++;
       nextAt = Date.now() + WHATNOT_MIN_GAP_MS;
-      const res = await fetch(url.toString(), {
-        headers: { Authorization: `Bearer ${env.WHATNOT_API_TOKEN}`, Accept: "application/json" },
-      });
+      const headers = { Authorization: `Bearer ${env.WHATNOT_API_TOKEN}`, Accept: "application/json" };
+      if (body !== undefined) headers["Content-Type"] = "application/json";
+      const res = await fetch(url.toString(), { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
       if (res.status === 429 && attempt < 3) {
         const ra = Number(res.headers.get("Retry-After"));
         await sleep(Math.max(Number.isFinite(ra) ? ra * 1000 : 1000 * 2 ** attempt, 250) + Math.random() * 250);
@@ -16533,12 +16533,16 @@ function whatnotClient(env, { budget = WHATNOT_RUN_BUDGET } = {}) {
       if (res.status === 404) return null;
       if (!res.ok) {
         const text = await res.text().catch(() => "");
-        throw new WhatnotHttpError(res.status, `Whatnot GET ${path} → ${res.status} ${text.slice(0, 200)}`);
+        throw new WhatnotHttpError(res.status, `Whatnot ${method} ${path} → ${res.status} ${text.slice(0, 200)}`);
       }
       return res.json();
     }
   }
-  return { get, get calls() { return calls; } };
+  return {
+    get: (path, params) => send("GET", path, params),
+    post: (path, body) => send("POST", path, {}, body),
+    get calls() { return calls; },
+  };
 }
 
 // The tables exist (migration-084). Until they do, the sync and the reads say so.
@@ -16743,6 +16747,133 @@ async function syncWhatnotProducts(env, api, at, out) {
   }
 }
 
+// ── Whatnot's financial report → whatnot_ledger (migration-086), for Live Sales "Money back" ──
+// Refunds, carrier adjustments and tips are only in seller_financial_report, an async report:
+// POST /reports asks for a window (the token needs write:reports), GET /reports/{id} says when
+// its CSV is ready. One run at a time, kept in whatnot_sync "ledger" as
+// { cursor, run, error, retryAfter, last }:
+//   - the backfill walks forward from the first order's day, a 31-day report per window, and asks
+//     for the next window in the same run that ingests one;
+//   - caught up, a report is asked for every 6 hours and re-reads the last 7 days: the report is
+//     built from a warehouse table that lags, and every row is an upsert on its own id;
+//   - a failed run, a bad download or a file without the expected columns backs off 6 hours and
+//     never moves the cursor; a 401/403 is asked again next hour (it generated nothing).
+const WHATNOT_LEDGER_TYPES = ["ORDER_REFUND", "ORDER_REFUND_SHIPPING_COSTS", "APPEALED_ORDER_REFUND",
+  "APPEALED_ORDER_REFUND_SHIPPING_COSTS", "CARRIER_ADJUSTMENT", "CARRIER_ADJUSTMENT_REFUND", "TIP"];
+const WHATNOT_LEDGER_COLUMNS = ["ledger_transaction_id", "transaction_type", "transaction_completed_at_utc", "transaction_amount"];
+const WHATNOT_LEDGER_WINDOW_DAYS = 31;
+const WHATNOT_LEDGER_OVERLAP_DAYS = 7;
+const WHATNOT_LEDGER_EVERY_HOURS = 6;
+const WHATNOT_LEDGER_GIVE_UP_HOURS = 24;   // a run still not ready a day after it was asked for is dropped
+
+async function whatnotLedgerReady(env) {
+  return !!(await env.DB.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'whatnot_ledger'").first());
+}
+
+// The report's timestamps are UTC; one written without a zone marker is read as UTC too.
+const wnUtc = (v) => {
+  const t = String(v || "").trim();
+  if (!t) return null;
+  return wnIso(/[zZ]$|[+-]\d\d:?\d\d$/.test(t) ? t : t.replace(" ", "T") + "Z");
+};
+
+// The file behind report_url. 🔒 The token goes to Whatnot's own hosts only: a file on a storage
+// host is a pre-signed URL and must never be handed the seller's token.
+async function whatnotReportText(env, reportUrl) {
+  const u = new URL(reportUrl, WHATNOT_API);
+  if (u.protocol !== "https:") throw new Error("report file is not on https");
+  const whatnotHost = u.hostname === "whatnot.com" || u.hostname.endsWith(".whatnot.com");
+  const res = await fetch(u.toString(), whatnotHost ? { headers: { Authorization: `Bearer ${env.WHATNOT_API_TOKEN}` } } : {});
+  if (!res.ok) throw new Error(`report download → ${res.status}`);
+  let bytes = new Uint8Array(await res.arrayBuffer());
+  if (bytes[0] === 0x1f && bytes[1] === 0x8b) {   // gzip the HTTP layer did not already undo
+    bytes = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer());
+  } else if (bytes[0] === 0x50 && bytes[1] === 0x4b) {
+    throw new Error("report file is a zip archive, which the Hub cannot read yet");
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+// The kept rows of one report file. A row without an id, a time or an amount is skipped and
+// counted, not guessed at.
+function whatnotLedgerRows(text) {
+  const rows = csvParse(text);
+  const head = (rows.shift() || []).map(h => String(h).trim());
+  const missing = WHATNOT_LEDGER_COLUMNS.filter(c => !head.includes(c));
+  if (missing.length) throw new Error(`report is missing column ${missing.join(", ")}`);
+  const at = (r, name) => { const i = head.indexOf(name), v = i < 0 ? "" : String(r[i] ?? "").trim(); return v === "" ? null : v; };
+  const out = [];
+  let skipped = 0;
+  for (const r of rows) {
+    const type = at(r, "transaction_type");
+    if (!WHATNOT_LEDGER_TYPES.includes(type)) continue;
+    const id = at(r, "ledger_transaction_id"), completedAt = wnUtc(at(r, "transaction_completed_at_utc")), amount = wnNum(at(r, "transaction_amount"));
+    if (!id || !completedAt || amount == null) { skipped++; continue; }
+    out.push({ id, type, completedAt, date: whatnotEt(completedAt).date, amount: roundCents(amount),
+      currency: at(r, "transaction_currency"), orderId: at(r, "order_id"), showId: at(r, "livestream_id") });
+  }
+  return { rows: out, skipped };
+}
+
+async function syncWhatnotLedger(env, api, at, out) {
+  if (!(await whatnotLedgerReady(env))) { out.ledger = { status: "skipped", reason: "migration-086 not applied" }; return; }
+  const raw = await whatnotState(env, "ledger");
+  const st = raw ? JSON.parse(raw) : {};
+  const nowMs = Date.parse(at), save = () => whatnotSetState(env, "ledger", JSON.stringify(st), at).run();
+  const fail = async (error, backoff) => {
+    Object.assign(st, { run: null, error, errorAt: at,
+      retryAfter: backoff ? new Date(nowMs + WHATNOT_LEDGER_EVERY_HOURS * 3600e3).toISOString() : null });
+    out.ledger = { status: "error", error };
+    await save();
+  };
+  out.ledger = { status: "fresh" };
+  let step = "poll";
+  try {
+    if (st.run) {
+      const r = await api.get(`/reports/${encodeURIComponent(st.run.id)}`);
+      if (!r || r.status === "failed" || r.status === "cancelled") return fail(r ? `Whatnot report ${r.status}` : "Whatnot report not found", true);
+      if (r.status !== "completed" || !r.report_url) {
+        if (nowMs - Date.parse(st.run.requestedAt) > WHATNOT_LEDGER_GIVE_UP_HOURS * 3600e3) return fail("Whatnot report not ready a day after it was asked for", true);
+        out.ledger = { status: "waiting", since: st.run.requestedAt };
+        return;
+      }
+      const { rows, skipped } = whatnotLedgerRows(await whatnotReportText(env, r.report_url));
+      for (let i = 0; i < rows.length; i += 50) {
+        await env.DB.batch(rows.slice(i, i + 50).map(x => env.DB.prepare(
+          `INSERT OR REPLACE INTO whatnot_ledger (id, type, completed_at, completed_date, amount, currency, order_id, show_id, synced_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(x.id, x.type, x.completedAt, x.date, x.amount, x.currency, x.orderId, x.showId, at)));
+      }
+      Object.assign(st, { cursor: st.cursor && st.cursor > st.run.end ? st.cursor : st.run.end,
+        last: { at, start: st.run.start, end: st.run.end, rows: rows.length, skipped }, run: null, error: null, retryAfter: null });
+      out.ledger = { status: "ingested", rows: rows.length, ...(skipped ? { skipped } : {}) };
+      await save();
+    }
+    if (st.retryAfter && at < st.retryAfter) { out.ledger = { status: "error", error: st.error, retryAfter: st.retryAfter }; return; }
+    const hour = Math.floor(nowMs / 3600e3) * 3600e3;
+    let start;
+    if (st.cursor) {
+      if (hour - Date.parse(st.cursor) < WHATNOT_LEDGER_EVERY_HOURS * 3600e3) return;
+      start = Date.parse(st.cursor) - WHATNOT_LEDGER_OVERLAP_DAYS * 864e5;
+    } else {
+      const first = Date.parse((await env.DB.prepare("SELECT MIN(created_at) AS t FROM whatnot_orders").first())?.t || "");
+      start = Math.floor((Number.isFinite(first) ? first : hour - WHATNOT_LEDGER_WINDOW_DAYS * 864e5) / 864e5) * 864e5;
+    }
+    const window = { start: new Date(start).toISOString(), end: new Date(Math.min(start + WHATNOT_LEDGER_WINDOW_DAYS * 864e5, hour)).toISOString() };
+    step = "request";
+    const r = await api.post("/reports", { report_parameters: { report_type: "seller_financial_report", start_date: window.start, end_date: window.end } });
+    Object.assign(st, { run: { id: r.id, ...window, requestedAt: at }, error: null, retryAfter: null });
+    out.ledger = { ...out.ledger, status: out.ledger.status === "ingested" ? "ingested" : "requested", requested: window };
+    await save();
+  } catch (e) {
+    if (e instanceof WhatnotBudgetError) throw e;
+    if (e instanceof WhatnotHttpError && (e.status === 401 || e.status === 403)) {
+      return fail(e.status === 401 ? "token rejected" : step === "request" ? "needs write:reports" : "needs read:reports", false);
+    }
+    return fail(String((e && e.message) || e).slice(0, 200), true);
+  }
+}
+
 // The cross-check, per store-day: Σ show analytics `sales` against the recap's whatnot row in
 // channel_sales. status: match | gap (≥ $1 apart) | pending (a show's analytics not calculated
 // yet, or the day is today) | no_recap (the recap row has not arrived; the recap's own
@@ -16831,6 +16962,7 @@ async function syncWhatnot(env, { now = new Date(), budget } = {}) {
   try {
     await syncWhatnotShows(env, api, at, out);
     await syncWhatnotAnalytics(env, api, at, out);
+    await syncWhatnotLedger(env, api, at, out);   // catches its own errors, so a 403 stops nothing else
     await syncWhatnotOrders(env, api, at, out);
     await syncWhatnotItems(env, api, at, out);
     await syncWhatnotProducts(env, api, at, out);
@@ -30696,12 +30828,17 @@ export default {
         }
         units = units.filter(u => u.code === store);
       }
-      const lastRun = (await whatnotReady(env)) ? await whatnotState(env, "last_run") : null;
+      const wnReady = await whatnotReady(env), lastRun = wnReady ? await whatnotState(env, "last_run") : null;
       const sync = { connected: !!env.WHATNOT_API_TOKEN, lastRun: lastRun ? JSON.parse(lastRun) : null };
+      const ledgerReady = wnReady && await whatnotLedgerReady(env);
+      const ledgerState = ledgerReady ? JSON.parse((await whatnotState(env, "ledger")) || "{}") : {};
+      // through = the end of the newest report window ingested; error = why the last attempt failed.
+      const ledgerSync = { ready: ledgerReady, through: ledgerState.cursor || null, error: ledgerState.error || null,
+                           waitingSince: (ledgerState.run && ledgerState.run.requestedAt) || null };
       const codes = units.map(u => u.code);
       // A Live Sales grant with no stores is a real state: it answers with nothing, never everything.
       if (!codes.length) {
-        return new Response(JSON.stringify({ ok: true, from, to, units: [], channels: [], coverage: [], bl: [], shows: [], sync }), { headers: corsJson });
+        return new Response(JSON.stringify({ ok: true, from, to, units: [], channels: [], coverage: [], bl: [], shows: [], ledger: [], ledgerSync, sync }), { headers: corsJson });
       }
       const inList = codes.map(() => "?").join(","), chList = LIVE_CHANNELS.map(() => "?").join(",");
       const [rows, cover, bl] = await env.DB.batch([
@@ -30720,7 +30857,7 @@ export default {
       ]);
       const parseMeta = (m) => { if (m == null) return null; try { return JSON.parse(m); } catch (_) { return null; } };
       let shows = [];
-      if (await whatnotReady(env)) {
+      if (wnReady) {
         // Lost = cancelled or failed. Whatnot's show `sales` leaves out every one of them; the recap
         // keeps those that fell through after its end-of-show summary (Oct 2026, checked to the cent).
         shows = ((await env.DB.prepare(
@@ -30742,12 +30879,30 @@ export default {
           lost: r.orders == null ? null : { orders: r.lost || 0, subtotal: r.lost_amt || 0, of: r.orders },
         }));
       }
+      // Money back: Whatnot's financial-report rows by Eastern day × store × type. A row's store is
+      // its show's, else its order's show's; a carrier adjustment has neither, so it has no store and
+      // is shown only to someone who sees every live store, with no store picked.
+      let ledger = [];
+      if (ledgerReady) {
+        const everyStore = allow === null && !store;
+        ledger = ((await env.DB.prepare(
+          `SELECT l.completed_date AS date, COALESCE(s.store, os.store) AS store, l.type, ROUND(SUM(l.amount), 2) AS amount, COUNT(*) AS n
+             FROM whatnot_ledger l
+             LEFT JOIN whatnot_shows s ON s.id = l.show_id
+             LEFT JOIN whatnot_orders o ON o.id = l.order_id
+             LEFT JOIN whatnot_shows os ON os.id = o.show_id
+            WHERE l.completed_date BETWEEN ? AND ?
+            GROUP BY 1, 2, 3 ORDER BY 1, 2, 3`
+        ).bind(from, to).all()).results || [])
+          .filter(r => r.store == null ? everyStore : codes.includes(r.store))
+          .map(r => ({ date: r.date, store: r.store ?? null, type: r.type, amount: r.amount, n: r.n }));
+      }
       return new Response(JSON.stringify({
         ok: true, from, to, units,
         channels: (rows.results || []).map(r => ({ channel: r.channel, store: r.store, date: r.date, total: r.total, count: r.count, meta: parseMeta(r.meta) })),
         coverage: cover.results || [],
         bl: (bl.results || []).map(r => ({ store: r.store, date: r.date, auction: r.auction, manualOverride: r.is_manual_override === 1 })),
-        shows, sync,
+        shows, ledger, ledgerSync, sync,
       }), { headers: corsJson });
     }
 

@@ -1,3 +1,29 @@
+# Live Sales: Money back from Whatnot's financial report (2026-11-02)
+
+**Ask (Brian):** start with adding `write:reports` to the Whatnot token, so Money back gets refunds, carrier
+adjustments and tips. **Correction:** per-show new followers are NOT in any report the API can generate
+(`analytics_livestreams_report` has no follower column; only `analytics_show_details_report` does, and the API can't
+request it). Followers exist only as a daily, account-wide count (`analytics_overview_report`): left out, offer later.
+
+- [ ] Brian: token with `write:reports` (edit, or new token + `wrangler secret put WHATNOT_API_TOKEN`)
+- [x] migration-086: `whatnot_ledger` (ledger_transaction_id PK, type, completed_at + Eastern date, signed amount,
+      order_id, show_id). Refund, carrier-adjustment and tip rows only; no buyer name, state or message
+- [x] worker: client gains POST; `syncWhatnotLedger` after analytics in the hourly sync, catching its own errors.
+      One run at a time in `whatnot_sync` key `ledger`; backfill from the first order's day, 31-day windows, next
+      window requested in the run that ingests one; caught up = every 6 h re-reading 7 days; failed run / bad file /
+      download error back off 6 h, never move the cursor; 401/403 retried next hour. Token to *.whatnot.com only;
+      gzip handled, zip refused with a reason. A row with no id/time/amount is skipped and counted
+- [x] worker: `live-sales` adds `ledger` (date × store × type) + `ledgerSync {ready, through, error, waitingSince}`;
+      no-store rows only for an all-stores caller with no `&store=`
+- [x] client: Money back cards (refunds incl. refunded shipping, count = refunds; carrier net charge/credit; tips),
+      store filter → carrier "All stores only"; states not set up / needs access / waiting / loading / retrying.
+      CACHE_NAME v293 + shell-cache fixture
+- [x] tests: test-whatnot-ledger.mjs 41/41 (can't run on main: no migration-086); 6 mutations each caught (token to
+      any host, no store filter, no overlap, errors escaping the step, every type kept, zone-less time as local).
+      browser-live-sales.mjs 158/158 in light/dark/OLED (15 fail on main's index.html). npm test: all but
+      test-briefing-margin, which fails identically on main (Monday week boundary)
+- [ ] Deploy order: migration-086 (additive) → worker → merge. Verify: first report ingested (D1 read), cards on prod
+
 # Associates: Supply Request as a grantable page (2026-11-02)
 
 **Ask (Brian):** add Supply Request as an option for associate access.
