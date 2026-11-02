@@ -1,3 +1,17 @@
+# Live Sales: the dashboard's date-range picker (2026-11-02)
+
+**Ask (Brian):** put the dashboard's date picker (Today … Custom Date Range) on the Live Sales pages.
+
+- [x] Same component: the WRS chip + panel, a third instance over RANGE_PRESETS / resolvePreset / fmtRangeShort,
+      class-based inside each of the five app bars (no new ids); own state, never moves the dashboard's or WRS's
+- [x] Comparison per preset: same days of the previous month/year, the week before, else the equal span before;
+      only through the newest recap day, so today's unreported day never drags the % down
+- [x] Ranges past the read's 92-day cap are fetched in ≤ 92-day pieces (no worker change); chart by day ≤ 62 days,
+      by week ≤ 200, else by month; "—" plus a sentence when nothing in the range is reported yet
+- [x] browser-live-sales.mjs 124/124 (picker lists the dashboard's presets, Escape, 12 months in ≥ 8 pieces drawn
+      by month, custom range via the calendar, Today "—"); npm test as before; CACHE_NAME v291
+- [ ] Brian: merge (frontend only, no worker or migration)
+
 # Whatnot cross-check: late cancellations and unsettled figures (2026-11-02)
 
 **Ask (Brian):** fix the #362 alert so ordinary late cancellations stop pushing.

@@ -6766,7 +6766,33 @@
             <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Whatnot shows and the online auction · also counted in Bargain Lane until the split</p>
           </div>
           <div class="flex items-center gap-2 flex-wrap">
-            <select class="lv-select lv-range" aria-label="Date range" onchange="lvSetRange(this.value)"></select>
+            <div class="relative lv-chip-wrap">
+              <button type="button" onclick="lvToggleRange(event)" aria-haspopup="true" aria-expanded="false" aria-label="Change date range"
+                class="lv-chip-trigger relative h-[38px] px-3 gap-2 rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink flex items-center justify-center transition-colors hover:border-accent-green/40 focus:outline-none focus:ring-1 focus:ring-accent-green">
+                <svg class="w-[17px] h-[17px] text-accent-green flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/></svg>
+                <span class="lv-chip-label text-[13px] font-bold whitespace-nowrap max-w-[180px] truncate">—</span>
+                <svg class="lv-chip-chev w-3.5 h-3.5 text-opl-inkDim dark:text-op-inkDim flex-shrink-0 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+              <div onclick="event.stopPropagation()"
+                class="lv-chip-panel hidden absolute top-[calc(100%+10px)] right-0 w-[300px] max-w-[92vw] max-sm:!fixed max-sm:!top-[calc(env(safe-area-inset-top)+64px)] max-sm:!left-3 max-sm:!right-3 max-sm:!w-auto max-sm:!max-w-none bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi rounded-[15px] shadow-2xl z-50 origin-top-right overflow-hidden">
+                <div class="lv-range-list max-h-[70vh] overflow-y-auto py-1"></div>
+                <div class="lv-range-custom hidden border-t border-[rgba(20,16,8,0.1)] dark:border-op-border">
+                  <div class="flex items-center justify-between gap-2 px-3.5 py-2.5">
+                    <button type="button" onclick="lvRangeCalNav(-1)" aria-label="Previous month" class="w-7 h-7 flex items-center justify-center rounded-[8px] text-base leading-none border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors">‹</button>
+                    <span class="lv-range-cal-title text-[12px] font-bold text-opl-ink dark:text-op-ink text-center flex-1"></span>
+                    <button type="button" onclick="lvRangeCalNav(1)" aria-label="Next month" class="w-7 h-7 flex items-center justify-center rounded-[8px] text-base leading-none border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors">›</button>
+                  </div>
+                  <div class="lv-range-cal-grids px-3 pb-2 grid grid-cols-1 gap-3"></div>
+                  <div class="flex items-center justify-between gap-2 px-3.5 py-3 border-t border-[rgba(20,16,8,0.1)] dark:border-op-border">
+                    <span class="lv-range-custom-summary text-[12px] font-medium text-opl-inkDim dark:text-op-inkDim truncate">Pick a start date</span>
+                    <div class="flex items-center gap-1.5 flex-shrink-0">
+                      <button type="button" onclick="lvRangeCustomCancel()" class="px-2.5 py-1.5 rounded-[8px] text-[12px] font-bold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Cancel</button>
+                      <button type="button" onclick="lvRangeCustomApply()" disabled class="lv-range-apply px-3 py-1.5 rounded-[8px] text-[12px] font-bold bg-accent-green text-[#0b1220] disabled:opacity-40 disabled:cursor-not-allowed transition-opacity">Apply</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
             <select class="lv-select lv-store" aria-label="Store" onchange="lvSetStore(this.value)"></select>
             <span class="lv-updated text-[11px] text-opl-inkDim dark:text-op-inkDim"></span>
             <button type="button" onclick="lvRefresh()" class="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-ink dark:text-op-ink hover:border-accent-green/50 transition">
@@ -6787,7 +6813,33 @@
             <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Every ended show, newest first</p>
           </div>
           <div class="flex items-center gap-2 flex-wrap">
-            <select class="lv-select lv-range" aria-label="Date range" onchange="lvSetRange(this.value)"></select>
+            <div class="relative lv-chip-wrap">
+              <button type="button" onclick="lvToggleRange(event)" aria-haspopup="true" aria-expanded="false" aria-label="Change date range"
+                class="lv-chip-trigger relative h-[38px] px-3 gap-2 rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink flex items-center justify-center transition-colors hover:border-accent-green/40 focus:outline-none focus:ring-1 focus:ring-accent-green">
+                <svg class="w-[17px] h-[17px] text-accent-green flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/></svg>
+                <span class="lv-chip-label text-[13px] font-bold whitespace-nowrap max-w-[180px] truncate">—</span>
+                <svg class="lv-chip-chev w-3.5 h-3.5 text-opl-inkDim dark:text-op-inkDim flex-shrink-0 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+              <div onclick="event.stopPropagation()"
+                class="lv-chip-panel hidden absolute top-[calc(100%+10px)] right-0 w-[300px] max-w-[92vw] max-sm:!fixed max-sm:!top-[calc(env(safe-area-inset-top)+64px)] max-sm:!left-3 max-sm:!right-3 max-sm:!w-auto max-sm:!max-w-none bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi rounded-[15px] shadow-2xl z-50 origin-top-right overflow-hidden">
+                <div class="lv-range-list max-h-[70vh] overflow-y-auto py-1"></div>
+                <div class="lv-range-custom hidden border-t border-[rgba(20,16,8,0.1)] dark:border-op-border">
+                  <div class="flex items-center justify-between gap-2 px-3.5 py-2.5">
+                    <button type="button" onclick="lvRangeCalNav(-1)" aria-label="Previous month" class="w-7 h-7 flex items-center justify-center rounded-[8px] text-base leading-none border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors">‹</button>
+                    <span class="lv-range-cal-title text-[12px] font-bold text-opl-ink dark:text-op-ink text-center flex-1"></span>
+                    <button type="button" onclick="lvRangeCalNav(1)" aria-label="Next month" class="w-7 h-7 flex items-center justify-center rounded-[8px] text-base leading-none border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors">›</button>
+                  </div>
+                  <div class="lv-range-cal-grids px-3 pb-2 grid grid-cols-1 gap-3"></div>
+                  <div class="flex items-center justify-between gap-2 px-3.5 py-3 border-t border-[rgba(20,16,8,0.1)] dark:border-op-border">
+                    <span class="lv-range-custom-summary text-[12px] font-medium text-opl-inkDim dark:text-op-inkDim truncate">Pick a start date</span>
+                    <div class="flex items-center gap-1.5 flex-shrink-0">
+                      <button type="button" onclick="lvRangeCustomCancel()" class="px-2.5 py-1.5 rounded-[8px] text-[12px] font-bold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Cancel</button>
+                      <button type="button" onclick="lvRangeCustomApply()" disabled class="lv-range-apply px-3 py-1.5 rounded-[8px] text-[12px] font-bold bg-accent-green text-[#0b1220] disabled:opacity-40 disabled:cursor-not-allowed transition-opacity">Apply</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
             <select class="lv-select lv-store" aria-label="Store" onchange="lvSetStore(this.value)"></select>
             <span class="lv-updated text-[11px] text-opl-inkDim dark:text-op-inkDim"></span>
             <button type="button" onclick="lvRefresh()" class="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-ink dark:text-op-ink hover:border-accent-green/50 transition">
@@ -6808,7 +6860,33 @@
             <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Results from the online auction feed, by store and day</p>
           </div>
           <div class="flex items-center gap-2 flex-wrap">
-            <select class="lv-select lv-range" aria-label="Date range" onchange="lvSetRange(this.value)"></select>
+            <div class="relative lv-chip-wrap">
+              <button type="button" onclick="lvToggleRange(event)" aria-haspopup="true" aria-expanded="false" aria-label="Change date range"
+                class="lv-chip-trigger relative h-[38px] px-3 gap-2 rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink flex items-center justify-center transition-colors hover:border-accent-green/40 focus:outline-none focus:ring-1 focus:ring-accent-green">
+                <svg class="w-[17px] h-[17px] text-accent-green flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/></svg>
+                <span class="lv-chip-label text-[13px] font-bold whitespace-nowrap max-w-[180px] truncate">—</span>
+                <svg class="lv-chip-chev w-3.5 h-3.5 text-opl-inkDim dark:text-op-inkDim flex-shrink-0 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+              <div onclick="event.stopPropagation()"
+                class="lv-chip-panel hidden absolute top-[calc(100%+10px)] right-0 w-[300px] max-w-[92vw] max-sm:!fixed max-sm:!top-[calc(env(safe-area-inset-top)+64px)] max-sm:!left-3 max-sm:!right-3 max-sm:!w-auto max-sm:!max-w-none bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi rounded-[15px] shadow-2xl z-50 origin-top-right overflow-hidden">
+                <div class="lv-range-list max-h-[70vh] overflow-y-auto py-1"></div>
+                <div class="lv-range-custom hidden border-t border-[rgba(20,16,8,0.1)] dark:border-op-border">
+                  <div class="flex items-center justify-between gap-2 px-3.5 py-2.5">
+                    <button type="button" onclick="lvRangeCalNav(-1)" aria-label="Previous month" class="w-7 h-7 flex items-center justify-center rounded-[8px] text-base leading-none border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors">‹</button>
+                    <span class="lv-range-cal-title text-[12px] font-bold text-opl-ink dark:text-op-ink text-center flex-1"></span>
+                    <button type="button" onclick="lvRangeCalNav(1)" aria-label="Next month" class="w-7 h-7 flex items-center justify-center rounded-[8px] text-base leading-none border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors">›</button>
+                  </div>
+                  <div class="lv-range-cal-grids px-3 pb-2 grid grid-cols-1 gap-3"></div>
+                  <div class="flex items-center justify-between gap-2 px-3.5 py-3 border-t border-[rgba(20,16,8,0.1)] dark:border-op-border">
+                    <span class="lv-range-custom-summary text-[12px] font-medium text-opl-inkDim dark:text-op-inkDim truncate">Pick a start date</span>
+                    <div class="flex items-center gap-1.5 flex-shrink-0">
+                      <button type="button" onclick="lvRangeCustomCancel()" class="px-2.5 py-1.5 rounded-[8px] text-[12px] font-bold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Cancel</button>
+                      <button type="button" onclick="lvRangeCustomApply()" disabled class="lv-range-apply px-3 py-1.5 rounded-[8px] text-[12px] font-bold bg-accent-green text-[#0b1220] disabled:opacity-40 disabled:cursor-not-allowed transition-opacity">Apply</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
             <select class="lv-select lv-store" aria-label="Store" onchange="lvSetStore(this.value)"></select>
             <span class="lv-updated text-[11px] text-opl-inkDim dark:text-op-inkDim"></span>
             <button type="button" onclick="lvRefresh()" class="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-ink dark:text-op-ink hover:border-accent-green/50 transition">
@@ -6829,7 +6907,33 @@
             <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Paid promotion on Whatnot</p>
           </div>
           <div class="flex items-center gap-2 flex-wrap">
-            <select class="lv-select lv-range" aria-label="Date range" onchange="lvSetRange(this.value)"></select>
+            <div class="relative lv-chip-wrap">
+              <button type="button" onclick="lvToggleRange(event)" aria-haspopup="true" aria-expanded="false" aria-label="Change date range"
+                class="lv-chip-trigger relative h-[38px] px-3 gap-2 rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink flex items-center justify-center transition-colors hover:border-accent-green/40 focus:outline-none focus:ring-1 focus:ring-accent-green">
+                <svg class="w-[17px] h-[17px] text-accent-green flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/></svg>
+                <span class="lv-chip-label text-[13px] font-bold whitespace-nowrap max-w-[180px] truncate">—</span>
+                <svg class="lv-chip-chev w-3.5 h-3.5 text-opl-inkDim dark:text-op-inkDim flex-shrink-0 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+              <div onclick="event.stopPropagation()"
+                class="lv-chip-panel hidden absolute top-[calc(100%+10px)] right-0 w-[300px] max-w-[92vw] max-sm:!fixed max-sm:!top-[calc(env(safe-area-inset-top)+64px)] max-sm:!left-3 max-sm:!right-3 max-sm:!w-auto max-sm:!max-w-none bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi rounded-[15px] shadow-2xl z-50 origin-top-right overflow-hidden">
+                <div class="lv-range-list max-h-[70vh] overflow-y-auto py-1"></div>
+                <div class="lv-range-custom hidden border-t border-[rgba(20,16,8,0.1)] dark:border-op-border">
+                  <div class="flex items-center justify-between gap-2 px-3.5 py-2.5">
+                    <button type="button" onclick="lvRangeCalNav(-1)" aria-label="Previous month" class="w-7 h-7 flex items-center justify-center rounded-[8px] text-base leading-none border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors">‹</button>
+                    <span class="lv-range-cal-title text-[12px] font-bold text-opl-ink dark:text-op-ink text-center flex-1"></span>
+                    <button type="button" onclick="lvRangeCalNav(1)" aria-label="Next month" class="w-7 h-7 flex items-center justify-center rounded-[8px] text-base leading-none border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors">›</button>
+                  </div>
+                  <div class="lv-range-cal-grids px-3 pb-2 grid grid-cols-1 gap-3"></div>
+                  <div class="flex items-center justify-between gap-2 px-3.5 py-3 border-t border-[rgba(20,16,8,0.1)] dark:border-op-border">
+                    <span class="lv-range-custom-summary text-[12px] font-medium text-opl-inkDim dark:text-op-inkDim truncate">Pick a start date</span>
+                    <div class="flex items-center gap-1.5 flex-shrink-0">
+                      <button type="button" onclick="lvRangeCustomCancel()" class="px-2.5 py-1.5 rounded-[8px] text-[12px] font-bold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Cancel</button>
+                      <button type="button" onclick="lvRangeCustomApply()" disabled class="lv-range-apply px-3 py-1.5 rounded-[8px] text-[12px] font-bold bg-accent-green text-[#0b1220] disabled:opacity-40 disabled:cursor-not-allowed transition-opacity">Apply</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
             <select class="lv-select lv-store" aria-label="Store" onchange="lvSetStore(this.value)"></select>
             <span class="lv-updated text-[11px] text-opl-inkDim dark:text-op-inkDim"></span>
             <button type="button" onclick="lvRefresh()" class="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-ink dark:text-op-ink hover:border-accent-green/50 transition">
@@ -6850,7 +6954,33 @@
             <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">What came off the gross after the show</p>
           </div>
           <div class="flex items-center gap-2 flex-wrap">
-            <select class="lv-select lv-range" aria-label="Date range" onchange="lvSetRange(this.value)"></select>
+            <div class="relative lv-chip-wrap">
+              <button type="button" onclick="lvToggleRange(event)" aria-haspopup="true" aria-expanded="false" aria-label="Change date range"
+                class="lv-chip-trigger relative h-[38px] px-3 gap-2 rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink flex items-center justify-center transition-colors hover:border-accent-green/40 focus:outline-none focus:ring-1 focus:ring-accent-green">
+                <svg class="w-[17px] h-[17px] text-accent-green flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/></svg>
+                <span class="lv-chip-label text-[13px] font-bold whitespace-nowrap max-w-[180px] truncate">—</span>
+                <svg class="lv-chip-chev w-3.5 h-3.5 text-opl-inkDim dark:text-op-inkDim flex-shrink-0 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+              <div onclick="event.stopPropagation()"
+                class="lv-chip-panel hidden absolute top-[calc(100%+10px)] right-0 w-[300px] max-w-[92vw] max-sm:!fixed max-sm:!top-[calc(env(safe-area-inset-top)+64px)] max-sm:!left-3 max-sm:!right-3 max-sm:!w-auto max-sm:!max-w-none bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi rounded-[15px] shadow-2xl z-50 origin-top-right overflow-hidden">
+                <div class="lv-range-list max-h-[70vh] overflow-y-auto py-1"></div>
+                <div class="lv-range-custom hidden border-t border-[rgba(20,16,8,0.1)] dark:border-op-border">
+                  <div class="flex items-center justify-between gap-2 px-3.5 py-2.5">
+                    <button type="button" onclick="lvRangeCalNav(-1)" aria-label="Previous month" class="w-7 h-7 flex items-center justify-center rounded-[8px] text-base leading-none border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors">‹</button>
+                    <span class="lv-range-cal-title text-[12px] font-bold text-opl-ink dark:text-op-ink text-center flex-1"></span>
+                    <button type="button" onclick="lvRangeCalNav(1)" aria-label="Next month" class="w-7 h-7 flex items-center justify-center rounded-[8px] text-base leading-none border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors">›</button>
+                  </div>
+                  <div class="lv-range-cal-grids px-3 pb-2 grid grid-cols-1 gap-3"></div>
+                  <div class="flex items-center justify-between gap-2 px-3.5 py-3 border-t border-[rgba(20,16,8,0.1)] dark:border-op-border">
+                    <span class="lv-range-custom-summary text-[12px] font-medium text-opl-inkDim dark:text-op-inkDim truncate">Pick a start date</span>
+                    <div class="flex items-center gap-1.5 flex-shrink-0">
+                      <button type="button" onclick="lvRangeCustomCancel()" class="px-2.5 py-1.5 rounded-[8px] text-[12px] font-bold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Cancel</button>
+                      <button type="button" onclick="lvRangeCustomApply()" disabled class="lv-range-apply px-3 py-1.5 rounded-[8px] text-[12px] font-bold bg-accent-green text-[#0b1220] disabled:opacity-40 disabled:cursor-not-allowed transition-opacity">Apply</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
             <select class="lv-select lv-store" aria-label="Store" onchange="lvSetStore(this.value)"></select>
             <span class="lv-updated text-[11px] text-opl-inkDim dark:text-op-inkDim"></span>
             <button type="button" onclick="lvRefresh()" class="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-ink dark:text-op-ink hover:border-accent-green/50 transition">
@@ -37110,13 +37240,12 @@
   // Headline Whatnot dollars are the recap's (gross at Whatnot's end-of-show summary);
   // per-show rows are Whatnot's API (net of every cancelled or failed order).
   const LV_PAGE = { 'live-overview': 'overview', 'live-shows': 'shows', 'live-auction': 'auction', 'live-promotion': 'promotion', 'live-money': 'money' };
-  const LV_RANGES = [['mtd', 'This month'], ['lm', 'Last month'], ['l7', 'Last 7 days'], ['l30', 'Last 30 days']];
   const LV_CH = { whatnot: { name: 'Whatnot', color: 'var(--lv-w)' }, auction: { name: 'Online auction', color: 'var(--lv-a)' } };
   const LV_SLOTS = ['Morning (before 10:30)', 'Midday (10:30–1:00)', 'Afternoon (1:00–3:30)', 'Evening (3:30 on)'];
   const LV_DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const LV_DOWL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const LV_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const lvState = { page: 'overview', range: 'mtd', store: 'all', type: 'all', showAll: false, view: 'chart',
+  const lvState = { page: 'overview', store: 'all', type: 'all', showAll: false, view: 'chart',
                     data: null, dataKey: null, loading: false, error: null, loadedAt: null };
   const lvEsc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const lvInt = (n) => n == null ? '—' : Math.round(n).toLocaleString('en-US');   // fmtInt(null) prints '0'
@@ -37129,45 +37258,62 @@
   const lvSpan = (a, b) => a === b ? lvShort(a) : `${lvShort(a)} – ${lvShort(b)}`;
   const lvEtTime = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' });
   const lvEtParts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: 'numeric', hour12: false });
+  // The selected range: the dashboard's own presets and custom calendar (RANGE_PRESETS,
+  // resolvePreset), held separately so it never moves the dashboard's or Retail Summary's.
+  let lvRange = null;
+  const lvDays = (a, b) => Math.round((ymdToUTC(b) - ymdToUTC(a)) / 864e5) + 1;
 
-  // The window a preset covers, and the window it is compared with. Complete days only: the
-  // newest day is yesterday (the recap and the auction results land the morning after).
-  function lvWindow(key) {
-    const today = getETTodayStr(), y = lvAdd(today, -1);
-    const mStart = (s) => s.slice(0, 8) + '01';
-    const mEnd = (s) => { const d = lvDay(mStart(s)); d.setUTCMonth(d.getUTCMonth() + 1); d.setUTCDate(0); return d.toISOString().slice(0, 10); };
-    const days = (a, b) => Math.round((lvDay(b) - lvDay(a)) / 864e5) + 1;
-    if (key === 'l7' || key === 'l30') {
-      const n = key === 'l7' ? 7 : 30, from = lvAdd(y, -(n - 1));
-      return { from, to: y, cFrom: lvAdd(from, -n), cTo: lvAdd(from, -1), label: LV_RANGES.find(r => r[0] === key)[1], cmpLabel: `the ${n} days before` };
-    }
-    // This month — except on the 1st, when it has no complete day yet and shows last month.
-    if (key === 'mtd' && today.slice(8) !== '01') {
-      const from = mStart(today), pm = mStart(lvAdd(from, -1));
-      const cTo = [lvAdd(pm, days(from, y) - 1), mEnd(pm)].sort()[0];
-      return { from, to: y, cFrom: pm, cTo, label: lvSpan(from, y), cmpLabel: lvSpan(pm, cTo) };
-    }
-    const from = mStart(lvAdd(mStart(today), -1)), to = mEnd(from), pm = mStart(lvAdd(from, -1));
-    return { from, to, cFrom: pm, cTo: mEnd(pm), label: `${LV_MON[lvDay(from).getUTCMonth()]} ${from.slice(0, 4)}`, cmpLabel: LV_MON[lvDay(pm).getUTCMonth()] };
+  // The range and the window it is compared with: the same days of the previous month or year
+  // for month and year presets, the same days a week earlier for week presets, otherwise the
+  // equal span just before. Live sales are reported after the fact (the recap the next morning,
+  // auction results days later), so the comparison runs only through the newest reported day.
+  // `cFrom` is fixed before any data arrives: it bounds the one fetch.
+  function lvMonthBack(ymd, months) {   // same day-of-month, clamped (Mar 31 → Feb 28)
+    const first = ymdMonthShift(ymdFirstOfMonth(ymd), -months), last = ymdLastOfMonth(first);
+    const day = first.slice(0, 8) + ymd.slice(8);
+    return day > last ? last : day;
+  }
+  function lvWindow() {
+    const r = lvRange, p = r.presetId;
+    const back = (d) => p === 'thisMonth' || p === 'lastMonth' ? lvMonthBack(d, 1)
+      : p === 'thisYear' || p === 'lastYear' ? lvMonthBack(d, 12)
+      : p === 'thisWeek' || p === 'lastWeek' ? ymdShift(d, -7)
+      : ymdShift(d, -lvDays(r.from, r.to));
+    return { from: r.from, to: r.to, cFrom: back(r.from), back, label: r.label,
+             dates: r.presetId === 'custom' ? '' : fmtRangeShort(r.from, r.to) };
+  }
+  // Whatnot is reported through the newest recap; the auction through its newest results.
+  function lvReported() {
+    const cov = (lvState.data && lvState.data.coverage) || [];
+    const last = (c) => (cov.find(r => r.channel === c) || {}).last || null;
+    return { whatnot: last('whatnot'), auction: last('auction') };
   }
 
+  async function lvFetch(from, to) {
+    const parts = [];
+    for (let a = from; a <= to; a = ymdShift(a, 92)) { const b = ymdShift(a, 91); parts.push([a, b < to ? b : to]); }
+    const bodies = await Promise.all(parts.map(async ([a, b]) => {
+      const res = await fetch(WORKER_BASE + `?action=live-sales&from=${a}&to=${b}`, { credentials: 'include' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.ok) throw Object.assign(new Error(body.error || `HTTP ${res.status}`), { code: body.code, status: res.status });
+      return body;
+    }));
+    // Units, coverage and sync are the same in every piece; the rows are not.
+    return { ...bodies[0], from, to, channels: bodies.flatMap(b => b.channels || []),
+             shows: bodies.flatMap(b => b.shows || []), bl: bodies.flatMap(b => b.bl || []) };
+  }
   async function lvLoad(force) {
-    const w = lvWindow(lvState.range), key = w.cFrom + '|' + w.to;
+    const w = lvWindow(), key = w.cFrom + '|' + w.to;
     if (!force && lvState.data && lvState.dataKey === key) return lvRender();
     lvState.loading = true; lvState.error = null; lvRender();
     try {
-      const res = await fetch(WORKER_BASE + `?action=live-sales&from=${w.cFrom}&to=${w.to}`, { credentials: 'include' });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok || !body.ok) {
-        lvState.error = body.code === 'UNCLASSIFIED_ACTION' ? 'The server has not been updated for Live Sales yet.'
-          : res.status === 503 ? 'Live Sales is not set up yet.'
-          : (body.error || `HTTP ${res.status}`);
-      } else {
-        lvState.data = body; lvState.dataKey = key; lvState.loadedAt = new Date();
-        if (lvState.store !== 'all' && !(body.units || []).some(u => u.code === lvState.store)) lvState.store = 'all';
-      }
+      const body = await lvFetch(w.cFrom, w.to);
+      lvState.data = body; lvState.dataKey = key; lvState.loadedAt = new Date();
+      if (lvState.store !== 'all' && !(body.units || []).some(u => u.code === lvState.store)) lvState.store = 'all';
     } catch (e) {
-      lvState.error = e && e.message ? e.message : String(e);
+      lvState.error = e.code === 'UNCLASSIFIED_ACTION' ? 'The server has not been updated for Live Sales yet.'
+        : e.status === 503 ? 'Live Sales is not set up yet.'
+        : (e && e.message ? e.message : String(e));
     }
     lvState.loading = false;
     lvRender();
@@ -37185,7 +37331,11 @@
       slot: mins < 630 ? 0 : mins < 780 ? 1 : mins < 930 ? 2 : 3, ready: s.sales != null };
   }
   function lvSelect() {
-    const d = lvState.data, w = lvWindow(lvState.range);
+    const d = lvState.data, w = lvWindow(), rep = lvReported();
+    // Compared span = the selected days the recap has reported, against the same span before.
+    w.repTo = rep.whatnot && rep.whatnot < w.to ? rep.whatnot : w.to;
+    w.cTo = w.repTo >= w.from ? w.back(w.repTo) : null;
+    w.cmpLabel = w.cTo ? fmtRangeShort(w.cFrom, w.cTo) : '';
     const inStore = (s) => lvState.store === 'all' || s === lvState.store;
     const inR = (x, a, b) => x >= a && x <= b;
     const rows = (d.channels || []).filter(r => inStore(r.store));
@@ -37194,8 +37344,10 @@
       w, units: (d.units || []).filter(u => inStore(u.code)),
       recap: rows.filter(r => r.channel === 'whatnot' && inR(r.date, w.from, w.to)),
       auc: rows.filter(r => r.channel === 'auction' && inR(r.date, w.from, w.to)),
-      recapPrev: rows.filter(r => r.channel === 'whatnot' && inR(r.date, w.cFrom, w.cTo)),
-      aucPrev: rows.filter(r => r.channel === 'auction' && inR(r.date, w.cFrom, w.cTo)),
+      recapCmp: rows.filter(r => r.channel === 'whatnot' && inR(r.date, w.from, w.repTo)),
+      aucCmp: rows.filter(r => r.channel === 'auction' && inR(r.date, w.from, w.repTo)),
+      recapPrev: w.cTo ? rows.filter(r => r.channel === 'whatnot' && inR(r.date, w.cFrom, w.cTo)) : [],
+      aucPrev: w.cTo ? rows.filter(r => r.channel === 'auction' && inR(r.date, w.cFrom, w.cTo)) : [],
       shows: shows.filter(s => inR(s.date, w.from, w.to)),
       allRows: d.channels || [], allShows: (d.shows || []).map(lvPrepShow),
     };
@@ -37211,12 +37363,13 @@
   // Like-for-like only: a change is shown when the Hub holds both channels for the whole
   // comparison window, otherwise it says which data starts too late.
   function lvCompare(x) {
+    if (!x.w.cTo) return { pct: null, why: 'nothing in this range has been reported yet' };
     const cov = lvState.data.coverage || [];
     for (const c of ['whatnot', 'auction']) {
       const v = cov.find(r => r.channel === c);
       if (v && v.first > x.w.cFrom) return { pct: null, why: `the Hub's ${LV_CH[c].name} data starts ${lvShort(v.first)}` };
     }
-    const cur = lvWk(x.recap).sales + lvAk(x.auc).sales, prev = lvWk(x.recapPrev).sales + lvAk(x.aucPrev).sales;
+    const cur = lvWk(x.recapCmp).sales + lvAk(x.aucCmp).sales, prev = lvWk(x.recapPrev).sales + lvAk(x.aucPrev).sales;
     return prev > 0 ? { pct: cur / prev - 1 } : { pct: null, why: 'no live sales in that window' };
   }
   // Recap gross minus Whatnot's total, per store-day where every show has Whatnot's figures.
@@ -37238,16 +37391,21 @@
   function lvHero(x) {
     const k = lvWk(x.recap), a = lvAk(x.auc), total = k.sales + a.sales, c = lvCompare(x);
     const delta = c.pct != null
-      ? `<span class="${c.pct >= 0 ? 'lv-up' : 'lv-down'}">${c.pct >= 0 ? '+' : '−'}${Math.abs(c.pct * 100).toFixed(0)}%</span> vs ${lvEsc(x.w.cmpLabel)}`
-      : `vs ${lvEsc(x.w.cmpLabel)}: not shown, ${lvEsc(c.why)}`;
+      ? `<span class="${c.pct >= 0 ? 'lv-up' : 'lv-down'}">${c.pct >= 0 ? '+' : '−'}${Math.abs(c.pct * 100).toFixed(0)}%</span> vs ${lvEsc(x.w.cmpLabel)}${x.w.repTo < x.w.to ? ` (through ${lvShort(x.w.repTo)}, the newest recap)` : ''}`
+      : `No comparison: ${lvEsc(c.why)}`;
+    const rep = lvReported(), any = x.recap.length || x.auc.some(r => r.total != null);
+    const behind = [rep.whatnot && rep.whatnot < x.w.to ? `Whatnot through ${lvShort(rep.whatnot)}` : '',
+                    rep.auction && rep.auction < x.w.to ? `online auction through ${lvShort(rep.auction)}` : ''].filter(Boolean).join(' · ');
+    const note = !any ? '<div class="lv-also">Nothing reported for this range yet. The Whatnot recap arrives the morning after a show; auction results a few days after the auction.</div>'
+      : behind ? `<div class="lv-also">Reported so far: ${behind}. Later days fill in as they arrive.</div>` : '';
     const liveDays = new Set([...x.auc.map(r => r.date), ...x.recap.filter(r => r.count > 0).map(r => r.date)]).size;
     const split = [['whatnot', k.sales, `${lvInt(k.shows)} shows`], ['auction', a.sales, `${lvInt(a.lots)} lots`]].map(([ch, v, n]) =>
       `<div class="lv-chrow"><span class="lv-sw" style="background:${LV_CH[ch].color}"></span><span>${LV_CH[ch].name}</span><span class="amt">${fmtDollar(v)}</span><span class="n">${n}</span></div>
        <div class="lv-track"><div class="lv-fill" style="width:${total ? v / total * 100 : 0}%;background:${LV_CH[ch].color}"></div></div>`).join('');
     const perItem = k.items ? k.sales / k.items : null, aov = k.ship ? k.sales / k.ship : null;
     return `<div class="lv-hero">
-      <div class="lv-card"><div class="lv-eyebrow">Live sales · ${lvEsc(x.w.label)}</div>
-        <div class="lv-big">${fmtDollar(total)}</div><div class="lv-delta">${delta}</div>
+      <div class="lv-card"><div class="lv-eyebrow">Live sales · ${lvEsc(x.w.label)}${x.w.dates ? ` · ${lvEsc(x.w.dates)}` : ''}</div>
+        <div class="lv-big">${any ? fmtDollar(total) : '—'}</div><div class="lv-delta">${delta}</div>${note}
         <div class="lv-chsplit">${split}</div>
         <div class="lv-facts"><div><div class="v">${lvInt(k.days)}</div><div class="l">show days</div></div><div><div class="v">${lvInt(a.days)}</div><div class="l">auction days</div></div>
           <div><div class="v">${liveDays ? fmtDollar(total / liveDays) : '—'}</div><div class="l">per live day</div></div></div>
@@ -37275,31 +37433,41 @@
   function lvStores(x) {
     return `<div class="lv-locs">${x.units.map(u => {
       const k = lvWk(x.recap.filter(r => r.store === u.code)), a = lvAk(x.auc.filter(r => r.store === u.code));
-      const vals = []; for (let d = x.w.from; d <= x.w.to; d = lvAdd(d, 1)) vals.push([...x.recap, ...x.auc].filter(r => r.store === u.code && r.date === d).reduce((n, r) => n + (Number(r.total) || 0), 0));
+      const vals = lvDaily({ ...x, recap: x.recap.filter(r => r.store === u.code), auc: x.auc.filter(r => r.store === u.code) }).map(r => r.tot);
       const tile = (ch, v, n) => `<div class="lv-ctile"><div class="l"><span class="lv-sw" style="background:${LV_CH[ch].color}"></span>${LV_CH[ch].name}</div><div class="v${v ? '' : ' none'}">${v ? fmtDollar(v) : 'none'}</div><div class="lv-sub">${n}</div></div>`;
       return `<div class="lv-card"><div class="lv-loc-head"><div><span class="lv-loc-name">${lvEsc(u.name)}</span><span class="lv-loc-code">${lvEsc(u.code)}</span></div><span class="lv-pill">${lvEsc(lvLast(u.code, x))}</span></div>
-        <div class="lv-loc-mid"><div><div class="lv-eyebrow">${lvEsc(x.w.label)}</div><div class="lv-loc-total">${k.days || a.days ? fmtDollar(k.sales + a.sales) : '—'}</div></div>${lvSpark(vals)}</div>
+        <div class="lv-loc-mid"><div><div class="lv-eyebrow">${lvEsc(x.w.label)}${x.w.dates ? ` · ${lvEsc(x.w.dates)}` : ''}</div><div class="lv-loc-total">${k.days || a.days ? fmtDollar(k.sales + a.sales) : '—'}</div></div>${lvSpark(vals)}</div>
         <div class="lv-ctiles">${tile('whatnot', k.sales, k.shows ? `${k.shows} shows · ${lvInt(k.items)} items` : 'no shows')}${tile('auction', a.sales, a.lots ? `${a.days} days · ${lvInt(a.lots)} lots` : 'no auctions')}</div>
         <div class="lv-foot">${k.shows ? `<button class="lv-link" onclick="lvGoto('live-shows','${u.code}')">Whatnot shows →</button>` : ''}${a.lots ? `<button class="lv-link" onclick="lvGoto('live-auction','${u.code}')">Auctions →</button>` : ''}</div></div>`;
     }).join('')}</div>`;
   }
 
-  // Daily sales, stacked by channel. Inline SVG to the dataviz marks: bars ≤ 24px, 4px rounded
-  // data end, 2px surface gap between segments, hairline solid grid, legend + table view.
+  // Sales over the range, stacked by channel: by day up to two months, by week (Sun–Sat, the
+  // retail week) up to ~6 months, then by month, so a year never draws 365 hairline bars. Inline
+  // SVG to the dataviz marks: bars ≤ 24px, 4px rounded data end, 2px surface gap, hairline grid.
+  function lvBucketUnit(w) { const n = lvDays(w.from, w.to); return n <= 62 ? 'day' : n <= 200 ? 'week' : 'month'; }
   function lvDaily(x) {
-    const rows = [];
+    const unit = lvBucketUnit(x.w);
+    const keyOf = (d) => unit === 'day' ? d : unit === 'week' ? ymdSundayOf(d) : ymdFirstOfMonth(d);
+    const rows = [], at = new Map();
     for (let d = x.w.from; d <= x.w.to; d = lvAdd(d, 1)) {
-      const w = x.recap.filter(r => r.date === d), a = x.auc.filter(r => r.date === d);
-      const v = [w.reduce((n, r) => n + (Number(r.total) || 0), 0), a.reduce((n, r) => n + (Number(r.total) || 0), 0)];
-      rows.push({ d, v, n: [w.reduce((n, r) => n + (r.count || 0), 0), a.reduce((n, r) => n + (r.count || 0), 0)], tot: v[0] + v[1] });
+      const k = keyOf(d);
+      if (!at.has(k)) { at.set(k, rows.length); rows.push({ d: k < x.w.from ? x.w.from : k, unit, v: [0, 0], n: [0, 0], tot: 0 }); }
+    }
+    for (const [j, list] of [[0, x.recap], [1, x.auc]]) for (const r of list) {
+      const row = rows[at.get(keyOf(r.date))]; if (!row) continue;
+      row.v[j] += Number(r.total) || 0; row.n[j] += r.count || 0; row.tot += Number(r.total) || 0;
     }
     return rows;
   }
+  const lvBucketLabel = (r) => r.unit === 'day' ? lvLabel(r.d)
+    : r.unit === 'week' ? `Week of ${lvShort(r.d)}` : `${LV_MON[lvDay(r.d).getUTCMonth()]} ${r.d.slice(0, 4)}`;
   function lvChartPanel(x) {
     const view = lvState.view;
-    const table = () => `<div class="lv-scroll" style="max-height:360px;overflow:auto"><table class="lv-dt"><thead><tr><th class="stick">Day</th><th class="num">Whatnot</th><th class="num">Online auction</th><th class="num">Total</th></tr></thead><tbody>
-      ${lvDaily(x).map(r => `<tr><td class="stick">${lvLabel(r.d)}</td>${r.v.map(v => `<td class="num">${v ? fmtDollar(v) : '<span class="dim">none</span>'}</td>`).join('')}<td class="num">${fmtDollar(r.tot)}</td></tr>`).join('')}</tbody></table></div>`;
-    return `<div class="lv-panel"><div class="lv-bar"><span class="t">Daily sales</span><span class="lab">gross, stacked by channel</span>
+    const unit = lvBucketUnit(x.w), title = { day: 'Daily sales', week: 'Weekly sales', month: 'Monthly sales' }[unit];
+    const table = () => `<div class="lv-scroll" style="max-height:360px;overflow:auto"><table class="lv-dt"><thead><tr><th class="stick">${{ day: 'Day', week: 'Week', month: 'Month' }[unit]}</th><th class="num">Whatnot</th><th class="num">Online auction</th><th class="num">Total</th></tr></thead><tbody>
+      ${lvDaily(x).map(r => `<tr><td class="stick">${lvBucketLabel(r)}</td>${r.v.map(v => `<td class="num">${v ? fmtDollar(v) : '<span class="dim">none</span>'}</td>`).join('')}<td class="num">${fmtDollar(r.tot)}</td></tr>`).join('')}</tbody></table></div>`;
+    return `<div class="lv-panel"><div class="lv-bar"><span class="t">${title}</span><span class="lab">gross, stacked by channel</span>
       <div class="r"><div class="lv-seg" role="group" aria-label="Chart or table"><button onclick="lvSetView('chart')" aria-pressed="${view === 'chart'}">Chart</button><button onclick="lvSetView('table')" aria-pressed="${view === 'table'}">Table</button></div></div></div>
       <div class="lv-body">${view === 'chart' ? '<div class="lv-chart" id="lv-chart"></div>' : table()}</div>
       <div class="lv-legend"><span class="lv-k"><span class="lv-sw" style="background:var(--lv-w)"></span>Whatnot</span><span class="lv-k"><span class="lv-sw" style="background:var(--lv-a)"></span>Online auction</span><span>Source: the Bargain Lane Live recap email and the online auction results feed</span></div></div>`;
@@ -37320,15 +37488,18 @@
       segs.forEach((j, k) => { const y0 = base - (k ? 2 : 0), y1 = base - (H - pt - pb) * (r.v[j] / top);
         if (y0 - y1 > 0.5) bars += `<path d="${seg(x0, y0, y1, k === segs.length - 1)}" fill="${cols[j]}"/>`; base = y1; });
       hits += `<rect x="${pl + i * slot}" y="${pt}" width="${slot}" height="${H - pt - pb}" fill="transparent" data-i="${i}"/>`;
-      const dn = lvDay(r.d).getUTCDate();
-      if (rows.length <= 14 || dn === 1 || dn % 5 === 0) xl += `<text class="ax" x="${pl + i * slot + slot / 2}" y="${H - 8}" text-anchor="middle">${dn}</text>`;
+      const dt = lvDay(r.d), dn = dt.getUTCDate();
+      const tick = r.unit === 'month' ? LV_MON[dt.getUTCMonth()]
+        : r.unit === 'week' ? (rows.length <= 14 || i % 2 === 0 ? `${dt.getUTCMonth() + 1}/${dn}` : '')
+        : (rows.length <= 14 || dn === 1 || dn % 5 === 0 ? String(dn) : '');
+      if (tick) xl += `<text class="ax" x="${pl + i * slot + slot / 2}" y="${H - 8}" text-anchor="middle">${tick}</text>`;
     });
-    host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Daily live sales by channel">${grid}${bars}${xl}${hits}</svg><div class="lv-tip"></div>`;
+    host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Live sales by ${rows[0] ? rows[0].unit : 'day'} and channel">${grid}${bars}${xl}${hits}</svg><div class="lv-tip"></div>`;
     const tip = host.querySelector('.lv-tip');
     host.querySelectorAll('rect[data-i]').forEach(rc => {
       rc.addEventListener('pointerenter', () => {
         const r = rows[+rc.dataset.i];
-        tip.innerHTML = `<div style="font-weight:600;margin-bottom:4px">${lvLabel(r.d)}</div>${[0, 1].map(j => `<div class="tr"><span><span class="lv-sw" style="background:${cols[j]}"></span>${names[j]}</span><span>${r.v[j] ? `${fmtDollar(r.v[j])} · ${r.n[j]} ${j ? 'lots' : 'shows'}` : 'none'}</span></div>`).join('')}<div class="tr"><span>Total</span><span><b>${fmtDollar(r.tot)}</b></span></div>`;
+        tip.innerHTML = `<div style="font-weight:600;margin-bottom:4px">${lvBucketLabel(r)}</div>${[0, 1].map(j => `<div class="tr"><span><span class="lv-sw" style="background:${cols[j]}"></span>${names[j]}</span><span>${r.v[j] ? `${fmtDollar(r.v[j])} · ${r.n[j]} ${j ? 'lots' : 'shows'}` : 'none'}</span></div>`).join('')}<div class="tr"><span>Total</span><span><b>${fmtDollar(r.tot)}</b></span></div>`;
         tip.style.display = 'block';
         const sx = (+rc.getAttribute('x') + slot / 2) / W * host.clientWidth;
         tip.style.left = Math.min(host.clientWidth - 200, Math.max(0, sx - 100)) + 'px'; tip.style.top = '0px';
@@ -37427,9 +37598,8 @@
   // The app-bar controls live outside the render target (§4.8 trap 7) and are filled here.
   function lvControls() {
     const units = (lvState.data && lvState.data.units) || [];
-    document.querySelectorAll('.lv-range').forEach(s => {
-      s.innerHTML = LV_RANGES.map(([k, l]) => `<option value="${k}"${k === lvState.range ? ' selected' : ''}>${l}</option>`).join('');
-    });
+    document.querySelectorAll('.lv-chip-label').forEach(s => { s.textContent = lvRange ? lvRange.label : '—'; });
+    document.querySelectorAll('.lv-chip-trigger').forEach(t => { if (lvRange) t.title = fmtRangeShort(lvRange.from, lvRange.to); });
     document.querySelectorAll('.lv-store').forEach(s => {
       s.innerHTML = `<option value="all">All stores</option>` + units.map(u => `<option value="${u.code}"${u.code === lvState.store ? ' selected' : ''}>${lvEsc(u.name)}</option>`).join('');
       s.value = lvState.store;
@@ -37463,10 +37633,136 @@
     if (p === 'overview' && lvState.view === 'chart') lvDrawChart(x);
   }
 
-  function lvInit(page) { lvState.page = LV_PAGE[page] || 'overview'; lvLoad(false); }
+  // ── The range picker: the dashboard's presets and custom calendar, Retail Summary's
+  // pattern (RANGE_PRESETS, resolvePreset, fmtRangeShort), on whichever Live page is open.
+  // Each page carries its own chip in its app bar, so everything is found by class inside it.
+  const lvIn = (sel) => { const p = el('page-live-' + lvState.page); return p ? p.querySelector(sel) : null; };
+  let _lvRcMonth = null, _lvRcStart = null, _lvRcEnd = null;
+  function lvRenderPresets() {
+    const list = lvIn('.lv-range-list'); if (!list) return;
+    list.innerHTML = RANGE_PRESETS.map(p => {
+      const active = lvRange && p.id === lvRange.presetId;
+      const border = p.groupEnd ? 'border-b border-[rgba(20,16,8,0.08)] dark:border-op-border' : '';
+      const activeCls = active ? 'bg-accent-green/12 font-bold' : 'hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.04)] font-medium';
+      return `<button type="button" onclick="lvPickPreset('${p.id}')" class="w-full flex items-center justify-between gap-2 px-4 py-2.5 text-left text-[14px] text-opl-ink dark:text-op-ink transition-colors ${activeCls} ${border}">`
+        + `<span>${p.label}</span>`
+        + (active ? '<svg class="w-4 h-4 text-accent-green flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : '')
+        + '</button>';
+    }).join('');
+  }
+  function lvSetPanelOpen(open) {
+    document.querySelectorAll('.lv-chip-panel').forEach(p => p.classList.add('hidden'));
+    document.querySelectorAll('.lv-chip-trigger').forEach(t => {
+      t.setAttribute('aria-expanded', 'false'); t.classList.remove('border-accent-green/45', 'bg-accent-green/10');
+      const c = t.querySelector('.lv-chip-chev'); if (c) c.style.transform = '';
+    });
+    if (!open) return;
+    const panel = lvIn('.lv-chip-panel'), trig = lvIn('.lv-chip-trigger');
+    if (!panel || !trig) return;
+    lvRangeCustomCancel();
+    lvRenderPresets();
+    panel.classList.remove('hidden');
+    trig.setAttribute('aria-expanded', 'true'); trig.classList.add('border-accent-green/45', 'bg-accent-green/10');
+    const c = trig.querySelector('.lv-chip-chev'); if (c) c.style.transform = 'rotate(180deg)';
+  }
+  window.lvToggleRange = (e) => {
+    if (e) e.stopPropagation();
+    const panel = lvIn('.lv-chip-panel');
+    lvSetPanelOpen(!!panel && panel.classList.contains('hidden'));
+  };
+  function lvSetRange(presetId, cFrom, cTo) {
+    const r = resolvePreset(presetId, cFrom, cTo);
+    if (!r.from || !r.to) return;
+    lvRange = r; lvState.showAll = false;
+    lvLoad(false);
+  }
+  window.lvSetRange = lvSetRange;
+  window.lvPickPreset = (id) => {
+    if (id === 'custom') {
+      const list = lvIn('.lv-range-list'), cust = lvIn('.lv-range-custom');
+      if (list) list.classList.add('hidden');
+      if (cust) cust.classList.remove('hidden');
+      const isCustom = lvRange && lvRange.presetId === 'custom';
+      _lvRcStart = isCustom ? lvRange.from : null; _lvRcEnd = isCustom ? lvRange.to : null;
+      _lvRcMonth = (_lvRcEnd || etTodayStr()).slice(0, 7);
+      lvRenderCal();
+      return;
+    }
+    lvSetRange(id);
+    lvSetPanelOpen(false);
+  };
+  function lvRangeCustomCancel() {
+    const list = lvIn('.lv-range-list'), cust = lvIn('.lv-range-custom');
+    if (cust) cust.classList.add('hidden');
+    if (list) list.classList.remove('hidden');
+  }
+  window.lvRangeCustomCancel = lvRangeCustomCancel;
+  window.lvRangeCalNav = (dir) => {
+    const d = ymdToUTC(_lvRcMonth + '-01'); d.setUTCMonth(d.getUTCMonth() + dir);
+    _lvRcMonth = d.toISOString().slice(0, 7); lvRenderCal();
+  };
+  window.lvRangeCalPick = (ymd) => {
+    if (ymd > etTodayStr()) return;
+    if (!_lvRcStart || _lvRcEnd) { _lvRcStart = ymd; _lvRcEnd = null; }
+    else if (ymd < _lvRcStart) { _lvRcEnd = _lvRcStart; _lvRcStart = ymd; }
+    else { _lvRcEnd = ymd; }
+    lvRenderCal();
+  };
+  window.lvRangeCustomApply = () => {
+    if (!_lvRcStart) return;
+    lvSetRange('custom', _lvRcStart, _lvRcEnd || _lvRcStart);
+    lvRangeCustomCancel(); lvSetPanelOpen(false);
+  };
+  function lvMonthGrid(ym) {
+    const first = ym + '-01', firstDow = ymdToUTC(first).getUTCDay(), days = Number(ymdLastOfMonth(first).slice(8));
+    const today = etTodayStr(), lo = _lvRcStart, hi = _lvRcEnd || _lvRcStart;
+    const monthName = new Date(first + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    let cells = '';
+    for (let i = 0; i < firstDow; i++) cells += '<div></div>';
+    for (let dn = 1; dn <= days; dn++) {
+      const ymd = `${ym}-${String(dn).padStart(2, '0')}`, future = ymd > today;
+      const isEnd = lo && (ymd === lo || ymd === hi), inRange = lo && hi && ymd >= lo && ymd <= hi && !isEnd;
+      let cls = 'h-8 flex items-center justify-center text-[12px] rounded-[7px] tabular-nums transition-colors ';
+      if (future) cls += 'opacity-30 cursor-not-allowed text-opl-inkDim dark:text-op-inkDim';
+      else if (isEnd) cls += 'bg-accent-green text-[#0b1220] font-bold cursor-pointer';
+      else if (inRange) cls += 'bg-accent-green/20 text-opl-ink dark:text-op-ink cursor-pointer';
+      else cls += 'text-opl-ink dark:text-op-ink hover:bg-[rgba(20,16,8,0.06)] dark:hover:bg-[rgba(255,255,255,0.06)] cursor-pointer';
+      cells += `<div ${future ? '' : `onclick="lvRangeCalPick('${ymd}')"`} class="${cls}">${dn}</div>`;
+    }
+    const dow = ['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(d => `<div class="h-5 flex items-center justify-center text-[9px] font-bold uppercase text-opl-inkDim dark:text-op-inkDim">${d}</div>`).join('');
+    return `<div><div class="text-[11px] font-bold text-opl-ink dark:text-op-ink mb-1.5 text-center">${monthName}</div>`
+      + `<div class="grid grid-cols-7 gap-0.5 mb-1">${dow}</div><div class="grid grid-cols-7 gap-0.5">${cells}</div></div>`;
+  }
+  function lvRenderCal() {
+    const grids = lvIn('.lv-range-cal-grids'), title = lvIn('.lv-range-cal-title'), apply = lvIn('.lv-range-apply'), summ = lvIn('.lv-range-custom-summary');
+    if (!grids) return;
+    const prevD = ymdToUTC(_lvRcMonth + '-01'); prevD.setUTCMonth(prevD.getUTCMonth() - 1);
+    const prev = prevD.toISOString().slice(0, 7);
+    grids.innerHTML = lvMonthGrid(prev) + lvMonthGrid(_lvRcMonth);
+    if (title) {
+      const a = new Date(prev + '-01T12:00:00'), b = new Date(_lvRcMonth + '-01T12:00:00');
+      title.textContent = `${a.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })} – ${b.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`;
+    }
+    if (summ) summ.textContent = _lvRcStart
+      ? (_lvRcEnd && _lvRcEnd !== _lvRcStart ? fmtRangeShort(_lvRcStart, _lvRcEnd) : fmtRangeShort(_lvRcStart, _lvRcStart) + ' — now pick end')
+      : 'Pick a start date';
+    if (apply) apply.disabled = !_lvRcStart;
+  }
+  document.addEventListener('click', (e) => {
+    if (e.target && e.target.closest && e.target.closest('.lv-chip-wrap')) return;
+    lvSetPanelOpen(false);
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') lvSetPanelOpen(false); });
+
+  // Opens on This Month, or Last Month on the 1st, when this month has nothing reported yet.
+  function lvInit(page) {
+    lvState.page = LV_PAGE[page] || 'overview';
+    if (!lvRange) lvRange = resolvePreset(etTodayStr().slice(8) === '01' ? 'lastMonth' : 'thisMonth');
+    lvSetPanelOpen(false);
+    lvLoad(false);
+  }
   window.lvInit = lvInit;
   window.lvRefresh = () => lvLoad(true);
-  window.lvSetRange = (v) => { lvState.range = v; lvState.showAll = false; lvLoad(false); };
   window.lvSetStore = (v) => { lvState.store = v; lvRender(); };
   window.lvSetType = (v) => { lvState.type = v; lvRender(); };
   window.lvSetView = (v) => { lvState.view = v; lvRender(); };
