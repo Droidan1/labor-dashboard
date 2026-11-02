@@ -10,7 +10,10 @@ $311 / $367, final $1,112 / $804 = the recap), and the sync never re-read a show
       show's orders are unsynced or its figures are under 24h old. syncWhatnotAnalytics re-reads until settled
 - [x] Prod data (read-only), Oct 20–29: every store-day match or cancelled; Oct 30's two "gaps" were frozen figures
 - [x] cli/reporting.mjs reading rule lists `cancelled` (needs the MCP redeploy to reach agents)
-- [ ] Brian: push → worker deploy → merge → MCP deploy
+- [x] Shipped 2026-11-02: worker adc0f8e4 (= b6f9027, byte-identical; b97c6ccd before it, same code) → PR #364 merged
+      bb2482e (main == deployed) → MCP 7b1cbdd0 (byte-identical to main). The 14:00Z run re-read 13 unsettled shows and
+      checked 14 store-days: 0 gaps, 0 pushed. Oct 30 healed: BL1 2,856 vs recap 2,927 (−71, within $99 lost → cancelled),
+      BL14 804 = recap. ⚠️ Those two days had already been pushed as gaps on Oct 31 (xcheck keys −1185 / −437); can't unsend
 
 # Live Sales business — phase 1: add it, move no money (2026-11-02)
 
