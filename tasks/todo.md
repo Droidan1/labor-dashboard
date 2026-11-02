@@ -1,3 +1,16 @@
+# Live Sales: date-range panel opens off-screen on a tablet-width phone (2026-11-02)
+
+**Ask (Brian):** screenshot of the Live Sales Overview with the range panel cut off at the left → "fix this on mobile".
+**Cause:** the panel is pinned to the chip's right edge. From ~640px to ~1150px the header wraps and the chip sits at
+the left, so the 300px panel ran to −131px (below 640 the `max-sm:!fixed` sheet already fits). The dashboard's and
+WRS's copies of the panel keep their chip at the right and stay on screen at 700–1400px (probed).
+
+- [x] client: `lvSetPanelOpen` pins the panel to the chip's LEFT edge when right-pinning would put it off-screen.
+      CACHE_NAME v295, shell-cache fixture updated
+- [x] tests: browser-live-sales.mjs §2c, all five pages at 375/700/900/1024/1400: 6 fail before the fix, 202/202
+      after; npm test: all but test-briefing-margin (Monday, fails identically on main)
+- [ ] PR, Brian's merge click (frontend only: Pages ships it, no worker or migration)
+
 # Live Sales: today's Whatnot sales before the recap (2026-11-02)
 
 **Ask (Brian):** "Why can't we pull from the API?" → yes, build a "so far, before the recap" line on the Overview.

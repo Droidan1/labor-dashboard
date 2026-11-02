@@ -262,6 +262,26 @@ for (const theme of ['light', 'dark', 'oled']) {
   await ctx.close();
 }
 
+// ── 2c. The range panel opens on screen at every width ─────────────────────
+// Between ~640px and ~1150px the header wraps and the chip sits at the LEFT edge, where a panel
+// pinned to the chip's right edge ran 125px off-screen (a tablet-width phone, 2026-11-02).
+for (const width of [375, 700, 900, 1024, 1400]) {
+  const { ctx, page, errs } = await open({ width });
+  for (const p of PAGES) {
+    await go(page, p);
+    await page.click(`#page-${p} .lv-chip-trigger`);
+    const r = await page.evaluate(p => {
+      const b = document.querySelector(`#page-${p} .lv-chip-panel`).getBoundingClientRect();
+      return { l: Math.round(b.left), r: Math.round(b.right), vw: document.documentElement.clientWidth };
+    }, p);
+    if (process.env.SHOTS && p === 'live-overview') await page.screenshot({ path: `${process.env.SHOTS}/panel-${width}.png` });   // eyeballing aid
+    check(r.l >= 0 && r.r <= r.vw, `${width}px ${p}: the range panel is on screen (${r.l}–${r.r} of ${r.vw})`);
+    await page.keyboard.press('Escape');
+  }
+  check(errs.length === 0, `${width}px panel: no JS errors${errs.length ? ': ' + errs[0] : ''}`);
+  await ctx.close();
+}
+
 // ── 3. The picker: Live Sales is shown, never added ─────────────────────────
 for (const live of [false, true]) {
   const { ctx, page, errs } = await open({ live, biz: '' });
