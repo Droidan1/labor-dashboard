@@ -37739,6 +37739,11 @@
     lvRangeCustomCancel();
     lvRenderPresets();
     panel.classList.remove('hidden');
+    // Pinned to the chip's right edge, which runs off-screen once the header wraps and puts the
+    // chip at the left (~640–1150px wide); pin it to the chip's left edge then. Below 640 the
+    // max-sm:! classes make it a fixed sheet and win over these.
+    panel.style.left = panel.style.right = '';
+    if (panel.getBoundingClientRect().left < 0) { panel.style.left = '0'; panel.style.right = 'auto'; }
     trig.setAttribute('aria-expanded', 'true'); trig.classList.add('border-accent-green/45', 'bg-accent-green/10');
     const c = trig.querySelector('.lv-chip-chev'); if (c) c.style.transform = 'rotate(180deg)';
   }
