@@ -9,7 +9,8 @@ WRS's copies of the panel keep their chip at the right and stay on screen at 700
       CACHE_NAME v295, shell-cache fixture updated
 - [x] tests: browser-live-sales.mjs §2c, all five pages at 375/700/900/1024/1400: 6 fail before the fix, 202/202
       after; npm test: all but test-briefing-margin (Monday, fails identically on main)
-- [ ] PR, Brian's merge click (frontend only: Pages ships it, no worker or migration)
+- [x] Shipped 2026-11-02: PR #369 merged 60602fa; www serves its index.html (sha256 45bcc472…, byte-identical to
+      main on 3 passes) + CACHE_NAME v295. Frontend only: no worker deploy, no migration
 
 # Live Sales: today's Whatnot sales before the recap (2026-11-02)
 
