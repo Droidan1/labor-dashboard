@@ -1,3 +1,21 @@
+# Live Sales: today's Whatnot sales before the recap (2026-11-02)
+
+**Ask (Brian):** "Why can't we pull from the API?" → yes, build a "so far, before the recap" line on the Overview.
+**Decided:** from Whatnot's ORDERS (hourly, includes a live show; Σ non-cancelled/failed subtotal = Whatnot's own sales
+to the cent, checked Oct 2026), labelled early, NOT added to the total; the recap replaces it the next morning.
+
+- [x] worker: syncWhatnotShows reads `status=live` first (one call), then ended, so a show that just ended is
+      written as ended. Readers of final figures already filter `status = 'ended'`; whatnot-items has no filter,
+      so a live show's items sold appear there as they sell (accurate)
+- [x] worker: `live-sales` adds `early`: per show (ended or live) dated after the newest recap, in scope: orders and
+      Σ subtotal of orders not cancelled/failed. No-show orders, cancelled/scheduled shows and recapped days left out
+- [x] client: Overview hero "So far, before the recap" — total, per show (title, live chip, amount; day · start ·
+      store · orders), as-of = last sync; filtered by range + store; never in the total, change or chart. v294
+- [x] tests: test-live-sales.mjs 56/56 (§7 new, 3 mutations caught); test-whatnot.mjs 75/75 (live show stored, then
+      ended; no-live-pass mutation caught); browser-live-sales.mjs 172/172 in light/dark/OLED (8 fail on main's page);
+      npm test: all but test-briefing-margin (Monday, fails identically on main)
+- [ ] Deploy: worker first (frontend reads `early` only if present), then merge
+
 # Live Sales: Money back from Whatnot's financial report (2026-11-02)
 
 **Ask (Brian):** start with adding `write:reports` to the Whatnot token, so Money back gets refunds, carrier

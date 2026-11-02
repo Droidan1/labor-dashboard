@@ -16593,11 +16593,9 @@ function whatnotOrderRow(env, o, at) {
 // Ended shows, newest first. Stops at the first page the database already holds unchanged,
 // so after the first run this is one call an hour.
 async function syncWhatnotShows(env, api, at, out) {
-  let cursor = null;
-  for (let page = 0; page < 40; page++) {
-    const body = await api.get("/shows", { status: "ended", limit: WHATNOT_PAGE, cursor, reverse: true });
-    const shows = (body && body.data) || [];
-    if (!shows.length) break;
+  // Writes the shows that are new or changed (Whatnot moves updated_at on any change); returns how many.
+  const write = async (shows) => {
+    if (!shows.length) return 0;
     const known = await env.DB.prepare(
       `SELECT id, updated_at FROM whatnot_shows WHERE id IN (${shows.map(() => "?").join(",")})`
     ).bind(...shows.map(s => String(s.id))).all();
@@ -16605,7 +16603,17 @@ async function syncWhatnotShows(env, api, at, out) {
     const fresh = shows.filter(s => have.get(String(s.id)) !== (s.updated_at ?? null) || !have.has(String(s.id)));
     if (fresh.length) await env.DB.batch(fresh.map(s => whatnotShowRow(env, s, at)));
     out.shows += fresh.length;
-    if (!fresh.length || !body.next_cursor) break;
+    return fresh.length;
+  };
+  // Shows on air now, one page: a live show's orders get a store and a day before it ends, for Live
+  // Sales' "before the recap" figure. First, so the ended pass below has the last word on a show that
+  // has just ended.
+  const live = await api.get("/shows", { status: "live", limit: WHATNOT_PAGE, reverse: true });
+  await write((live && live.data) || []);
+  let cursor = null;
+  for (let page = 0; page < 40; page++) {
+    const body = await api.get("/shows", { status: "ended", limit: WHATNOT_PAGE, cursor, reverse: true });
+    if (!(await write((body && body.data) || [])) || !body.next_cursor) break;
     cursor = body.next_cursor;
   }
 }
@@ -30838,7 +30846,7 @@ export default {
       const codes = units.map(u => u.code);
       // A Live Sales grant with no stores is a real state: it answers with nothing, never everything.
       if (!codes.length) {
-        return new Response(JSON.stringify({ ok: true, from, to, units: [], channels: [], coverage: [], bl: [], shows: [], ledger: [], ledgerSync, sync }), { headers: corsJson });
+        return new Response(JSON.stringify({ ok: true, from, to, units: [], channels: [], coverage: [], bl: [], shows: [], early: [], ledger: [], ledgerSync, sync }), { headers: corsJson });
       }
       const inList = codes.map(() => "?").join(","), chList = LIVE_CHANNELS.map(() => "?").join(",");
       const [rows, cover, bl] = await env.DB.batch([
@@ -30856,6 +30864,24 @@ export default {
         ).bind(from, to, ...codes),
       ]);
       const parseMeta = (m) => { if (m == null) return null; try { return JSON.parse(m); } catch (_) { return null; } };
+      // Before the recap: shows dated after the newest recap day, ended or still on air, from Whatnot's
+      // orders. Σ subtotal of the orders not cancelled or failed is Whatnot's own sales figure (to the cent,
+      // Oct 2026). Hourly, so it moves until the recap replaces it; the page never adds it to a total.
+      let early = [];
+      if (wnReady) {
+        const lastRecap = ((cover.results || []).find(r => r.channel === "whatnot") || {}).last || "";
+        early = ((await env.DB.prepare(
+          `SELECT s.id, s.title, s.store, s.show_date, COALESCE(s.started_at, s.scheduled_start_at) AS start_at, s.status,
+                  COUNT(o.id) AS orders, ROUND(COALESCE(SUM(o.subtotal), 0), 2) AS sales
+             FROM whatnot_shows s
+             LEFT JOIN whatnot_orders o ON o.show_id = s.id AND o.status NOT IN ('cancelled', 'failed')
+            WHERE s.status IN ('ended', 'live') AND s.show_date > ? AND s.show_date BETWEEN ? AND ? AND s.store IN (${inList})
+            GROUP BY s.id ORDER BY start_at`
+        ).bind(lastRecap, from, to, ...codes).all()).results || []).map(r => ({
+          showId: r.id, title: r.title, store: r.store, date: r.show_date, startAt: r.start_at, status: r.status,
+          orders: r.orders, sales: r.sales,
+        }));
+      }
       let shows = [];
       if (wnReady) {
         // Lost = cancelled or failed. Whatnot's show `sales` leaves out every one of them; the recap
@@ -30902,7 +30928,7 @@ export default {
         channels: (rows.results || []).map(r => ({ channel: r.channel, store: r.store, date: r.date, total: r.total, count: r.count, meta: parseMeta(r.meta) })),
         coverage: cover.results || [],
         bl: (bl.results || []).map(r => ({ store: r.store, date: r.date, auction: r.auction, manualOverride: r.is_manual_override === 1 })),
-        shows, ledger, ledgerSync, sync,
+        shows, early, ledger, ledgerSync, sync,
       }), { headers: corsJson });
     }
 

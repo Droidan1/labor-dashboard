@@ -6658,6 +6658,16 @@
       .lv .lv-chrow .amt { margin-left:auto; font-weight:600; font-variant-numeric:tabular-nums; }
       .lv .lv-chrow .n { color:var(--lv-dim); font-size:12px; min-width:74px; text-align:right; font-variant-numeric:tabular-nums; }
       .lv .lv-also { margin-top:12px; font-size:12px; color:var(--lv-dim); }
+      .lv .lv-early { margin-top:14px; border:1px solid var(--lv-hair); border-radius:10px; padding:10px 12px; }
+      .lv .lv-early .h { display:flex; justify-content:space-between; align-items:baseline; gap:8px; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.08em; color:var(--lv-dim); }
+      .lv .lv-early .h .a { font-size:18px; font-weight:700; letter-spacing:0; text-transform:none; color:var(--lv-ink); font-variant-numeric:tabular-nums; }
+      .lv .lv-early ul { list-style:none; margin:8px 0 0; padding:0; display:flex; flex-direction:column; gap:6px; }
+      .lv .lv-early li { display:grid; grid-template-columns:minmax(0,1fr) auto; column-gap:8px; align-items:baseline; font-size:13px; }
+      .lv .lv-early li .w { grid-column:1 / -1; font-size:12px; color:var(--lv-dim); }
+      .lv .lv-early li .n { color:var(--lv-ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .lv .lv-early li .a { color:var(--lv-ink); font-variant-numeric:tabular-nums; }
+      .lv .lv-early .lv-chip { margin:0 0 0 6px; padding:1px 6px; vertical-align:1px; }
+      .lv .lv-early .s { margin-top:8px; font-size:12px; color:var(--lv-dim); }
       .lv .lv-sec { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin:4px 2px 0; }
       .lv .lv-sec h2 { margin:0; font-size:15px; font-weight:600; }
       .lv .lv-sec span { font-size:13px; color:var(--lv-dim); }
@@ -37316,7 +37326,8 @@
     }));
     // Units, coverage and sync are the same in every piece; the rows are not.
     return { ...bodies[0], from, to, channels: bodies.flatMap(b => b.channels || []),
-             shows: bodies.flatMap(b => b.shows || []), bl: bodies.flatMap(b => b.bl || []), ledger: bodies.flatMap(b => b.ledger || []) };
+             shows: bodies.flatMap(b => b.shows || []), bl: bodies.flatMap(b => b.bl || []), ledger: bodies.flatMap(b => b.ledger || []),
+             early: bodies.flatMap(b => b.early || []) };
   }
   async function lvLoad(force) {
     const w = lvWindow(), key = w.cFrom + '|' + w.to;
@@ -37367,6 +37378,7 @@
       shows: shows.filter(s => inR(s.date, w.from, w.to)),
       // The worker already left out rows with no store for anyone who does not see every store.
       ledger: (d.ledger || []).filter(r => inR(r.date, w.from, w.to) && inStore(r.store)),
+      early: (d.early || []).filter(e => inR(e.date, w.from, w.to) && inStore(e.store)),
       allRows: d.channels || [], allShows: (d.shows || []).map(lvPrepShow),
     };
   }
@@ -37423,7 +37435,7 @@
     const perItem = k.items ? k.sales / k.items : null, aov = k.ship ? k.sales / k.ship : null;
     return `<div class="lv-hero">
       <div class="lv-card"><div class="lv-eyebrow">Live sales · ${lvEsc(x.w.label)}${x.w.dates ? ` · ${lvEsc(x.w.dates)}` : ''}</div>
-        <div class="lv-big">${any ? fmtDollar(total) : '—'}</div><div class="lv-delta">${delta}</div>${note}
+        <div class="lv-big">${any ? fmtDollar(total) : '—'}</div><div class="lv-delta">${delta}</div>${note}${lvEarly(x)}
         <div class="lv-chsplit">${split}</div>
         <div class="lv-facts"><div><div class="v">${lvInt(k.days)}</div><div class="l">show days</div></div><div><div class="v">${lvInt(a.days)}</div><div class="l">auction days</div></div>
           <div><div class="v">${liveDays ? fmtDollar(total / liveDays) : '—'}</div><div class="l">per live day</div></div></div>
@@ -37434,6 +37446,18 @@
         <div class="lv-tile"><div class="l">New buyers</div><div class="v">${lvInt(k.nb)}</div><div class="s">${k.ship ? Math.round(k.nb / k.ship * 100) + '% of shipments' : '—'}</div></div>
         <div class="lv-tile"><div class="l">Auction lots</div><div class="v">${lvInt(a.lots)}</div><div class="s">${a.lots ? fmtDollar(a.sales / a.lots) + ' per lot' : '—'}</div></div>
       </div></div>`;
+  }
+
+  // Before the recap: Whatnot's own orders for shows the recap has not reached yet, read hourly. Shown
+  // beside the total, never in it, nor in the change or the chart: the recap replaces it next morning.
+  function lvEarly(x) {
+    if (!x.early.length) return '';
+    const sum = x.early.reduce((n, e) => n + Number(e.sales || 0), 0), today = etTodayStr();
+    const at = lvState.data.sync && lvState.data.sync.lastRun && lvState.data.sync.lastRun.at;
+    const rows = x.early.map(e => `<li><span class="n">${lvEsc(e.title)}${e.status === 'live' ? '<span class="lv-chip ok">Live</span>' : ''}</span><span class="a">${fmtDollar(e.sales)}</span>
+      <span class="w">${e.date === today ? 'Today' : lvShort(e.date)} · ${lvEtTime.format(new Date(e.startAt))} · ${lvEsc(lvUnitName(e.store))} · ${lvInt(e.orders)} order${e.orders === 1 ? '' : 's'}</span></li>`).join('');
+    return `<div class="lv-early"><div class="h"><span>So far, before the recap</span><span class="a">${fmtDollar(sum)}</span></div><ul>${rows}</ul>
+      <div class="s">Whatnot's orders${at ? ` as of ${lvEtTime.format(new Date(at))}` : ''}, cancelled ones left out. Not in the total above: the recap replaces it the next morning.</div></div>`;
   }
 
   function lvSpark(vals) {
