@@ -259,6 +259,19 @@ guess was low), but a guessed 4.9 next to measured numbers reads as measured.
    measurement as the last step before committing, not when the comment was first written.
 </rules>
 
+### Recurred (2026-11-02, Live Sales range panel): a band I estimated, written in four places
+
+I wrote "~640–1150px" as the width band where the Live Sales header wraps into the
+`lvSetPanelOpen` comment, the commit, `tasks/todo.md` and PR #369's body, and only measured it
+afterwards. The panel was off-screen only from 640 to 1023px, and where the header wraps differs
+by page: Shows stops wrapping by 800px, and Overview is still wrapped at 1300. Rule 4 already
+covered this. I wrote the number before running the probe that would have produced it.
+
+<rules>
+9. **Measure a range before naming it.** If the fix does not depend on the exact band, describe
+   the condition ("once the header wraps") and leave the number out.
+</rules>
+
 ## The third one today: my escalation lost a seven-second race (2026-09-21) · rule 6: re-read a PR's state before pushing to it (recurred 2026-09-25) · rule 7: push only verified work, because a merge can come before the verification (2026-09-28)
 
 Same trap as the entry below, and as 2026-09-18's. This time I did everything that entry
@@ -2684,7 +2697,7 @@ was far cheaper to check and was the thing forcing all the inference.
    The request is evidence: they may know something about your access that you do not.
 </rules>
 
-## The button was in the DOM, the assertion passed, and nobody could click it (2026-09-14)
+## The button was in the DOM, the assertion passed, and nobody could click it (2026-09-14) · recurred: a right-pinned panel after flex-wrap (2026-11-02)
 
 Brian: *"when selecting the date the apply button doesn't display."*
 
@@ -2739,6 +2752,45 @@ my own arrangement of the same parts.
 13. **Before inventing a layout, read how the neighbouring surface solved it.** Two other range
    pickers ship in this file. Both avoid this failure, one of them by construction. CLAUDE.md
    already says extend what is there; the cost of not looking was a shipped-broken control.
+</rules>
+
+### Recurred (2026-11-02, Live Sales range panel): pinned to the right, wrapped to the left
+
+Brian sent a phone screenshot of the Live Sales Overview with the date-range panel open: only the
+tick beside This Month and the "ge" of Custom Date Range were on screen. The panel is
+`absolute right-0 w-[300px]`, pinned to the chip's right edge, with a `max-sm:!fixed` sheet below
+640px. Those are `#day-chip-panel`'s classes verbatim, and on the dashboard they are right: its chip
+stays at the right of its header (panel 376–676 at 700px). The Live Sales header is
+`flex justify-between flex-wrap`. Once it wraps, the chip starts the second row at the left edge,
+and a 300px panel pinned to a 143px chip's right edge starts at −133px.
+
+Measured after the fix shipped (chip's right edge − 300; negative = off-screen):
+- Off-screen only from 640px, where the fixed sheet stops, to 1023px. At 1024 the sidebar appears
+  (`max-lg:hidden`, 256px), a wrapped chip sits at x 280, and the panel starts at 123: it covers
+  the sidebar but stays on screen.
+- Where the header wraps is set by its content, not a breakpoint. Chip at the left: all five pages
+  at 700px; Overview and Auction at 800; Overview only at 900–1023; Overview, Auction and Money at
+  1024, once the sidebar takes 256px; Overview alone at 1300; none at 1400. Shows wrapped at 760px
+  in one probe and not in another that waited longer after load. Same markup, five different
+  ranges, and the range moves with what the header shows.
+
+Rule 9 already said to assert geometry. §2b of `browser-live-sales.mjs` opened this panel, but
+at the default 1400px, and asserted only that `hidden` was gone. Section 1's contrast audit ran at
+1400 and 393. Those two widths sit either side of the whole broken band: at 393 the fixed sheet
+takes over, and at 1400 the chip is at the right. The fix (#369): `lvSetPanelOpen` measures on open
+and pins the panel to the chip's left edge if the right pin would start off-screen. §2c asserts the
+panel's rect is inside the viewport on all five pages at 375/700/900/1024/1400 (6 fail before).
+
+<rules>
+14. **A popover pinned to one edge of its trigger assumes where the trigger sits.** `flex-wrap`
+   moves the trigger at a width set by content (five pages, five wrap points), which no Tailwind
+   breakpoint can name. Measure on open and pin to the side with room; don't encode it in classes.
+15. **A component copied from another page brings its original layout's assumptions.** Its
+   placement was right where it came from. Check it where it now lives, at the widths where the
+   two layouts differ.
+16. **Geometry checks run in the band between breakpoints, not only at the widths a suite already
+   uses.** Here that is just above `sm` (640) and just below `lg` (1024), where neither the phone
+   sheet nor the desktop sidebar saves the layout, on every page that hosts a copy.
 </rules>
 
 ## The comment said it could not affect budget, and it was the only thing that did (2026-09-16)

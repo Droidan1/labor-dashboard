@@ -1,8 +1,10 @@
 # Live Sales: date-range panel opens off-screen on a tablet-width phone (2026-11-02)
 
 **Ask (Brian):** screenshot of the Live Sales Overview with the range panel cut off at the left → "fix this on mobile".
-**Cause:** the panel is pinned to the chip's right edge. From ~640px to ~1150px the header wraps and the chip sits at
-the left, so the 300px panel ran to −131px (below 640 the `max-sm:!fixed` sheet already fits). The dashboard's and
+**Cause:** the panel is pinned to the chip's right edge. Once the header wraps, the chip sits at the left and the
+300px panel started at −131px. Measured after ship: off-screen only from 640px (the `max-sm:!fixed` sheet below) to
+1023px (from 1024 the sidebar keeps it on screen); where the header wraps differs by page. The "~640–1150px" first
+written here was a guess. The dashboard's and
 WRS's copies of the panel keep their chip at the right and stay on screen at 700–1400px (probed).
 
 - [x] client: `lvSetPanelOpen` pins the panel to the chip's LEFT edge when right-pinning would put it off-screen.
