@@ -37273,6 +37273,7 @@
   const lvSpan = (a, b) => a === b ? lvShort(a) : `${lvShort(a)} – ${lvShort(b)}`;
   const lvEtTime = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' });
   const lvEtParts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: 'numeric', hour12: false });
+  const lvEtYmd = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
   // The selected range: the dashboard's own presets and custom calendar (RANGE_PRESETS,
   // resolvePreset), held separately so it never moves the dashboard's or Retail Summary's.
   let lvRange = null;
@@ -37315,7 +37316,7 @@
     }));
     // Units, coverage and sync are the same in every piece; the rows are not.
     return { ...bodies[0], from, to, channels: bodies.flatMap(b => b.channels || []),
-             shows: bodies.flatMap(b => b.shows || []), bl: bodies.flatMap(b => b.bl || []) };
+             shows: bodies.flatMap(b => b.shows || []), bl: bodies.flatMap(b => b.bl || []), ledger: bodies.flatMap(b => b.ledger || []) };
   }
   async function lvLoad(force) {
     const w = lvWindow(), key = w.cFrom + '|' + w.to;
@@ -37364,6 +37365,8 @@
       recapPrev: w.cTo ? rows.filter(r => r.channel === 'whatnot' && inR(r.date, w.cFrom, w.cTo)) : [],
       aucPrev: w.cTo ? rows.filter(r => r.channel === 'auction' && inR(r.date, w.cFrom, w.cTo)) : [],
       shows: shows.filter(s => inR(s.date, w.from, w.to)),
+      // The worker already left out rows with no store for anyone who does not see every store.
+      ledger: (d.ledger || []).filter(r => inR(r.date, w.from, w.to) && inStore(r.store)),
       allRows: d.channels || [], allShows: (d.shows || []).map(lvPrepShow),
     };
   }
@@ -37591,17 +37594,52 @@
       <div class="lv-legend"><span>Cancelled: orders cancelled or failed after the show, where its orders have loaded</span><span>loading: Whatnot has not sent this show's figures yet</span><span>—: not reported</span></div></div>`;
   }
 
+  // Whatnot's financial report as the Money back cards read it. A refund's shipping line is part of
+  // the refund, but only the refunds themselves are counted. amount is signed: − = money out.
+  const LV_REFUND = ['ORDER_REFUND', 'ORDER_REFUND_SHIPPING_COSTS', 'APPEALED_ORDER_REFUND', 'APPEALED_ORDER_REFUND_SHIPPING_COSTS'];
+  function lvLedger(x) {
+    const s = lvState.data.ledgerSync || null, rows = x.ledger;
+    const pick = (types) => rows.filter(r => types.includes(r.type));
+    const sum = (types) => Math.round(pick(types).reduce((n, r) => n + Number(r.amount), 0) * 100) / 100 + 0;
+    const cnt = (types) => pick(types).reduce((n, r) => n + (r.n || 0), 0);
+    // `through` is the end of the newest report window, exclusive: its last Eastern day is a ms before.
+    const thru = s && s.through ? lvEtYmd.format(new Date(Date.parse(s.through) - 1)) : null;
+    const state = !s || !s.ready ? 'setup' : thru ? (thru < x.w.from ? 'behind' : 'ok')
+      : s.error === 'needs write:reports' ? 'access' : s.error ? 'error' : 'waiting';
+    return { state, thru, error: s && s.error,
+      refunds: -sum(LV_REFUND) + 0, nRefunds: cnt(['ORDER_REFUND', 'APPEALED_ORDER_REFUND']),
+      carrier: sum(['CARRIER_ADJUSTMENT', 'CARRIER_ADJUSTMENT_REFUND']), nCharges: cnt(['CARRIER_ADJUSTMENT']), nCredits: cnt(['CARRIER_ADJUSTMENT_REFUND']),
+      tips: sum(['TIP']), nTips: cnt(['TIP']) };
+  }
   function lvMoneyBack(x, withHead) {
-    const lost = lvLostAfter(x);
+    const lost = lvLostAfter(x), L = lvLedger(x), live = L.state === 'ok';
     const card = (l, v, s, chip, cls) => `<div class="lv-mb"><div class="l">${l}</div><div class="v${v === '—' ? ' none' : ''}">${v}</div><div class="s">${s}</div><span class="lv-chip ${cls}">${chip}</span></div>`;
+    const [chip, cls] = { setup: ['Not set up', 'no'], access: ['Needs access', 'need'], waiting: ['Waiting', 'need'],
+      error: ['Retrying', 'need'], behind: ['Loading', 'need'], ok: ['Connected', 'ok'] }[L.state];
+    const why = { setup: "The Hub does not read Whatnot's financial report yet", access: 'The Whatnot token needs write:reports to ask for the report',
+      waiting: "Waiting for Whatnot's first financial report", error: "Whatnot's report did not come through; the Hub tries again",
+      behind: `Whatnot's report has loaded through ${L.thru ? lvShort(L.thru) : ''} so far`, ok: '' }[L.state];
+    const plural = (n, w) => `${lvInt(n)} ${w}${n === 1 ? '' : 's'}`;
+    const carrier = live && lvState.store !== 'all'
+      ? card('Carrier adjustments', '—', 'Not tied to a show, so they show under All stores only', 'All stores only', 'no')
+      : card('Carrier adjustments', live ? fmtDollar(Math.abs(L.carrier)) : '—',
+          live ? `${L.carrier > 0 ? 'Net credit' : 'Net charge'} for wrong package weight or size · ${plural(L.nCharges, 'charge')}, ${plural(L.nCredits, 'credit')}` : why, chip, cls);
     return `${withHead ? '<div class="lv-sec"><h2>Money back</h2><span>What came off the Whatnot gross after the show · the auction feed has no refund data</span></div>' : ''}
       <div class="lv-mbgrid">${[
         card('Cancelled after the show', lost.compared ? fmtDollar(lost.amt) : '—', lost.compared ? `${lvInt(lost.items)} items failed or were cancelled after Whatnot's end-of-show summary · ${lost.compared} of ${lost.all} show days` : 'No Whatnot show days to compare in this range', 'Connected', 'ok'),
-        card('Refunds', '—', "Whatnot's financial report lists every refund", 'Needs access', 'need'),
+        card('Refunds', live ? fmtDollar(L.refunds) : '—', live ? `${plural(L.nRefunds, 'refund')} issued in this range, refunded shipping included` : why, chip, cls),
         card('Returns', '—', 'Whatnot books a return as a refund; it has no separate return count', 'In refunds', 'no'),
-        card('Carrier adjustments', '—', 'Charges and credits for wrong package weight or size, from the same report', 'Needs access', 'need'),
+        carrier,
         card('Support cases', '—', "Not in Whatnot's API or webhooks", 'Not available', 'no'),
-        card('Tips', '—', 'From the same financial report', 'Needs access', 'need')].join('')}</div>`;
+        card('Tips', live ? fmtDollar(L.tips) : '—', live ? `${plural(L.nTips, 'tip')} from buyers` : why, chip, cls)].join('')}</div>`;
+  }
+  // The note under the Money back cards: where the figures come from, or what they wait on.
+  function lvMoneyNote(x) {
+    const L = lvLedger(x);
+    const text = L.state === 'access'
+      ? `Refunds, carrier adjustments and tips come from Whatnot's financial report. The Hub can request it once the Whatnot token also has <b style="color:var(--lv-ink)">write:reports</b>, which only lets the Hub ask Whatnot to build a report and changes nothing on Whatnot.`
+      : `Refunds, carrier adjustments and tips come from Whatnot's financial report and are dated the day each was issued${L.thru ? `. The Hub has it through ${lvShort(L.thru)}` : ''}${L.error && L.thru ? `; the last update did not come through, and the Hub tries again` : ''}.`;
+    return `<div class="lv-card" style="font-size:14px;color:var(--lv-dim)">${text} The online auction feed carries no refunds.</div>`;
   }
   function lvPromo() {
     const c = (l, s) => `<div><div class="lv-eyebrow">${l}</div><div class="v">—</div><div class="lv-sub">${s}</div></div>`;
@@ -37644,7 +37682,7 @@
       : p === 'shows' ? lvShows(x)
       : p === 'auction' ? lvAuction(x, true)
       : p === 'promotion' ? lvPromo()
-      : lvMoneyBack(x, false) + `<div class="lv-card" style="font-size:14px;color:var(--lv-dim)">Refunds, carrier adjustments and tips come from Whatnot's financial report. The Hub can request it once the Whatnot token also has <b style="color:var(--lv-ink)">write:reports</b>, which only lets the Hub ask Whatnot to build a report and changes nothing on Whatnot. The online auction feed carries no refunds.</div>`;
+      : lvMoneyBack(x, false) + lvMoneyNote(x);
     if (p === 'overview' && lvState.view === 'chart') lvDrawChart(x);
   }
 
