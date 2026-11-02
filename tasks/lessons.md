@@ -3026,3 +3026,12 @@ auction feeder (`SBN→BL2`) and migration-030, all of which I had open.
 2. **When a feed adds a store, read its mapping** (`SITE_TO_STORE` in the feeder) before describing which stores it
    covers; data showed BL1 also had auctions, which a fixed channel map would have hidden.
 </rules>
+
+## I told Brian a clock time with last week's UTC offset (2026-11-02)
+
+**What happened.** The day after DST ended I converted 18:30Z to "2:30 PM Eastern" with the summer
+offset (UTC−4). It was 1:30 PM EST. Brian corrected me; every check time I had given him was an hour off.
+
+**Rule.** Never convert a time to Eastern in my head. Ask the machine:
+`TZ=America/New_York date '+%I:%M %p %Z'` (now), or `TZ=America/New_York date -r <epoch>` for a given instant.
+The `%Z` (EST/EDT) in the output is the check that the offset is the current one.
