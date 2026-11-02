@@ -10,7 +10,7 @@
       by week ≤ 200, else by month; "—" plus a sentence when nothing in the range is reported yet
 - [x] browser-live-sales.mjs 124/124 (picker lists the dashboard's presets, Escape, 12 months in ≥ 8 pieces drawn
       by month, custom range via the calendar, Today "—"); npm test as before; CACHE_NAME v291
-- [ ] Brian: merge (frontend only, no worker or migration)
+- [x] Shipped 2026-11-02: PR #365 merged d06d8d7; www index.html + sw.js (v291) byte-identical to main at 14:40Z
 
 # Whatnot cross-check: late cancellations and unsettled figures (2026-11-02)
 
