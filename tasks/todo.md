@@ -22,7 +22,10 @@ request it). Followers exist only as a daily, account-wide count (`analytics_ove
       any host, no store filter, no overlap, errors escaping the step, every type kept, zone-less time as local).
       browser-live-sales.mjs 158/158 in light/dark/OLED (15 fail on main's index.html). npm test: all but
       test-briefing-margin, which fails identically on main (Monday week boundary)
-- [ ] Deploy order: migration-086 (additive) → worker → merge. Verify: first report ingested (D1 read), cards on prod
+- [x] Shipped 2026-11-02: worker 045e811a (byte-identical to 19b9f15's dry-run build; 100% on 3 status passes 30 s apart),
+      migration-086 on staging + prod (re-run on both: no-op), PR #367 merged af81c18; www serves its index.html + CACHE_NAME v293
+- [ ] Verify the first real report run: `whatnot_sync` key `ledger` gains a run id, then a cursor + `last.rows`.
+      Unverified until then: the report file's format (plain/gzip, where report_url points)
 
 # Associates: Supply Request as a grantable page (2026-11-02)
 
