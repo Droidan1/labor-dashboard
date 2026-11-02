@@ -147,20 +147,15 @@ for (const theme of ['light', 'dark', 'oled']) {
     const tag = `${theme}/${width}`;
     const { ctx, page, errs } = await open({ theme, width });
     await go(page, 'live-overview');
-    await page.evaluate(() => lvSetRange('l7'));
+    await page.evaluate(() => lvSetRange('last7'));
     await page.waitForTimeout(250);
-    const expect7 = await page.evaluate(() => {
-      const d = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
-      const add = (s, n) => { const x = new Date(s + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
-      const from = add(d, -7), to = add(d, -1);
-      return { from, to };
-    });
     const big = await page.evaluate(() => document.querySelector('#lv-overview-body .lv-big')?.textContent);
-    // Last 7 days = i = 1..7: Whatnot BL1 Σ(1000+i)=7028, BL14 on odd i (4 × 700)=2800, auction BL2 i=3,6 (400), BL14 i=4 (300), BL16 null.
-    check(big === '$10,528.00', `${tag}: Overview total for the last 7 days (${expect7.from}…${expect7.to}) — got ${big}`);
+    // Last 7 Days = today and the 6 days before; the stub has i = 1..6 of them (today is not reported yet):
+    // Whatnot BL1 Σ(1000+i) = 6021, BL14 on odd i (3 × 700) = 2100, auction BL2 i=3,6 (400), BL14 i=4 (300), BL16 null.
+    check(big === '$8,821.00', `${tag}: Overview total for Last 7 Days — got ${big}`);
     await page.evaluate(() => lvSetStore('BL14'));
     const big14 = await page.evaluate(() => document.querySelector('#lv-overview-body .lv-big')?.textContent);
-    check(big14 === '$3,100.00', `${tag}: store filter re-renders (Battle Creek 2,800 + 300) — got ${big14}`);
+    check(big14 === '$2,400.00', `${tag}: store filter re-renders (Battle Creek 2,100 + 300) — got ${big14}`);
     await page.evaluate(() => lvSetStore('all'));
     await page.evaluate(() => lvSetView('table'));
     check(await page.evaluate(() => document.querySelectorAll('#lv-overview-body .lv-dt tbody tr').length >= 7), `${tag}: chart → table view renders`);
@@ -193,6 +188,62 @@ for (const theme of ['light', 'dark', 'oled']) {
   await page.evaluate(() => lvSetStore('BL2'));
   const calls = await page.evaluate(() => window.__lvCalls.length);
   check(calls === 1, `five pages and a store change cost one request, got ${calls}`);
+  await ctx.close();
+}
+
+// ── 2b. The range picker is the dashboard's own ───────────────────────────
+{
+  const { ctx, page, errs } = await open();
+  await go(page, 'live-overview');
+  await page.click('#page-live-overview .lv-chip-trigger');
+  const r = await page.evaluate(() => ({
+    open: !document.querySelector('#page-live-overview .lv-chip-panel').classList.contains('hidden'),
+    labels: [...document.querySelectorAll('#page-live-overview .lv-range-list button span')].map(n => n.textContent),
+    want: RANGE_PRESETS.map(p => p.label),
+    checked: document.querySelector('#page-live-overview .lv-range-list button.font-bold span')?.textContent,
+  }));
+  if (process.env.SHOTS) await page.screenshot({ path: `${process.env.SHOTS}/picker-open.png` });   // eyeballing aid
+  check(r.open, 'clicking the chip opens the panel');
+  check(JSON.stringify(r.labels) === JSON.stringify(r.want), `the panel lists the dashboard's presets in its order (${r.labels.join(', ')})`);
+  check(r.checked === 'This Month', `This Month is ticked on open (${r.checked})`);
+  await page.keyboard.press('Escape');
+  check(await page.evaluate(() => document.querySelector('#page-live-overview .lv-chip-panel').classList.contains('hidden')), 'Escape closes it');
+
+  // A long range is fetched in ≤ 92-day pieces (the read's cap) and drawn by month.
+  await page.evaluate(() => { window.__lvCalls = []; lvPickPreset('last12mo'); });
+  await page.waitForTimeout(400);
+  const long = await page.evaluate(() => ({ label: document.querySelector('#page-live-overview .lv-chip-label').textContent,
+    calls: window.__lvCalls.map(u => { const q = new URL(u).searchParams; return [q.get('from'), q.get('to')]; }),
+    title: document.querySelector('#lv-overview-body .lv-bar .t')?.textContent, bars: document.querySelectorAll('#lv-chart svg path').length }));
+  const spans = long.calls.map(([a, b]) => (Date.parse(b) - Date.parse(a)) / 864e5 + 1);
+  check(long.label === 'Last 12 Months', `the chip reads Last 12 Months (${long.label})`);
+  check(long.calls.length >= 8 && spans.every(n => n <= 92), `two years (range + comparison) in ${long.calls.length} requests of ≤ 92 days (${spans.join(',')})`);
+  const sorted = long.calls.map(c => c[0]).sort();
+  check(long.calls.every(([, b], i) => i === 0 || true) && sorted.every((a, i) => i === 0 || a > long.calls.map(c => c[1]).sort()[i - 1]), 'the pieces do not overlap');
+  check(long.title === 'Monthly sales' && long.bars > 0, `a year is drawn by month (${long.title}, ${long.bars} bars)`);
+
+  // Custom: the dual calendar, then Apply.
+  const cust = await page.evaluate(() => {
+    const t = etTodayStr(), a = ymdShift(t, -10), b = ymdShift(t, -3);
+    lvPickPreset('custom'); lvRangeCalPick(a); lvRangeCalPick(b);
+    const shown = !document.querySelector('#page-live-overview .lv-range-custom').classList.contains('hidden');
+    lvRangeCustomApply();
+    return { shown, want: fmtRangeShort(a, b) };
+  });
+  await page.waitForTimeout(300);
+  const after = await page.evaluate(() => ({ label: document.querySelector('#page-live-overview .lv-chip-label').textContent,
+    big: document.querySelector('#lv-overview-body .lv-big')?.textContent, title: document.querySelector('#lv-overview-body .lv-bar .t')?.textContent }));
+  check(cust.shown, 'Custom Date Range opens the calendar');
+  check(after.label === cust.want, `the chip shows the custom dates (${after.label} vs ${cust.want})`);
+  // i = 3..10: BL1 Σ(1000+i) = 8052, BL14 odd i 3,5,7,9 = 2800, auction BL2 i=3,6,9 = 600, BL14 i=4,8 = 600.
+  check(after.big === '$12,052.00' && after.title === 'Daily sales', `custom range totals the right days, by day (${after.big}, ${after.title})`);
+
+  // Today: nothing is reported until the next morning, so "—" and a sentence, never $0.00.
+  await page.evaluate(() => lvSetRange('today'));
+  await page.waitForTimeout(300);
+  const today = await page.evaluate(() => ({ big: document.querySelector('#lv-overview-body .lv-big')?.textContent, text: document.querySelector('#lv-overview-body .lv-hero')?.innerText || '' }));
+  check(today.big === '—' && /Nothing reported for this range yet/.test(today.text), `Today reads "—" with why (${today.big})`);
+  check(errs.length === 0, `picker: no JS errors${errs.length ? ': ' + errs[0] : ''}`);
   await ctx.close();
 }
 

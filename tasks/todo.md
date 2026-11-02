@@ -1,3 +1,17 @@
+# Live Sales: the dashboard's date-range picker (2026-11-02)
+
+**Ask (Brian):** put the dashboard's date picker (Today … Custom Date Range) on the Live Sales pages.
+
+- [x] Same component: the WRS chip + panel, a third instance over RANGE_PRESETS / resolvePreset / fmtRangeShort,
+      class-based inside each of the five app bars (no new ids); own state, never moves the dashboard's or WRS's
+- [x] Comparison per preset: same days of the previous month/year, the week before, else the equal span before;
+      only through the newest recap day, so today's unreported day never drags the % down
+- [x] Ranges past the read's 92-day cap are fetched in ≤ 92-day pieces (no worker change); chart by day ≤ 62 days,
+      by week ≤ 200, else by month; "—" plus a sentence when nothing in the range is reported yet
+- [x] browser-live-sales.mjs 124/124 (picker lists the dashboard's presets, Escape, 12 months in ≥ 8 pieces drawn
+      by month, custom range via the calendar, Today "—"); npm test as before; CACHE_NAME v291
+- [ ] Brian: merge (frontend only, no worker or migration)
+
 # Whatnot cross-check: late cancellations and unsettled figures (2026-11-02)
 
 **Ask (Brian):** fix the #362 alert so ordinary late cancellations stop pushing.
@@ -10,7 +24,10 @@ $311 / $367, final $1,112 / $804 = the recap), and the sync never re-read a show
       show's orders are unsynced or its figures are under 24h old. syncWhatnotAnalytics re-reads until settled
 - [x] Prod data (read-only), Oct 20–29: every store-day match or cancelled; Oct 30's two "gaps" were frozen figures
 - [x] cli/reporting.mjs reading rule lists `cancelled` (needs the MCP redeploy to reach agents)
-- [ ] Brian: push → worker deploy → merge → MCP deploy
+- [x] Shipped 2026-11-02: worker adc0f8e4 (= b6f9027, byte-identical; b97c6ccd before it, same code) → PR #364 merged
+      bb2482e (main == deployed) → MCP 7b1cbdd0 (byte-identical to main). The 14:00Z run re-read 13 unsettled shows and
+      checked 14 store-days: 0 gaps, 0 pushed. Oct 30 healed: BL1 2,856 vs recap 2,927 (−71, within $99 lost → cancelled),
+      BL14 804 = recap. ⚠️ Those two days had already been pushed as gaps on Oct 31 (xcheck keys −1185 / −437); can't unsend
 
 # Live Sales business — phase 1: add it, move no money (2026-11-02)
 
