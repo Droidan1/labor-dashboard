@@ -1,3 +1,26 @@
+# Associates: Supply Request as a grantable page (2026-11-02)
+
+**Ask (Brian):** add Supply Request as an option for associate access.
+**Decided (Brian, 2026-11-02):** no money — associates never see the supply budget, a request's cost or its invoice #
+(stripped by the worker, not just hidden); they see every request for the stores on their grant, as a manager does.
+
+- [x] worker: ACTION_PAGE — supply-requests / supply-request at view; supply-request-create / supply-request-comment
+      at edit; each handler calls requirePage. Status, fulfillment, delete, purge and every budget action stay absent
+- [x] worker: cost + invoice_number stripped from supply-requests / supply-request for a non-financial caller
+      (agents' reporting read-through keeps them: no currentUser)
+- [x] worker: an associate's request and comments carry their NAME (actorLabel), never the synthetic address;
+      the status-change email is skipped when the stored requester is not an address
+- [x] client: GRANTABLE_PAGES + Supply Request (appended, so no landing page moves); navigateToPage lets a grant past
+      FINANCIAL_PAGES and the role list; associate view = My Requests (+ New Request and comments at edit), no budget
+      call; the phone bar's existing Supply tab appears on the grant. CACHE_NAME v292 + shell-cache fixture
+- [x] tests: test-associate.mjs 373/373 (13 fail on main's worker; each of the four worker pieces mutation-checked);
+      browser-associate-supply.mjs 32/32, both themes (13 fail on main's index.html; manager section passes on both);
+      npm test: all but test-briefing-margin, which fails identically on main
+- [ ] PR; worker deploy is backward-compatible (inert until the client offers the page) → ask for it first
+
+**Review.** browser-associate-price-scan.mjs has 3 failures on main as well (the associate bar has had seven tabs since
+Submit Photos opened to associates on 2026-10-13; the check still says six). A Supply grant makes it eight.
+
 # Live Sales: the dashboard's date-range picker (2026-11-02)
 
 **Ask (Brian):** put the dashboard's date picker (Today … Custom Date Range) on the Live Sales pages.
@@ -10,7 +33,7 @@
       by week ≤ 200, else by month; "—" plus a sentence when nothing in the range is reported yet
 - [x] browser-live-sales.mjs 124/124 (picker lists the dashboard's presets, Escape, 12 months in ≥ 8 pieces drawn
       by month, custom range via the calendar, Today "—"); npm test as before; CACHE_NAME v291
-- [ ] Brian: merge (frontend only, no worker or migration)
+- [x] Shipped 2026-11-02: PR #365 merged d06d8d7; www index.html + sw.js (v291) byte-identical to main at 14:40Z
 
 # Whatnot cross-check: late cancellations and unsettled figures (2026-11-02)
 
