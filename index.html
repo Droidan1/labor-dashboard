@@ -13899,7 +13899,10 @@
                              'all-stores-detail', 'inventory-add', 'inventory-viewer',
                              'inventory-sale', 'supply-request', 'labor',
                              'live-overview', 'live-shows', 'live-auction', 'live-promotion', 'live-money'];
-    if (FINANCIAL_PAGES.includes(page) && !canSeeFinancials(currentUser)) return;
+    // Supply Request is the one on the list an associate may be granted (2026-11-02): the
+    // worker strips its money for them, so the page is safe to open on the grant.
+    if (FINANCIAL_PAGES.includes(page) && !canSeeFinancials(currentUser)
+        && !(page === 'supply-request' && pageLevel('supply-request') >= 1)) return;
 
     // Guard admin-only pages
     const adminOnly = ['inventory-add', 'inventory-viewer', 'inventory-sale', 'users', 'marketing', 'flow-calendar', 'content', 'comments', 'merch-criteria', 'merch-coverage', 'merch-manifests', 'merch-velocity', 'merch-products'];
@@ -13921,7 +13924,7 @@
     if (page === 'supply-request') {
       const role = currentUser && currentUser.role;
       const allowed = ['superuser','admin','district_manager','manager'];
-      if (!allowed.includes(role)) return;
+      if (!allowed.includes(role) && pageLevel('supply-request') < 1) return;
     }
     // Shelf Count is the one Merchandising surface a store manager needs. The worker
     // scopes the write to their own stores; this only decides whether the shell opens.
@@ -14421,15 +14424,24 @@
     }
 
     // ── Init (called from navigateToPage) ──
+    // An associate submits and comments only at edit; at view they read their stores' requests.
+    // Everyone else who reaches this page could always submit. The worker holds the same line
+    // (ACTION_PAGE: supply-request-create and -comment at edit).
+    const srCanSubmit = () => !isAssociate(currentUser) || pageLevel('supply-request') >= 2;
+
     function initSRPage() {
       srDetailCache  = {};
       srFilterStatus = 'all';
       srLoadingHist  = false;
       srAllFilters   = { store:'all', status:'all', priority:'all' };
       const isSu = currentUser?.role === 'superuser';
-      srRenderTabBar(isSu ? ['all','budget','reports'] : ['new','history']);
-      srRenderForm();
-      srSwitchTab(isSu ? 'all' : 'new');
+      const tabs = isSu ? ['all','budget','reports'] : srCanSubmit() ? ['new','history'] : ['history'];
+      srRenderTabBar(tabs);
+      el('sr-header-sub').textContent = tabs.includes('new') || isSu
+        ? 'Submit and track supply requests for your store' : 'Track supply requests for your store';
+      el('sr-pane-new').innerHTML = '';
+      if (tabs.includes('new')) srRenderForm();
+      srSwitchTab(tabs[0]);
       if (!isSu) srLoadBudget();
     }
     window.initSRPage = initSRPage;
@@ -14632,6 +14644,9 @@
     async function srLoadBudget() {
       const section = el('sr-budget-section');
       if (!section) return;
+      // The budget is money: never an associate's (Brian, 2026-11-02). The worker refuses
+      // them supply-budgets anyway — this keeps the page from asking.
+      if (isAssociate(currentUser)) { section.innerHTML = ''; return; }
       try {
         const now = new Date();
         const resp = await fetch(`${WORKER_BASE}?action=supply-budgets&year=${now.getFullYear()}&month=${now.getMonth()+1}`, { credentials:'include' });
@@ -14717,7 +14732,7 @@
         list.innerHTML = `<div class="text-center py-14 text-opl-inkDim dark:text-op-inkDim">
           <svg class="mx-auto mb-3 text-opl-inkDim dark:text-op-inkDim" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
           <p class="text-sm">No requests found</p>
-          <button onclick="srSwitchTab('new')" class="mt-3 text-sm text-accent-green hover:underline font-semibold">Submit your first request →</button>
+          ${srCanSubmit() ? `<button onclick="srSwitchTab('new')" class="mt-3 text-sm text-accent-green hover:underline font-semibold">Submit your first request →</button>` : ''}
         </div>`;
         return;
       }
@@ -14832,7 +14847,7 @@
             <div class="space-y-3">${timeline}</div>
           </div>`:''}
 
-          <div class="flex gap-2 pt-1">
+          ${srCanSubmit() ? `<div class="flex gap-2 pt-1">
             <input id="sr-cmt-${id}" type="text" placeholder="Add a comment…"
               class="flex-1 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700/80 text-gray-900 dark:text-white text-sm px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]/50 focus:border-[#3BB54A]"
               onkeydown="if(event.key==='Enter')srAddComment('${id}')">
@@ -14840,7 +14855,7 @@
               class="px-4 py-2 bg-[#3BB54A] hover:bg-[#2ea042] text-[#06210f] text-sm font-semibold rounded-lg transition-colors">
               Send
             </button>
-          </div>
+          </div>` : ''}
         </div>`;
     }
 
@@ -37824,6 +37839,9 @@
     // existing associate's front door where it was.
     { id: 'merch-scan', label: 'Price Scan', nav: 'nav-merch-scan' },
     { id: 'merch-signs', label: 'Sign Studio', nav: 'nav-merch-signs' },
+    // Supply Request (Brian, 2026-11-02): view reads their stores' requests, edit also submits
+    // and comments. No money at either level — the worker strips cost and invoice #.
+    { id: 'supply-request', label: 'Supply Request', nav: 'nav-supply-request' },
   ];
   // Pages EVERY associate may open, no grant needed (Brian, 2026-10-13: associates
   // upload photos too, so the weekly targets fill across shifts). The worker already

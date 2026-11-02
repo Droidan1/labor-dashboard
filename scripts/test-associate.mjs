@@ -887,5 +887,129 @@ const cipherOf = (db, id) => db.prepare('SELECT pin_cipher c FROM users WHERE id
   }
 }
 
+// ── Supply Request (2026-11-02) ────────────────────────────────────────────
+// Brian's decisions: view reads the requests for the stores on their grant, as a manager does;
+// edit also submits and comments. NO MONEY at either level — a request's cost and invoice # and
+// the store's supply budget never reach an associate, and the worker strips them, not the
+// screen. And a request carries the associate's NAME: their address is synthetic, so it is
+// neither shown nor mailed.
+{
+  const { db, env } = env0();
+  db.exec(fs.readFileSync(path.join(repo, 'migration-011.sql'), 'utf8'));
+  applyMigrationAlters(db, repo);
+  const ITEMS = [{ category: 'Cleaning', item_name: 'Trash bags', quantity: 4, unit: 'boxes' }];
+  // Seeded through the endpoints: a manager's BL1 request a superuser has costed, and a BL4 one.
+  const mine = await json(await call('/?action=supply-request-create', { user: 'u-mgr1', method: 'POST', env,
+    body: { store: 'BL1', items: ITEMS } }));
+  const other = await json(await call('/?action=supply-request-create', { user: 'u-su', method: 'POST', env,
+    body: { store: 'BL4', items: ITEMS } }));
+  eq((await call('/?action=supply-request-fulfillment', { user: 'u-su', method: 'PATCH', env,
+    body: { id: mine.id, invoice_number: 'INV-77', cost: 123.45 } })).status, 200, 'a superuser costs the BL1 request');
+
+  const view = await makeAssociate(env, { name: 'Sue Ply', pin: '424242', pages: { 'supply-request': 'view' } });
+  const edit = await makeAssociate(env, { name: 'Ed Supply', pin: '535353', pages: { 'supply-request': 'edit' } });
+  await makeAssociate(env, { name: 'No Supply', pin: '646464', pages: { 'bin-dump': 'edit' } });
+  eq(view.status, 200, 'an associate can be granted Supply Request — the page is grantable');
+  eq(edit.status, 200, '…at edit too');
+  const sV = (await signIn(env, 'Sue Ply', '424242')).sid;
+  const sE = (await signIn(env, 'Ed Supply', '535353')).sid;
+  const sN = (await signIn(env, 'No Supply', '646464')).sid;
+  ok(sV && sE && sN, 'all three sign in');
+  const ask = async (sid, url, opts) => {
+    const r = await worker.fetch(asSession(url, sid, opts), env, ctx);
+    return { status: r.status, body: await json(r) };
+  };
+
+  console.log('  Supply Request, view level:');
+  const list = await ask(sV, '/?action=supply-requests&limit=100');
+  eq(list.status, 200, '🔑 view reads the requests');
+  eq(list.body.requests?.map(r => r.id).join(), mine.id, '…for the stores on their grant only (BL1, not BL4)');
+  const row = list.body.requests?.[0] || {};
+  ok(!('cost' in row) && !('invoice_number' in row),
+     `🛑 …with NO cost and NO invoice # on the row (got ${JSON.stringify(row)})`);
+  const one = await ask(sV, `/?action=supply-request&id=${mine.id}`);
+  eq(one.status, 200, 'view opens a request');
+  eq(one.body.request?.items?.[0]?.item_name, 'Trash bags', '…with its items');
+  ok(one.body.request && !('cost' in one.body.request) && !('invoice_number' in one.body.request),
+     '🛑 …and no cost or invoice # in the detail either');
+  ok(!JSON.stringify(one.body).includes('123.45') && !JSON.stringify(list.body).includes('123.45'),
+     '🛑 the figure is nowhere in either response');
+  eq((await ask(sV, `/?action=supply-request&id=${other.id}`)).status, 403, '🛑 a store they do not hold stays shut');
+  const vCreate = await ask(sV, '/?action=supply-request-create', { method: 'POST', body: { store: 'BL1', items: ITEMS } });
+  eq(vCreate.status, 403, '🛑 view cannot submit');
+  eq(vCreate.body.code, 'NEED_PAGE_EDIT', '…and is told it needs edit');
+  eq((await ask(sV, '/?action=supply-request-comment', { method: 'POST', body: { id: mine.id, note: 'hi' } })).status, 403,
+     '🛑 view cannot comment');
+
+  console.log('  Supply Request, edit level:');
+  const made = await ask(sE, '/?action=supply-request-create', { method: 'POST', body: { store: 'BL1', items: ITEMS, notes: 'back room' } });
+  eq(made.status, 200, '🔑 edit submits a request');
+  eq(db.prepare('SELECT user_email e FROM supply_requests WHERE id = ?').get(made.body.id)?.e, 'Ed Supply',
+     '🔑 …under their NAME — the synthetic address would mean nothing on the superuser\'s list');
+  eq(db.prepare("SELECT changed_by_email e FROM supply_request_history WHERE request_id = ?").get(made.body.id)?.e, 'Ed Supply',
+     '…and so does its first history line');
+  eq((await ask(sE, '/?action=supply-request-create', { method: 'POST', body: { store: 'BL4', items: ITEMS } })).status, 403,
+     '🛑 a page grant does not open a store they do not hold');
+  eq((await ask(sE, '/?action=supply-request-comment', { method: 'POST', body: { id: mine.id, note: 'Still need these' } })).status, 200,
+     'edit comments');
+  eq(db.prepare("SELECT changed_by_email e FROM supply_request_history WHERE request_id = ? AND type = 'comment'").get(mine.id)?.e,
+     'Ed Supply', '…under their name');
+  eq((await ask(sE, '/?action=supply-request-comment', { method: 'POST', body: { id: other.id, note: 'x' } })).status, 403,
+     '🛑 …but not on another store\'s request');
+
+  console.log('  what NEITHER level buys:');
+  for (const [label, sid] of [['view', sV], ['edit', sE]]) {
+    eq((await ask(sid, '/?action=supply-budgets&year=2026&month=11')).status, 403, `🛑 ${label} cannot read the supply budget`);
+    eq((await ask(sid, '/?action=supply-request-status', { method: 'PATCH', body: { id: mine.id, status: 'on_hold' } })).status, 403,
+       `🛑 ${label} cannot change a status`);
+    eq((await ask(sid, '/?action=supply-request-fulfillment', { method: 'PATCH', body: { id: mine.id, cost: 1 } })).status, 403,
+       `🛑 ${label} cannot set a cost`);
+    eq((await ask(sid, '/?action=supply-request-delete', { method: 'DELETE', body: { id: mine.id } })).status, 403,
+       `🛑 ${label} cannot delete a request`);
+    eq((await ask(sid, '/?action=supply-requests-purge-preview&days=30')).status, 403, `🛑 ${label} cannot preview a purge`);
+    eq((await ask(sid, '/?action=supply-budget-set', { method: 'POST', body: { store: 'BL1', year: 2026, month: 11, budget: 1 } })).status, 403,
+       `🛑 ${label} cannot set a budget`);
+  }
+  eq(db.prepare('SELECT cost FROM supply_requests WHERE id = ?').get(mine.id)?.cost, 123.45, 'the cost is untouched');
+  const n = await ask(sN, '/?action=supply-requests');
+  eq(n.status, 403, '🛑 an associate WITHOUT Supply Request reads nothing');
+  eq(n.body.code, 'NEED_PAGE_VIEW', '…and is told which page they lack');
+
+  console.log('  everyone else is unchanged:');
+  const mgr = await json(await call('/?action=supply-requests&limit=100', { user: 'u-mgr1', env }));
+  const mrow = (mgr.requests || []).find(r => r.id === mine.id) || {};
+  eq(mrow.cost, 123.45, 'a manager still sees the cost');
+  eq(mrow.invoice_number, 'INV-77', '…and the invoice #');
+  eq((await json(await call(`/?action=supply-request&id=${mine.id}`, { user: 'u-mgr1', env }))).request?.cost, 123.45,
+     '…in the detail too');
+
+  console.log('  the status-change email:');
+  // Recorded, not sent: Resend is the one host let through, and only into this array.
+  env.RESEND_API_KEY = 're_test_not_real';
+  const mailed = [];
+  const blocked = globalThis.fetch;
+  globalThis.fetch = async (u, init) => {
+    if (String(u).startsWith('https://api.resend.com/')) {
+      mailed.push(JSON.parse(init.body).to);
+      return new Response(JSON.stringify({ id: 'em_' + mailed.length }), { status: 200 });
+    }
+    return blocked(u, init);
+  };
+  const waits = [];
+  const ctxW = { waitUntil: (p) => waits.push(p), passThroughOnException: () => {} };
+  const setStatus = async (id) => {
+    const r = await worker.fetch(req('/?action=supply-request-status', { user: 'u-su', method: 'PATCH',
+      body: { id, status: 'under_review' } }), env, ctxW);
+    await Promise.allSettled(waits.splice(0));
+    return r.status;
+  };
+  eq(await setStatus(mine.id), 200, 'a superuser moves the manager\'s request');
+  ok(mailed.flat().includes('howardbrian260@gmail.com'), `…and the manager is emailed, as before (${JSON.stringify(mailed)})`);
+  mailed.length = 0;
+  eq(await setStatus(made.body.id), 200, 'a superuser moves the associate\'s request');
+  eq(mailed.length, 0, `🛑 …and nothing is mailed — an associate has no inbox (${JSON.stringify(mailed)})`);
+  globalThis.fetch = blocked;
+}
+
 console.log(failures ? `\n${failures} of ${assertions} FAILED` : `\n${assertions} passed, 0 failed`);
 process.exit(failures ? 1 : 0);

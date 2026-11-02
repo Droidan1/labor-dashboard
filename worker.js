@@ -9796,7 +9796,10 @@ async function notifySupplyStatusChange(env, { requestId, requesterId, requester
 
   // Email — same story as notifySupplyRequestNew: previously fire-and-forget
   // with no res.ok check, so every non-2xx vanished.
-  if (requesterEmail) {
+  //
+  // 🔑 An associate's request stores their NAME here (supply-request-create): they have no
+  // inbox, so there is nothing to mail and the push above is their whole notification.
+  if (requesterEmail && requesterEmail.includes('@')) {
     const html = buildStatusUpdateEmailHtml({ store, oldStatus, newStatus, note, requestId });
     // 🔑 A PER-CALL key, deliberately not one derived from requestId + status.
     // The key's job here is only to stop resendSend's own retry from delivering
@@ -15382,6 +15385,17 @@ const ACTION_PAGE = new Map([
   ["saved-sign-list",    ["merch-signs", "view"]],
   ["saved-sign-save",    ["merch-signs", "edit"]],
   ["saved-sign-delete",  ["merch-signs", "edit"]],
+  // Supply Request (Brian, 2026-11-02). View reads the requests for the stores on their grant,
+  // as a manager does; edit also submits and comments. NO MONEY at either level, by his
+  // decision: the two reads strip cost and invoice_number for a non-financial caller
+  // (supplyHideMoney), and supply-budgets is absent so the budget widget never loads.
+  //
+  // 🛑 ABSENT on purpose: supply-request-status / -fulfillment (superuser only), -delete,
+  // the purge pair, and every supply-budget* action.
+  ["supply-requests",        ["supply-request", "view"]],
+  ["supply-request",         ["supply-request", "view"]],
+  ["supply-request-create",  ["supply-request", "edit"]],
+  ["supply-request-comment", ["supply-request", "edit"]],
 ]);
 
 // The closed set an admin may tick, DERIVED from the map above rather than
@@ -15426,6 +15440,15 @@ function associateStoreDenied(user, isAdminSecret, store, corsJson) {
 // never shown anywhere, so `logged_by` has to carry the name they go by.
 function actorLabel(user) {
   return (user && (user.name || user.email)) || "unknown";
+}
+
+// A supply request's cost and invoice # are supply spend — money. An associate granted
+// Supply Request reads the requests but never those two (Brian, 2026-11-02). Machine callers
+// (admin secret, the reporting key) carry no currentUser and keep the full row.
+function supplyHideMoney(user) { return !!user && !canSeeFinancials(user); }
+function supplyWithoutMoney(row) {
+  const { cost, invoice_number, ...rest } = row;
+  return rest;
 }
 
 // ── Associate codes ─────────────────────────────────────────────────────────
@@ -23991,8 +24014,12 @@ export default {
     // POST ?action=supply-request-create
     // Body: { store, items: [{category,item_name,quantity,unit,notes}], notes?, priority? }
     // Any authenticated user may submit; managers/DMs restricted to their allowed stores.
+    // Staff reach it only as an associate holding Supply Request at edit (ACTION_PAGE);
+    // requirePage passes every financial role exactly as before.
     if (request.method === "POST" && url.searchParams.get("action") === "supply-request-create") {
       if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      const pageDenied = requirePage(currentUser, isAdminSecret, "supply-request", "edit", corsJson);
+      if (pageDenied) return pageDenied;
       try {
         const body = await request.json();
         const { store, items, notes, priority = 'normal' } = body;
@@ -24014,12 +24041,16 @@ export default {
         }
         const now = new Date().toISOString();
         const requestId = randomHex(16);
+        // 🔑 An associate's address is synthetic and never shown, so their request — on the
+        // superuser's list, in the CSV, in the alert — carries the name they go by. That also
+        // means user_email is then NOT an address; notifySupplyStatusChange checks before mailing.
+        const by = isAssociate(currentUser) ? actorLabel(currentUser) : currentUser.email;
 
         // Insert request
         await env.DB.prepare(
           `INSERT INTO supply_requests (id, user_id, user_email, store, status, priority, notes, submitted_at, updated_at)
            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)`
-        ).bind(requestId, currentUser.id, currentUser.email, store, priority, notes || null, now, now).run();
+        ).bind(requestId, currentUser.id, by, store, priority, notes || null, now, now).run();
 
         // Insert items
         const itemStmts = items.map(it =>
@@ -24035,12 +24066,12 @@ export default {
         await env.DB.prepare(
           `INSERT INTO supply_request_history (id, request_id, type, changed_by_id, changed_by_email, old_status, new_status, note, changed_at)
            VALUES (?, ?, 'status_change', ?, ?, null, 'pending', 'Request submitted', ?)`
-        ).bind(randomHex(12), requestId, currentUser.id, currentUser.email, now).run();
+        ).bind(randomHex(12), requestId, currentUser.id, by, now).run();
 
         // Notify superusers (fire-and-forget)
         const fullItems = await env.DB.prepare('SELECT * FROM supply_request_items WHERE request_id = ?').bind(requestId).all();
         ctx.waitUntil(notifySupplyRequestNew(env, {
-          requestId, requesterId: currentUser.id, requesterEmail: currentUser.email,
+          requestId, requesterId: currentUser.id, requesterEmail: by,
           store, priority, notes: notes || '', items: fullItems.results || [],
         }));
 
@@ -24054,6 +24085,8 @@ export default {
     // Superuser/admin: all requests. Others: own store(s) only.
     if (request.method === "GET" && url.searchParams.get("action") === "supply-requests") {
       if (!currentUser && !reportingReadThrough) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      const pageDenied = requirePage(currentUser, isAdminSecret || reportingReadThrough, "supply-request", "view", corsJson);
+      if (pageDenied) return pageDenied;
       try {
         const filterStore  = url.searchParams.get("store") || null;
         const filterStatus = url.searchParams.get("status") || null;
@@ -24096,7 +24129,12 @@ export default {
           `SELECT COUNT(*) AS total FROM supply_requests r ${where}`
         ).bind(...binds).first();
 
-        return new Response(JSON.stringify({ ok: true, requests: rows.results || [], total: countRow?.total ?? 0 }), { headers: corsJson });
+        const requests = rows.results || [];
+        return new Response(JSON.stringify({
+          ok: true,
+          requests: supplyHideMoney(currentUser) ? requests.map(supplyWithoutMoney) : requests,
+          total: countRow?.total ?? 0,
+        }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
@@ -24106,6 +24144,8 @@ export default {
     // Returns full request: items array + history array.
     if (request.method === "GET" && url.searchParams.get("action") === "supply-request") {
       if (!currentUser && !reportingReadThrough) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      const pageDenied = requirePage(currentUser, isAdminSecret || reportingReadThrough, "supply-request", "view", corsJson);
+      if (pageDenied) return pageDenied;
       try {
         const id = url.searchParams.get("id");
         if (!id) return new Response(JSON.stringify({ error: "Missing id" }), { status: 400, headers: corsJson });
@@ -24124,7 +24164,8 @@ export default {
           env.DB.prepare('SELECT * FROM supply_request_history WHERE request_id = ? ORDER BY changed_at ASC').bind(id).all(),
         ]);
 
-        return new Response(JSON.stringify({ ok: true, request: { ...req, items: items || [], history: history || [] } }), { headers: corsJson });
+        const row = supplyHideMoney(currentUser) ? supplyWithoutMoney(req) : req;
+        return new Response(JSON.stringify({ ok: true, request: { ...row, items: items || [], history: history || [] } }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
@@ -29476,8 +29517,11 @@ export default {
 
     // POST ?action=supply-request-comment
     // Body: { id, note }  — any authenticated user (superuser or requester's store).
+    // Staff: an associate holding Supply Request at edit (ACTION_PAGE).
     if (request.method === "POST" && url.searchParams.get("action") === "supply-request-comment") {
       if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      const pageDenied = requirePage(currentUser, isAdminSecret, "supply-request", "edit", corsJson);
+      if (pageDenied) return pageDenied;
       try {
         const { id, note } = await request.json();
         if (!id || !note?.trim()) return new Response(JSON.stringify({ error: "id and note required" }), { status: 400, headers: corsJson });
@@ -29491,10 +29535,12 @@ export default {
         }
 
         const now = new Date().toISOString();
+        // The name, not the synthetic address — same reason as supply-request-create.
+        const by = isAssociate(currentUser) ? actorLabel(currentUser) : currentUser.email;
         await env.DB.prepare(
           `INSERT INTO supply_request_history (id, request_id, type, changed_by_id, changed_by_email, note, changed_at)
            VALUES (?, ?, 'comment', ?, ?, ?, ?)`
-        ).bind(randomHex(12), id, currentUser.id, currentUser.email, note.trim(), now).run();
+        ).bind(randomHex(12), id, currentUser.id, by, note.trim(), now).run();
         await env.DB.prepare('UPDATE supply_requests SET updated_at = ? WHERE id = ?').bind(now, id).run();
 
         // Notify the other party (fire-and-forget, respects supply_notifications)
@@ -29502,7 +29548,7 @@ export default {
           requestId: id,
           store: existing.store,
           commenterId: currentUser.id,
-          commenterEmail: currentUser.email,
+          commenterEmail: by,
           note: note.trim(),
           requesterId: existing.user_id,
           requesterEmail: existing.user_email,
