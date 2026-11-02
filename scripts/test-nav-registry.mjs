@@ -83,6 +83,12 @@ ok(badBiz.length === 0, `every registry business id is seeded by a migration; un
 const ecomItems = Object.entries(registry).filter(([, v]) => v === 'ecom').map(([k]) => k);
 ok(ecomItems.length >= 1, `E-Commerce owns at least one nav item; got [${ecomItems}]`);
 
+// ── Live Sales (migration-085) is seeded and owns its five pages ───────────
+ok(seeded.has('live'), `migration-085 seeds the live business; got [${[...seeded]}]`);
+const liveItems = Object.entries(registry).filter(([, v]) => v === 'live').map(([k]) => k).sort();
+ok(JSON.stringify(liveItems) === JSON.stringify(['nav-live-auction', 'nav-live-money', 'nav-live-overview', 'nav-live-promotion', 'nav-live-shows']),
+   `Live Sales owns exactly its five nav items; got [${liveItems}]`);
+
 // ── The mobile More sheet must mirror the sidebar, not diverge from it ─────
 // Every bottom-nav gate is written as gate('more-x', vis('nav-y')); if nav-y does
 // not exist, vis() is false forever and the row is dead with no error anywhere.

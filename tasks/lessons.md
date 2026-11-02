@@ -2645,6 +2645,11 @@ which costs nothing if the column exists — not "you are in this state, here is
    not set `INTERACTIVE_COMMENTS`, so `--file=x.sql   # staging` passes `#` and `staging` as
    arguments. My annotation is what made both of his migration runs fail. Put the label on its
    own line, above the command.
+   **Recurred (2026-10-30, migration-084):** I handed over
+   `--command "$(cat migration-084.sql)"` untested. The file opens with a `-- migration-084: …`
+   comment, so yargs read the value as flags (`Unknown arguments`). Nothing ran, but it cost him
+   a try. Pass a file as `--command="$(cat x.sql)"` (with `=`), and run any command you hand over
+   first in a read-only form that has the same shape (here: `--command="-- c;\nSELECT 1;"`).
 </rules>
 
 ### Addendum, same day: the limitation I asserted was also unchecked
@@ -3007,4 +3012,17 @@ and its scrollTop, so the wheel landed on Settings and scrolled the page.
 38. **Mutation-test CSS like code.** A declaration that survives removal is not part of the
    fix. When a test fails in the SAME way as the bug it guards, check the test's own
    measurements before touching the fix.
+</rules>
+
+## I named a store from memory and got it wrong in front of Brian (2026-10-30)
+
+I labelled BL2 "Dupont" in the Live Sales preview, the store table I sent Brian, and two messages. BL2 is South
+Bend; Dupont is BL4 and has no live sales. The planning review caught it from `STORE_LABELS` (worker.js), the
+auction feeder (`SBN→BL2`) and migration-030, all of which I had open.
+
+<rules>
+1. **A store's name comes from `STORE_LABELS` or `business_units.name`, never from memory** — including in
+   chat, previews and tables sent to Brian. Codes are easy to remember wrong because they are not in order.
+2. **When a feed adds a store, read its mapping** (`SITE_TO_STORE` in the feeder) before describing which stores it
+   covers; data showed BL1 also had auctions, which a fixed channel map would have hidden.
 </rules>

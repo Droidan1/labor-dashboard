@@ -96,6 +96,15 @@ const get = async (a, user) => (await worker.fetch(req(`/?action=${a}`, { user }
   ok(JSON.stringify(m.allowedUnits(ec, 'ecom')) === '["SHOP1"]', 'ecom units resolve from the ecom grant');
   ok(JSON.stringify(m.allowedUnits(ec, 'bl')) === '["BL1"]',
      'and bl still falls back for that same user (transitional, bl-only)');
+
+  // Live Sales (migration-085): no grant fails CLOSED even for a manager with Bargain Lane
+  // stores — the users.stores fallback never leaks into another business — and a live grant
+  // with NULL units is every live store.
+  ok(JSON.stringify(m.allowedUnits(mgr, 'live')) === '[]', 'live fails CLOSED for a bl-only manager');
+  const lv = { id: 'l', role: 'manager', stores: ['BL1'], grants: [{ business_id: 'live', role: 'manager', units: null }] };
+  ok(m.allowedUnits(lv, 'live') === null, 'a live grant with NULL units is every live store');
+  const lv1 = { id: 'l1', role: 'manager', stores: ['BL1'], grants: [{ business_id: 'live', role: 'manager', units: '["BL14"]' }] };
+  ok(JSON.stringify(m.allowedUnits(lv1, 'live')) === '["BL14"]', 'live units resolve from the live grant (JSON text)');
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed`);

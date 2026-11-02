@@ -44,6 +44,8 @@ const ALLOWED = [
    'buildAllStoresWeeklyTable: documented "today keeps its live-POS behavior"'],
   ['mtdActual += (r.aTotal || 0) + (r.aAuction || 0);',
    'month-to-date loop explicitly `continue`s on d >= todayStr'],
+  ['mtdLive   += (r.aAuction || 0);',
+   'the same month-to-date loop (skips today); today joins via auctionRaw in liveMtd'],
   ['m.aAuction',
    'a sumRows RESULT, not a row — today was already excluded upstream'],
   ['wk.aAuction',
