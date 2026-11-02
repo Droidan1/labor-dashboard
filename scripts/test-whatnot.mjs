@@ -120,7 +120,7 @@ function freshEnv() {
   env.WHATNOT_API_TOKEN = 'wn_pat_tk_test';
   return { db, env };
 }
-const NOW = new Date('2026-10-30T16:00:00Z');   // noon Eastern, Fri 2026-10-30
+let NOW = new Date('2026-10-30T16:00:00Z');     // noon Eastern, Fri 2026-10-30 (moved on once, in 2b)
 
 // ── 0. Not configured: nothing is called ───────────────────────────────────
 {
@@ -219,9 +219,57 @@ const showsRead = async (user, q = 'from=2026-10-28&to=2026-10-29') => {
   const { body } = await showsRead('u-su');
   const a = body.shows.find(s => s.showId === 'sh-a');
   eq([a.orders.itemsPending, a.items.units, a.items.sales], [0, 42, 108], 'sh-a once caught up: 42 units (one order added a 2-unit line) worth $108');
-  eq(body.days.find(d => d.store === 'BL14' && d.date === '2026-10-29').status, 'match', 'once sh-d is calculated its day matches the recap');
+  // Whatnot keeps revising a show's figures for hours after it ends (Oct 30, 2026: $311 stored, $1,112
+  // final). sh-d started 10-29 19:40Z, so at NOW its figures can still move: the day waits.
+  eq(body.days.find(d => d.store === 'BL14' && d.date === '2026-10-29').status, 'pending', 'sh-d is calculated but under 24h old: its day is still pending');
   eq([db.prepare('SELECT COUNT(*) n FROM whatnot_order_items').get().n, db.prepare('SELECT COUNT(*) n FROM whatnot_orders').get().n], [61, 60], 'three runs, still 60 orders and 61 item lines: nothing duplicated');
   eq(db.prepare('SELECT COUNT(*) n FROM whatnot_orders WHERE items_synced = 0').get().n, 0, 'every order itemised');
+}
+
+// ── 2b. Late cancellations are not a gap (2026-11-02) ──────────────────────
+// The recap is gross at Whatnot's end-of-show summary; Whatnot's `sales` leaves out EVERY cancelled
+// or failed order (checked to the cent on four October store-days). So a recap above Whatnot by no
+// more than that day's lost orders is the same sales falling through after the summary: "cancelled",
+// never a gap and never pushed. The first prod run pushed 9 store-days of exactly this.
+{
+  const show = db.prepare("INSERT INTO whatnot_shows (id,title,status,scheduled_start_at,started_at,show_date,store,synced_at) VALUES (?,?,'ended',?,?,?,'BL1','t')");
+  const an = db.prepare("INSERT INTO whatnot_show_analytics (show_id,calculation_status,sales,orders_count,fetched_at) VALUES (?,'GENERATED',?,3,'2026-10-30T16:00:00.000Z')");
+  const ord = db.prepare("INSERT INTO whatnot_orders (id,show_id,status,created_at,subtotal,items_synced,synced_at) VALUES (?,?,?,?,?,1,'t')");
+  const day = (id, date, sales, lost) => {
+    show.run(id, 'Late show ' + id, date + 'T16:00:00Z', date + 'T16:00:00Z', date);
+    an.run(id, sales);
+    ord.run(id + '-1', id, 'completed', date + 'T16:10:00Z', sales);
+    lost.forEach((amt, i) => ord.run(`${id}-x${i}`, id, i % 2 ? 'failed' : 'cancelled', date + 'T16:20:00Z', amt));
+  };
+  day('sh-late', '2026-10-27', 97, [3, 2]);   // recap 100: $3 of the $5 lost fell through after the summary
+  day('sh-over', '2026-10-26', 97, [3, 2]);   // recap 110: $13 above Whatnot with only $5 lost — a real gap
+  show.run('sh-noord', 'No orders yet', '2026-10-25T16:00:00Z', '2026-10-25T16:00:00Z', '2026-10-25');
+  an.run('sh-noord', 97);                       // its orders have not synced: the range is unknown
+  recap.run('BL1', '2026-10-27', 100, 1);
+  recap.run('BL1', '2026-10-26', 110, 1);
+  recap.run('BL1', '2026-10-25', 100, 1);
+  const { body } = await showsRead('u-su', 'from=2026-10-25&to=2026-10-27');
+  eq(body.days.map(d => [d.date, d.status, d.diff, d.lost]), [
+    ['2026-10-25', 'pending', -3, 0], ['2026-10-26', 'gap', -13, 5], ['2026-10-27', 'cancelled', -3, 5],
+  ], 'recap above Whatnot within the lost orders is "cancelled"; beyond them a gap; with no orders loaded, pending');
+  calls = [];
+  const r4 = await runAt();
+  eq([r4?.crossCheck?.gaps, r4?.crossCheck?.pushed], [2, 1], 'run 4: only the real gap is new and pushed; late cancellations push nothing');
+  eq(db.prepare("SELECT COUNT(*) n FROM whatnot_sync WHERE key = 'xcheck:BL1:2026-10-27'").get().n, 0, 'a cancelled day is never remembered as a pushed gap');
+  ok(calls.some(c => c === '/analytics/shows/sh-d'), 'run 4 re-reads sh-d: calculated, but under 24h since it started');
+  ok(!calls.some(c => c === '/analytics/shows/sh-a'), 'a show past 24h is not read again');
+
+  // Past 24h from sh-d's start, the next run reads it once more and its day settles to a match.
+  NOW = new Date('2026-10-30T20:00:00Z');
+  calls = [];
+  const r5 = await runAt();
+  ok(calls.includes('/analytics/shows/sh-d'), 'run 5 reads sh-d one last time');
+  eq([r5?.crossCheck?.gaps, r5?.crossCheck?.pushed], [2, 0], 'run 5: the same two gaps, nothing new pushed');
+  const after = await showsRead('u-su');
+  eq(after.body.days.find(d => d.store === 'BL14' && d.date === '2026-10-29').status, 'match', 'once settled, sh-d\'s day matches the recap');
+  calls = [];
+  await runAt();
+  ok(!calls.includes('/analytics/shows/sh-d'), 'and is never read again');
 }
 
 // ── 3. whatnot-items ───────────────────────────────────────────────────────

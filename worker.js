@@ -16442,6 +16442,10 @@ const WHATNOT_ORDER_OVERLAP_MS = 3 * 864e5; // re-read 3 days of orders, so a ca
 // compares two different splits of the same shows.
 const WHATNOT_FW_CUTOFF_MIN = 15 * 60 + 30;
 const WHATNOT_STORES = ["BL1", "BL14"];
+// A show's analytics are re-read until a read lands this long after it started (see syncWhatnotAnalytics).
+const WHATNOT_SETTLE_HOURS = 24;
+// SQL for that moment, for a row `s` of whatnot_shows. ISO strings compare correctly as text.
+const WHATNOT_SETTLED_AT = `strftime('%Y-%m-%dT%H:%M:%fZ', COALESCE(s.started_at, s.scheduled_start_at), '+${WHATNOT_SETTLE_HOURS} hours')`;
 
 class WhatnotBudgetError extends Error {}
 class WhatnotHttpError extends Error {
@@ -16582,8 +16586,14 @@ async function syncWhatnotShows(env, api, at, out) {
 // Analytics until it is calculated (sales comes back non-null), newest show first.
 async function syncWhatnotAnalytics(env, api, at, out) {
   const { results } = await env.DB.prepare(
+    // 🔑 GENERATED is not final: Whatnot keeps revising a show's figures for hours after it ends
+    // (2026-10-30: one show read $311 an hour after ending and $1,112 later; another $367 → $804,
+    // which is what the recap said). So a show is read again every run until a read lands at least
+    // WHATNOT_SETTLE_HOURS after it started; only that read is treated as final.
     `SELECT s.id FROM whatnot_shows s LEFT JOIN whatnot_show_analytics a ON a.show_id = s.id
-      WHERE s.status = 'ended' AND (a.show_id IS NULL OR (a.sales IS NULL AND COALESCE(a.calculation_status, '') <> 'WILL_NOT_BE_CALCULATED'))
+      WHERE s.status = 'ended' AND (a.show_id IS NULL
+         OR (a.sales IS NULL AND COALESCE(a.calculation_status, '') <> 'WILL_NOT_BE_CALCULATED')
+         OR (a.sales IS NOT NULL AND a.fetched_at < ${WHATNOT_SETTLED_AT}))
       ORDER BY COALESCE(s.started_at, s.scheduled_start_at) DESC LIMIT 40`
   ).all();
   for (const { id } of results || []) {
@@ -16717,23 +16727,33 @@ async function syncWhatnotProducts(env, api, at, out) {
 async function whatnotCrossCheck(env, from, to, stores, today = getETToday().dateStr) {
   const inList = stores.map(() => "?").join(",");
   if (!stores.length) return [];
+  // `lost` = the day's cancelled + failed orders; `unloaded` = shows with orders that have not synced;
+  // `unsettled` = shows whose figures Whatnot may still revise (read under 24h after they started).
   const [api, recap] = await env.DB.batch([
     env.DB.prepare(
       `SELECT s.store, s.show_date AS date, COUNT(*) AS shows,
               SUM(CASE WHEN a.sales IS NULL AND COALESCE(a.calculation_status, '') <> 'WILL_NOT_BE_CALCULATED' THEN 1 ELSE 0 END) AS pending,
-              ROUND(COALESCE(SUM(a.sales), 0), 2) AS sales
+              ROUND(COALESCE(SUM(a.sales), 0), 2) AS sales,
+              ROUND(COALESCE(SUM(o.lost), 0), 2) AS lost,
+              SUM(CASE WHEN COALESCE(a.orders_count, 0) > 0 AND o.n IS NULL THEN 1 ELSE 0 END) AS unloaded,
+              SUM(CASE WHEN a.sales IS NOT NULL AND a.fetched_at < ${WHATNOT_SETTLED_AT} THEN 1 ELSE 0 END) AS unsettled
          FROM whatnot_shows s LEFT JOIN whatnot_show_analytics a ON a.show_id = s.id
+              LEFT JOIN (SELECT show_id, COUNT(*) AS n,
+                                SUM(CASE WHEN status IN ('cancelled', 'failed') THEN COALESCE(subtotal, 0) ELSE 0 END) AS lost
+                           FROM whatnot_orders
+                          WHERE show_id IN (SELECT id FROM whatnot_shows WHERE status = 'ended' AND show_date BETWEEN ? AND ? AND store IN (${inList}))
+                          GROUP BY show_id) o ON o.show_id = s.id
         WHERE s.status = 'ended' AND s.show_date BETWEEN ? AND ? AND s.store IN (${inList})
-        GROUP BY s.store, s.show_date`).bind(from, to, ...stores),
+        GROUP BY s.store, s.show_date`).bind(from, to, ...stores, from, to, ...stores),
     env.DB.prepare(
       `SELECT store, date, total FROM channel_sales WHERE channel = 'whatnot' AND date BETWEEN ? AND ? AND store IN (${inList})`
     ).bind(from, to, ...stores),
   ]);
   const days = new Map();
-  for (const r of api.results || []) days.set(r.store + "|" + r.date, { store: r.store, date: r.date, shows: r.shows, apiSales: r.sales, pendingShows: r.pending, recap: null });
+  for (const r of api.results || []) days.set(r.store + "|" + r.date, { store: r.store, date: r.date, shows: r.shows, apiSales: r.sales, pendingShows: r.pending + (r.unsettled || 0), lost: r.lost, ordersPending: r.unloaded, recap: null });
   for (const r of recap.results || []) {
     const k = r.store + "|" + r.date;
-    const d = days.get(k) || { store: r.store, date: r.date, shows: 0, apiSales: 0, pendingShows: 0 };
+    const d = days.get(k) || { store: r.store, date: r.date, shows: 0, apiSales: 0, pendingShows: 0, lost: 0, ordersPending: 0 };
     d.recap = r.total == null ? null : roundCents(Number(r.total));
     days.set(k, d);
   }
@@ -16741,7 +16761,19 @@ async function whatnotCrossCheck(env, from, to, stores, today = getETToday().dat
     // diff only where the two can be compared: a pending day's API figure is not final.
     const pending = d.date >= today || d.pendingShows > 0;
     const diff = pending || d.recap == null ? null : roundCents(d.apiSales - d.recap);
-    const status = pending ? "pending" : d.recap == null ? "no_recap" : Math.abs(diff) >= 1 ? "gap" : "match";
+    // 🔑 The recap is gross at Whatnot's end-of-show summary; Whatnot's show `sales` leaves out
+    // EVERY cancelled or failed order (checked to the cent on four October store-days). So a recap
+    // ABOVE Whatnot by no more than the day's lost orders is the same sales falling through after
+    // the summary — "cancelled", not a gap. The first prod run pushed 9 store-days of exactly that.
+    // A recap BELOW Whatnot, or above it by more than the lost orders, is still a gap; and with a
+    // show's orders not synced yet the range is unknown, so the day waits rather than alarms.
+    const excess = diff == null ? null : roundCents(-diff - (d.lost || 0));
+    const status = pending ? "pending"
+      : d.recap == null ? "no_recap"
+      : Math.abs(diff) < 1 ? "match"
+      : diff < 0 && d.ordersPending > 0 ? "pending"
+      : diff < 0 && excess < 1 ? "cancelled"
+      : "gap";
     return { ...d, diff, status };
   }).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.store < b.store ? -1 : 1));
 }
