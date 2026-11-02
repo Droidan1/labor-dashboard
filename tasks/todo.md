@@ -16,7 +16,9 @@
 - [x] tests: test-associate.mjs 373/373 (13 fail on main's worker; each of the four worker pieces mutation-checked);
       browser-associate-supply.mjs 32/32, both themes (13 fail on main's index.html; manager section passes on both);
       npm test: all but test-briefing-margin, which fails identically on main
-- [ ] PR; worker deploy is backward-compatible (inert until the client offers the page) → ask for it first
+- [x] Shipped 2026-11-02: PR #366 merged 819ca41 (17:36Z) → worker dc44e888 (17:39Z, 100%), byte-identical to main's
+      dry-run build on 3 passes a minute apart; api.retjghub.com 200; www serves CACHE_NAME v292 + the Supply Request
+      registry entry. The frontend led the worker by ~3 min (a tick in that window would have been a 400, nothing worse)
 
 **Review.** browser-associate-price-scan.mjs has 3 failures on main as well (the associate bar has had seven tabs since
 Submit Photos opened to associates on 2026-10-13; the check still says six). A Supply grant makes it eight.
