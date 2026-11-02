@@ -1,3 +1,17 @@
+# Whatnot cross-check: late cancellations and unsettled figures (2026-11-02)
+
+**Ask (Brian):** fix the #362 alert so ordinary late cancellations stop pushing.
+**Found while fixing:** a second cause. Whatnot revises a show's analytics for hours after it ends (Oct 30: stored
+$311 / $367, final $1,112 / $804 = the recap), and the sync never re-read a show once it had sales.
+
+- [x] Test first (test-whatnot §2b): late-cancel day, real gap, orders-not-synced day, alert pushes only the real
+      gap; a show under 24h old keeps being re-read and its day stays pending; settled → match, never re-read
+- [x] whatnotCrossCheck: `cancelled` when recap − Whatnot ≤ the day's cancelled + failed orders; `pending` while a
+      show's orders are unsynced or its figures are under 24h old. syncWhatnotAnalytics re-reads until settled
+- [x] Prod data (read-only), Oct 20–29: every store-day match or cancelled; Oct 30's two "gaps" were frozen figures
+- [x] cli/reporting.mjs reading rule lists `cancelled` (needs the MCP redeploy to reach agents)
+- [ ] Brian: push → worker deploy → merge → MCP deploy
+
 # Live Sales business — phase 1: add it, move no money (2026-11-02)
 
 **Ask (Brian):** plan and build phase 1 of moving live sales (online auction + Whatnot) out of Bargain Lane into
