@@ -23,7 +23,11 @@ scheduled shows show "this show lately" (average of the last five of that title 
       writes, no-087); six deliberate breaks each caught. browser-live-sales 341/341 (§7 calendar in light/dark/OLED at
       1400 and 393, old worker); browser-mobile-menu: the live bar passes (5 associate failures identical on main).
       npm test: all but test-briefing-margin, which fails identically on main
-- [ ] Deploy: migration-087 (staging, prod) and the worker in either order, then merge
+- [x] Shipped 2026-11-03: migration-087 on prod (a re-run failed on the duplicate column, as expected: no change);
+      skipped on staging, which has no whatnot_shows (migration-084 never applied there). Worker 483008ea
+      (byte-identical to ec11599's dry-run build; 100% on 3 status passes 30 s apart), PR #370 merged 465a37c;
+      www serves its index.html + CACHE_NAME v296
+- [ ] Watch the first hourly sync after ship: the whole schedule is stored once (shows count jumps), no error
 
 # Live Sales: date-range panel opens off-screen on a tablet-width phone (2026-11-02)
 
