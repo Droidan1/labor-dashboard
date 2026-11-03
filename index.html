@@ -1241,7 +1241,7 @@
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
           <span class="nav-label">eBay Cases</span>
         </div>
-        <!-- Live Sales (migration-085, phase 1): its five pages. Shown by applyRoleUI only
+        <!-- Live Sales (migration-085, phase 1): its six pages. Shown by applyRoleUI only
              for an account holding Live Sales; applyBusinessNav keeps them out of every
              other business. -->
         <div id="nav-live-overview" class="hidden nav-item" data-page="live-overview" data-menu-section="Live Sales" onclick="navigateToPage('live-overview')">
@@ -1251,6 +1251,10 @@
         <div id="nav-live-shows" class="hidden nav-item" data-page="live-shows" data-menu-section="Live Sales" onclick="navigateToPage('live-shows')">
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.49M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14"/></svg></span>
           <span class="nav-label">Whatnot Shows</span>
+        </div>
+        <div id="nav-live-calendar" class="hidden nav-item" data-page="live-calendar" data-menu-section="Live Sales" onclick="navigateToPage('live-calendar')">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
+          <span class="nav-label">Show Calendar</span>
         </div>
         <div id="nav-live-auction" class="hidden nav-item" data-page="live-auction" data-menu-section="Live Sales" onclick="navigateToPage('live-auction')">
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 13l-7.5 7.5a2.12 2.12 0 0 1-3-3L11 10"/><path d="M16 16l6-6"/><path d="M8 8l6-6"/><path d="M9 7l8 8"/><path d="M21 11l-8-8"/></svg></span>
@@ -1417,15 +1421,16 @@
       <button id="bn-ebay-cases" data-tab="ebay-cases" aria-label="eBay Cases" onclick="navigateToPage('ebay-cases')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
         <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span class="bn-lb">eBay Cases</span>
       </button>
-      <!-- Live Sales' bar: Overview · Shows · Auction · Money · Menu. Promotion is on the Menu. -->
+      <!-- Live Sales' bar: Overview · Shows · Calendar · Money · Menu. Online Auction and Promotion are on
+           the Menu (Brian, 2026-11-03: the Show Calendar took Auction's tab). -->
       <button id="bn-live-overview" data-tab="live-overview" aria-label="Live Sales" onclick="navigateToPage('live-overview')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
         <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><span class="bn-lb">Overview</span>
       </button>
       <button id="bn-live-shows" data-tab="live-shows" aria-label="Whatnot Shows" onclick="navigateToPage('live-shows')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
         <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.49M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14"/></svg><span class="bn-lb">Shows</span>
       </button>
-      <button id="bn-live-auction" data-tab="live-auction" aria-label="Online Auction" onclick="navigateToPage('live-auction')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
-        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 13l-7.5 7.5a2.12 2.12 0 0 1-3-3L11 10"/><path d="M16 16l6-6"/><path d="M8 8l6-6"/><path d="M9 7l8 8"/><path d="M21 11l-8-8"/></svg><span class="bn-lb">Auction</span>
+      <button id="bn-live-calendar" data-tab="live-calendar" aria-label="Show Calendar" onclick="navigateToPage('live-calendar')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg><span class="bn-lb">Calendar</span>
       </button>
       <button id="bn-live-money" data-tab="live-money" aria-label="Money Back" onclick="navigateToPage('live-money')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
         <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg><span class="bn-lb">Money</span>
@@ -1440,6 +1445,10 @@
         <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg><span class="bn-lb">Menu</span>
       </button>
     </nav>
+
+    <!-- The Show Calendar's show panel: fixed, so it lives outside #main-scroll (a fixed element
+         inside the scroller scrolls with it on iOS). `lv` gives it Live Sales' colours. -->
+    <div id="lc-sheet-root" class="lv"></div>
 
     <!-- Main content -->
     <div id="main-scroll" class="flex-1 min-w-0 overflow-y-auto max-lg:overflow-x-hidden max-lg:overscroll-contain max-lg:pb-24">
@@ -6754,6 +6763,82 @@
       .lv .lv-spark { width:120px; height:44px; flex:0 0 120px; }
       .lv .lv-select { height:36px; border-radius:10px; border:1px solid var(--lv-border); background:var(--lv-panel); color:var(--lv-ink); padding:0 10px; font-size:13px; font-weight:500; }
       .lv .lv-stack > * + * { margin-top:16px; }
+      /* Show Calendar (2026-11-03). A done show is a solid chip with Whatnot's sales; scheduled is dashed;
+         "…" = ended, Whatnot still counting; LIVE = on air. Phone: dots per show and the day's list below. */
+      .lv .lc-tiles { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-top:0; }
+      .lv .lc-tiles .lv-ctile { background:var(--lv-panel); }
+      .lv .lc-tiles .s { font-size:12px; color:var(--lv-dim); margin-top:2px; }
+      .lv .lv-ctile .v .none { color:var(--lv-dim); font-weight:500; font-size:14px; }
+      .lv .lc-inl { background:none; border:0; padding:0; font:inherit; color:var(--lv-brand); font-weight:600; cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
+      .lv .lc-mnav { display:flex; align-items:center; gap:6px; }
+      .lv .lc-mnav .t { min-width:150px; text-align:center; }
+      .lv .lc-ib { width:36px; height:36px; border-radius:10px; border:1px solid var(--lv-border); background:var(--lv-panel); color:var(--lv-ink); cursor:pointer; font-size:18px; line-height:1; display:grid; place-content:center; }
+      .lv .lc-dow { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); border-bottom:1px solid var(--lv-hair); background:var(--lv-panelHi); }
+      .lv .lc-dow div { padding:8px 10px; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--lv-dim); }
+      .lv .lc-grid { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); }
+      .lv .lc-day { min-height:132px; min-width:0; padding:6px 6px 8px; border-right:1px solid var(--lv-hair); border-bottom:1px solid var(--lv-hair); display:flex; flex-direction:column; gap:4px; background:var(--lv-panel); }
+      .lv .lc-day:nth-child(7n) { border-right:0; }
+      .lv .lc-grid .lc-day:nth-last-child(-n+7) { border-bottom:0; }
+      .lv .lc-day.out { background:var(--lv-panelHi); }
+      .lv .lc-hit { display:flex; align-items:center; justify-content:space-between; gap:4px; min-height:26px; width:100%; background:none; border:0; padding:0; color:var(--lv-ink); font:inherit; cursor:default; text-align:left; }
+      .lv .lc-day.out .lc-dn { color:var(--lv-dim); font-weight:500; }
+      .lv .lc-dn { width:26px; height:26px; border-radius:999px; display:grid; place-content:center; font-size:13px; font-weight:600; font-variant-numeric:tabular-nums; flex:0 0 26px; }
+      .lv .lc-day.today .lc-dn { background:rgb(var(--accent-green)); color:#06210f; }
+      .lv .lc-dt { font-size:12px; color:var(--lv-dim); font-variant-numeric:tabular-nums; padding-right:2px; }
+      .lv .lc-dtk, .lv .lc-dots { display:none; }
+      .lv .lc-chips { display:flex; flex-direction:column; gap:3px; }
+      .lv .lc-chip { display:flex; flex-wrap:wrap; column-gap:5px; row-gap:0; align-items:baseline; width:100%; text-align:left; border-radius:6px; padding:3px 6px; font-size:12px; line-height:1.35; border:1px solid var(--lv-hair); background:var(--lv-panelHi); color:var(--lv-ink); cursor:pointer; min-height:26px; }
+      .lv .lc-chip:hover { border-color:var(--lv-border); }
+      .lv .lc-chip:focus-visible, .lv .lc-hit:focus-visible, .lv .lc-row:focus-visible { outline:2px solid var(--lv-brand); outline-offset:1px; }
+      .lv .lc-chip .t { color:var(--lv-dim); font-variant-numeric:tabular-nums; }
+      .lv .lc-chip .n { flex:0 0 auto; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .lv .lc-chip .a { margin-left:auto; font-weight:600; font-variant-numeric:tabular-nums; }
+      .lv .lc-chip.s-scheduled, .lv .lc-chip.s-starting { background:transparent; border:1px dashed var(--lv-dim); }
+      .lv .lc-chip.s-live { border-color:rgba(34,197,94,.55); background:rgba(34,197,94,.10); }
+      .lv .lc-chip.s-live .a { color:var(--lv-good); font-size:10px; letter-spacing:.06em; }
+      .lv .lc-chip.s-counting .a, .lv .lc-chip.s-nofig .a, .lv .lc-chip.s-empty .a { color:var(--lv-dim); font-weight:500; }
+      .lv .lc-chip.s-cancelled { background:transparent; }
+      .lv .lc-chip.s-cancelled .n { text-decoration:line-through; color:var(--lv-dim); }
+      .lv .lc-lk { display:inline-grid; place-content:center; min-width:34px; height:20px; padding:0 5px; border-radius:5px; font-size:11px; font-weight:600; border:1px solid var(--lv-hair); background:var(--lv-panelHi); color:var(--lv-ink); font-variant-numeric:tabular-nums; }
+      .lv .lc-lk.s-counting { color:var(--lv-dim); }
+      .lv .lc-lk.s-live { border-color:rgba(34,197,94,.55); background:rgba(34,197,94,.10); color:var(--lv-good); font-size:10px; letter-spacing:.06em; }
+      .lv .lc-lk.s-scheduled { background:transparent; border:1px dashed var(--lv-dim); }
+      .lv .lc-lk.s-cancelled { background:transparent; text-decoration:line-through; color:var(--lv-dim); font-weight:500; }
+      .lv .lc-days { display:none; border-top:1px solid var(--lv-hair); }
+      .lv .lc-dhead { display:flex; justify-content:space-between; gap:10px; align-items:baseline; padding:12px 16px 6px; font-size:14px; font-weight:600; }
+      .lv .lc-dhead .d { font-size:13px; font-weight:500; color:var(--lv-dim); font-variant-numeric:tabular-nums; }
+      .lv .lc-empty { padding:14px 16px 16px; font-size:13px; color:var(--lv-dim); }
+      .lv .lc-row { display:grid; grid-template-columns:64px minmax(0,1fr) auto; gap:10px; align-items:start; width:100%; text-align:left; padding:10px 16px; min-height:52px; background:none; border:0; border-top:1px solid var(--lv-hair); color:var(--lv-ink); cursor:pointer; font-size:14px; }
+      .lv .lc-row .tm { color:var(--lv-dim); font-variant-numeric:tabular-nums; font-size:13px; padding-top:1px; }
+      .lv .lc-row .nm { font-weight:500; overflow-wrap:anywhere; }
+      .lv .lc-row .w { display:block; font-size:12px; color:var(--lv-dim); font-weight:400; margin-top:2px; }
+      .lv .lc-row .am { font-weight:600; font-variant-numeric:tabular-nums; }
+      .lv .lc-mc { font-size:10px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; padding:2px 6px; border-radius:999px; border:1px solid var(--lv-dim); color:var(--lv-dim); white-space:nowrap; }
+      .lv .lc-mc.s-scheduled, .lv .lc-mc.s-starting { border-style:dashed; }
+      .lv .lc-mc.s-live { border-color:rgba(34,197,94,.55); color:var(--lv-good); background:rgba(34,197,94,.10); }
+      .lv .lc-mc.s-counting { border-color:rgba(245,158,11,.40); color:var(--lv-warn); background:rgba(245,158,11,.12); }
+      /* The show panel: a drawer on the right on a desktop, a sheet from the bottom on a phone. */
+      .lv .lc-back { position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:90; }
+      .lv .lc-sheet { position:fixed; z-index:91; top:0; right:0; bottom:0; width:440px; max-width:100%; overflow-y:auto; background:var(--lv-panel); color:var(--lv-ink); border-left:1px solid var(--lv-border); padding:calc(env(safe-area-inset-top) + 18px) 20px 24px; display:flex; flex-direction:column; gap:14px; box-shadow:-12px 0 32px rgba(0,0,0,.25); }
+      .lv .lc-grab { display:none; }
+      .lv .lc-shead { display:flex; gap:12px; align-items:flex-start; }
+      .lv .lc-thumb { width:64px; height:64px; border-radius:12px; object-fit:cover; flex:0 0 64px; background:var(--lv-panelHi); border:1px solid var(--lv-card); }
+      .lv .lc-sttl { flex:1; min-width:0; }
+      .lv .lc-sttl h2 { margin:2px 0 6px; font-size:17px; font-weight:700; line-height:1.3; }
+      .lv .lc-smeta { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; font-size:13px; color:var(--lv-dim); }
+      .lv .lc-smeta .lv-chip { margin:0; }
+      .lv .lc-x { flex:0 0 40px; width:40px; height:40px; font-size:22px; }
+      .lv .lc-when { font-size:14px; font-variant-numeric:tabular-nums; }
+      .lv .lc-sheet .lv-ctiles { margin-top:0; }
+      .lv .lc-sheet .lv-ctile .v { font-size:18px; }
+      .lv .lc-sheet .lv-ctile .s { font-size:12px; color:var(--lv-dim); margin-top:2px; }
+      .lv .lc-sheet .lv-note { margin:0; }
+      .lv .lc-acts { display:flex; flex-wrap:wrap; gap:8px; }
+      .lv .lc-acts a, .lv .lc-acts button { display:inline-flex; align-items:center; gap:6px; text-decoration:none; min-height:40px; }
+      .lv .lc-go { padding:0 14px; border-radius:10px; background:rgb(var(--accent-green)); color:#06210f; font-size:13px; font-weight:700; }
+      .lv .lc-foot { font-size:12px; color:var(--lv-dim); }
+      .lv .lc-step { display:flex; justify-content:space-between; gap:10px; border-top:1px solid var(--lv-hair); padding-top:6px; margin-top:auto; }
+      .lv .lc-step .lv-link { font-size:12px; text-align:left; }
       @media (max-width:1023px) {
         .lv .lv-hero, .lv .lv-row2, .lv .lv-locs { grid-template-columns:1fr; }
         .lv .lv-big { font-size:38px; }
@@ -6765,6 +6850,30 @@
         .lv .lv-promo { grid-template-columns:repeat(2,1fr); }
         .lv .lv-promo > div { border-bottom:1px solid var(--lv-hair); }
         .lv .lv-promo > div:nth-child(even) { border-right:0; }
+        .lv .lc-tiles { grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
+        .lv .lc-tiles .lv-ctile { padding:8px 10px; }
+        .lv .lc-tiles .lv-ctile .l { font-size:9.5px; letter-spacing:.04em; }
+        .lv .lc-tiles .lv-ctile .v { font-size:16px; }
+        .lv .lc-tiles .s { display:none; }
+        .lv .lc-ib { width:40px; height:40px; }
+        .lv .lc-mnav .t { min-width:120px; }
+        .lv .lc-dow div { padding:6px 0; text-align:center; }
+        .lv .lc-day { min-height:54px; padding:0; }
+        .lv .lc-day.sel { background:var(--lv-panelHi); }
+        .lv .lc-hit { flex-direction:column; justify-content:flex-start; gap:2px; height:100%; min-height:54px; padding:4px 2px 5px; cursor:pointer; text-align:center; }
+        .lv .lc-day.out .lc-hit { cursor:default; }
+        .lv .lc-dn { width:28px; height:28px; flex-basis:28px; }
+        .lv .lc-day.sel:not(.today) .lc-dn { box-shadow:inset 0 0 0 2px var(--lv-brand); }
+        .lv .lc-dt, .lv .lc-chips { display:none; }
+        .lv .lc-dtk { display:block; font-size:10px; color:var(--lv-dim); font-variant-numeric:tabular-nums; line-height:1.1; }
+        .lv .lc-dots { display:flex; gap:3px; justify-content:center; flex-wrap:wrap; max-width:40px; }
+        .lv .lc-dots i { width:6px; height:6px; border-radius:50%; background:var(--lv-dim); }
+        .lv .lc-dots i.s-scheduled, .lv .lc-dots i.s-starting { background:transparent; box-shadow:inset 0 0 0 1.5px var(--lv-dim); }
+        .lv .lc-dots i.s-live { background:#22c55e; }
+        .lv .lc-dots i.s-cancelled { background:transparent; box-shadow:inset 0 0 0 1.5px var(--lv-dimmer); }
+        .lv .lc-days { display:block; }
+        .lv .lc-sheet { top:auto; left:0; right:0; width:auto; max-height:82vh; border-left:0; border-top:1px solid var(--lv-border); border-radius:20px 20px 0 0; box-shadow:0 -12px 32px rgba(0,0,0,.3); padding:8px 16px calc(env(safe-area-inset-bottom) + 20px); }
+        .lv .lc-grab { display:block; width:40px; height:4px; border-radius:999px; background:var(--lv-dimmer); margin:2px auto 4px; flex:0 0 4px; }
       }
     </style>
 
@@ -6861,6 +6970,29 @@
       </div>
       <div id="lv-shows-body" class="max-w-6xl mx-auto px-4 sm:px-6 pt-4 pb-6 lv-stack"></div>
     </div><!-- end #page-live-shows -->
+
+    <!-- Show Calendar (2026-11-03, ?action=live-calendar): every Whatnot show by day, done and
+         scheduled. Month navigation is in the panel bar; the store select and Refresh are here,
+         outside the render target (§4.8 trap 7). A show's panel opens in #lc-sheet-root. -->
+    <div id="page-live-calendar" class="hidden lv">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-3 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-6xl mx-auto flex items-end justify-between gap-4 flex-wrap">
+          <div>
+            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Show Calendar</h1>
+            <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Every Whatnot show, done and scheduled · times are Eastern</p>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <select class="lv-select lc-store" aria-label="Store" onchange="lcSetStore(this.value)"></select>
+            <span class="lc-updated text-[11px] text-opl-inkDim dark:text-op-inkDim"></span>
+            <button type="button" onclick="lcRefresh()" class="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-ink dark:text-op-ink hover:border-accent-green/50 transition">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+              Refresh
+            </button>
+          </div>
+        </div>
+      </div>
+      <div id="lv-calendar-body" class="max-w-6xl mx-auto px-4 sm:px-6 pt-4 pb-6 lv-stack"></div>
+    </div><!-- end #page-live-calendar -->
 
     <div id="page-live-auction" class="hidden lv">
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-3 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
@@ -13908,7 +14040,7 @@
     const FINANCIAL_PAGES = ['dashboard', 'weekly-summary', 'store-detail',
                              'all-stores-detail', 'inventory-add', 'inventory-viewer',
                              'inventory-sale', 'supply-request', 'labor',
-                             'live-overview', 'live-shows', 'live-auction', 'live-promotion', 'live-money'];
+                             'live-overview', 'live-shows', 'live-calendar', 'live-auction', 'live-promotion', 'live-money'];
     // Supply Request is the one on the list an associate may be granted (2026-11-02): the
     // worker strips its money for them, so the page is safe to open on the grant.
     if (FINANCIAL_PAGES.includes(page) && !canSeeFinancials(currentUser)
@@ -14079,6 +14211,8 @@
     if (page === 'ebay-cases') {
       if (typeof initEbayCases === 'function') initEbayCases();
     }
+    // A Show Calendar panel left open must not cover the next page.
+    if (page !== 'live-calendar' && typeof window.lcClose === 'function') window.lcClose();
     if (page.startsWith('live-')) {
       if (typeof lvInit === 'function') lvInit(page);
     }
@@ -37838,6 +37972,7 @@
 
   // Opens on This Month, or Last Month on the 1st, when this month has nothing reported yet.
   function lvInit(page) {
+    if (page === 'live-calendar') return lcInit();   // its own month-by-month read, below
     lvState.page = LV_PAGE[page] || 'overview';
     if (!lvRange) lvRange = resolvePreset(etTodayStr().slice(8) === '01' ? 'lastMonth' : 'thisMonth');
     lvSetPanelOpen(false);
@@ -37855,6 +37990,227 @@
     if (lvState.page !== 'overview' || !el('lv-chart') || typeof currentPage === 'undefined' || currentPage !== 'live-overview') return;
     clearTimeout(lvResizeT); lvResizeT = setTimeout(() => { if (lvState.data) lvDrawChart(lvSelect()); }, 150);
   });
+
+  // ═══ Show Calendar (2026-11-03, ?action=live-calendar) ═══
+  // Every Whatnot show by Eastern day, a month per read (kept per month; Refresh re-reads it). The store
+  // is Live Sales' own (lvState.store) and filters in memory. A show opens its panel in #lc-sheet-root:
+  // a drawer on a desktop, a sheet from the bottom on a phone. Built as previewed (Brian, 2026-11-03).
+  const LV_MONL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const lcState = { month: null, sel: null, open: null, months: {}, loading: false, error: null, note: '' };
+  const lcWhole = (n) => n == null ? '—' : '$' + Math.round(n).toLocaleString('en-US');
+  const lcEtFmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hourCycle: 'h23' });
+  // Rounded to the minute: Whatnot records a 2:00 show that went live at 1:59:58 PM.
+  const lcEt = (iso) => { const p = Object.fromEntries(lcEtFmt.formatToParts(new Date(Math.round(Date.parse(iso) / 6e4) * 6e4)).map(x => [x.type, x.value])); return { h: +p.hour % 24, mi: +p.minute }; };
+  const lcT12 = ({ h, mi }) => `${h % 12 || 12}:${String(mi).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+  const lcTShort = ({ h, mi }) => `${h % 12 || 12}${mi ? ':' + String(mi).padStart(2, '0') : ''}${h < 12 ? 'a' : 'p'}`;
+  // A chip rounds to 5 minutes (a 12:01 go-live reads 12p); the panel and the day list keep the minute.
+  const lcTChip = (t) => { const m = Math.round((t.h * 60 + t.mi) / 5) * 5; return lcTShort({ h: Math.floor(m / 60) % 24, mi: m % 60 }); };
+  const lcMins = (m) => m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ' ' + (m % 60) + ' min' : ''}`;
+  const lcRel = (d) => { const t = etTodayStr(); return d === t ? 'Today' : d === lvAdd(t, 1) ? 'Tomorrow' : d === lvAdd(t, -1) ? 'Yesterday' : lvLabel(d); };
+  // "$1 Starts : Womens Fashion Finds" → "Womens": a day cell is ~100–150px wide, so the chip drops the
+  // price. A first word of 3 letters or fewer takes the next ("Pre Loved / NWOT Shoes" → "Pre Loved").
+  const lcShort = (t) => {
+    const ws = String((String(t || '').split(':')[1] || t || '')).trim().replace(/’/g, "'").split(/\s+/);
+    return { Bag: 'Bags', Coat: 'Coats', Shoe: 'Shoes' }[ws[0]] || (ws[0].length <= 3 && ws[1] ? `${ws[0]} ${ws[1]}` : ws[0]) || 'Show';
+  };
+  // What a show is now: done (Whatnot's sales in), empty (its figures say nothing sold, as a restarted
+  // show does), counting (ended, figures not in yet), nofig (none came), live, scheduled, starting
+  // (start time passed, not on air yet), cancelled.
+  function lcStateOf(s, now) {
+    if (s.status === 'live') return 'live';
+    if (s.status === 'cancelled') return 'cancelled';
+    if (s.status === 'scheduled') return Date.parse(s.startAt) <= now ? 'starting' : 'scheduled';
+    if (s.sales > 0) return 'done';
+    if (s.sales === 0 || (s.sales == null && ['GENERATED', 'CALCULATED'].includes(s.calculationStatus))) return 'empty';
+    if (s.calculationStatus === 'WILL_NOT_BE_CALCULATED') return 'nofig';
+    return now - Date.parse(s.startAt) < 2 * 864e5 ? 'counting' : 'nofig';
+  }
+  const LC_LABEL = { done: 'Done', empty: 'No sales', counting: 'Still counting', nofig: 'No figures', live: 'Live', scheduled: 'Scheduled', starting: 'Starting', cancelled: 'Cancelled' };
+  const lcEnded = (st) => ['done', 'empty', 'counting', 'nofig'].includes(st);
+  // Store names from the calendar's own reads: the Overview's data may not be loaded.
+  const lcUnit = (code) => { for (const m of Object.values(lcState.months)) { const u = (m.units || []).find(x => x.code === code); if (u) return u.name; } return code; };
+
+  function lcPrep(s, now) {
+    return { ...s, st: lcEt(s.startAt), state: lcStateOf(s, now), short: lcShort(s.title),
+      url: `https://www.whatnot.com/dashboard/lives/edit/${encodeURIComponent(s.showId)}` };
+  }
+  function lcShows() {   // the month on screen, in the chosen store
+    const m = lcState.months[lcState.month], now = Date.now();
+    return m ? (m.shows || []).filter(s => lvState.store === 'all' || s.store === lvState.store).map(s => lcPrep(s, now))
+      .sort((a, b) => Date.parse(a.startAt) - Date.parse(b.startAt)) : [];
+  }
+  async function lcLoad(force) {
+    const ym = lcState.month;
+    if (!force && lcState.months[ym]) return lcRender();
+    lcState.loading = true; lcState.error = null; lcRender();
+    try {
+      const res = await fetch(WORKER_BASE + `?action=live-calendar&from=${ym}-01&to=${ymdLastOfMonth(ym + '-01')}`, { credentials: 'include' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.ok) throw Object.assign(new Error(body.error || `HTTP ${res.status}`), { code: body.code, status: res.status });
+      lcState.months[ym] = { ...body, loadedAt: new Date() };
+      if (lvState.store !== 'all' && !(body.units || []).some(u => u.code === lvState.store)) lvState.store = 'all';
+    } catch (e) {
+      lcState.error = e.code === 'UNCLASSIFIED_ACTION' ? 'The server has not been updated for the Show Calendar yet.'
+        : e.status === 503 ? 'Live Sales is not set up yet.' : (e && e.message ? e.message : String(e));
+    }
+    lcState.loading = false;
+    if (ym === lcState.month) lcRender();
+  }
+  function lcInit() {
+    const today = etTodayStr();
+    if (!lcState.month) { lcState.month = today.slice(0, 7); lcState.sel = today; }
+    lcLoad(false);
+  }
+
+  function lcTiles(shows) {
+    const ended = shows.filter(s => lcEnded(s.state)), done = shows.filter(s => s.state === 'done');
+    const ahead = shows.filter(s => s.state === 'scheduled' || s.state === 'starting');
+    const gap = shows.filter(s => s.state === 'counting' || s.state === 'nofig').length;
+    const mName = LV_MONL[+lcState.month.slice(5) - 1], now = Date.now();
+    const next = shows.find(s => s.state === 'live' || (s.state === 'scheduled' && Date.parse(s.startAt) > now));
+    let nextTxt = '';
+    if (next) {
+      const inMin = Math.round((Date.parse(next.startAt) - now) / 6e4);
+      const when = next.state === 'live' ? 'live now' : inMin < 120 ? `in ${lcMins(Math.max(inMin, 1))}` : `${lcRel(next.date)} ${lcT12(next.st)}`;
+      nextTxt = `Next: <button class="lc-inl" onclick="lcOpen('${lvEsc(next.showId)}')">${lvEsc(next.short)}</button> · ${lvEsc(when)} · ${lvEsc(lcUnit(next.store))}`;
+    }
+    const t = (l, v, sub) => `<div class="lv-ctile"><div class="l">${mName} · ${l}</div><div class="v">${v}</div><div class="s">${sub}</div></div>`;
+    return `<div class="lc-tiles">${t('shows done', lvInt(ended.length), gap ? `${gap} without Whatnot figures yet` : 'Whatnot’s figure for every show')}${
+      t('sales', done.length ? fmtDollar(done.reduce((n, s) => n + s.sales, 0)) : '<span class="none">—</span>', 'Per-show figures, cancelled orders left out')}${
+      t('scheduled', lvInt(ahead.length), nextTxt || 'Nothing else scheduled this month')}</div>`;
+  }
+  function lcChip(s) {
+    const right = s.state === 'done' ? lcWhole(s.sales) : s.state === 'empty' ? '$0' : s.state === 'live' ? 'LIVE' : s.state === 'counting' ? '…' : '';
+    const aria = `${s.title}, ${lcT12(s.st)}, ${lcUnit(s.store)}, ${LC_LABEL[s.state]}${s.state === 'done' ? ', ' + fmtDollar(s.sales) : ''}`;
+    return `<button class="lc-chip s-${s.state}" onclick="lcOpen('${lvEsc(s.showId)}')" aria-label="${lvEsc(aria)}"><span class="t">${lcTChip(s.st)}</span><span class="n">${lvEsc(s.short)}</span><span class="a">${right}</span></button>`;
+  }
+  function lcGrid(shows) {
+    const first = lcState.month + '-01', startDow = lvDay(first).getUTCDay(), today = etTodayStr();
+    const daysIn = Number(ymdLastOfMonth(first).slice(8)), cells = Math.ceil((startDow + daysIn) / 7) * 7, byDay = {};
+    for (const s of shows) (byDay[s.date] ||= []).push(s);
+    let html = '';
+    for (let i = 0; i < cells; i++) {
+      const d = lvAdd(first, i - startDow), out = !d.startsWith(lcState.month), list = out ? [] : (byDay[d] || []);
+      const done = list.filter(s => s.state === 'done'), tot = done.reduce((n, s) => n + s.sales, 0);
+      const cls = ['lc-day', out && 'out', d === today && 'today', !out && d === lcState.sel && 'sel'].filter(Boolean).join(' ');
+      const aria = `${lvLabel(d)}, ${list.length} show${list.length === 1 ? '' : 's'}${done.length ? ', ' + fmtDollar(tot) : ''}`;
+      html += `<div class="${cls}"><button class="lc-hit"${out ? ' tabindex="-1" disabled' : ` onclick="lcPickDay('${d}')" aria-label="${aria}"`}>
+          <span class="lc-dn">${lvDay(d).getUTCDate()}</span>${done.length ? `<span class="lc-dt">${lcWhole(tot)}</span><span class="lc-dtk">${lvK(Math.round(tot))}</span>` : ''}
+          <span class="lc-dots">${list.map(s => `<i class="s-${s.state}"></i>`).join('')}</span></button>
+        <div class="lc-chips">${list.map(lcChip).join('')}</div></div>`;
+    }
+    return { html, byDay };
+  }
+  function lcDayList(byDay) {
+    if (!lcState.sel || !lcState.sel.startsWith(lcState.month)) return '<div class="lc-days"><div class="lc-empty">Tap a day to see its shows.</div></div>';
+    const list = byDay[lcState.sel] || [], done = list.filter(s => s.state === 'done'), d = lvDay(lcState.sel);
+    const head = `${LV_DOWL[d.getUTCDay()]}, ${LV_MONL[d.getUTCMonth()]} ${d.getUTCDate()}`;
+    const sub = list.length ? `${list.length} show${list.length === 1 ? '' : 's'}${done.length ? ' · ' + fmtDollar(done.reduce((n, s) => n + s.sales, 0)) : ''}` : 'No shows';
+    const row = (s) => {
+      const len = s.endedAt ? Math.round((Date.parse(s.endedAt) - Date.parse(s.startAt)) / 6e4) : s.minutes;
+      const w = [lcUnit(s.store), len ? lcMins(len) : null, s.orders != null ? `${lvInt(s.orders)} orders` : null].filter(Boolean).join(' · ');
+      const right = s.state === 'done' ? fmtDollar(s.sales) : `<span class="lc-mc s-${s.state}">${LC_LABEL[s.state]}</span>`;
+      return `<button class="lc-row" onclick="lcOpen('${lvEsc(s.showId)}')"><span class="tm">${lcT12(s.st)}</span><span class="nm">${lvEsc(s.title)}<span class="w">${lvEsc(w)}</span></span><span class="am">${right}</span></button>`;
+    };
+    return `<div class="lc-days"><div class="lc-dhead"><span>${head}</span><span class="d">${sub}</span></div>${list.map(row).join('') || '<div class="lc-empty">Nothing scheduled.</div>'}</div>`;
+  }
+  function lcPanel(shows) {
+    const [y, m] = lcState.month.split('-').map(Number), g = lcGrid(shows);
+    return `<div class="lv-panel"><div class="lv-bar"><div class="lc-mnav"><button class="lc-ib" onclick="lcStep(-1)" aria-label="Previous month">‹</button>
+        <span class="t">${LV_MONL[m - 1]} ${y}</span><button class="lc-ib" onclick="lcStep(1)" aria-label="Next month">›</button></div>
+        <div class="r"><button class="lv-btn" onclick="lcToday()">Today</button></div></div>
+      ${shows.length ? '' : '<div class="lv-status" style="padding-bottom:10px">No Whatnot shows this month.</div>'}
+      <div class="lc-dow">${LV_DOW.map(d => `<div>${d}</div>`).join('')}</div><div class="lc-grid">${g.html}</div>
+      ${lcDayList(g.byDay)}
+      <div class="lv-legend"><span class="lv-k"><span class="lc-lk">$698</span>Done: Whatnot’s sales for the show</span>
+        <span class="lv-k"><span class="lc-lk s-counting">…</span>Ended, Whatnot still counting</span>
+        <span class="lv-k"><span class="lc-lk s-live">LIVE</span>On air now</span>
+        <span class="lv-k"><span class="lc-lk s-scheduled">&nbsp;</span>Scheduled</span>
+        <span class="lv-k"><span class="lc-lk s-cancelled">Show</span>Cancelled</span>
+        <span>Day total = shows with Whatnot’s figures</span></div></div>`;
+  }
+
+  function lcSheet(s, shows) {
+    const len = s.endedAt ? Math.round((Date.parse(s.endedAt) - Date.parse(s.startAt)) / 6e4) : null;
+    const when = `${lcRel(s.date)} · ${lcT12(s.st)}${s.endedAt ? ' – ' + lcT12(lcEt(s.endedAt)) : ''}${len ? ` · ${lcMins(len)}` : s.minutes ? ` · ${lcMins(s.minutes)} live` : ''}`;
+    const chip = { done: 'ok', live: 'ok', counting: 'need', starting: 'need' }[s.state] || 'no';
+    const fig = (l, v, sub) => `<div class="lv-ctile"><div class="l">${l}</div><div class="v">${v}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`;
+    const none = '<span class="none">—</span>';
+    const soFar = s.soFar ? fig('So far', fmtDollar(s.soFar.sales), `${lvInt(s.soFar.orders)} order${s.soFar.orders === 1 ? '' : 's'}, cancelled ones left out`) : '';
+    const store = fig('Store', lvEsc(lcUnit(s.store)), s.store === 'BL1' ? 'Starts before 3:30 PM' : 'Starts 3:30 PM or later');
+    let body = '';
+    if (s.state === 'done') {
+      body = `<div class="lv-ctiles">${fig('Sales', fmtDollar(s.sales), 'Cancelled orders left out')}${fig('Orders', lvInt(s.orders), s.orders ? `${fmtDollar(s.sales / s.orders)} average` : '')}
+        ${fig('Buyers', s.buyers == null ? none : lvInt(s.buyers), s.newBuyers != null ? `${lvInt(s.newBuyers)} new · ${lvInt(s.returning)} returning` : '')}${fig('Viewers', s.viewers == null ? none : lvInt(s.viewers), s.peak != null ? `${lvInt(s.peak)} at the peak` : '')}
+        ${fig('Est. earnings', s.earnings == null ? none : fmtDollar(s.earnings), 'After Whatnot’s fees')}${fig('Cancelled or failed', s.lost == null ? none : lvInt(s.lost.orders), s.lost == null ? 'Its orders have not loaded yet' : s.lost.orders ? `${fmtDollar(s.lost.subtotal)} of orders` : 'None')}</div>`;
+    } else if (s.state === 'empty') {
+      body = `<div class="lv-note"><b>Nothing sold.</b> Whatnot has figures for this show and they are zero: no orders.</div>`;
+    } else if (s.state === 'counting') {
+      body = `<div class="lv-note"><b>Still counting.</b> The show ended; Whatnot usually has its figures within a few hours. Until then the Overview shows it under “So far, before the recap”.</div>${soFar ? `<div class="lv-ctiles">${soFar}${store}</div>` : ''}`;
+    } else if (s.state === 'nofig') {
+      body = `<div class="lv-note"><b>No Whatnot figures.</b> Whatnot has not sent figures for this show. It is still counted in the recap totals.</div>`;
+    } else if (s.state === 'live') {
+      body = `<div class="lv-ctiles">${soFar || fig('So far', none, 'Its orders have not loaded yet')}${store}</div>`;
+    } else if (s.state === 'scheduled' || s.state === 'starting') {
+      const inMin = Math.round((Date.parse(s.startAt) - Date.now()) / 6e4), r = ((lcState.months[lcState.month] || {}).recent || {})[s.title];
+      body = `<div class="lv-ctiles">${fig('Starts', inMin > 0 ? (inMin < 24 * 60 ? 'in ' + lcMins(inMin) : lvEsc(lcRel(s.date))) : 'Now', lcT12(s.st) + ' Eastern')}${store}
+        ${fig('This show lately', r ? fmtDollar(r.avg) : none, r ? `Average of the last ${r.n} show${r.n === 1 ? '' : 's'} with this title (${lcWhole(r.min)}–${lcWhole(r.max)})` : 'No earlier show with this title sold anything')}</div>`;
+    } else body = `<div class="lv-note"><b>Cancelled</b> in Whatnot.</div>`;
+    const i = shows.findIndex(x => x.showId === s.showId), prev = shows[i - 1], next = shows[i + 1];
+    const step = (x, back) => x ? `<button class="lv-link" onclick="lcOpen('${lvEsc(x.showId)}')">${back ? '‹ ' : ''}${lvEsc(lcRel(x.date))} ${lcTShort(x.st)} ${lvEsc(x.short)}${back ? '' : ' ›'}</button>` : '<span></span>';
+    return `<div class="lc-back" onclick="lcClose()"></div>
+      <aside class="lc-sheet" role="dialog" aria-modal="true" aria-labelledby="lc-sh-title">
+        <div class="lc-grab"></div>
+        <div class="lc-shead">${s.thumbnail ? `<img class="lc-thumb" src="${lvEsc(s.thumbnail)}" alt="" onerror="this.remove()">` : ''}
+          <div class="lc-sttl"><h2 id="lc-sh-title">${lvEsc(s.title)}</h2><div class="lc-smeta"><span class="lv-chip ${chip}">${LC_LABEL[s.state]}</span><span>${lvEsc(lcUnit(s.store))} · ${lvEsc(s.store)}</span></div></div>
+          <button class="lc-ib lc-x" onclick="lcClose()" aria-label="Close">×</button></div>
+        <div class="lc-when">${lvEsc(when)}</div>
+        ${body}
+        <div class="lc-acts"><a class="lc-go" href="${lvEsc(s.url)}" target="_blank" rel="noopener">Open in Whatnot <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
+          ${lcEnded(s.state) ? `<button class="lv-btn" onclick="lcShowDay('${s.date}')">See in Whatnot shows</button>` : ''}</div>
+        <div class="lc-foot">Opens the show in Whatnot’s seller dashboard, which needs the Whatnot login.</div>
+        <div class="lc-step">${step(prev, true)}${step(next, false)}</div>
+      </aside>`;
+  }
+
+  function lcControls() {
+    const m = lcState.months[lcState.month], units = (m && m.units) || [];
+    document.querySelectorAll('.lc-store').forEach(s => {
+      s.innerHTML = `<option value="all">All stores</option>` + units.map(u => `<option value="${u.code}"${u.code === lvState.store ? ' selected' : ''}>${lvEsc(u.name)}</option>`).join('');
+      s.value = lvState.store;
+      s.classList.toggle('hidden', units.length < 2);
+    });
+    document.querySelectorAll('.lc-updated').forEach(s => {
+      s.textContent = m && m.loadedAt ? 'Updated ' + m.loadedAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
+    });
+  }
+  function lcRender() {
+    lcControls();
+    const body = el('lv-calendar-body'), root = el('lc-sheet-root');
+    if (!body) return;
+    const m = lcState.months[lcState.month];
+    if (lcState.loading && !m) {
+      body.innerHTML = `<div class="lv-card"><div class="skel" style="height:44px;width:60%;border-radius:8px"></div></div><div class="lv-card"><div class="skel" style="height:320px;border-radius:8px"></div></div>`;
+    } else if (lcState.error && !m) {
+      body.innerHTML = `<div class="lv-err"><b>Couldn't load the Show Calendar.</b> ${lvEsc(lcState.error)} <button class="lv-btn" style="margin-left:8px" onclick="lcRefresh()">Retry</button></div>`;
+    } else if (m) {
+      const shows = lcShows();
+      body.innerHTML = lcTiles(shows) + lcPanel(shows);
+    }
+    const open = lcState.open && m && lcShows().find(s => s.showId === lcState.open);
+    if (root) root.innerHTML = open ? lcSheet(open, lcShows()) : '';
+    if (!open) lcState.open = null;
+  }
+  window.lcRefresh = () => lcLoad(true);
+  window.lcSetStore = (v) => { lvState.store = v; lcRender(); };
+  window.lcStep = (n) => { lcState.month = ymdMonthShift(lcState.month + '-01', n).slice(0, 7); lcState.open = null; lcLoad(false); };
+  window.lcToday = () => { const t = etTodayStr(); lcState.month = t.slice(0, 7); lcState.sel = t; lcLoad(false); };
+  window.lcPickDay = (d) => { lcState.sel = d; lcRender(); };
+  window.lcOpen = (id) => { lcState.open = id; const s = lcShows().find(x => x.showId === id); if (s) lcState.sel = s.date; lcRender(); };
+  window.lcClose = () => { lcState.open = null; lcRender(); };
+  // "See in Whatnot shows": that day on the Whatnot Shows page.
+  window.lcShowDay = (d) => { lcState.open = null; lcRender(); lvRange = resolvePreset('custom', d, d); lvState.showAll = true; navigateToPage('live-shows'); };
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && lcState.open) window.lcClose(); });
 
   // ── Which business the session is currently "inside" ─────────────
   // Kept in sessionStorage, not memory: landingPageFor() is also called when a
@@ -38684,6 +39040,7 @@
     'nav-ebay-cases': 'ecom',
     'nav-live-overview': 'live',
     'nav-live-shows': 'live',
+    'nav-live-calendar': 'live',
     'nav-live-auction': 'live',
     'nav-live-promotion': 'live',
     'nav-live-money': 'live',
@@ -39206,9 +39563,9 @@
     // rule invented here would have to be unpicked once that lands.
     const ebNav = el('nav-ebay-cases');
     if (ebNav) ebNav.classList.toggle('hidden', !userBusinesses(user).some(b => b.id === 'ecom'));
-    // Live Sales' five pages, on the same rule: holding the business.
+    // Live Sales' six pages, on the same rule: holding the business.
     const holdsLive = userBusinesses(user).some(b => b.id === 'live');
-    ['nav-live-overview', 'nav-live-shows', 'nav-live-auction', 'nav-live-promotion', 'nav-live-money']
+    ['nav-live-overview', 'nav-live-shows', 'nav-live-calendar', 'nav-live-auction', 'nav-live-promotion', 'nav-live-money']
       .forEach(id => { const n = el(id); if (n) n.classList.toggle('hidden', !holdsLive); });
     // The three catalog pages carry the old single Inventory page's audience: admins
     // only. The GROUP wrapper they sit in is gated further down, once binDumpRoles is
@@ -41212,7 +41569,7 @@
       // Live Sales' bar, each tab on its sidebar item (which exists only inside that business).
       gate('bn-live-overview', vis('nav-live-overview'), 'flex');
       gate('bn-live-shows', vis('nav-live-shows'), 'flex');
-      gate('bn-live-auction', vis('nav-live-auction'), 'flex');
+      gate('bn-live-calendar', vis('nav-live-calendar'), 'flex');
       gate('bn-live-money', vis('nav-live-money'), 'flex');
       // Manager bar: Dashboard · Retail · Submit · Supply · Menu. Price Scan was a
       // sixth tab here until Brian moved it to the Menu (2026-09-22); that is what

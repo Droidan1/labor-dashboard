@@ -1,3 +1,30 @@
+# Live Sales: Show Calendar (2026-11-03)
+
+**Ask (Brian):** a page in the Whatnot (Live Sales) business: a calendar of every show, scheduled and past, each one
+clickable → preview first (`_preview/live-sales-show-calendar.html`, real shows, gitignored) → "Build as previewed".
+**Decided (as previewed):** Calendar takes Auction's bottom-bar tab (Auction moves to the Menu); show pictures kept
+(new column); per-show figures are Whatnot's (cancelled left out), so they can differ slightly from the recap totals;
+scheduled shows show "this show lately" (average of the last five of that title that sold).
+
+- [x] migration-087: `whatnot_shows.ended_at`, `thumbnail_url` (additive; not idempotent — a re-run fails on the
+      duplicate column and changes nothing). The worker checks for the column, so either deploy order is safe
+- [x] worker: `syncWhatnotShows` reads scheduled (every page), cancelled, live, then ended. A stored scheduled or live
+      show no list returns is asked for once (`GET /shows/{id}`): 404 → status 'removed' (no reader shows it), else its
+      real status (e.g. `stopped`). ~4 calls an hour when nothing changed. Readers of final figures all filter
+      `status = 'ended'`, so the new statuses reach none of them
+- [x] worker: `?action=live-calendar&from&to[&store]` (business `live`): every show in the range but removed, with
+      Whatnot's figures, orders so far, cancelled/failed, end time, picture; `recent` per scheduled title.
+      `liveScope()` now holds live-sales' date/unit/store checks for both reads
+- [x] client: `#page-live-calendar` (nav + bar `Calendar`): month grid of chips (desktop) / dots + the day's list
+      (phone), month tiles, legend; a show's panel (drawer / bottom sheet) with figures, so-far, start + store + recent
+      average, Open in Whatnot, See in Whatnot shows (that day on the Shows page). CACHE_NAME v296
+- [x] tests: test-whatnot 84/84 (scheduled/cancelled stored, the sweep, https-only pictures, no-087 database);
+      test-live-sales 73/73 (§8: gate, validation, every status but removed, figures, so far, recent, scope, no
+      writes, no-087); six deliberate breaks each caught. browser-live-sales 341/341 (§7 calendar in light/dark/OLED at
+      1400 and 393, old worker); browser-mobile-menu: the live bar passes (5 associate failures identical on main).
+      npm test: all but test-briefing-margin, which fails identically on main
+- [ ] Deploy: migration-087 (staging, prod) and the worker in either order, then merge
+
 # Live Sales: date-range panel opens off-screen on a tablet-width phone (2026-11-02)
 
 **Ask (Brian):** screenshot of the Live Sales Overview with the range panel cut off at the left → "fix this on mobile".

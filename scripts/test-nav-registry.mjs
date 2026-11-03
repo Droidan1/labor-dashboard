@@ -86,8 +86,8 @@ ok(ecomItems.length >= 1, `E-Commerce owns at least one nav item; got [${ecomIte
 // ── Live Sales (migration-085) is seeded and owns its five pages ───────────
 ok(seeded.has('live'), `migration-085 seeds the live business; got [${[...seeded]}]`);
 const liveItems = Object.entries(registry).filter(([, v]) => v === 'live').map(([k]) => k).sort();
-ok(JSON.stringify(liveItems) === JSON.stringify(['nav-live-auction', 'nav-live-money', 'nav-live-overview', 'nav-live-promotion', 'nav-live-shows']),
-   `Live Sales owns exactly its five nav items; got [${liveItems}]`);
+ok(JSON.stringify(liveItems) === JSON.stringify(['nav-live-auction', 'nav-live-calendar', 'nav-live-money', 'nav-live-overview', 'nav-live-promotion', 'nav-live-shows']),
+   `Live Sales owns exactly its six nav items (the Show Calendar, 2026-11-03); got [${liveItems}]`);
 
 // ── The mobile More sheet must mirror the sidebar, not diverge from it ─────
 // Every bottom-nav gate is written as gate('more-x', vis('nav-y')); if nav-y does
