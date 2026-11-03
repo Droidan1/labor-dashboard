@@ -94,10 +94,11 @@ const EXPECT = {
   ecom: { role: 'superuser', businesses: [BL, ECOM], biz: 'ecom',
     bar: ['eBay Cases', 'Menu'],
     menu: [['E-Commerce', ['ebay-cases']], ['Account', ['@switch', 'settings', '@signout']]] },
-  // Live Sales (migration-085): four tabs + Menu; Promotion is reached from the Menu.
+  // Live Sales (migration-085): four tabs + Menu. The Show Calendar took Auction's tab (2026-11-03), so
+  // Online Auction and Promotion are reached from the Menu.
   live: { role: 'superuser', businesses: [BL, ECOM, LIVE], biz: 'live',
-    bar: ['Overview', 'Shows', 'Auction', 'Money', 'Menu'],
-    menu: [['Live Sales', ['live-overview', 'live-shows', 'live-auction', 'live-promotion', 'live-money']], ['Account', ['@switch', 'settings', '@signout']]] },
+    bar: ['Overview', 'Shows', 'Calendar', 'Money', 'Menu'],
+    menu: [['Live Sales', ['live-overview', 'live-shows', 'live-calendar', 'live-auction', 'live-promotion', 'live-money']], ['Account', ['@switch', 'settings', '@signout']]] },
 };
 
 const results = [];

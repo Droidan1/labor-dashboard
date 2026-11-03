@@ -30,11 +30,18 @@ const blocked = globalThis.fetch;
 // 2026-10-28 and -29 are EDT (UTC-4). 3:30 PM Eastern = 19:30Z.
 const SHOWS = [
   { id: 'sh-c', title: 'Rehearsal', status: 'ended', scheduled_start_at: '2026-10-28T16:00:00Z', updated_at: 'u1' },
-  { id: 'sh-a', title: 'Morning apparel', status: 'ended', scheduled_start_at: '2026-10-28T17:00:00Z', updated_at: 'u1' },
+  { id: 'sh-a', title: 'Morning apparel', status: 'ended', scheduled_start_at: '2026-10-28T17:00:00Z', ended_at: '2026-10-28T19:05:00.250Z', updated_at: 'u1' },
   { id: 'sh-b', title: 'Battle Creek night', status: 'ended', scheduled_start_at: '2026-10-28T23:00:00Z', updated_at: 'u1' },
   // Scheduled 3:20 PM (BL1) but went live 3:40 PM (BL14): the real start decides, as in the recap.
   { id: 'sh-d', title: 'Late start', status: 'ended', scheduled_start_at: '2026-10-29T19:20:00Z', updated_at: 'u1' },
-  { id: 'sh-next', title: 'Next week', status: 'scheduled', scheduled_start_at: '2026-11-04T17:00:00Z', updated_at: 'u1' },
+  { id: 'sh-next', title: 'Next week', status: 'scheduled', scheduled_start_at: '2026-11-04T17:00:00Z', updated_at: 'u1',
+    thumbnail: { id: 't1', url: 'https://images.whatnot.com/next.jpg' } },
+  // Two more on the schedule (the Show calendar, 2026-11-03): one is deleted in Whatnot before run 2, the
+  // other moves to `stopped`, a status no list pass reads. A cancelled show sits in its own list.
+  { id: 'sh-gone', title: 'Deleted later', status: 'scheduled', scheduled_start_at: '2026-11-05T17:00:00Z', updated_at: 'u1' },
+  { id: 'sh-stop', title: 'Stopped later', status: 'scheduled', scheduled_start_at: '2026-11-06T22:00:00Z', updated_at: 'u1',
+    thumbnail: { id: 't2', url: 'javascript:alert(1)' } },
+  { id: 'sh-x', title: 'Called off', status: 'cancelled', scheduled_start_at: '2026-10-31T17:00:00Z', updated_at: 'u1' },
   // On air at NOW (11 AM Eastern, 10-30): stored so its orders have a store and a day before it ends.
   { id: 'sh-live', title: 'Coat finds', status: 'live', scheduled_start_at: '2026-10-30T15:00:00Z', updated_at: 'u1' },
 ];
@@ -97,6 +104,7 @@ const whatnot = async (u, init) => {
     return res(200, page(q.get('reverse') === 'false' ? list : [...list].reverse(), q));
   }
   let m;
+  if ((m = p.match(/^\/shows\/([^/]+)$/))) { const sh = SHOWS.find(x => x.id === m[1]); return sh ? res(200, sh) : res(404, {}); }
   if ((m = p.match(/^\/analytics\/shows\/([^/]+)$/))) { const a = analyticsFor(m[1]); return a ? res(200, { show_id: m[1], ...a }) : res(404, {}); }
   if (p === '/orders') {
     if (throttleNextOrders) { throttleNextOrders = false; return res(429, { type: 'rate-limited', status: 429 }, { 'Retry-After': '0' }); }
@@ -171,8 +179,18 @@ throttleNextOrders = true;
 const r1 = await runAt();
 ok(r1 && !r1.error, 'run 1 (the hourly cron) has no error: ' + JSON.stringify(r1 && (r1.error || r1.skipped)));
 eq([r1?.crossCheck?.gaps, r1?.crossCheck?.pushed], [1, 1], 'run 1: one gap (BL14 10-28), pushed');
-eq([r1.complete, r1.shows, r1.orders, r1.backfill], [true, 5, 60, 'done'], 'run 1: 4 ended shows + the live one (not the scheduled one), all 60 orders (head 50 + backfill 10), backfill done');
-ok(calls.every(c => !c.startsWith('/shows') || /status=(ended|live)/.test(c)), 'shows are asked for ended and live only');
+eq([r1.complete, r1.shows, r1.orders, r1.backfill], [true, 9, 60, 'done'], 'run 1: 4 ended shows, the live one, 3 scheduled and 1 cancelled; all 60 orders (head 50 + backfill 10), backfill done');
+eq(calls.filter(c => c.startsWith('/shows')).map(c => c.match(/status=(\w+)/)[1]), ['scheduled', 'cancelled', 'live', 'ended'],
+  'shows are read scheduled, cancelled, live, then ended (so ended has the last word on a show that just ended)');
+ok(calls.some(c => /status=scheduled.*reverse=false|reverse=false.*status=scheduled/.test(c)), 'the schedule is read soonest first');
+eq(db.prepare("SELECT id, status, store, show_date FROM whatnot_shows WHERE status IN ('scheduled', 'cancelled') ORDER BY id").all(), [
+  { id: 'sh-gone', status: 'scheduled', store: 'BL1', show_date: '2026-11-05' }, { id: 'sh-next', status: 'scheduled', store: 'BL1', show_date: '2026-11-04' },
+  { id: 'sh-stop', status: 'scheduled', store: 'BL14', show_date: '2026-11-06' }, { id: 'sh-x', status: 'cancelled', store: 'BL1', show_date: '2026-10-31' },
+], 'scheduled and cancelled shows are stored with the store and day of their start (5 PM Eastern = Battle Creek)');
+eq(db.prepare("SELECT id, ended_at, thumbnail_url FROM whatnot_shows WHERE id IN ('sh-a', 'sh-next', 'sh-stop') ORDER BY id").all(), [
+  { id: 'sh-a', ended_at: '2026-10-28T19:05:00.250Z', thumbnail_url: null }, { id: 'sh-next', ended_at: null, thumbnail_url: 'https://images.whatnot.com/next.jpg' },
+  { id: 'sh-stop', ended_at: null, thumbnail_url: null },
+], 'migration-087: the end time and an https picture are kept; a picture that is not https is not');
 eq(db.prepare("SELECT status, store, show_date FROM whatnot_shows WHERE id = 'sh-live'").get(), { status: 'live', store: 'BL1', show_date: '2026-10-30' },
   'the live show is stored, with the store and day of its start');
 ok(!calls.includes('/analytics/shows/sh-live'), 'a live show has no analytics read (it has not ended)');
@@ -213,7 +231,7 @@ const showsRead = async (user, q = 'from=2026-10-28&to=2026-10-29') => {
   ok(r2 && !r2.error, 'run 2 ran: ' + JSON.stringify(r2 && (r2.error || r2.skipped)));
   eq([r2?.crossCheck?.gaps, r2?.crossCheck?.pushed], [1, 0], 'run 2: the same gap is not pushed again');
   eq([r2?.items, r2?.shows, r2?.orders], [11, 0, 60], 'run 2: 11 item lines for the 10 backfilled orders (one is a 2-pack); unchanged shows; 3 days of orders re-read');
-  eq(calls.filter(c => c.startsWith('/shows')).map(c => c.match(/status=(\w+)/)[1]), ['live', 'ended'], 'when nothing changed: one call for live shows, one page of ended');
+  eq(calls.filter(c => c.startsWith('/shows')).map(c => c.match(/status=(\w+)/)[1]), ['scheduled', 'cancelled', 'live', 'ended'], 'when nothing changed: one call each for scheduled, cancelled, live, and one page of ended');
   ok(!calls.some(c => /^\/orders\/\d+\/items/.test(c) && Number(c.split('/')[2]) > 1010), 'orders already itemised are not asked for again');
   shDCalculated = true;
   const r3 = await runAt();
@@ -278,6 +296,32 @@ const showsRead = async (user, q = 'from=2026-10-28&to=2026-10-29') => {
   calls = [];
   await runAt();
   ok(!calls.includes('/analytics/shows/sh-d'), 'and is never read again');
+}
+
+// ── 2c. The Show calendar's schedule (2026-11-03) ──────────────────────────
+// A scheduled show no list returns any more has been deleted, or moved to a status no pass reads
+// (`stopped`). Each is asked for once: a 404 is kept as 'removed', which no reader shows.
+{
+  SHOWS.splice(SHOWS.findIndex(x => x.id === 'sh-gone'), 1);
+  Object.assign(SHOWS.find(x => x.id === 'sh-stop'), { status: 'stopped', updated_at: 'u2' });
+  calls = [];
+  const r = await runAt();
+  ok(r && !r.error, 'the run after a delete and a stop has no error: ' + JSON.stringify(r && r.error));
+  eq(calls.filter(c => /^\/shows\/sh-/.test(c)).sort(), ['/shows/sh-gone', '/shows/sh-stop'], 'the two scheduled shows no list returned are asked for, once each');
+  eq(db.prepare("SELECT id, status FROM whatnot_shows WHERE id IN ('sh-gone', 'sh-stop') ORDER BY id").all(),
+    [{ id: 'sh-gone', status: 'removed' }, { id: 'sh-stop', status: 'stopped' }], 'a 404 is kept as removed; the other takes the status Whatnot gives');
+  calls = [];
+  await runAt();
+  ok(!calls.some(c => /^\/shows\/sh-/.test(c)), 'and neither is asked for again the next hour');
+}
+// Before migration-087 the sync still stores every show, without the end time and picture.
+{
+  const { db: db0, env: env0 } = makeEnv(repo);
+  for (const m of ['015', '084']) db0.exec(fs.readFileSync(path.join(repo, `migration-${m}.sql`), 'utf8'));
+  env0.WHATNOT_API_TOKEN = 'wn_pat_tk_test';
+  ok(!db0.prepare('PRAGMA table_info(whatnot_shows)').all().some(c => c.name === 'thumbnail_url'), 'this database has no migration-087 columns');
+  const r = await (await worker.fetch(req('/?action=whatnot-sync', { user: 'u-su', method: 'POST' }), env0, ctx)).json();
+  eq([r.error, db0.prepare('SELECT COUNT(*) n FROM whatnot_shows').get().n], [undefined, 7], 'before migration-087: no error, every listed show stored (sh-stop is in no list now)');
 }
 
 // ── 3. whatnot-items ───────────────────────────────────────────────────────

@@ -255,7 +255,8 @@ V1 "comfortable" density:
     they hold that page and no dashboard, then Menu. **Buy** sits after
     Price Scan for one who can print (`psCanPrint`): it opens Price Scan's
     Buy sheet. E-Commerce: eBay Cases · Menu. Live Sales: Overview ·
-    Shows · Auction · Money · Menu (Promotion is on the Menu).
+    Shows · Calendar · Money · Menu (Online Auction and Promotion are on the Menu;
+    the Show Calendar took Auction's tab, 2026-11-03).
 
   Tabs mirror the sidebar (`vis('nav-…')`). The lit tab is **derived**:
   the page's own visible tab, Dashboard for the two detail pages,

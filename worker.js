@@ -3807,6 +3807,33 @@ function itemRangeScope(url, currentUser, corsJson) {
   return { from, to, stores, days };
 }
 
+// The Live Sales reads' range and stores (live-sales, live-calendar), or the refusal: real dates at
+// most 92 days apart (400, before anything is read), the business set up (503), then which stores.
+// The business gate decides WHETHER you reach Live Sales (ACTION_BUSINESS); this decides WHICH stores,
+// from allowedUnits(…, "live") — superuser and admin get every store, a grant its units. `&store=` is a
+// display filter inside that scope, never a boundary. `allow` null = every live store.
+async function liveScope(url, env, currentUser, corsJson) {
+  const refuse = (status, body) => ({ response: new Response(JSON.stringify(body), { status, headers: corsJson }) });
+  if (!env.DB) return refuse(500, { error: "DB not configured" });
+  const from = url.searchParams.get("from") || "", to = url.searchParams.get("to") || "";
+  const isYmd = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && new Date(s + "T00:00:00Z").toISOString().slice(0, 10) === s;
+  if (!isYmd(from) || !isYmd(to) || to < from) return refuse(400, { error: "from and to must be YYYY-MM-DD dates with from on or before to" });
+  if ((Date.parse(to) - Date.parse(from)) / 864e5 + 1 > 92) return refuse(400, { error: "At most 92 days per request" });
+  const unitRows = (await env.DB.prepare(
+    "SELECT code, name FROM business_units WHERE business_id = 'live' AND active = 1 ORDER BY code"
+  ).all()).results || [];
+  if (!unitRows.length) return refuse(503, { error: "Live Sales is not set up yet (migration-085 not applied)" });
+  const allow = allowedUnits(currentUser, "live");
+  let units = unitRows.filter(u => allow === null || allow.includes(u.code));
+  const store = (url.searchParams.get("store") || "").trim();
+  if (store) {
+    if (!unitRows.some(u => u.code === store)) return refuse(400, { error: `${store} is not a Live Sales store` });
+    if (!units.some(u => u.code === store)) return refuse(403, { error: "Not your store", code: "NO_STORE_ACCESS" });
+    units = units.filter(u => u.code === store);
+  }
+  return { from, to, allow, store, units, codes: units.map(u => u.code) };
+}
+
 // How an item was filed, for the per-item record (item_day_lines). One word per rung of
 // the ladder below, splitting the two that `l2Source` lumps together ("clover-l3" covers
 // a mapped category, the sku book and an unmapped category; "custom" covers Custom Sales,
@@ -5109,6 +5136,7 @@ const ACTION_BUSINESS = new Map([
   // Live Sales (migration-085). Phase 1 reads the same live-sales rows Bargain Lane still counts; the
   // whatnot-* actions below stay on bl until the phase-2 cutover moves the money.
   ["live-sales", "live"],
+  ["live-calendar", "live"],
   ["afternoon-briefing", "bl"],
   ["associate-save", "bl"],
   ["associate-reveal-pin", "bl"],
@@ -16560,17 +16588,28 @@ function whatnotSetState(env, key, value, at) {
   ).bind(key, value, at);
 }
 
-function whatnotShowRow(env, s, at) {
+// migration-087 adds ended_at and thumbnail_url to whatnot_shows for the Show calendar. Until it is
+// applied the sync writes without them and the calendar reads them as null, so the migration and
+// the worker can ship in either order.
+async function whatnotShowExtras(env) {
+  const cols = (await env.DB.prepare("PRAGMA table_info(whatnot_shows)").all()).results || [];
+  return cols.some(c => c.name === "thumbnail_url");
+}
+
+function whatnotShowRow(env, s, at, extras) {
   const { store, date } = whatnotStoreFor(s.scheduled_start_at);
+  const thumb = s.thumbnail && /^https:\/\//.test(String(s.thumbnail.url || "")) ? String(s.thumbnail.url) : null;
   // started_at/show_date/store are left alone once analytics has set them from the real start.
   return env.DB.prepare(
-    `INSERT INTO whatnot_shows (id, title, status, scheduled_start_at, show_date, store, updated_at, synced_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO whatnot_shows (id, title, status, scheduled_start_at, show_date, store, updated_at, synced_at${extras ? ", ended_at, thumbnail_url" : ""})
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?${extras ? ", ?, ?" : ""})
      ON CONFLICT(id) DO UPDATE SET title = excluded.title, status = excluded.status,
        scheduled_start_at = excluded.scheduled_start_at, updated_at = excluded.updated_at, synced_at = excluded.synced_at,
        show_date = CASE WHEN whatnot_shows.started_at IS NULL THEN excluded.show_date ELSE whatnot_shows.show_date END,
-       store     = CASE WHEN whatnot_shows.started_at IS NULL THEN excluded.store     ELSE whatnot_shows.store END`
-  ).bind(String(s.id), s.title ?? null, s.status ?? null, s.scheduled_start_at ?? null, date, store, s.updated_at ?? null, at);
+       store     = CASE WHEN whatnot_shows.started_at IS NULL THEN excluded.store     ELSE whatnot_shows.store END${extras ? `,
+       ended_at = excluded.ended_at, thumbnail_url = excluded.thumbnail_url` : ""}`
+  ).bind(String(s.id), s.title ?? null, s.status ?? null, s.scheduled_start_at ?? null, date, store, s.updated_at ?? null, at,
+    ...(extras ? [wnIso(s.ended_at), thumb] : []));
 }
 
 function whatnotOrderRow(env, o, at) {
@@ -16590,31 +16629,61 @@ function whatnotOrderRow(env, o, at) {
     wnMoney(a.applied_discount && a.applied_discount.amount), (a.total && a.total.currency) || (a.subtotal && a.subtotal.currency) || null, at);
 }
 
-// Ended shows, newest first. Stops at the first page the database already holds unchanged,
-// so after the first run this is one call an hour.
+// Every show the Show calendar draws: scheduled (all of them), cancelled, live, then ended. The
+// cancelled and ended passes run newest first and stop at the first page the database already holds
+// unchanged, so after the first run this is four calls an hour.
 async function syncWhatnotShows(env, api, at, out) {
-  // Writes the shows that are new or changed (Whatnot moves updated_at on any change); returns how many.
-  const write = async (shows) => {
+  const extras = await whatnotShowExtras(env);
+  const seen = new Set();
+  // Writes the shows that are new or changed (Whatnot moves updated_at on any change), or every one
+  // given when `all`; returns how many.
+  const write = async (shows, all) => {
     if (!shows.length) return 0;
+    shows.forEach(s => seen.add(String(s.id)));
     const known = await env.DB.prepare(
       `SELECT id, updated_at FROM whatnot_shows WHERE id IN (${shows.map(() => "?").join(",")})`
     ).bind(...shows.map(s => String(s.id))).all();
     const have = new Map((known.results || []).map(r => [r.id, r.updated_at]));
-    const fresh = shows.filter(s => have.get(String(s.id)) !== (s.updated_at ?? null) || !have.has(String(s.id)));
-    if (fresh.length) await env.DB.batch(fresh.map(s => whatnotShowRow(env, s, at)));
+    const fresh = all ? shows : shows.filter(s => have.get(String(s.id)) !== (s.updated_at ?? null) || !have.has(String(s.id)));
+    if (fresh.length) await env.DB.batch(fresh.map(s => whatnotShowRow(env, s, at, extras)));
     out.shows += fresh.length;
     return fresh.length;
   };
+  const newestFirst = async (status) => {
+    let cursor = null;
+    for (let page = 0; page < 40; page++) {
+      const body = await api.get("/shows", { status, limit: WHATNOT_PAGE, cursor, reverse: true });
+      if (!(await write((body && body.data) || [])) || !body.next_cursor) break;
+      cursor = body.next_cursor;
+    }
+  };
+  // The whole schedule, every page: the calendar shows all of it, and the sweep below needs to know
+  // which stored scheduled shows Whatnot no longer lists.
+  let cursor = null, wholeSchedule = false;
+  for (let page = 0; page < 10; page++) {
+    const body = await api.get("/shows", { status: "scheduled", limit: WHATNOT_PAGE, cursor, reverse: false });
+    await write((body && body.data) || []);
+    if (!body || !body.next_cursor) { wholeSchedule = true; break; }
+    cursor = body.next_cursor;
+  }
+  await newestFirst("cancelled");
   // Shows on air now, one page: a live show's orders get a store and a day before it ends, for Live
-  // Sales' "before the recap" figure. First, so the ended pass below has the last word on a show that
+  // Sales' "before the recap" figure. Before the ended pass, so that has the last word on a show that
   // has just ended.
   const live = await api.get("/shows", { status: "live", limit: WHATNOT_PAGE, reverse: true });
   await write((live && live.data) || []);
-  let cursor = null;
-  for (let page = 0; page < 40; page++) {
-    const body = await api.get("/shows", { status: "ended", limit: WHATNOT_PAGE, cursor, reverse: true });
-    if (!(await write((body && body.data) || [])) || !body.next_cursor) break;
-    cursor = body.next_cursor;
+  await newestFirst("ended");
+  // A show still stored as scheduled or live that no list returned has gone somewhere these passes do
+  // not read: deleted, or `stopped`. Asked for once each; a 404 is a deleted show, kept as 'removed',
+  // which no reader shows. Only after the whole schedule was read, or a show on page 11 would go.
+  if (wholeSchedule) {
+    const stale = ((await env.DB.prepare("SELECT id FROM whatnot_shows WHERE status IN ('scheduled', 'live')").all()).results || [])
+      .map(r => r.id).filter(id => !seen.has(id)).slice(0, 20);
+    for (const id of stale) {
+      const s = await api.get(`/shows/${encodeURIComponent(id)}`);
+      if (s && s.id) await write([s], true);
+      else { await env.DB.prepare("UPDATE whatnot_shows SET status = 'removed', synced_at = ? WHERE id = ?").bind(at, id).run(); out.shows++; }
+    }
   }
 }
 
@@ -30805,37 +30874,11 @@ export default {
     // Whatnot recap, with the recap's items/shipments/new buyers), each channel's coverage, Bargain
     // Lane's own auction column for the same store-days (phase 1 moves no money, so the page can say
     // where the two differ), and the Whatnot shows with their analytics and lost orders.
-    // The business gate decides WHETHER you reach Live Sales (ACTION_BUSINESS); this decides WHICH
-    // stores, from allowedUnits(…, "live") — superuser and admin get every store, a grant its units.
-    // `&store=` is a display filter inside that scope, never a boundary.
+    // Which stores: liveScope.
     if (url.searchParams.get("action") === "live-sales" && request.method === "GET") {
-      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
-      const from = url.searchParams.get("from") || "", to = url.searchParams.get("to") || "";
-      const isYmd = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && new Date(s + "T00:00:00Z").toISOString().slice(0, 10) === s;
-      if (!isYmd(from) || !isYmd(to) || to < from) {
-        return new Response(JSON.stringify({ error: "from and to must be YYYY-MM-DD dates with from on or before to" }), { status: 400, headers: corsJson });
-      }
-      if ((Date.parse(to) - Date.parse(from)) / 864e5 + 1 > 92) {
-        return new Response(JSON.stringify({ error: "At most 92 days per request" }), { status: 400, headers: corsJson });
-      }
-      const unitRows = (await env.DB.prepare(
-        "SELECT code, name FROM business_units WHERE business_id = 'live' AND active = 1 ORDER BY code"
-      ).all()).results || [];
-      if (!unitRows.length) {
-        return new Response(JSON.stringify({ error: "Live Sales is not set up yet (migration-085 not applied)" }), { status: 503, headers: corsJson });
-      }
-      const allow = allowedUnits(currentUser, "live");   // null = every live store
-      let units = unitRows.filter(u => allow === null || allow.includes(u.code));
-      const store = (url.searchParams.get("store") || "").trim();
-      if (store) {
-        if (!unitRows.some(u => u.code === store)) {
-          return new Response(JSON.stringify({ error: `${store} is not a Live Sales store` }), { status: 400, headers: corsJson });
-        }
-        if (!units.some(u => u.code === store)) {
-          return new Response(JSON.stringify({ error: "Not your store", code: "NO_STORE_ACCESS" }), { status: 403, headers: corsJson });
-        }
-        units = units.filter(u => u.code === store);
-      }
+      const scope = await liveScope(url, env, currentUser, corsJson);
+      if (scope.response) return scope.response;
+      const { from, to, allow, store, units } = scope;
       const wnReady = await whatnotReady(env), lastRun = wnReady ? await whatnotState(env, "last_run") : null;
       const sync = { connected: !!env.WHATNOT_API_TOKEN, lastRun: lastRun ? JSON.parse(lastRun) : null };
       const ledgerReady = wnReady && await whatnotLedgerReady(env);
@@ -30930,6 +30973,66 @@ export default {
         bl: (bl.results || []).map(r => ({ store: r.store, date: r.date, auction: r.auction, manualOverride: r.is_manual_override === 1 })),
         shows, early, ledger, ledgerSync, sync,
       }), { headers: corsJson });
+    }
+
+    // ─── Live Sales: the Show calendar (2026-11-03), read-only ──
+    //    GET ?action=live-calendar&from=YYYY-MM-DD&to=YYYY-MM-DD[&store=BLn]
+    // Every Whatnot show dated in the range — scheduled, live, ended or cancelled; a show deleted in
+    // Whatnot is 'removed' and left out — with Whatnot's figures once it has them, the orders so far
+    // (for a show on air or still being counted: Σ subtotal of orders not cancelled or failed, the
+    // "before the recap" figure), and the cancelled or failed orders. `recent`: for each title scheduled
+    // in the range, the last five shows of that title that sold something, for "this show lately".
+    // Same stores as live-sales (liveScope).
+    if (url.searchParams.get("action") === "live-calendar" && request.method === "GET") {
+      const scope = await liveScope(url, env, currentUser, corsJson);
+      if (scope.response) return scope.response;
+      const { from, to, units, codes } = scope;
+      const wnReady = await whatnotReady(env), lastRun = wnReady ? await whatnotState(env, "last_run") : null;
+      const sync = { ready: wnReady, connected: !!env.WHATNOT_API_TOKEN, lastRun: lastRun ? JSON.parse(lastRun) : null };
+      if (!wnReady || !codes.length) {
+        return new Response(JSON.stringify({ ok: true, from, to, units, shows: [], recent: {}, sync }), { headers: corsJson });
+      }
+      const extras = await whatnotShowExtras(env);
+      const inList = codes.map(() => "?").join(",");
+      const rows = (await env.DB.prepare(
+        `WITH sh AS (SELECT * FROM whatnot_shows WHERE COALESCE(status, '') <> 'removed' AND show_date BETWEEN ? AND ? AND store IN (${inList})),
+              ord AS (SELECT o.show_id, COUNT(*) AS n,
+                             SUM(CASE WHEN o.status IN ('cancelled', 'failed') THEN 1 ELSE 0 END) AS lost,
+                             ROUND(SUM(CASE WHEN o.status IN ('cancelled', 'failed') THEN COALESCE(o.subtotal, 0) ELSE 0 END), 2) AS lost_amt,
+                             ROUND(SUM(CASE WHEN o.status IN ('cancelled', 'failed') THEN 0 ELSE COALESCE(o.subtotal, 0) END), 2) AS kept_amt
+                        FROM whatnot_orders o JOIN sh ON sh.id = o.show_id GROUP BY o.show_id)
+         SELECT sh.id, sh.title, sh.status, sh.store, sh.show_date, COALESCE(sh.started_at, sh.scheduled_start_at) AS start_at,
+                ${extras ? "sh.ended_at, sh.thumbnail_url" : "NULL AS ended_at, NULL AS thumbnail_url"},
+                a.calculation_status, a.sales, a.estimated_earnings, a.orders_count, a.buyers, a.first_time_buyers,
+                a.returning_buyers, a.distinct_viewers, a.max_concurrent_viewers, a.stream_minutes,
+                ord.n, ord.lost, ord.lost_amt, ord.kept_amt
+           FROM sh LEFT JOIN whatnot_show_analytics a ON a.show_id = sh.id LEFT JOIN ord ON ord.show_id = sh.id
+          ORDER BY start_at`
+      ).bind(from, to, ...codes).all()).results || [];
+      const shows = rows.map(r => ({
+        showId: r.id, title: r.title, status: r.status, store: r.store, date: r.show_date, startAt: r.start_at,
+        endedAt: r.ended_at ?? null, thumbnail: r.thumbnail_url ?? null,
+        calculationStatus: r.calculation_status ?? null, sales: r.sales ?? null, earnings: r.estimated_earnings ?? null,
+        orders: r.orders_count ?? null, buyers: r.buyers ?? null, newBuyers: r.first_time_buyers ?? null,
+        returning: r.returning_buyers ?? null, viewers: r.distinct_viewers ?? null, peak: r.max_concurrent_viewers ?? null,
+        minutes: r.stream_minutes ?? null,
+        // null until that show's orders have synced — "no orders loaded" is not "nothing sold"
+        soFar: r.n == null ? null : { orders: r.n - (r.lost || 0), sales: r.kept_amt || 0 },
+        lost: r.n == null ? null : { orders: r.lost || 0, subtotal: r.lost_amt || 0, of: r.n },
+      }));
+      const titles = [...new Set(shows.filter(s => s.status === "scheduled" && s.title).map(s => s.title))].slice(0, 40);
+      const recent = {};
+      if (titles.length) {
+        const rr = (await env.DB.prepare(
+          `SELECT title, COUNT(*) AS n, ROUND(AVG(sales), 2) AS avg, MIN(sales) AS min, MAX(sales) AS max FROM (
+             SELECT s.title, a.sales, ROW_NUMBER() OVER (PARTITION BY s.title ORDER BY COALESCE(s.started_at, s.scheduled_start_at) DESC) AS rn
+               FROM whatnot_shows s JOIN whatnot_show_analytics a ON a.show_id = s.id
+              WHERE s.status = 'ended' AND a.sales > 0 AND s.store IN (${inList}) AND s.title IN (${titles.map(() => "?").join(",")}))
+            WHERE rn <= 5 GROUP BY title`
+        ).bind(...codes, ...titles).all()).results || [];
+        for (const r of rr) recent[r.title] = { n: r.n, avg: r.avg, min: r.min, max: r.max };
+      }
+      return new Response(JSON.stringify({ ok: true, from, to, units, shows, recent, sync }), { headers: corsJson });
     }
 
     // ─── Whatnot (2026-10-30): the Seller API mirror, read-only ──

@@ -198,5 +198,77 @@ const counts = (db) => ['channel_sales', 'daily_sales', 'whatnot_shows', 'whatno
   eq(counts(db), before, 'the read writes nothing');
 }
 
+// ── 8. The Show calendar (?action=live-calendar, 2026-11-03) ────────────────
+// Every show dated in the range — scheduled, live, ended or cancelled, never one deleted in Whatnot
+// ('removed') — with Whatnot's figures once it has them, the orders so far, the cancelled or failed
+// orders, and for each title on the schedule the last five shows of it that sold something. Same gate
+// and store scope as live-sales.
+{
+  const { db, env } = freshEnv();
+  const cal = async (qs, user) => {
+    const r = await worker.fetch(req('/?action=live-calendar' + qs, { user }), env, ctx);
+    let body = null; try { body = await r.json(); } catch (_) {}
+    return { status: r.status, body };
+  };
+  const NOV = '&from=2026-11-01&to=2026-11-30';
+  const W = '$1 Starts : Womens Fashion Finds';
+  const sh = db.prepare('INSERT INTO whatnot_shows (id,title,status,scheduled_start_at,started_at,show_date,store,ended_at,thumbnail_url,synced_at) VALUES (?,?,?,?,?,?,?,?,?,?)');
+  const an = db.prepare(`INSERT INTO whatnot_show_analytics (show_id,calculation_status,sales,estimated_earnings,orders_count,buyers,first_time_buyers,
+    returning_buyers,distinct_viewers,max_concurrent_viewers,stream_minutes,fetched_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,'x')`);
+  const or = db.prepare('INSERT INTO whatnot_orders (id,show_id,status,created_at,subtotal,items_synced,synced_at) VALUES (?,?,?,?,?,1,?)');
+  // History for "this show lately": n-done below (Nov 2, $698), sh-1 (Oct 29, $1,000, from freshEnv) and six
+  // more of the title at BL1, Oct 20–25 at $100…$600, plus one that sold nothing (left out). The last five
+  // that sold: 698, 1000, 600, 500, 400.
+  for (let i = 0; i < 6; i++) {
+    sh.run(`w-${i}`, W, 'ended', `2026-10-2${i}T12:30:00Z`, `2026-10-2${i}T12:30:00Z`, `2026-10-2${i}`, 'BL1', null, null, 'x');
+    an.run(`w-${i}`, 'GENERATED', 100 * (i + 1), null, 10, null, null, null, null, null, null);
+  }
+  sh.run('w-zero', W, 'ended', '2026-10-28T12:30:00Z', '2026-10-28T12:30:00Z', '2026-10-28', 'BL1', null, null, 'x');
+  an.run('w-zero', 'GENERATED', 0, null, 0, null, null, null, null, null, null);
+  // November.
+  sh.run('n-done', W, 'ended', '2026-11-02T13:30:00Z', '2026-11-02T13:30:00Z', '2026-11-02', 'BL1', '2026-11-02T15:35:01.887Z', 'https://images.whatnot.com/w.jpg', 'x');
+  an.run('n-done', 'GENERATED', 698, 580.19, 157, 36, 3, 33, 249, 52, 125);
+  [['d1', 'completed', 10], ['d2', 'completed', 20], ['d3', 'cancelled', 5]].forEach(([id, st, a]) => or.run(id, 'n-done', st, '2026-11-02T14:00:00Z', a, 'x'));
+  sh.run('n-count', '$10 Starts : Coat Finds', 'ended', '2026-11-02T19:00:00Z', '2026-11-02T19:00:00Z', '2026-11-02', 'BL1', '2026-11-02T21:31:00Z', null, 'x');
+  an.run('n-count', 'PENDING', null, null, null, null, null, null, null, null, null);
+  or.run('c1', 'n-count', 'completed', '2026-11-02T19:30:00Z', 40, 'x');
+  sh.run('n-live', '$1 Starts : Kids Apparel Finds', 'live', '2026-11-02T22:00:00Z', null, '2026-11-02', 'BL14', null, null, 'x');
+  or.run('l1', 'n-live', 'pending', '2026-11-02T22:10:00Z', 12.5, 'x');
+  sh.run('n-sched', W, 'scheduled', '2026-11-03T13:30:00Z', null, '2026-11-03', 'BL1', null, 'https://images.whatnot.com/w.jpg', 'x');
+  sh.run('n-new', 'Brand new show', 'scheduled', '2026-11-03T22:00:00Z', null, '2026-11-03', 'BL14', null, null, 'x');
+  sh.run('n-x', 'Called off', 'cancelled', '2026-11-04T15:00:00Z', null, '2026-11-04', 'BL1', null, null, 'x');
+  sh.run('n-gone', 'Deleted in Whatnot', 'removed', '2026-11-05T15:00:00Z', null, '2026-11-05', 'BL1', null, null, 'x');
+
+  eq((await cal(NOV, 'u-staff')).status, 403, 'calendar: staff is refused');
+  eq((await cal(NOV, 'u-mgr1')).body?.code, 'NO_BUSINESS_ACCESS', 'calendar: a manager without a Live Sales grant meets the business gate');
+  eq((await cal('&from=2026-11-31&to=2026-12-01', 'u-su')).status, 400, 'calendar: a date that does not exist is a 400');
+  eq((await cal('&from=2026-08-01&to=2026-11-30', 'u-su')).status, 400, 'calendar: more than 92 days is a 400');
+  const r = await cal(NOV, 'u-su');
+  eq(r.status, 200, 'calendar: superuser → 200');
+  eq(r.body.shows.map(s => [s.showId, s.status]), [['n-done', 'ended'], ['n-count', 'ended'], ['n-live', 'live'], ['n-sched', 'scheduled'],
+    ['n-new', 'scheduled'], ['n-x', 'cancelled'], ['sh-3', 'scheduled']], 'every November show by start, every status but removed');
+  eq(r.body.shows[0], { showId: 'n-done', title: W, status: 'ended', store: 'BL1', date: '2026-11-02', startAt: '2026-11-02T13:30:00Z',
+    endedAt: '2026-11-02T15:35:01.887Z', thumbnail: 'https://images.whatnot.com/w.jpg', calculationStatus: 'GENERATED', sales: 698, earnings: 580.19,
+    orders: 157, buyers: 36, newBuyers: 3, returning: 33, viewers: 249, peak: 52, minutes: 125,
+    soFar: { orders: 2, sales: 30 }, lost: { orders: 1, subtotal: 5, of: 3 } }, 'a finished show: Whatnot\'s figures, its orders so far, its cancelled ones');
+  eq([r.body.shows[1].calculationStatus, r.body.shows[1].sales, r.body.shows[1].soFar], ['PENDING', null, { orders: 1, sales: 40 }], 'still counting: no sales yet, the orders so far');
+  eq([r.body.shows[2].soFar, r.body.shows[2].lost], [{ orders: 1, sales: 12.5 }, { orders: 0, subtotal: 0, of: 1 }], 'on air: the orders so far');
+  eq([r.body.shows[3].soFar, r.body.shows[3].lost], [null, null], 'scheduled: no orders loaded is null, not zero');
+  eq(r.body.recent, { [W]: { n: 5, avg: 639.6, min: 400, max: 1000 } }, 'recent: the last five of a scheduled title that sold; none for a title with no history');
+  eq([r.body.sync.ready, r.body.units.map(u => u.code)], [true, ['BL1', 'BL14', 'BL16', 'BL2']], 'with the sync status and every live store');
+  const one = await cal(NOV + '&store=BL14', 'u-su');
+  eq([one.body.shows.map(s => s.showId), one.body.recent], [['n-live', 'n-new'], {}], '&store=BL14: Battle Creek\'s shows only');
+  db.prepare("INSERT INTO user_grants (user_id,business_id,role,units) VALUES ('u-mgr1','live','manager','[\"BL14\"]')").run();
+  eq((await cal(NOV, 'u-mgr1')).body.shows.map(s => s.showId), ['n-live', 'n-new'], 'a BL14 grant sees BL14 only');
+  eq((await cal(NOV + '&store=BL1', 'u-mgr1')).status, 403, 'and cannot reach BL1 with &store=');
+  const before = counts(db);
+  await cal(NOV, 'u-su');
+  eq(counts(db), before, 'the calendar read writes nothing');
+  // Before migration-087 the read still answers, with no end time or picture.
+  db.exec('ALTER TABLE whatnot_shows DROP COLUMN thumbnail_url; ALTER TABLE whatnot_shows DROP COLUMN ended_at;');
+  const old = await cal(NOV, 'u-su');
+  eq([old.status, old.body.shows[0].endedAt, old.body.shows[0].thumbnail, old.body.shows[0].sales], [200, null, null, 698], 'before migration-087: same shows, no end time or picture');
+}
+
 console.log(`test-live-sales: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
