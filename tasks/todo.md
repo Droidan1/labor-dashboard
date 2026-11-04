@@ -1,3 +1,34 @@
+# BL1 net sales short of Clover: paid orders with no total (2026-11-04)
+
+**Ask (Brian):** "Some stores are reporting that the apps net sales are not matching clovers net sales this week."
+**Found (Clover's own Sales report, read in Brian's signed-in dashboard, vs the app's till sales):** only BL1 differs.
+BL1 Oct 31 and Nov 1 match to the cent; Nov 2 app $8,033.88 vs Clover $8,388.95 (−$355.07); Nov 3 $5,796.02 vs
+$6,968.32 (−$1,172.30); Nov 4 at ~3 PM $3,373.51 vs $3,905.66. BL2, BL4, BL14 match to the cent on Nov 2–3; BL16 Nov 3 is
+$1.00 off. **Cause:** from Mon Nov 2 one BL1 card-only device (`149e9b44…`) takes payments as a keyed amount with no
+items rung. Clover stores each as a locked, PAID order with no line items and no `total` (its own Orders page shows them
+as $0.00, 0 items). Clover's Net Sales counts their payments; the worker skipped every order whose total was missing
+(49 of BL1's 192 orders on Nov 4).
+
+- [x] `scripts/test-unitemized-orders.mjs`: the exact order shape through the live route, `?action=snapshot`
+      (daily_sales + items:) and `?action=hourly`. Fails 9/13 on main ($10 of $37)
+- [x] worker: `orderTotalCents(order)` = order.total, or the SUCCESS payments of an order with none (null if nothing
+      paid); used at the three `total == null` skips (aggregateOrders, aggregateItemSales, hourly). The money reaches no
+      item, so it lands in "Other / Non-Item" (retail). Test 13/13
+- [x] Mutation check: reverting each of the three sites, or dropping the SUCCESS filter, fails the test (4/4 caught).
+      `npm test`: 130 suites, 11,378 assertions, all pass
+- [x] Live check, 3:14 PM Nov 4: today's BL1 orders + the fix = $4,426.00 vs Clover $4,413.65 (was $3,877.00). Clover's
+      figure also nets $7.00 of manual refunds, which the live route never fetches (nightly does)
+- [x] PR #372. Worker deployed by Brian from this branch (e33fb15 = main 7879b55 + fix): version 2f1fed92. The live
+      route counted 203 = 152 orders with a total + 51 without on 3 passes (3:30:16, 3:31:09, 3:31:44 PM), $4,554.75
+- [x] A manual items-snapshot (Settings › Re-snapshot selected range) at 20:32Z rebuilt BL1 Nov 2–3 items: +
+      item_day_lines with the new code: nets $8,388.95 / $6,968.32, Clover's figures to the cent
+- [x] Backup before any daily_sales write: `~/Desktop/labor-dashboard-backups/2026-11-04-bl1-daily_sales-nov2-3.json`
+      and `2026-11-04-kv-sales-bl1-2026-11-0{2,3}.json` ($8,033.88 / $5,796.02)
+- [ ] daily_sales BL1 Nov 2–3: no manual write. Tonight's sweep (03:55Z = 10:55 PM EST) re-snapshots today + 2
+      prior = Nov 4, 3, 2 with the fixed code. Check on Nov 5: Nov 2 $8,388.95, Nov 3 $6,968.32, Nov 4 vs Clover
+- [ ] Merge #372 (prod runs it; main does not yet)
+- [ ] Tell BL1: keyed-amount sales carry no items, so 4–17% of their sales a day since Nov 2 have no category, margin or item data
+
 # Whatnot API as the only source of Whatnot sales; recap email retired (2026-11-04)
 
 **Ask (Brian):** "use the Whatnot API as the only source of truth for the app and the executive summary. So remove
