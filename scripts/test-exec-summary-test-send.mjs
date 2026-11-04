@@ -1,5 +1,5 @@
 // POST ?action=send-test-summary: ONE copy of the chain-wide Executive Summary,
-// recap PDF included, to the signed-in superuser and nobody else (2026-10-19).
+// Whatnot PDF included, to the signed-in superuser and nobody else (2026-10-19).
 //
 // Why it exists: send-daily-summary re-runs the whole 8 AM job (every recipient,
 // plus their phone pushes), and Resend refuses a same-day re-send whose body
@@ -37,8 +37,13 @@ globalThis.fetch = async (url, opts = {}) => {
 const resend = () => calls.filter(c => c.url === 'https://api.resend.com/emails').map(c => ({ ...JSON.parse(c.body), __key: c.key }));
 
 const worker = await loadWorker(repo);
-const PDF = new TextEncoder().encode('%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\n%%EOF\n');
 
+const whatnotShow = (h, id, date, store, sales) => {
+  h.db.prepare("INSERT INTO whatnot_shows (id,title,status,scheduled_start_at,started_at,show_date,store,synced_at) VALUES (?,?,'ended',?,?,?,?,'t')")
+    .run(id, '$1 Starts : Womens Fashion Finds', date + 'T13:30:00Z', date + 'T13:30:00Z', date, store);
+  h.db.prepare("INSERT INTO whatnot_show_analytics (show_id,calculation_status,sales,orders_count,fetched_at) VALUES (?,'GENERATED',?,40,'t')").run(id, sales);
+};
+const isPdf = (b64) => Buffer.from(b64 || '', 'base64').subarray(0, 5).toString() === '%PDF-';
 function setup({ pdf = true } = {}) {
   const h = makeEnv(repo);
   h.db.exec(fs.readFileSync(path.join(repo, 'migration-015.sql'), 'utf8'));
@@ -54,7 +59,10 @@ function setup({ pdf = true } = {}) {
     .run('ps1', 'u-su', 'https://push.example.com/x', 'p', 'a', '2026-10-01');
   h.env.RESEND_API_KEY = 'test-key';
   h.env.VAPID_PUBLIC_KEY = 'BOGUS'; h.env.VAPID_PRIVATE_KEY = 'BOGUS'; h.env.VAPID_SUBJECT = 'mailto:x@example.com';
-  if (pdf) h.env.MEDIA.put('live-recap/2026-10-18.pdf', PDF, { httpMetadata: { contentType: 'application/pdf' } });
+  // The Whatnot daily PDF is built from the Whatnot tables: a show on the day = a PDF.
+  h.db.exec(fs.readFileSync(path.join(repo, 'migration-084.sql'), 'utf8'));
+  applyMigrationAlters(h.db, repo);
+  if (pdf) whatnotShow(h, 'w-18', '2026-10-18', 'BL1', 250);
   return h;
 }
 const send = (h, { user, qs = '', method = 'POST', secret } = {}) => {
@@ -65,13 +73,13 @@ const send = (h, { user, qs = '', method = 'POST', secret } = {}) => {
 };
 
 // ── 1. A superuser gets exactly one copy, with the PDF ──────────────────────
-console.log('superuser: one copy, to them, with the recap PDF');
+console.log('superuser: one copy, to them, with the Whatnot PDF');
 {
   const h = setup();
   calls.length = 0;
   const r = await send(h, { user: 'u-su' });
   const j = await r.json().catch(() => ({}));
-  eq([r.status, j.ok, j.to, j.date, j.attached], [200, true, 'bhoward@bargainlane.com', '2026-10-18', 'BL-Live-Recap-2026-10-18.pdf'],
+  eq([r.status, j.ok, j.to, j.date, j.attached], [200, true, 'bhoward@bargainlane.com', '2026-10-18', 'BL-Live-2026-10-18.pdf'],
      'defaults to yesterday in ET and reports what it sent');
   const sent = resend();
   eq(sent.map(s => s.to), ['bhoward@bargainlane.com'], 'exactly one email, to the signed-in superuser');
@@ -79,8 +87,8 @@ console.log('superuser: one copy, to them, with the recap PDF');
   const m = sent[0] || {};
   ok((m.subject || '').startsWith('[Test] Executive Summary — '), `subject marks it as a test (${m.subject})`);
   ok((m.html || '').includes('>All Stores</td>'), 'the body is the chain-wide Executive Summary');
-  eq((m.attachments || []).map(a => [a.filename, a.content, a.content_type]),
-     [['BL-Live-Recap-2026-10-18.pdf', Buffer.from(PDF).toString('base64'), 'application/pdf']], 'the recap PDF is attached');
+  eq((m.attachments || []).map(a => [a.filename, isPdf(a.content), a.content_type]),
+     [['BL-Live-2026-10-18.pdf', true, 'application/pdf']], 'the Whatnot PDF, built from the API data, is attached');
   const log = h.db.prepare("SELECT user_id, event_type, status, provider_message_id FROM notification_log").all();
   eq(log.map(l => [l.user_id, l.event_type, l.status, l.provider_message_id]), [['u-su', 'daily-summary-test', 'sent', 'msg_1']],
      'logged as a test send, apart from the daily-summary rows');
@@ -120,7 +128,7 @@ console.log('\ndates and a missing PDF');
   calls.length = 0;
   const r = await send(h, { user: 'u-su', qs: '&date=2026-10-18' });
   const j = await r.json().catch(() => ({}));
-  eq([r.status, j.attached], [200, null], 'no PDF stored: still sends, and says nothing was attached');
+  eq([r.status, j.attached], [200, null], 'no Whatnot show that day: still sends, and says nothing was attached');
   ok(resend().length === 1 && !('attachments' in resend()[0]), 'the email carries no attachments key');
 }
 for (const bad of ['2026-10-1', '2026-13-01', 'yesterday', '2026-02-30']) {
@@ -131,11 +139,11 @@ for (const bad of ['2026-10-1', '2026-13-01', 'yesterday', '2026-02-30']) {
 }
 {
   const h = setup();
-  h.env.MEDIA.put('live-recap/2026-10-17.pdf', PDF, { httpMetadata: { contentType: 'application/pdf' } });
+  whatnotShow(h, 'w-17', '2026-10-17', 'BL14', 120);
   calls.length = 0;
   const r = await send(h, { user: 'u-su', qs: '&date=2026-10-17' });
   const j = await r.json().catch(() => ({}));
-  eq([r.status, j.date, j.attached], [200, '2026-10-17', 'BL-Live-Recap-2026-10-17.pdf'], 'an explicit date sends that day, with that day\'s PDF');
+  eq([r.status, j.date, j.attached], [200, '2026-10-17', 'BL-Live-2026-10-17.pdf'], 'an explicit date sends that day, with that day\'s PDF');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

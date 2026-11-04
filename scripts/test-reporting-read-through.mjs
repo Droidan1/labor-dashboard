@@ -250,7 +250,7 @@ for (const [action, q] of Object.entries(ACTIONS)) {
   const is = await bodyOf(await fetchW(withKey(ACTIONS['item-sales'])));
   eq(JSON.stringify(is?.items?.map(i => [i.store, i.code, i.units, i.sales])), '[["BL1","BL-50038-1_5",3,4.5]]', 'item-sales through the key: the paid order\'s units, not the voided one\'s');
   const ws2 = await bodyOf(await fetchW(withKey(ACTIONS['whatnot-shows'])));
-  eq(JSON.stringify([ws2?.shows?.map(x => [x.storeId, x.analytics?.sales, x.items?.units]), ws2?.days?.map(d => d.status)]), '[[["BL1",18,1]],["match"]]', 'whatnot-shows through the key: the show, its analytics, and the recap cross-check');
+  eq(JSON.stringify([ws2?.shows?.map(x => [x.storeId, x.analytics?.sales, x.items?.units]), ws2?.days?.map(d => [d.store, d.sales])]), '[[["BL1",18,1]],[["BL1",18]]]', 'whatnot-shows through the key: the show, its analytics, and the store-day total');
   const wi = await bodyOf(await fetchW(withKey(ACTIONS['whatnot-items'])));
   eq(JSON.stringify(wi?.categories?.map(c => [c.category, c.units, c.sales])), '[["Men\'s Outerwear",1,18]]', 'whatnot-items through the key: sold by Whatnot category');
   const wp = await bodyOf(await fetchW(withKey(ACTIONS['whatnot-products'])));

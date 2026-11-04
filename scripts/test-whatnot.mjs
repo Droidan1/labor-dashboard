@@ -178,7 +178,7 @@ calls = [];
 throttleNextOrders = true;
 const r1 = await runAt();
 ok(r1 && !r1.error, 'run 1 (the hourly cron) has no error: ' + JSON.stringify(r1 && (r1.error || r1.skipped)));
-eq([r1?.crossCheck?.gaps, r1?.crossCheck?.pushed], [1, 1], 'run 1: one gap (BL14 10-28), pushed');
+eq([r1?.crossCheck, r1?.daily], [undefined, undefined], 'run 1 (Oct 30): no recap cross-check, and no daily rows before WHATNOT_API_FROM (Nov 1)');
 eq([r1.complete, r1.shows, r1.orders, r1.backfill], [true, 9, 60, 'done'], 'run 1: 4 ended shows, the live one, 3 scheduled and 1 cancelled; all 60 orders (head 50 + backfill 10), backfill done');
 eq(calls.filter(c => c.startsWith('/shows')).map(c => c.match(/status=(\w+)/)[1]), ['scheduled', 'cancelled', 'live', 'ended'],
   'shows are read scheduled, cancelled, live, then ended (so ended has the last word on a show that just ended)');
@@ -208,16 +208,17 @@ const dump = JSON.stringify(['whatnot_shows', 'whatnot_show_analytics', 'whatnot
 ok(!/secret_buyer|Secret Buyer|"b\d+"/.test(dump), 'no buyer id, username or name is stored in any whatnot_ table');
 eq(JSON.stringify([db.prepare('SELECT * FROM channel_sales ORDER BY id').all(), db.prepare('SELECT store, date, total, auction FROM daily_sales ORDER BY store, date').all()]), liveBefore, 'channel_sales and daily_sales are untouched (the recap stays the source of live sales)');
 
-// ── 2. The cross-check, the reads, and later runs ──────────────────────────
+// ── 2. The reads, and later runs ───────────────────────────────────────────
 const showsRead = async (user, q = 'from=2026-10-28&to=2026-10-29') => {
   const r = await worker.fetch(req(`/?action=whatnot-shows&${q}`, { user }), env, ctx);
   return { status: r.status, body: await r.json() };
 };
 {
   const { body } = await showsRead('u-su');
-  eq(body.days.map(d => [d.store, d.date, d.status, d.diff]), [
-    ['BL1', '2026-10-28', 'match', 0], ['BL14', '2026-10-28', 'gap', 5], ['BL1', '2026-10-29', 'match', 0], ['BL14', '2026-10-29', 'pending', null],
-  ], 'per store-day: rehearsal counts $0, the gap is +$5, a PENDING show holds its day (no diff until final)');
+  eq(body.days.map(d => [d.store, d.date, d.shows, d.sales, d.pendingShows]), [
+    ['BL1', '2026-10-28', 2, 100, 0], ['BL14', '2026-10-28', 1, 50, 0], ['BL14', '2026-10-29', 1, 7.5, 1],
+  ], 'per store-day from the API: a rehearsal counts $0; a PENDING show counts its orders so far (cancelled left out) and is flagged');
+  ok(body.days.every(d => !('recap' in d) && !('status' in d)), 'no recap fields remain in days');
   eq(body.shows.map(s => s.showId), ['sh-c', 'sh-a', 'sh-b', 'sh-d'], 'every ended show in the range, by start');
   const a = body.shows.find(s => s.showId === 'sh-a');
   eq([a.analytics.sales, a.analytics.estimatedEarnings, a.analytics.buyers, a.orders.count, a.orders.itemsPending, a.items.units, a.items.sales],
@@ -229,31 +230,27 @@ const showsRead = async (user, q = 'from=2026-10-28&to=2026-10-29') => {
   calls = [];
   const r2 = await runAt();
   ok(r2 && !r2.error, 'run 2 ran: ' + JSON.stringify(r2 && (r2.error || r2.skipped)));
-  eq([r2?.crossCheck?.gaps, r2?.crossCheck?.pushed], [1, 0], 'run 2: the same gap is not pushed again');
   eq([r2?.items, r2?.shows, r2?.orders], [11, 0, 60], 'run 2: 11 item lines for the 10 backfilled orders (one is a 2-pack); unchanged shows; 3 days of orders re-read');
   eq(calls.filter(c => c.startsWith('/shows')).map(c => c.match(/status=(\w+)/)[1]), ['scheduled', 'cancelled', 'live', 'ended'], 'when nothing changed: one call each for scheduled, cancelled, live, and one page of ended');
   ok(!calls.some(c => /^\/orders\/\d+\/items/.test(c) && Number(c.split('/')[2]) > 1010), 'orders already itemised are not asked for again');
   shDCalculated = true;
   const r3 = await runAt();
-  eq([r3?.crossCheck?.gaps, r3?.crossCheck?.pushed, r3?.analytics], [1, 0, 1], 'run 3: still one gap, not pushed; sh-d\'s analytics re-read once calculated');
-  eq(db.prepare("SELECT value FROM whatnot_sync WHERE key = 'xcheck:BL14:2026-10-28'").get()?.value, '5', 'the pushed gap is remembered with its amount');
+  eq(r3?.analytics, 1, 'run 3: sh-d\'s analytics re-read once calculated');
 }
 {
   const { body } = await showsRead('u-su');
   const a = body.shows.find(s => s.showId === 'sh-a');
   eq([a.orders.itemsPending, a.items.units, a.items.sales], [0, 42, 108], 'sh-a once caught up: 42 units (one order added a 2-unit line) worth $108');
-  // Whatnot keeps revising a show's figures for hours after it ends (Oct 30, 2026: $311 stored, $1,112
-  // final). sh-d started 10-29 19:40Z, so at NOW its figures can still move: the day waits.
-  eq(body.days.find(d => d.store === 'BL14' && d.date === '2026-10-29').status, 'pending', 'sh-d is calculated but under 24h old: its day is still pending');
+  eq([body.days.find(d => d.store === 'BL14' && d.date === '2026-10-29').sales, body.days.find(d => d.store === 'BL14' && d.date === '2026-10-29').pendingShows],
+    [30, 0], 'once Whatnot has calculated sh-d, its day is Whatnot\'s figure');
   eq([db.prepare('SELECT COUNT(*) n FROM whatnot_order_items').get().n, db.prepare('SELECT COUNT(*) n FROM whatnot_orders').get().n], [61, 60], 'three runs, still 60 orders and 61 item lines: nothing duplicated');
   eq(db.prepare('SELECT COUNT(*) n FROM whatnot_orders WHERE items_synced = 0').get().n, 0, 'every order itemised');
 }
 
-// ── 2b. Late cancellations are not a gap (2026-11-02) ──────────────────────
-// The recap is gross at Whatnot's end-of-show summary; Whatnot's `sales` leaves out EVERY cancelled
-// or failed order (checked to the cent on four October store-days). So a recap above Whatnot by no
-// more than that day's lost orders is the same sales falling through after the summary: "cancelled",
-// never a gap and never pushed. The first prod run pushed 9 store-days of exactly this.
+// ── 2b. Cancelled and failed orders, and Whatnot's revisions ───────────────
+// Whatnot's `sales` leaves out every cancelled or failed order; `lost` per store-day is their subtotal.
+// Whatnot keeps revising a show's figures for hours after it ends, so a show is read again until a read
+// lands 24h after it started.
 {
   const show = db.prepare("INSERT INTO whatnot_shows (id,title,status,scheduled_start_at,started_at,show_date,store,synced_at) VALUES (?,?,'ended',?,?,?,'BL1','t')");
   const an = db.prepare("INSERT INTO whatnot_show_analytics (show_id,calculation_status,sales,orders_count,fetched_at) VALUES (?,'GENERATED',?,3,'2026-10-30T16:00:00.000Z')");
@@ -264,35 +261,27 @@ const showsRead = async (user, q = 'from=2026-10-28&to=2026-10-29') => {
     ord.run(id + '-1', id, 'completed', date + 'T16:10:00Z', sales);
     lost.forEach((amt, i) => ord.run(`${id}-x${i}`, id, i % 2 ? 'failed' : 'cancelled', date + 'T16:20:00Z', amt));
   };
-  day('sh-late', '2026-10-27', 97, [3, 2]);   // recap 100: $3 of the $5 lost fell through after the summary
-  day('sh-over', '2026-10-26', 97, [3, 2]);   // recap 110: $13 above Whatnot with only $5 lost — a real gap
+  day('sh-late', '2026-10-27', 97, [3, 2]);
+  day('sh-over', '2026-10-26', 97, [3, 2]);
   show.run('sh-noord', 'No orders yet', '2026-10-25T16:00:00Z', '2026-10-25T16:00:00Z', '2026-10-25');
-  an.run('sh-noord', 97);                       // its orders have not synced: the range is unknown
-  recap.run('BL1', '2026-10-27', 100, 1);
-  recap.run('BL1', '2026-10-26', 110, 1);
-  recap.run('BL1', '2026-10-25', 100, 1);
+  an.run('sh-noord', 97);
   const { body } = await showsRead('u-su', 'from=2026-10-25&to=2026-10-27');
-  eq(body.days.map(d => [d.date, d.status, d.diff, d.lost]), [
-    ['2026-10-25', 'pending', -3, 0], ['2026-10-26', 'gap', -13, 5], ['2026-10-27', 'cancelled', -3, 5],
-  ], 'recap above Whatnot within the lost orders is "cancelled"; beyond them a gap; with no orders loaded, pending');
+  eq(body.days.map(d => [d.date, d.sales, d.lost]), [['2026-10-25', 97, 0], ['2026-10-26', 97, 5], ['2026-10-27', 97, 5]],
+    'sales are Whatnot\'s figure; lost = the day\'s cancelled and failed orders');
   calls = [];
   const r4 = await runAt();
-  eq([r4?.crossCheck?.gaps, r4?.crossCheck?.pushed], [2, 1], 'run 4: only the real gap is new and pushed; late cancellations push nothing');
-  eq(db.prepare("SELECT COUNT(*) n FROM whatnot_sync WHERE key = 'xcheck:BL1:2026-10-27'").get().n, 0, 'a cancelled day is never remembered as a pushed gap');
   ok(calls.some(c => c === '/analytics/shows/sh-d'), 'run 4 re-reads sh-d: calculated, but under 24h since it started');
   ok(!calls.some(c => c === '/analytics/shows/sh-a'), 'a show past 24h is not read again');
+  ok(r4 && !r4.error, 'run 4 ran');
 
-  // Past 24h from sh-d's start, the next run reads it once more and its day settles to a match.
+  // Past 24h from sh-d's start, the next run reads it once more.
   // sh-live has ended meanwhile: Whatnot moves its updated_at, so the ended pass rewrites the row.
   NOW = new Date('2026-10-30T20:00:00Z');
   Object.assign(SHOWS.find(x => x.id === 'sh-live'), { status: 'ended', updated_at: 'u2' });
   calls = [];
-  const r5 = await runAt();
+  await runAt();
   eq(db.prepare("SELECT status FROM whatnot_shows WHERE id = 'sh-live'").get().status, 'ended', 'the live show becomes ended once it ends');
   ok(calls.includes('/analytics/shows/sh-d'), 'run 5 reads sh-d one last time');
-  eq([r5?.crossCheck?.gaps, r5?.crossCheck?.pushed], [2, 0], 'run 5: the same two gaps, nothing new pushed');
-  const after = await showsRead('u-su');
-  eq(after.body.days.find(d => d.store === 'BL14' && d.date === '2026-10-29').status, 'match', 'once settled, sh-d\'s day matches the recap');
   calls = [];
   await runAt();
   ok(!calls.includes('/analytics/shows/sh-d'), 'and is never read again');
@@ -323,6 +312,105 @@ const showsRead = async (user, q = 'from=2026-10-28&to=2026-10-29') => {
   const r = await (await worker.fetch(req('/?action=whatnot-sync', { user: 'u-su', method: 'POST' }), env0, ctx)).json();
   eq([r.error, db0.prepare('SELECT COUNT(*) n FROM whatnot_shows').get().n], [undefined, 7], 'before migration-087: no error, every listed show stored (sh-stop is in no list now)');
 }
+
+// ── 2d. Whatnot's daily sales come from the API (2026-11-04) ───────────────
+// Brian: the Whatnot API is the only source of Whatnot sales; the recap email is retired. The hourly
+// sync writes channel_sales 'whatnot' per store-day from WHATNOT_API_FROM (Nov 1) on: Whatnot's gross
+// (analytics `sales`, else orders not cancelled or failed), $0 on a day with no show, re-derived for
+// the last 7 days; then daily_sales.auction = the live channels' sum, manual overrides untouched.
+const runFor = async (envX, iso) => {
+  const at = new Date(iso);
+  globalThis.Date = class extends RealDate { constructor(...a) { super(...(a.length ? a : [at.getTime()])); } static now() { return at.getTime(); } };
+  const waits = [], logs = [], real = console.log;
+  console.log = (...a) => logs.push(a.join(' '));
+  try {
+    await worker.scheduled({ cron: '0 * * * *', scheduledTime: at.getTime() }, envX, { waitUntil: (p) => waits.push(p), passThroughOnException() {} });
+    await Promise.allSettled(waits);
+  } finally { console.log = real; globalThis.Date = RealDate; }
+  const line = logs.find(l => l.startsWith('whatnot-sync:'));
+  return line ? JSON.parse(line.slice('whatnot-sync:'.length)) : null;
+};
+function novemberEnv({ shipments = true } = {}) {
+  const { db: d, env: e } = makeEnv(repo);
+  for (const m of ['015', '084']) d.exec(fs.readFileSync(path.join(repo, `migration-${m}.sql`), 'utf8'));
+  if (shipments) applyMigrationAlters(d, repo);
+  e.WHATNOT_API_TOKEN = 'wn_pat_tk_test';
+  const sh = d.prepare("INSERT INTO whatnot_shows (id,title,status,scheduled_start_at,started_at,show_date,store,synced_at) VALUES (?,?,?,?,?,?,?,'t')");
+  const an = d.prepare("INSERT INTO whatnot_show_analytics (show_id,calculation_status,sales,orders_count,first_time_buyers,fetched_at) VALUES (?,?,?,?,?,'2026-11-04T00:00:00.000Z')");
+  const or = d.prepare("INSERT INTO whatnot_orders (id,show_id,status,created_at,order_date,subtotal,items_synced,synced_at) VALUES (?,?,?,?,?,?,1,'t')");
+  const it = shipments
+    ? d.prepare("INSERT INTO whatnot_order_items (id,order_id,show_id,quantity,unit_price,synced_at,shipment_id) VALUES (?,?,?,1,1,'t',?)")
+    : d.prepare("INSERT INTO whatnot_order_items (id,order_id,show_id,quantity,unit_price,synced_at) VALUES (?,?,?,1,1,'t')");
+  const item = (id, order, show, ship) => shipments ? it.run(id, order, show, ship) : it.run(id, order, show);
+  // Nov 2, BL1: n1 has Whatnot's figures; n2 is still being counted (its orders so far).
+  sh.run('n1', '$1 Starts : Womens', 'ended', '2026-11-02T13:30:00Z', '2026-11-02T13:30:00Z', '2026-11-02', 'BL1');
+  an.run('n1', 'GENERATED', 698, 157, 3);
+  or.run('o-n1a', 'n1', 'completed', '2026-11-02T14:00:00Z', '2026-11-02', 10);
+  or.run('o-n1b', 'n1', 'pending_fulfillment', '2026-11-02T14:01:00Z', '2026-11-02', 20);
+  or.run('o-n1x', 'n1', 'cancelled', '2026-11-02T14:02:00Z', '2026-11-02', 5);
+  item('i1', 'o-n1a', 'n1', 'S1'); item('i2', 'o-n1a', 'n1', 'S1'); item('i3', 'o-n1b', 'n1', 'S2'); item('i4', 'o-n1x', 'n1', 'S3');
+  sh.run('n2', '$5 Starts : Bags', 'ended', '2026-11-02T16:00:00Z', '2026-11-02T16:00:00Z', '2026-11-02', 'BL1');
+  an.run('n2', 'PENDING', null, null, null);
+  or.run('o-n2a', 'n2', 'completed', '2026-11-02T16:10:00Z', '2026-11-02', 40);
+  or.run('o-n2b', 'n2', 'completed', '2026-11-02T16:11:00Z', '2026-11-02', 2.5);
+  or.run('o-n2f', 'n2', 'failed', '2026-11-02T16:12:00Z', '2026-11-02', 9);
+  item('i5', 'o-n2a', 'n2', 'S2'); item('i6', 'o-n2b', 'n2', 'S4');   // S2 also holds an n1 item: one shipment
+  // Nov 3: a show on air at Battle Creek; a cancelled one at Coliseum. Nov 4: only scheduled.
+  sh.run('n3', '$10 Starts : Coats', 'live', '2026-11-03T22:00:00Z', null, '2026-11-03', 'BL14');
+  or.run('o-n3a', 'n3', 'pending', '2026-11-03T22:05:00Z', '2026-11-03', 12.5);
+  sh.run('nx', 'Called off', 'cancelled', '2026-11-03T15:00:00Z', null, '2026-11-03', 'BL1');
+  sh.run('ns', 'Next', 'scheduled', '2026-11-04T23:00:00Z', null, '2026-11-04', 'BL14');
+  // Oct 31 (before the cutover): the recap's row stays as reported, whatever the API says.
+  sh.run('no', 'October', 'ended', '2026-10-31T16:00:00Z', '2026-10-31T16:00:00Z', '2026-10-31', 'BL1');
+  an.run('no', 'GENERATED', 500, 50, 1);
+  const cs = d.prepare("INSERT INTO channel_sales (channel,store,date,total,count,meta,source_file,ingested_at) VALUES (?,?,?,?,?,?,?,'t')");
+  cs.run('whatnot', 'BL1', '2026-10-31', 520, 1, null, 'Bargain Lane Live recap 2026-10-31');
+  cs.run('whatnot', 'BL1', '2026-11-01', 789, 1, null, 'Bargain Lane Live recap 2026-11-01');   // rewritten from the API
+  cs.run('auction', 'BL1', '2026-11-02', 100, 5, null, 'auction');
+  d.prepare("INSERT INTO daily_sales (store,date,total,auction) VALUES ('BL1','2026-10-31',4000,520)").run();
+  d.prepare("INSERT INTO daily_sales (store,date,auction,is_manual_override) VALUES ('BL14','2026-11-03',999,1)").run();
+  return { db: d, env: e };
+}
+// Whatnot still lists the November show on air and the scheduled one, or the sync's sweep (2c) would
+// ask for them and, on a 404, keep them as removed.
+SHOWS.push({ id: 'n3', title: '$10 Starts : Coats', status: 'live', scheduled_start_at: '2026-11-03T22:00:00Z', updated_at: 'u1' },
+           { id: 'ns', title: 'Next', status: 'scheduled', scheduled_start_at: '2026-11-04T23:00:00Z', updated_at: 'u1' });
+{
+  const { db: d, env: e } = novemberEnv();
+  const r = await runFor(e, '2026-11-04T17:00:00Z');
+  ok(r && !r.dailyError && !r.error, 'the November run has no error: ' + JSON.stringify(r && (r.dailyError || r.error)));
+  eq(r?.daily, { from: '2026-11-01', to: '2026-11-04', written: 8 }, 'it writes Nov 1 through today, both stores, 8 rows');
+  const rows = d.prepare("SELECT store, date, total, count, meta, source_file FROM channel_sales WHERE channel = 'whatnot' AND date >= '2026-11-01' ORDER BY date, store").all()
+    .map(x => [x.store, x.date, x.total, x.count, JSON.parse(x.meta), x.source_file]);
+  const M = (items, shipments, nb) => ({ items, shipments, new_buyers: nb, source: 'whatnot-api' });
+  eq(rows, [
+    ['BL1', '2026-11-01', 0, 0, M(0, 0, 0), 'Whatnot API'], ['BL14', '2026-11-01', 0, 0, M(0, 0, 0), 'Whatnot API'],
+    ['BL1', '2026-11-02', 740.5, 2, M(159, 3, 3), 'Whatnot API'], ['BL14', '2026-11-02', 0, 0, M(0, 0, 0), 'Whatnot API'],
+    ['BL1', '2026-11-03', 0, 0, M(0, 0, 0), 'Whatnot API'], ['BL14', '2026-11-03', 12.5, 1, M(1, 0, null), 'Whatnot API'],
+    ['BL1', '2026-11-04', 0, 0, M(0, 0, 0), 'Whatnot API'], ['BL14', '2026-11-04', 0, 0, M(0, 0, 0), 'Whatnot API'],
+  ], 'per store-day: Whatnot\'s sales (698) + a show still counting from its orders (42.5, the failed one left out); a live show counts; cancelled and scheduled shows do not; shipments distinct (S2 held two shows\' items), the cancelled order\'s left out; Nov 1\'s recap row rewritten');
+  eq(d.prepare("SELECT total, source_file FROM channel_sales WHERE channel = 'whatnot' AND date = '2026-10-31'").get(), { total: 520, source_file: 'Bargain Lane Live recap 2026-10-31' }, 'before Nov 1 the recap\'s row is left as reported');
+  const auction = (st, dt) => d.prepare('SELECT auction FROM daily_sales WHERE store = ? AND date = ?').get(st, dt)?.auction;
+  eq([auction('BL1', '2026-11-02'), auction('BL1', '2026-11-01'), auction('BL14', '2026-11-03'), auction('BL1', '2026-10-31')], [840.5, 0, 999, 520],
+    'daily_sales.auction = Whatnot + the auction (740.5 + 100); a manual override is untouched; October untouched');
+  const again = await runFor(e, '2026-11-04T18:00:00Z');
+  eq(again?.daily?.written, 0, 'a second run with nothing changed writes nothing');
+  // A week on, Nov 2 is outside the 7-day window: frozen, even if Whatnot revises it.
+  d.prepare("UPDATE whatnot_show_analytics SET sales = 600 WHERE show_id = 'n1'").run();
+  const later = await runFor(e, '2026-11-12T17:00:00Z');
+  eq([later?.daily?.from, d.prepare("SELECT total FROM channel_sales WHERE channel = 'whatnot' AND store = 'BL1' AND date = '2026-11-02'").get().total],
+    ['2026-11-05', 740.5], 'only the last 7 days are re-derived: older days freeze');
+  const sh = await (await worker.fetch(req('/?action=whatnot-shows&from=2026-11-02&to=2026-11-03', { user: 'u-su' }), e, ctx)).json();
+  eq(sh.days.map(x => [x.store, x.date, x.sales, x.shipments, x.lost, x.pendingShows]),
+    [['BL1', '2026-11-02', 642.5, 3, 14, 1], ['BL14', '2026-11-03', 12.5, 0, 0, 1]], 'whatnot-shows days are the same API figures (read live, so n1\'s revision shows there)');
+}
+{
+  const { db: d, env: e } = novemberEnv({ shipments: false });
+  const r = await runFor(e, '2026-11-04T17:00:00Z');
+  ok(r && !r.dailyError, 'without migration-088: no error ' + JSON.stringify(r && r.dailyError));
+  eq(JSON.parse(d.prepare("SELECT meta FROM channel_sales WHERE channel = 'whatnot' AND store = 'BL1' AND date = '2026-11-02'").get().meta).shipments, null, 'and shipments are null, not 0');
+}
+SHOWS.splice(SHOWS.findIndex(x => x.id === 'n3'), 2);
 
 // ── 3. whatnot-items ───────────────────────────────────────────────────────
 {
@@ -413,7 +501,7 @@ async function tool(name, args = {}) {
 {
   const t = await tool('get_whatnot_shows', { from: '2026-10-28', to: '2026-10-29' });
   ok(!t.isError, 'get_whatnot_shows answers: ' + (t.text || 'ok'));
-  eq([t.shows?.[0]?.showId, t.listed, t.days?.length, t.totals?.sales], ['sh-d', 4, 4, 180], 'newest show first, every day, analytics sales summed');
+  eq([t.shows?.[0]?.showId, t.listed, t.days?.length, t.totals?.sales], ['sh-d', 4, 3, 180], 'newest show first, every store-day with a show, analytics sales summed');
   eq(t.shows?.find(s => s.showId === 'sh-c')?.analytics, { calculationStatus: 'WILL_NOT_BE_CALCULATED' }, 'nulls are dropped from a show\'s analytics');
   const i = await tool('get_whatnot_items', { from: '2026-10-28', to: '2026-10-29', storeId: 'bl14', search: 'outerwear' });
   eq([upstream.at(-1).get('store'), i.matched, i.items?.[0]?.category, i.categories?.length], ['BL14', 1, "Men's Outerwear", 3], 'get_whatnot_items: store upper-cased, search filters items, categories stay whole');

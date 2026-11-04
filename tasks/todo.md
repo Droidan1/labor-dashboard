@@ -1,3 +1,32 @@
+# Whatnot API as the only source of Whatnot sales; recap email retired (2026-11-04)
+
+**Ask (Brian):** "use the Whatnot API as the only source of truth for the app and the executive summary. So remove
+anything about the recap email. For the Executive summary only use the Gross sales, also recreate the pdf using the
+api data." **Decided:** gross = Whatnot's own `sales` (before fees, cancelled/failed left out; orders so far while
+Whatnot counts); from Nov 1 (Nov 1+ rewritten after a backup; October keeps the recap's reported figures); the PDF
+keeps Shipments (from `shipment_id` on order items).
+
+- [x] worker: `syncWhatnotDaily` (end of every hourly sync, DB only) writes `channel_sales` 'whatnot' per store-day
+      from max(Nov 1, today − 7) to today, $0 on a no-show day, then `projectLiveSales` (extracted from ingest) re-sums
+      `daily_sales.auction`; manual overrides untouched. `whatnotDays` = the API's per-store-day totals
+- [x] worker: `?action=ingest` refuses channel whatnot (410, writes nothing); reconcile gone; `?action=live-recap-pdf`,
+      `whatnotCrossCheck` + `whatnotCrossCheckAlert`, live-sales `early` removed; whatnot-shows `days` = API totals
+- [x] migration-088: `whatnot_order_items.shipment_id`; items keep it ('' = none); November items re-read 100/run
+- [x] Exec Summary: stale-sync warning (no complete-or-not sync in 2 h) replaces "recap has not arrived"; footer says
+      Whatnot is gross sales from the Whatnot API; `BL-Live-<date>.pdf` built with pdfPage/pdfBuild from API data
+      (same sections as the old recap PDF), attached on show days to chain-wide and BL1+BL14 copies;
+      `GET ?action=live-daily-pdf&date=` (superuser) previews it
+- [x] Live Sales pages: early block gone (today is in the total, hourly), recap wording replaced, Money back
+      "Cancelled or failed" from Whatnot's orders. Agent tools' reading rules and get_whatnot_shows text. CACHE v297
+- [x] removed: scripts/whatnot-recap-ingest.gs + its parse/feeder tests; test-live-recap-attachment →
+      test-whatnot-daily-pdf.mjs
+- [x] tests: test-whatnot 90/90 (2d: November daily rows, cutover, window, projection, override, shipments, no-088);
+      test-live-sales-channels 22/22; test-whatnot-daily-pdf 27/27 (content, xref, who gets it); exec-summary 43/43;
+      test-send 23/23; browser-live-sales 339/339; npm test 129 suites all pass. Eight deliberate breaks each caught.
+      PDF rendered from a fixture and looked at
+- [ ] Deploy: backup (Brian) → migration-088 → worker (🛑 rule 7: rewrites Nov 1+ whatnot rows + daily_sales.auction
+      for BL1/BL14) → Brian deletes the recap Apps Script trigger → merge. Verify rows, preview PDF, next 5 AM email
+
 # Live Sales: Show Calendar (2026-11-03)
 
 **Ask (Brian):** a page in the Whatnot (Live Sales) business: a calendar of every show, scheduled and past, each one

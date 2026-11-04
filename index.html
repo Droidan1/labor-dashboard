@@ -6667,16 +6667,6 @@
       .lv .lv-chrow .amt { margin-left:auto; font-weight:600; font-variant-numeric:tabular-nums; }
       .lv .lv-chrow .n { color:var(--lv-dim); font-size:12px; min-width:74px; text-align:right; font-variant-numeric:tabular-nums; }
       .lv .lv-also { margin-top:12px; font-size:12px; color:var(--lv-dim); }
-      .lv .lv-early { margin-top:14px; border:1px solid var(--lv-hair); border-radius:10px; padding:10px 12px; }
-      .lv .lv-early .h { display:flex; justify-content:space-between; align-items:baseline; gap:8px; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.08em; color:var(--lv-dim); }
-      .lv .lv-early .h .a { font-size:18px; font-weight:700; letter-spacing:0; text-transform:none; color:var(--lv-ink); font-variant-numeric:tabular-nums; }
-      .lv .lv-early ul { list-style:none; margin:8px 0 0; padding:0; display:flex; flex-direction:column; gap:6px; }
-      .lv .lv-early li { display:grid; grid-template-columns:minmax(0,1fr) auto; column-gap:8px; align-items:baseline; font-size:13px; }
-      .lv .lv-early li .w { grid-column:1 / -1; font-size:12px; color:var(--lv-dim); }
-      .lv .lv-early li .n { color:var(--lv-ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-      .lv .lv-early li .a { color:var(--lv-ink); font-variant-numeric:tabular-nums; }
-      .lv .lv-early .lv-chip { margin:0 0 0 6px; padding:1px 6px; vertical-align:1px; }
-      .lv .lv-early .s { margin-top:8px; font-size:12px; color:var(--lv-dim); }
       .lv .lv-sec { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin:4px 2px 0; }
       .lv .lv-sec h2 { margin:0; font-size:15px; font-weight:600; }
       .lv .lv-sec span { font-size:13px; color:var(--lv-dim); }
@@ -37396,8 +37386,9 @@
   // Five pages, one module. One fetch covers the chosen range AND its comparison window;
   // a store change re-renders from memory. Phase 1 moves no money: everything here is also
   // inside Bargain Lane's totals until the phase-2 cutover, and the Overview says so.
-  // Headline Whatnot dollars are the recap's (gross at Whatnot's end-of-show summary);
-  // per-show rows are Whatnot's API (net of every cancelled or failed order).
+  // Whatnot is the Whatnot API's alone (Brian, 2026-11-04: the recap email is retired): its daily rows
+  // are Whatnot's gross sales per store-day, written hourly by the sync, and the per-show rows are the
+  // same figures show by show (cancelled and failed orders left out).
   const LV_PAGE = { 'live-overview': 'overview', 'live-shows': 'shows', 'live-auction': 'auction', 'live-promotion': 'promotion', 'live-money': 'money' };
   const LV_CH = { whatnot: { name: 'Whatnot', color: 'var(--lv-w)' }, auction: { name: 'Online auction', color: 'var(--lv-a)' } };
   const LV_SLOTS = ['Morning (before 10:30)', 'Midday (10:30–1:00)', 'Afternoon (1:00–3:30)', 'Evening (3:30 on)'];
@@ -37425,8 +37416,8 @@
 
   // The range and the window it is compared with: the same days of the previous month or year
   // for month and year presets, the same days a week earlier for week presets, otherwise the
-  // equal span just before. Live sales are reported after the fact (the recap the next morning,
-  // auction results days later), so the comparison runs only through the newest reported day.
+  // equal span just before. Live sales can be reported after the fact (auction results days later),
+  // so the comparison runs only through the newest reported day.
   // `cFrom` is fixed before any data arrives: it bounds the one fetch.
   function lvMonthBack(ymd, months) {   // same day-of-month, clamped (Mar 31 → Feb 28)
     const first = ymdMonthShift(ymdFirstOfMonth(ymd), -months), last = ymdLastOfMonth(first);
@@ -37442,7 +37433,7 @@
     return { from: r.from, to: r.to, cFrom: back(r.from), back, label: r.label,
              dates: r.presetId === 'custom' ? '' : fmtRangeShort(r.from, r.to) };
   }
-  // Whatnot is reported through the newest recap; the auction through its newest results.
+  // Whatnot is reported through the sync's newest day; the auction through its newest results.
   function lvReported() {
     const cov = (lvState.data && lvState.data.coverage) || [];
     const last = (c) => (cov.find(r => r.channel === c) || {}).last || null;
@@ -37460,8 +37451,7 @@
     }));
     // Units, coverage and sync are the same in every piece; the rows are not.
     return { ...bodies[0], from, to, channels: bodies.flatMap(b => b.channels || []),
-             shows: bodies.flatMap(b => b.shows || []), bl: bodies.flatMap(b => b.bl || []), ledger: bodies.flatMap(b => b.ledger || []),
-             early: bodies.flatMap(b => b.early || []) };
+             shows: bodies.flatMap(b => b.shows || []), bl: bodies.flatMap(b => b.bl || []), ledger: bodies.flatMap(b => b.ledger || []) };
   }
   async function lvLoad(force) {
     const w = lvWindow(), key = w.cFrom + '|' + w.to;
@@ -37493,7 +37483,7 @@
   }
   function lvSelect() {
     const d = lvState.data, w = lvWindow(), rep = lvReported();
-    // Compared span = the selected days the recap has reported, against the same span before.
+    // Compared span = the selected days that are reported, against the same span before.
     w.repTo = rep.whatnot && rep.whatnot < w.to ? rep.whatnot : w.to;
     w.cTo = w.repTo >= w.from ? w.back(w.repTo) : null;
     w.cmpLabel = w.cTo ? fmtRangeShort(w.cFrom, w.cTo) : '';
@@ -37503,23 +37493,22 @@
     const shows = (d.shows || []).filter(s => inStore(s.store)).map(lvPrepShow);
     return {
       w, units: (d.units || []).filter(u => inStore(u.code)),
-      recap: rows.filter(r => r.channel === 'whatnot' && inR(r.date, w.from, w.to)),
+      wn: rows.filter(r => r.channel === 'whatnot' && inR(r.date, w.from, w.to)),
       auc: rows.filter(r => r.channel === 'auction' && inR(r.date, w.from, w.to)),
-      recapCmp: rows.filter(r => r.channel === 'whatnot' && inR(r.date, w.from, w.repTo)),
+      wnCmp: rows.filter(r => r.channel === 'whatnot' && inR(r.date, w.from, w.repTo)),
       aucCmp: rows.filter(r => r.channel === 'auction' && inR(r.date, w.from, w.repTo)),
-      recapPrev: w.cTo ? rows.filter(r => r.channel === 'whatnot' && inR(r.date, w.cFrom, w.cTo)) : [],
+      wnPrev: w.cTo ? rows.filter(r => r.channel === 'whatnot' && inR(r.date, w.cFrom, w.cTo)) : [],
       aucPrev: w.cTo ? rows.filter(r => r.channel === 'auction' && inR(r.date, w.cFrom, w.cTo)) : [],
       shows: shows.filter(s => inR(s.date, w.from, w.to)),
       // The worker already left out rows with no store for anyone who does not see every store.
       ledger: (d.ledger || []).filter(r => inR(r.date, w.from, w.to) && inStore(r.store)),
-      early: (d.early || []).filter(e => inR(e.date, w.from, w.to) && inStore(e.store)),
       allRows: d.channels || [], allShows: (d.shows || []).map(lvPrepShow),
     };
   }
-  function lvWk(recap) {
-    const sum = (f) => recap.reduce((n, r) => n + (Number(f(r)) || 0), 0), m = (r) => r.meta || {};
+  function lvWk(rows) {
+    const sum = (f) => rows.reduce((n, r) => n + (Number(f(r)) || 0), 0), m = (r) => r.meta || {};
     return { sales: sum(r => r.total), shows: sum(r => r.count), items: sum(r => m(r).items), ship: sum(r => m(r).shipments),
-             nb: sum(r => m(r).new_buyers), days: new Set(recap.filter(r => r.count > 0).map(r => r.date)).size };
+             nb: sum(r => m(r).new_buyers), days: new Set(rows.filter(r => r.count > 0).map(r => r.date)).size };
   }
   // An auction row with no total is unknown, not a $0 auction day, so it counts nowhere.
   const lvAk = (rows) => { const auc = rows.filter(r => r.total != null);
@@ -37533,43 +37522,35 @@
       const v = cov.find(r => r.channel === c);
       if (v && v.first > x.w.cFrom) return { pct: null, why: `the Hub's ${LV_CH[c].name} data starts ${lvShort(v.first)}` };
     }
-    const cur = lvWk(x.recapCmp).sales + lvAk(x.aucCmp).sales, prev = lvWk(x.recapPrev).sales + lvAk(x.aucPrev).sales;
+    const cur = lvWk(x.wnCmp).sales + lvAk(x.aucCmp).sales, prev = lvWk(x.wnPrev).sales + lvAk(x.aucPrev).sales;
     return prev > 0 ? { pct: cur / prev - 1 } : { pct: null, why: 'no live sales in that window' };
   }
-  // Recap gross minus Whatnot's total, per store-day where every show has Whatnot's figures.
-  function lvLostAfter(x) {
-    let amt = 0, items = 0, compared = 0, all = 0;
-    for (const r of x.recap) {
-      if (!(r.count > 0) || r.total == null) continue;
-      all++;
-      const day = x.shows.filter(s => s.date === r.date && s.store === r.store);
-      if (!day.length || !day.every(s => s.ready)) continue;
-      compared++;
-      amt += r.total - day.reduce((n, s) => n + s.sales, 0);
-      items += ((r.meta && r.meta.items) || 0) - day.reduce((n, s) => n + (s.orders || 0), 0);
-    }
-    return { amt, items, compared, all };
+  // Orders cancelled or failed, from Whatnot's orders, over the range's shows whose orders have loaded.
+  function lvLost(x) {
+    const loaded = x.shows.filter(s => s.lost);
+    return { amt: loaded.reduce((n, s) => n + Number(s.lost.subtotal || 0), 0), orders: loaded.reduce((n, s) => n + (s.lost.orders || 0), 0),
+             loaded: loaded.length, all: x.shows.length };
   }
   const lvUnitName = (code) => ((lvState.data && lvState.data.units.find(u => u.code === code)) || {}).name || code;
 
   function lvHero(x) {
-    const k = lvWk(x.recap), a = lvAk(x.auc), total = k.sales + a.sales, c = lvCompare(x);
+    const k = lvWk(x.wn), a = lvAk(x.auc), total = k.sales + a.sales, c = lvCompare(x);
     const delta = c.pct != null
-      ? `<span class="${c.pct >= 0 ? 'lv-up' : 'lv-down'}">${c.pct >= 0 ? '+' : '−'}${Math.abs(c.pct * 100).toFixed(0)}%</span> vs ${lvEsc(x.w.cmpLabel)}${x.w.repTo < x.w.to ? ` (through ${lvShort(x.w.repTo)}, the newest recap)` : ''}`
+      ? `<span class="${c.pct >= 0 ? 'lv-up' : 'lv-down'}">${c.pct >= 0 ? '+' : '−'}${Math.abs(c.pct * 100).toFixed(0)}%</span> vs ${lvEsc(x.w.cmpLabel)}${x.w.repTo < x.w.to ? ` (through ${lvShort(x.w.repTo)})` : ''}`
       : `No comparison: ${lvEsc(c.why)}`;
-    const rep = lvReported(), any = x.recap.length || x.auc.some(r => r.total != null);
+    const rep = lvReported(), any = x.wn.length || x.auc.some(r => r.total != null);
     const behind = [rep.whatnot && rep.whatnot < x.w.to ? `Whatnot through ${lvShort(rep.whatnot)}` : '',
                     rep.auction && rep.auction < x.w.to ? `online auction through ${lvShort(rep.auction)}` : ''].filter(Boolean).join(' · ');
-    const note = !any ? '<div class="lv-also">Nothing reported for this range yet. The Whatnot recap arrives the morning after a show; auction results a few days after the auction.</div>'
+    const note = !any ? '<div class="lv-also">No live sales in this range yet. Whatnot updates hourly; auction results arrive a few days after the auction.</div>'
       : behind ? `<div class="lv-also">Reported so far: ${behind}. Later days fill in as they arrive.</div>` : '';
-    const liveDays = new Set([...x.auc.map(r => r.date), ...x.recap.filter(r => r.count > 0).map(r => r.date)]).size;
+    const liveDays = new Set([...x.auc.map(r => r.date), ...x.wn.filter(r => r.count > 0).map(r => r.date)]).size;
     const split = [['whatnot', k.sales, `${lvInt(k.shows)} shows`], ['auction', a.sales, `${lvInt(a.lots)} lots`]].map(([ch, v, n]) =>
       `<div class="lv-chrow"><span class="lv-sw" style="background:${LV_CH[ch].color}"></span><span>${LV_CH[ch].name}</span><span class="amt">${fmtDollar(v)}</span><span class="n">${n}</span></div>
        <div class="lv-track"><div class="lv-fill" style="width:${total ? v / total * 100 : 0}%;background:${LV_CH[ch].color}"></div></div>`).join('');
     const perItem = k.items ? k.sales / k.items : null, aov = k.ship ? k.sales / k.ship : null;
     return `<div class="lv-hero">
       <div class="lv-card"><div class="lv-eyebrow">Live sales · ${lvEsc(x.w.label)}${x.w.dates ? ` · ${lvEsc(x.w.dates)}` : ''}</div>
-        <div class="lv-big">${any ? fmtDollar(total) : '—'}</div><div class="lv-delta">${delta}</div>${note}${lvEarly(x)}
+        <div class="lv-big">${any ? fmtDollar(total) : '—'}</div><div class="lv-delta">${delta}</div>${note}
         <div class="lv-chsplit">${split}</div>
         <div class="lv-facts"><div><div class="v">${lvInt(k.days)}</div><div class="l">show days</div></div><div><div class="v">${lvInt(a.days)}</div><div class="l">auction days</div></div>
           <div><div class="v">${liveDays ? fmtDollar(total / liveDays) : '—'}</div><div class="l">per live day</div></div></div>
@@ -37580,18 +37561,6 @@
         <div class="lv-tile"><div class="l">New buyers</div><div class="v">${lvInt(k.nb)}</div><div class="s">${k.ship ? Math.round(k.nb / k.ship * 100) + '% of shipments' : '—'}</div></div>
         <div class="lv-tile"><div class="l">Auction lots</div><div class="v">${lvInt(a.lots)}</div><div class="s">${a.lots ? fmtDollar(a.sales / a.lots) + ' per lot' : '—'}</div></div>
       </div></div>`;
-  }
-
-  // Before the recap: Whatnot's own orders for shows the recap has not reached yet, read hourly. Shown
-  // beside the total, never in it, nor in the change or the chart: the recap replaces it next morning.
-  function lvEarly(x) {
-    if (!x.early.length) return '';
-    const sum = x.early.reduce((n, e) => n + Number(e.sales || 0), 0), today = etTodayStr();
-    const at = lvState.data.sync && lvState.data.sync.lastRun && lvState.data.sync.lastRun.at;
-    const rows = x.early.map(e => `<li><span class="n">${lvEsc(e.title)}${e.status === 'live' ? '<span class="lv-chip ok">Live</span>' : ''}</span><span class="a">${fmtDollar(e.sales)}</span>
-      <span class="w">${e.date === today ? 'Today' : lvShort(e.date)} · ${lvEtTime.format(new Date(e.startAt))} · ${lvEsc(lvUnitName(e.store))} · ${lvInt(e.orders)} order${e.orders === 1 ? '' : 's'}</span></li>`).join('');
-    return `<div class="lv-early"><div class="h"><span>So far, before the recap</span><span class="a">${fmtDollar(sum)}</span></div><ul>${rows}</ul>
-      <div class="s">Whatnot's orders${at ? ` as of ${lvEtTime.format(new Date(at))}` : ''}, cancelled ones left out. Not in the total above: the recap replaces it the next morning.</div></div>`;
   }
 
   function lvSpark(vals) {
@@ -37608,8 +37577,8 @@
   }
   function lvStores(x) {
     return `<div class="lv-locs">${x.units.map(u => {
-      const k = lvWk(x.recap.filter(r => r.store === u.code)), a = lvAk(x.auc.filter(r => r.store === u.code));
-      const vals = lvDaily({ ...x, recap: x.recap.filter(r => r.store === u.code), auc: x.auc.filter(r => r.store === u.code) }).map(r => r.tot);
+      const k = lvWk(x.wn.filter(r => r.store === u.code)), a = lvAk(x.auc.filter(r => r.store === u.code));
+      const vals = lvDaily({ ...x, wn: x.wn.filter(r => r.store === u.code), auc: x.auc.filter(r => r.store === u.code) }).map(r => r.tot);
       const tile = (ch, v, n) => `<div class="lv-ctile"><div class="l"><span class="lv-sw" style="background:${LV_CH[ch].color}"></span>${LV_CH[ch].name}</div><div class="v${v ? '' : ' none'}">${v ? fmtDollar(v) : 'none'}</div><div class="lv-sub">${n}</div></div>`;
       return `<div class="lv-card"><div class="lv-loc-head"><div><span class="lv-loc-name">${lvEsc(u.name)}</span><span class="lv-loc-code">${lvEsc(u.code)}</span></div><span class="lv-pill">${lvEsc(lvLast(u.code, x))}</span></div>
         <div class="lv-loc-mid"><div><div class="lv-eyebrow">${lvEsc(x.w.label)}${x.w.dates ? ` · ${lvEsc(x.w.dates)}` : ''}</div><div class="lv-loc-total">${k.days || a.days ? fmtDollar(k.sales + a.sales) : '—'}</div></div>${lvSpark(vals)}</div>
@@ -37630,7 +37599,7 @@
       const k = keyOf(d);
       if (!at.has(k)) { at.set(k, rows.length); rows.push({ d: k < x.w.from ? x.w.from : k, unit, v: [0, 0], n: [0, 0], tot: 0 }); }
     }
-    for (const [j, list] of [[0, x.recap], [1, x.auc]]) for (const r of list) {
+    for (const [j, list] of [[0, x.wn], [1, x.auc]]) for (const r of list) {
       const row = rows[at.get(keyOf(r.date))]; if (!row) continue;
       row.v[j] += Number(r.total) || 0; row.n[j] += r.count || 0; row.tot += Number(r.total) || 0;
     }
@@ -37646,7 +37615,7 @@
     return `<div class="lv-panel"><div class="lv-bar"><span class="t">${title}</span><span class="lab">gross, stacked by channel</span>
       <div class="r"><div class="lv-seg" role="group" aria-label="Chart or table"><button onclick="lvSetView('chart')" aria-pressed="${view === 'chart'}">Chart</button><button onclick="lvSetView('table')" aria-pressed="${view === 'table'}">Table</button></div></div></div>
       <div class="lv-body">${view === 'chart' ? '<div class="lv-chart" id="lv-chart"></div>' : table()}</div>
-      <div class="lv-legend"><span class="lv-k"><span class="lv-sw" style="background:var(--lv-w)"></span>Whatnot</span><span class="lv-k"><span class="lv-sw" style="background:var(--lv-a)"></span>Online auction</span><span>Source: the Bargain Lane Live recap email and the online auction results feed</span></div></div>`;
+      <div class="lv-legend"><span class="lv-k"><span class="lv-sw" style="background:var(--lv-w)"></span>Whatnot</span><span class="lv-k"><span class="lv-sw" style="background:var(--lv-a)"></span>Online auction</span><span>Source: the Whatnot API (hourly) and the online auction results feed</span></div></div>`;
   }
   function lvDrawChart(x) {
     const host = el('lv-chart'); if (!host) return;
@@ -37685,7 +37654,7 @@
   }
 
   function lvBreakdown(x) {
-    const by = x.units.map(u => ({ u, w: lvWk(x.recap.filter(r => r.store === u.code)), a: lvAk(x.auc.filter(r => r.store === u.code)) }))
+    const by = x.units.map(u => ({ u, w: lvWk(x.wn.filter(r => r.store === u.code)), a: lvAk(x.auc.filter(r => r.store === u.code)) }))
       .map(o => ({ ...o, tot: o.w.sales + o.a.sales })).sort((p, q) => q.tot - p.tot);
     const max = Math.max(...by.map(o => o.tot), 1), ready = x.shows.filter(s => s.ready);
     const types = ['Apparel', 'Bags'].map(t => { const g = ready.filter(s => s.type === t);
@@ -37770,7 +37739,7 @@
       tips: sum(['TIP']), nTips: cnt(['TIP']) };
   }
   function lvMoneyBack(x, withHead) {
-    const lost = lvLostAfter(x), L = lvLedger(x), live = L.state === 'ok';
+    const lost = lvLost(x), L = lvLedger(x), live = L.state === 'ok';
     const card = (l, v, s, chip, cls) => `<div class="lv-mb"><div class="l">${l}</div><div class="v${v === '—' ? ' none' : ''}">${v}</div><div class="s">${s}</div><span class="lv-chip ${cls}">${chip}</span></div>`;
     const [chip, cls] = { setup: ['Not set up', 'no'], access: ['Needs access', 'need'], waiting: ['Waiting', 'need'],
       error: ['Retrying', 'need'], behind: ['Loading', 'need'], ok: ['Connected', 'ok'] }[L.state];
@@ -37784,7 +37753,7 @@
           live ? `${L.carrier > 0 ? 'Net credit' : 'Net charge'} for wrong package weight or size · ${plural(L.nCharges, 'charge')}, ${plural(L.nCredits, 'credit')}` : why, chip, cls);
     return `${withHead ? '<div class="lv-sec"><h2>Money back</h2><span>What came off the Whatnot gross after the show · the auction feed has no refund data</span></div>' : ''}
       <div class="lv-mbgrid">${[
-        card('Cancelled after the show', lost.compared ? fmtDollar(lost.amt) : '—', lost.compared ? `${lvInt(lost.items)} items failed or were cancelled after Whatnot's end-of-show summary · ${lost.compared} of ${lost.all} show days` : 'No Whatnot show days to compare in this range', 'Connected', 'ok'),
+        card('Cancelled or failed', lost.loaded ? fmtDollar(lost.amt) : '—', lost.loaded ? `${plural(lost.orders, 'order')} cancelled or failed, from Whatnot's orders · ${lost.loaded} of ${lost.all} shows` : 'No Whatnot shows with orders in this range', 'Connected', 'ok'),
         card('Refunds', live ? fmtDollar(L.refunds) : '—', live ? `${plural(L.nRefunds, 'refund')} issued in this range, refunded shipping included` : why, chip, cls),
         card('Returns', '—', 'Whatnot books a return as a refund; it has no separate return count', 'In refunds', 'no'),
         carrier,
@@ -38146,9 +38115,9 @@
     } else if (s.state === 'empty') {
       body = `<div class="lv-note"><b>Nothing sold.</b> Whatnot has figures for this show and they are zero: no orders.</div>`;
     } else if (s.state === 'counting') {
-      body = `<div class="lv-note"><b>Still counting.</b> The show ended; Whatnot usually has its figures within a few hours. Until then the Overview shows it under “So far, before the recap”.</div>${soFar ? `<div class="lv-ctiles">${soFar}${store}</div>` : ''}`;
+      body = `<div class="lv-note"><b>Still counting.</b> The show ended; Whatnot usually has its figures within a few hours. Until then its sales are its orders so far.</div>${soFar ? `<div class="lv-ctiles">${soFar}${store}</div>` : ''}`;
     } else if (s.state === 'nofig') {
-      body = `<div class="lv-note"><b>No Whatnot figures.</b> Whatnot has not sent figures for this show. It is still counted in the recap totals.</div>`;
+      body = `<div class="lv-note"><b>No Whatnot figures.</b> Whatnot has not sent figures for this show.</div>`;
     } else if (s.state === 'live') {
       body = `<div class="lv-ctiles">${soFar || fig('So far', none, 'Its orders have not loaded yet')}${store}</div>`;
     } else if (s.state === 'scheduled' || s.state === 'starting') {

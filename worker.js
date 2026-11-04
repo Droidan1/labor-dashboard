@@ -5266,7 +5266,6 @@ const ACTION_BUSINESS = new Map([
   ["labor-plan", "bl"],
   ["list-sale-schedules", "bl"],
   ["list-users", "bl"],
-  ["live-recap-pdf", "bl"],
   ["ly-sales", "bl"],
   ["manual-override", "bl"],
   ["marketing-insights", "bl"],
@@ -5282,6 +5281,7 @@ const ACTION_BUSINESS = new Map([
   ["photo-targets", "bl"],
   ["photo-upload", "bl"],
   ["preview-daily-summary", "bl"],
+  ["live-daily-pdf", "live"],
   ["publish-draft", "bl"],
   ["rebuild-week-summaries", "bl"],
   ["refresh-item-cats", "bl"],
@@ -5452,10 +5452,30 @@ const STORE_LABELS = {
 };
 
 // Live sales: the channel_sales channels whose SUM is a store-day's
-// daily_sales.auction. "auction" = the online auction Drive feed,
-// "whatnot" = Whatnot shows from the Bargain Lane Live recap email. The column
-// keeps its old name because every reader already folds it into store totals.
+// daily_sales.auction. "auction" = the online auction results feed (?action=ingest),
+// "whatnot" = Whatnot's gross sales from the Whatnot API (syncWhatnotDaily; the recap
+// email is retired). The column keeps its old name because every reader already folds
+// it into store totals.
 const LIVE_CHANNELS = ["auction", "whatnot"];
+
+// Projection: the dashboard and the daily email read daily_sales.auction as the store-day's LIVE
+// sales, folded into each store's total. The column is RECOMPUTED as the sum of every live channel's
+// channel_sales row, never written from a request — when it was last-writer-wins, the auction feed
+// overwrote Battle Creek's Whatnot on 11 days in Sep-Oct 2026 (~$23.9k gone). Manual-override rows
+// are never touched. Callers pass only the store-days they STORED with a total: a rejected or
+// total-less row must not re-sum (and so wipe) a day it never wrote.
+async function projectLiveSales(env, storeDates) {
+  if (!storeDates.length) return 0;
+  const proj = env.DB.prepare(
+    `INSERT INTO daily_sales (store, date, auction)
+     VALUES (?, ?, (SELECT ROUND(SUM(total), 2) FROM channel_sales
+                     WHERE store = ? AND date = ? AND channel IN (${LIVE_CHANNELS.map(() => "?").join(",")})))
+     ON CONFLICT(store, date) DO UPDATE SET
+       auction = CASE WHEN is_manual_override = 1 THEN auction ELSE excluded.auction END`
+  );
+  await env.DB.batch(storeDates.map(([store, date]) => proj.bind(store, date, store, date, ...LIVE_CHANNELS)));
+  return storeDates.length;
+}
 
 // Attribute a Meta campaign to a store/location by keyword-matching its name.
 // Most specific first (Coliseum/Dupont before the generic "Fort Wayne").
@@ -6717,20 +6737,19 @@ async function buildExecSummaryData(env, through, scopeStores = null) {
   const missing = stores.filter(s => { const r = row[s + "|" + through]; return !r || r.total == null || !r.snapshot_time; })
     .map(s => STORE_LABELS[s] || s);
 
-  // Whatnot posts a row for every recap, $0 days included, for the stores it
-  // covers. Those stores in scope with no row for `through` = recap not in yet.
-  // Best-effort: no channel_sales table means no note, never a failed email.
-  let whatnotPending = false;
+  // Whatnot's sales come from the hourly Whatnot sync (syncWhatnotDaily). A sync that has not run in
+  // the last 2 hours may be missing later shows: say when it last read. Only for a scope holding a
+  // Whatnot store. Best-effort: no Whatnot tables means no note, never a failed email.
+  let whatnotStale = null;
   try {
-    const { results: wn } = await env.DB.prepare(
-      `SELECT store, MAX(date) AS last FROM channel_sales
-        WHERE channel = 'whatnot' AND date >= ? AND date <= ? AND store IN (${ph}) GROUP BY store`
-    ).bind(addDaysYmd(through, -30), through, ...stores).all();
-    whatnotPending = (wn || []).some(r => r.last < through);
-  } catch (_) { /* table absent: nothing to say */ }
+    if (stores.some(s => WHATNOT_STORES.includes(s)) && await whatnotReady(env)) {
+      const lr = JSON.parse((await whatnotState(env, "last_run")) || "null");
+      if (!lr || !lr.at || Date.now() - Date.parse(lr.at) > 2 * 3600e3) whatnotStale = lr && lr.at ? lr.at : "never";
+    }
+  } catch (_) { /* nothing to say */ }
 
   return {
-    reportDate: addDaysYmd(through, 1), through, weekStart, weekEnd, wtd, yday, mtd, missing, whatnotPending,
+    reportDate: addDaysYmd(through, 1), through, weekStart, weekEnd, wtd, yday, mtd, missing, whatnotStale,
     // No plan (no budget rows yet, e.g. a new year) is not "on track".
     pace: { projected, fullWeekPlan, onTrack: fullWeekPlan > 0 ? projected >= fullWeekPlan : null },
   };
@@ -6823,7 +6842,8 @@ function buildExecSummaryEmailHtml(d, totalsLabel = "All Stores", scopeLabel = t
           Projected <strong>${usd(pace.projected)}</strong> vs full-week plan <strong>${usd(pace.fullWeekPlan)}</strong>
         </div>
         ${d.missing.length ? warn(`No sales data yet for ${d.missing.map(_esc).join(", ")} on ${short(d.through)}; counted as $0 above.`) : ""}
-        ${d.whatnotPending ? warn(`The Whatnot recap for ${short(d.through)} has not arrived, so that day's Whatnot sales are not included yet.`) : ""}
+        ${d.whatnotStale ? warn(d.whatnotStale === "never" ? "Whatnot's figures have not been read yet, so Whatnot sales may be missing."
+          : `Whatnot's figures were last read at ${new Date(d.whatnotStale).toLocaleString("en-US", { timeZone: "America/New_York", month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })} Eastern; later Whatnot sales may be missing.`) : ""}
       </div>
 
       ${section("Week to date", `${short(d.weekStart)} – ${short(d.through)}`, ["WTD Sales", "WTD Plan", "Variance %"], d.wtd, "var", "WTD")}
@@ -6831,8 +6851,8 @@ function buildExecSummaryEmailHtml(d, totalsLabel = "All Stores", scopeLabel = t
       ${section("Month to date", `${month} 1 – ${new Date(d.through + "T12:00:00Z").getUTCDate()}`, ["MTD Sales", "Monthly Plan", "% of Plan"], d.mtd, "attain", "MTD")}
 
       <p style="margin:24px 0 0;padding-top:12px;border-top:1px solid ${RULE};font-size:11px;line-height:1.6;color:${MUTED}">
-        Sales = net sales (retail + BIN) plus live sales, counted once. Live sales = online auction plus Whatnot
-        (Whatnot is gross, before fees and refunds). Plan = the daily budget from the budget sheet.
+        Sales = net sales (retail + BIN) plus live sales, counted once. Live sales = online auction plus Whatnot's
+        gross sales from the Whatnot API (before fees, cancelled orders left out). Plan = the daily budget from the budget sheet.
         Variance % = sales ÷ plan − 1. Week = Sunday–Saturday. Pace = week-to-date sales plus last week's sales
         for the days still to come.
         <br><a href="https://www.retjghub.com" style="color:${NAVY}">Open Dashboard</a>
@@ -6985,40 +7005,215 @@ async function storeScopedRecipients(env) {
 // The Executive Summary's send hour, Eastern (see the hourly cron in scheduled()).
 const DAILY_SUMMARY_ET_HOUR = 5;
 
-// ── The BL-Live-Recap PDF on the Executive Summary ─────────────────────────
-// The "Bargain Lane Live recap" email carries a PDF (BL-Live-Recap-<date>.pdf)
-// that only the Apps Script feeder sees. It uploads it to ?action=live-recap-pdf,
-// which keeps it privately in R2 under live-recap/ (no route serves that prefix),
-// and the 5 AM send attaches the one for the day the email covers.
+// ── The Whatnot daily PDF on the Executive Summary (BL-Live-<date>.pdf) ─────
+// Brian (2026-11-04): rebuilt from the Whatnot API; the recap email that used to carry this PDF is
+// retired. Same page as the old recap: tiles, sales by show, the month's daily sales by location, the
+// shows table and month to date, drawn with the worker's own pdfPage/pdfBuild (no library). Sales are
+// Whatnot's gross (analytics `sales`, else orders not cancelled or failed, as in whatnotDays); the
+// month's rows are channel_sales 'whatnot', the same rows the email's live sales come from.
 //
-// 🔑 The PDF lists Fort Wayne's and Battle Creek's shows side by side, so it goes
-// only to a copy entitled to BOTH stores: every chain-wide copy, and a scoped
-// copy whose stores include all of LIVE_RECAP_STORES. A BL1-only manager does
-// not get it. On the cron the recipient list IS the access control.
-//
-// These are the feeder's LOCATION_TO_STORE stores (scripts/whatnot-recap-ingest.gs).
-// Two encodings of one fact: test-live-recap-attachment.mjs pins them equal.
-const LIVE_RECAP_STORES = ["BL1", "BL14"];
-const LIVE_RECAP_MAX_BYTES = 10 * 1024 * 1024;
-const liveRecapKey = (date) => `live-recap/${date}.pdf`;
+// 🔑 The PDF lists Fort Wayne's and Battle Creek's shows side by side, so it goes only to a copy
+// entitled to BOTH stores: every chain-wide copy, and a scoped copy whose stores include all of
+// WHATNOT_STORES. A BL1-only manager does not get it. On the cron the recipient list IS the access
+// control. No show that day = no PDF.
 // A real calendar date in YYYY-MM-DD, nothing else (2026-02-30 is refused).
 const isYmdDate = (s) => {
   const t = Date.parse(s + "T12:00:00Z");
   return /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(t) && new Date(t).toISOString().slice(0, 10) === s;
 };
+const WHATNOT_LOCATION = { BL1: "Fort Wayne", BL14: "Battle Creek" };
 
-// The recap PDF for `through` as a Resend attachment, or null. Never throws: a
-// recap that is late, missing or unreadable must not hold the email back, and
-// the email already says when that day's recap has not arrived.
-async function liveRecapAttachment(env, through) {
-  if (!env.MEDIA || !through) return null;
+// Everything the page draws for `through`, or null when no show ran that day.
+async function whatnotDailyReport(env, through) {
+  if (!(await whatnotReady(env))) return null;
+  const inList = WHATNOT_STORES.map(() => "?").join(",");
+  const shipCol = await whatnotItemShipments(env);
+  const KEPT = "COALESCE(o.status, '') NOT IN ('cancelled', 'failed')";
+  const shows = (await env.DB.prepare(
+    `WITH sh AS (SELECT * FROM whatnot_shows WHERE status IN ('ended', 'live', 'stopped') AND show_date = ? AND store IN (${inList})),
+          ord AS (SELECT o.show_id, SUM(CASE WHEN ${KEPT} THEN 1 ELSE 0 END) AS kept,
+                         ROUND(SUM(CASE WHEN ${KEPT} THEN COALESCE(o.subtotal, 0) ELSE 0 END), 2) AS kept_amt
+                    FROM whatnot_orders o JOIN sh ON sh.id = o.show_id GROUP BY o.show_id)
+          ${shipCol ? `, shp AS (SELECT i.show_id, COUNT(DISTINCT i.shipment_id) AS shipments FROM whatnot_order_items i
+                         JOIN sh ON sh.id = i.show_id JOIN whatnot_orders o ON o.id = i.order_id
+                        WHERE COALESCE(i.shipment_id, '') <> '' AND ${KEPT} GROUP BY i.show_id)` : ""}
+     SELECT sh.id, sh.title, sh.store, COALESCE(sh.started_at, sh.scheduled_start_at) AS start_at,
+            ROUND(COALESCE(a.sales, ord.kept_amt, 0), 2) AS sales, COALESCE(a.orders_count, ord.kept, 0) AS items,
+            a.first_time_buyers AS new_buyers, ${shipCol ? "COALESCE(shp.shipments, 0)" : "NULL"} AS shipments
+       FROM sh LEFT JOIN whatnot_show_analytics a ON a.show_id = sh.id LEFT JOIN ord ON ord.show_id = sh.id
+       ${shipCol ? "LEFT JOIN shp ON shp.show_id = sh.id" : ""}
+      ORDER BY start_at`
+  ).bind(through, ...WHATNOT_STORES).all()).results || [];
+  if (!shows.length) return null;
+  const monthStart = through.slice(0, 8) + "01", weekAgo = addDaysYmd(through, -7);
+  const [month, prev] = await env.DB.batch([
+    env.DB.prepare(`SELECT store, date, total, count, meta FROM channel_sales WHERE channel = 'whatnot' AND date BETWEEN ? AND ? AND store IN (${inList}) ORDER BY date`)
+      .bind(monthStart, through, ...WHATNOT_STORES),
+    env.DB.prepare(`SELECT ROUND(SUM(total), 2) AS t, COUNT(*) AS n FROM channel_sales WHERE channel = 'whatnot' AND date = ? AND store IN (${inList})`)
+      .bind(weekAgo, ...WHATNOT_STORES),
+  ]);
+  // A shipment can hold items from two shows, so the day's count is distinct across the day.
+  const day = await whatnotDays(env, through, through, WHATNOT_STORES);
+  const dayShipments = shipCol ? day.reduce((n, d) => n + (d.shipments || 0), 0) : null;
+  // Tips: Whatnot's financial report, once it covers the whole Eastern day (05:00Z = midnight EST).
+  let tips = null;
+  if (await whatnotLedgerReady(env)) {
+    const st = JSON.parse((await whatnotState(env, "ledger")) || "{}");
+    if (st.cursor && Date.parse(st.cursor) >= Date.parse(addDaysYmd(through, 1) + "T05:00:00Z")) {
+      const r = await env.DB.prepare("SELECT ROUND(COALESCE(SUM(amount), 0), 2) AS t FROM whatnot_ledger WHERE type = 'TIP' AND completed_date = ?").bind(through).first();
+      tips = r ? Number(r.t) : 0;
+    }
+  }
+  const p = prev.results && prev.results[0];
+  return { through, shows, dayShipments, tips, weekAgo: p && p.n ? Number(p.t) : null,
+    month: (month.results || []).map(r => { let m = {}; try { m = JSON.parse(r.meta || "{}") || {}; } catch (_) {} return { ...r, meta: m }; }) };
+}
+
+// The page: US Letter, one page; up to 14 shows fit the table.
+function whatnotDailyPdfBytes(rep) {
+  const INK = [0.11, 0.13, 0.16], DIM = [0.42, 0.45, 0.5], RULE = [0.86, 0.87, 0.89];
+  const LOC_COLOR = { BL1: [0.184, 0.365, 0.624], BL14: [0.788, 0.439, 0.165] };
+  const M = PDF_MARGIN, R = PDF_PAGE_W - M;
+  const page = pdfPage();
+  const ink = (c) => page.fill(c[0], c[1], c[2]);
+  const usd0 = (n) => "$" + Math.round(n).toLocaleString("en-US");
+  const usd2 = (n) => "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const int = (n) => n == null ? "-" : Math.round(n).toLocaleString("en-US");
+  const k = (n) => n >= 1000 ? "$" + (n / 1000).toFixed(2).replace(/\.?0+$/, "") + "k" : "$" + Math.round(n);   // 1250 → $1.25k
+  const center = (x, y, s, size, bold) => page.text(x - pdfTextWidth(s, size, bold) / 2, y, s, size, bold);
+  const hline = (y, x1 = M, x2 = R, w = 0.5) => { page.stroke(...RULE); page.line(x1, y, x2, y, w); };
+  const etTime = (iso) => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" })
+    .format(new Date(Math.round(Date.parse(iso) / 6e4) * 6e4));
+  const dt = new Date(rep.through + "T12:00:00Z");
+  const dateLong = dt.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
+  const wk = dt.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" });
+  const monthName = dt.toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
+  const shows = rep.shows, sum = (f) => shows.reduce((n, s) => n + (Number(f(s)) || 0), 0);
+  const sales = sum(s => s.sales), items = sum(s => s.items), nb = sum(s => s.new_buyers);
+
+  // Header
+  let y = 750;
+  ink(DIM); page.text(M, y, "BARGAIN LANE LIVE  ·  WHATNOT DAILY RECAP", 8, true);
+  y -= 26; ink(INK); page.text(M, y, dateLong, 22, true);
+  y -= 15; ink(DIM); page.text(M, y, `${shows.length} show${shows.length === 1 ? "" : "s"}  ·  from the Whatnot API  ·  gross sales, before fees, cancelled orders left out`, 9);
+
+  // Tiles
+  const tTop = y - 12, tH = 58, tw = (R - M) / 5;
+  page.stroke(...RULE);
+  page.line(M, tTop, R, tTop); page.line(M, tTop - tH, R, tTop - tH); page.line(M, tTop, M, tTop - tH); page.line(R, tTop, R, tTop - tH);
+  const vsWeek = rep.weekAgo == null ? "" : `${sales - rep.weekAgo >= 0 ? "+" : "-"}${usd0(Math.abs(sales - rep.weekAgo))} vs last ${wk}`;
+  const tiles = [
+    ["SALES", usd0(sales), vsWeek],
+    ["ITEMS SOLD", int(items), items ? `${usd2(sales / items)} per item` : ""],
+    ["SHIPMENTS", rep.dayShipments == null ? "-" : int(rep.dayShipments), rep.dayShipments ? `${(items / rep.dayShipments).toFixed(1)} items each` : ""],
+    ["NEW BUYERS", int(nb), rep.dayShipments ? `${Math.round(nb / rep.dayShipments * 100)}% of shipments` : ""],
+    ["TIPS", rep.tips == null ? "-" : usd2(rep.tips), rep.tips == null ? "not in Whatnot's report yet" : ""],
+  ];
+  tiles.forEach(([l, v, sub], i) => {
+    const x = M + i * tw + 10;
+    if (i) { page.stroke(...RULE); page.line(M + i * tw, tTop - 8, M + i * tw, tTop - tH + 8); }
+    ink(DIM); page.text(x, tTop - 15, l, 7, true);
+    ink(INK); page.text(x, tTop - 35, v, 17, true);
+    ink(DIM); page.text(x, tTop - 49, pdfEllipsize(sub, 7, false, tw - 14), 7);
+  });
+
+  // Charts: sales by show (left), the month's daily sales by location (right)
+  const cTop = tTop - tH - 26, cBot = cTop - 150, plotTop = cTop - 30;
+  // Round steps ($250, $500, $1k…), at most 5 of them above $0.
+  const scale = (v) => { for (const step of [100, 250, 500, 1000, 2000, 5000, 10000]) if (v <= step * 5) return { max: Math.max(step, Math.ceil(v / step) * step), step };
+                         return { max: Math.ceil(v / 20000) * 20000, step: 20000 }; };
+  const axis = (x1, x2, sc) => {
+    for (let v = 0; v <= sc.max + 0.01; v += sc.step) {
+      const yy = cBot + (plotTop - cBot) * v / sc.max;
+      page.stroke(...RULE); page.line(x1, yy, x2, yy, 0.4);
+      ink(DIM); page.textRight(x1 - 4, yy - 2.5, k(v), 6.5);
+    }
+  };
+  ink(INK); page.text(M, cTop, "Sales by show", 10, true);
+  const lx1 = M + 34, lx2 = M + 250, lSc = scale(Math.max(...shows.map(s => Number(s.sales) || 0))), lMax = lSc.max;
+  axis(lx1, lx2, lSc);
+  const slot = (lx2 - lx1) / Math.max(shows.length, 1), bw = Math.min(28, slot * 0.6);
+  shows.forEach((s, i) => {
+    const cx = lx1 + slot * (i + 0.5), h = (plotTop - cBot) * (Number(s.sales) || 0) / lMax;
+    ink(LOC_COLOR[s.store] || DIM); page.rect(cx - bw / 2, cBot, bw, h);
+    ink(INK); center(cx, cBot + h + 4, usd0(s.sales), 6.5, true);
+    ink(DIM); center(cx, cBot - 10, etTime(s.start_at), 6.5); center(cx, cBot - 18, WHATNOT_LOCATION[s.store] || s.store, 6.5);
+  });
+  const rx0 = M + 300;
+  ink(INK); page.text(rx0, cTop, `${monthName} to date, daily sales`, 10, true);
+  [["BL1", rx0], ["BL14", rx0 + 62]].forEach(([st, x]) => { ink(LOC_COLOR[st]); page.rect(x, cTop - 14, 7, 7); ink(DIM); page.text(x + 10, cTop - 13.5, WHATNOT_LOCATION[st], 7); });
+  const byDay = new Map();
+  for (const r of rep.month) { const d = byDay.get(r.date) || { BL1: 0, BL14: 0 }; d[r.store] = Number(r.total) || 0; byDay.set(r.date, d); }
+  const nDays = Number(rep.through.slice(8)), rx1 = rx0 + 34, rx2 = R;
+  const rSc = scale(Math.max(1, ...[...byDay.values()].map(d => d.BL1 + d.BL14))), rMax = rSc.max;
+  axis(rx1, rx2, rSc);
+  const dslot = (rx2 - rx1) / Math.max(nDays, 7), dbw = Math.min(20, dslot * 0.7);
+  for (let i = 1; i <= nDays; i++) {
+    const d = byDay.get(rep.through.slice(0, 8) + String(i).padStart(2, "0")) || { BL1: 0, BL14: 0 };
+    const cx = rx1 + dslot * (i - 0.5);
+    let base = cBot;
+    for (const st of ["BL1", "BL14"]) {
+      const h = (plotTop - cBot) * d[st] / rMax;
+      if (h > 0) { ink(LOC_COLOR[st]); page.rect(cx - dbw / 2, base, dbw, h); base += h; }
+    }
+    if (nDays <= 16 || i === 1 || i % 5 === 0 || i === nDays) { ink(DIM); center(cx, cBot - 10, String(i), 6.5); }
+  }
+
+  // Shows table
+  y = cBot - 44;
+  ink(INK); page.text(M, y, "Shows", 11, true);
+  const cols = [[M, "Start", "l"], [M + 58, "Location", "l"], [M + 128, "Show", "l"], [M + 368, "Items", "r"], [M + 410, "Ship.", "r"],
+                [M + 446, "New", "r"], [M + 498, "Sales", "r"], [R, "$/item", "r"]];
+  const row = (yy, vals, bold) => cols.forEach(([x, , al], i) => {
+    const v = vals[i] == null ? "" : String(vals[i]);
+    if (al === "r") page.textRight(x, yy, v, 8, bold); else page.text(x, yy, i === 2 ? pdfEllipsize(v, 8, bold, 230) : v, 8, bold);
+  });
+  y -= 16; ink(DIM); row(y, cols.map(c => c[1]), true); hline(y - 5);
+  for (const s of shows.slice(0, 14)) {
+    y -= 15; ink(INK);
+    row(y, [etTime(s.start_at), WHATNOT_LOCATION[s.store] || s.store, s.title, int(s.items), s.shipments == null ? "-" : int(s.shipments),
+             s.new_buyers == null ? "-" : int(s.new_buyers), usd2(s.sales), s.items ? usd2(s.sales / s.items) : "-"]);
+    hline(y - 5);
+  }
+  y -= 15; ink(INK);
+  row(y, ["", "", "Day total", int(items), rep.dayShipments == null ? "-" : int(rep.dayShipments), int(nb), usd2(sales), items ? usd2(sales / items) : "-"], true);
+  hline(y - 5, M, R, 0.8);
+
+  // Month to date, by location
+  y -= 32; ink(INK); page.text(M, y, `${monthName} to date`, 11, true);
+  const mc = [[M, "Location", "l"], [M + 230, "Shows", "r"], [M + 310, "Items", "r"], [M + 400, "New buyers", "r"], [M + 480, "Sales", "r"], [R, "$/item", "r"]];
+  const mrow = (yy, vals, bold) => mc.forEach(([x, , al], i) => { const v = String(vals[i] ?? ""); if (al === "r") page.textRight(x, yy, v, 8, bold); else page.text(x, yy, v, 8, bold); });
+  y -= 16; ink(DIM); mrow(y, mc.map(c => c[1]), true); hline(y - 5);
+  const tot = { shows: 0, items: 0, nb: 0, sales: 0 };
+  for (const st of WHATNOT_STORES) {
+    const rows = rep.month.filter(r => r.store === st);
+    const a = { shows: rows.reduce((n, r) => n + (Number(r.count) || 0), 0), items: rows.reduce((n, r) => n + (Number(r.meta.items) || 0), 0),
+                nb: rows.reduce((n, r) => n + (Number(r.meta.new_buyers) || 0), 0), sales: rows.reduce((n, r) => n + (Number(r.total) || 0), 0) };
+    Object.keys(tot).forEach(f => { tot[f] += a[f]; });
+    y -= 15; ink(INK); mrow(y, [`${WHATNOT_LOCATION[st]} (${st})`, int(a.shows), int(a.items), int(a.nb), usd2(a.sales), a.items ? usd2(a.sales / a.items) : "-"]);
+    hline(y - 5);
+  }
+  y -= 15; ink(INK); mrow(y, ["Total", int(tot.shows), int(tot.items), int(tot.nb), usd2(tot.sales), tot.items ? usd2(tot.sales / tot.items) : "-"], true);
+  hline(y - 5, M, R, 0.8);
+  const showDays = [...byDay.values()].filter(d => d.BL1 + d.BL14 > 0).length;
+  y -= 20; ink(DIM); page.text(M, y, `${showDays} show day${showDays === 1 ? "" : "s"} so far, averaging ${usd0(showDays ? tot.sales / showDays : 0)} per day.`, 8);
+
+  ink(DIM);
+  page.text(M, 46, "Location is assigned by start time: before 3:30 PM = Fort Wayne (BL1), 3:30 PM or later = Battle Creek (BL14).", 6.5);
+  page.text(M, 37, "Sales = Whatnot's gross sales (before fees), cancelled and failed orders left out; a show Whatnot is still counting uses its orders so far.", 6.5);
+  return pdfBuild([page], []);
+}
+
+// The PDF for `through` as a Resend attachment, or null (no show that day). Never throws: a PDF that
+// cannot be built must not hold the email back.
+async function whatnotDailyAttachment(env, through) {
+  if (!env.DB || !through) return null;
   try {
-    const obj = await env.MEDIA.get(liveRecapKey(through));
-    if (!obj) return null;
-    const bytes = new Uint8Array(await obj.arrayBuffer());
-    return { filename: `BL-Live-Recap-${through}.pdf`, content: b64FromBytes(bytes), content_type: "application/pdf" };
+    const rep = await whatnotDailyReport(env, through);
+    if (!rep) return null;
+    return { filename: `BL-Live-${through}.pdf`, content: b64FromBytes(whatnotDailyPdfBytes(rep)), content_type: "application/pdf" };
   } catch (e) {
-    console.error(`Live recap PDF read failed for ${through}: ${e.message}`);
+    console.error(`Whatnot daily PDF failed for ${through}: ${e.message}`);
     return null;
   }
 }
@@ -7028,7 +7223,7 @@ async function liveRecapAttachment(env, through) {
 // eight managers in prod share six store sets, and each body costs a D1 read
 // plus one KV read per store. Grouping keeps this a fixed small cost as the
 // team grows rather than something that scales with headcount inside a cron.
-async function dispatchScopedDailySummaries(env, date, prefMapAll, recapPdf = null) {
+async function dispatchScopedDailySummaries(env, date, prefMapAll, livePdf = null) {
   const recipients = await storeScopedRecipients(env);
   if (!recipients.length) return { recipients: 0 };
 
@@ -7087,7 +7282,7 @@ async function dispatchScopedDailySummaries(env, date, prefMapAll, recapPdf = nu
     const emailHtml = buildExecSummaryEmailHtml(exec, totalsLabel, scopeLabel);
     const reportDay = new Date(exec.reportDate + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
     // Entitlement, not what the body shows: the PDF shows both live stores.
-    const attach = recapPdf && LIVE_RECAP_STORES.every(s => stores.includes(s)) ? { attachments: [recapPdf] } : {};
+    const attach = livePdf && WHATNOT_STORES.every(s => stores.includes(s)) ? { attachments: [livePdf] } : {};
 
     const tb = data.totals.budget, ts = data.totals.sales;
     const budgetLine = tb > 0 ? ` • Budget: ${_fmtVsBudget(ts, tb)}` : '';
@@ -7166,7 +7361,7 @@ async function dispatchDailySummary(env, date) {
   const { sales: ts, budget: tb } = data.totals;
   const emailHtml = buildExecSummaryEmailHtml(exec);
   // Read once here and handed to the scoped pass: one R2 read per send, not per body.
-  const recapPdf = await liveRecapAttachment(env, exec && exec.through);
+  const livePdf = await whatnotDailyAttachment(env, exec && exec.through);
 
   // Short push body
   const budgetLine = tb > 0 ? ` • Budget: ${_fmtVsBudget(ts, tb)}` : '';
@@ -7192,7 +7387,7 @@ async function dispatchDailySummary(env, date) {
   // construction (allowedStores() null vs non-null), so this cannot double-send.
   // Run it even when the chain-wide list is empty — those are different people,
   // and an empty chain-wide list must not silence the managers too.
-  const scoped = await dispatchScopedDailySummaries(env, date, prefMap, recapPdf)
+  const scoped = await dispatchScopedDailySummaries(env, date, prefMap, livePdf)
     .catch(e => { console.error('Scoped daily summary failed:', e.message); return { error: e.message }; });
 
   // All active users (notification_preferences controls per-user opt-in)
@@ -7236,7 +7431,7 @@ async function dispatchDailySummary(env, date) {
         to: user.email,
         subject: `Executive Summary — ${reportDay}`,
         html: emailHtml,
-        ...(recapPdf ? { attachments: [recapPdf] } : {}),
+        ...(livePdf ? { attachments: [livePdf] } : {}),
       }, `daily-chain-${date}-${user.id}`);
       if (!emailResult.skipped) {
         if (emailResult.ok) summary.email.sent++;
@@ -16472,9 +16667,9 @@ async function syncBufferPosts(env, now, window) {
 
 // ─── Whatnot Seller API (2026-10-30) ─────────────────────────────────────────
 // Brian (2026-10-30): pull Whatnot into the Hub through the Seller API, read-only: every
-// item sold per show, show analytics, and products. The Bargain Lane Live recap email
-// (scripts/whatnot-recap-ingest.gs) STAYS the source of live-sales dollars; this mirror
-// cross-checks it and never writes channel_sales or daily_sales.
+// item sold per show, show analytics, and products. Since 2026-11-04 it is also the ONLY source
+// of Whatnot's live-sales dollars (Brian): syncWhatnotDaily writes channel_sales 'whatnot' from
+// WHATNOT_API_FROM on, and the Bargain Lane Live recap email is retired.
 //
 // REST, Bearer personal access token (WHATNOT_API_TOKEN, `wn_pat_tk_…`), 10 requests a
 // second per seller per app, cursor paging (limit ≤ 50, newest first by default). /orders and
@@ -16487,10 +16682,8 @@ const WHATNOT_PAGE = 50;                // the API's maximum page size
 const WHATNOT_MIN_GAP_MS = 120;         // ≤ ~8 calls a second, under the 10/s limit
 const WHATNOT_RUN_BUDGET = 400;         // API calls per hourly run; the rest waits an hour
 const WHATNOT_ORDER_OVERLAP_MS = 3 * 864e5; // re-read 3 days of orders, so a cancel lands
-// The recap feeder's rule (LOCATION_TO_STORE there): the recap files a show by its start
-// time, before 3:30 PM Eastern = Fort Wayne, which is Coliseum (BL1), never Dupont; later =
-// Battle Creek (BL14). 🛑 One copy here; change it with the feeder, or the cross-check
-// compares two different splits of the same shows.
+// A show is filed by its start time, as the retired recap filed it: before 3:30 PM Eastern =
+// Fort Wayne, which is Coliseum (BL1), never Dupont; later = Battle Creek (BL14).
 const WHATNOT_FW_CUTOFF_MIN = 15 * 60 + 30;
 const WHATNOT_STORES = ["BL1", "BL14"];
 // A show's analytics are re-read until a read lands this long after it started (see syncWhatnotAnalytics).
@@ -16667,9 +16860,9 @@ async function syncWhatnotShows(env, api, at, out) {
     cursor = body.next_cursor;
   }
   await newestFirst("cancelled");
-  // Shows on air now, one page: a live show's orders get a store and a day before it ends, for Live
-  // Sales' "before the recap" figure. Before the ended pass, so that has the last word on a show that
-  // has just ended.
+  // Shows on air now, one page: a live show's orders get a store and a day before it ends, so today's
+  // sales count while it runs. Before the ended pass, so that has the last word on a show that has
+  // just ended.
   const live = await api.get("/shows", { status: "live", limit: WHATNOT_PAGE, reverse: true });
   await write((live && live.data) || []);
   await newestFirst("ended");
@@ -16781,11 +16974,27 @@ async function syncWhatnotBackfill(env, api, at, out, maxPages = 10) {
 
 // Items for every order not yet itemised, newest first. An order is marked only in the same
 // batch that writes its items, so a run cut short by the budget never marks one half-read.
+// migration-088 adds whatnot_order_items.shipment_id, for the shipments count. Until it is applied
+// items are stored without it and shipments read as null; either deploy order is safe.
+async function whatnotItemShipments(env) {
+  const cols = (await env.DB.prepare("PRAGMA table_info(whatnot_order_items)").all()).results || [];
+  return cols.some(c => c.name === "shipment_id");
+}
+
 async function syncWhatnotItems(env, api, at, out) {
+  const ship = await whatnotItemShipments(env);
   const { results } = await env.DB.prepare(
     "SELECT id, show_id FROM whatnot_orders WHERE items_synced = 0 ORDER BY created_at DESC LIMIT 300"
   ).all();
-  for (const o of results || []) {
+  // Items read before migration-088 have no shipment_id: those of orders from WHATNOT_API_FROM on are
+  // read again, 100 a run, newest first, so the daily shipments count fills in.
+  const again = ship ? ((await env.DB.prepare(
+    `SELECT o.id, o.show_id FROM whatnot_orders o
+      WHERE o.items_synced = 1 AND o.order_date >= ?
+        AND EXISTS (SELECT 1 FROM whatnot_order_items i WHERE i.order_id = o.id AND i.shipment_id IS NULL)
+      ORDER BY o.created_at DESC LIMIT 100`
+  ).bind(WHATNOT_API_FROM).all()).results || []) : [];
+  for (const o of [...(results || []), ...again]) {
     const items = [];
     let cursor = null;
     for (let page = 0; page < 10; page++) {
@@ -16796,10 +17005,12 @@ async function syncWhatnotItems(env, api, at, out) {
     }
     const stmts = items.map(i => env.DB.prepare(
       `INSERT OR REPLACE INTO whatnot_order_items (id, order_id, show_id, product_id, variant_id, sku, title, quantity,
-         unit_price, price_includes_tax, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         unit_price, price_includes_tax, synced_at${ship ? ", shipment_id" : ""}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${ship ? ", ?" : ""})`
     ).bind(String(i.id), o.id, o.show_id, i.product_id ?? null, i.variant_id ?? null,
       (i.purchased_item && i.purchased_item.sku) || null, (i.purchased_item && i.purchased_item.title) || null,
-      wnNum(i.quantity), wnMoney(i.unit_price), i.price_includes_tax == null ? null : (i.price_includes_tax ? 1 : 0), at));
+      wnNum(i.quantity), wnMoney(i.unit_price), i.price_includes_tax == null ? null : (i.price_includes_tax ? 1 : 0), at,
+      // '' = read, and Whatnot gave none: never NULL after this, so no order is read again forever.
+      ...(ship ? [i.shipment_id == null ? "" : String(i.shipment_id)] : [])));
     stmts.push(env.DB.prepare("UPDATE whatnot_orders SET items_synced = 1 WHERE id = ?").bind(o.id));
     await env.DB.batch(stmts);
     out.items += items.length;
@@ -16951,81 +17162,88 @@ async function syncWhatnotLedger(env, api, at, out) {
   }
 }
 
-// The cross-check, per store-day: Σ show analytics `sales` against the recap's whatnot row in
-// channel_sales. status: match | gap (≥ $1 apart) | pending (a show's analytics not calculated
-// yet, or the day is today) | no_recap (the recap row has not arrived; the recap's own
-// reconcile covers that). A rehearsal or private show (WILL_NOT_BE_CALCULATED) counts as $0.
-async function whatnotCrossCheck(env, from, to, stores, today = getETToday().dateStr) {
-  const inList = stores.map(() => "?").join(",");
+// Whatnot's gross sales per store-day, from the API alone (Brian, 2026-11-04: the API is the only
+// source; the recap email is retired). A show's gross = its analytics `sales` once Whatnot has it, else
+// Σ subtotal of its orders not cancelled or failed — the same figure (to the cent, Oct 2026) before
+// Whatnot finishes counting. Shows that ran: ended, live or stopped; scheduled and cancelled ones sold
+// nothing. items = analytics orders, else orders kept; shipments = distinct shipment_id on the kept
+// orders' items (migration-088; null without it); new_buyers = Σ first-time buyers.
+async function whatnotDays(env, from, to, stores) {
   if (!stores.length) return [];
-  // `lost` = the day's cancelled + failed orders; `unloaded` = shows with orders that have not synced;
-  // `unsettled` = shows whose figures Whatnot may still revise (read under 24h after they started).
-  const [api, recap] = await env.DB.batch([
+  const inList = stores.map(() => "?").join(",");
+  const shipCol = await whatnotItemShipments(env);
+  const KEPT = "COALESCE(o.status, '') NOT IN ('cancelled', 'failed')";
+  const [days, ship] = await env.DB.batch([
     env.DB.prepare(
-      `SELECT s.store, s.show_date AS date, COUNT(*) AS shows,
-              SUM(CASE WHEN a.sales IS NULL AND COALESCE(a.calculation_status, '') <> 'WILL_NOT_BE_CALCULATED' THEN 1 ELSE 0 END) AS pending,
-              ROUND(COALESCE(SUM(a.sales), 0), 2) AS sales,
-              ROUND(COALESCE(SUM(o.lost), 0), 2) AS lost,
-              SUM(CASE WHEN COALESCE(a.orders_count, 0) > 0 AND o.n IS NULL THEN 1 ELSE 0 END) AS unloaded,
-              SUM(CASE WHEN a.sales IS NOT NULL AND a.fetched_at < ${WHATNOT_SETTLED_AT} THEN 1 ELSE 0 END) AS unsettled
-         FROM whatnot_shows s LEFT JOIN whatnot_show_analytics a ON a.show_id = s.id
-              LEFT JOIN (SELECT show_id, COUNT(*) AS n,
-                                SUM(CASE WHEN status IN ('cancelled', 'failed') THEN COALESCE(subtotal, 0) ELSE 0 END) AS lost
-                           FROM whatnot_orders
-                          WHERE show_id IN (SELECT id FROM whatnot_shows WHERE status = 'ended' AND show_date BETWEEN ? AND ? AND store IN (${inList}))
-                          GROUP BY show_id) o ON o.show_id = s.id
-        WHERE s.status = 'ended' AND s.show_date BETWEEN ? AND ? AND s.store IN (${inList})
-        GROUP BY s.store, s.show_date`).bind(from, to, ...stores, from, to, ...stores),
-    env.DB.prepare(
-      `SELECT store, date, total FROM channel_sales WHERE channel = 'whatnot' AND date BETWEEN ? AND ? AND store IN (${inList})`
-    ).bind(from, to, ...stores),
+      `WITH sh AS (SELECT id, store, show_date FROM whatnot_shows
+                    WHERE status IN ('ended', 'live', 'stopped') AND show_date BETWEEN ? AND ? AND store IN (${inList})),
+            ord AS (SELECT o.show_id, SUM(CASE WHEN ${KEPT} THEN 1 ELSE 0 END) AS kept,
+                           ROUND(SUM(CASE WHEN ${KEPT} THEN COALESCE(o.subtotal, 0) ELSE 0 END), 2) AS kept_amt,
+                           ROUND(SUM(CASE WHEN ${KEPT} THEN 0 ELSE COALESCE(o.subtotal, 0) END), 2) AS lost
+                      FROM whatnot_orders o JOIN sh ON sh.id = o.show_id GROUP BY o.show_id)
+       SELECT sh.store, sh.show_date AS date, COUNT(*) AS shows,
+              ROUND(SUM(COALESCE(a.sales, ord.kept_amt, 0)), 2) AS total,
+              SUM(COALESCE(a.orders_count, ord.kept, 0)) AS items,
+              SUM(a.first_time_buyers) AS new_buyers,
+              ROUND(COALESCE(SUM(ord.lost), 0), 2) AS lost,
+              SUM(CASE WHEN a.sales IS NULL AND COALESCE(a.calculation_status, '') NOT IN ('WILL_NOT_BE_CALCULATED', 'GENERATED', 'CALCULATED') THEN 1 ELSE 0 END) AS pending
+         FROM sh LEFT JOIN whatnot_show_analytics a ON a.show_id = sh.id LEFT JOIN ord ON ord.show_id = sh.id
+        GROUP BY sh.store, sh.show_date`).bind(from, to, ...stores),
+    shipCol ? env.DB.prepare(
+      `SELECT s.store, s.show_date AS date, COUNT(DISTINCT i.shipment_id) AS shipments
+         FROM whatnot_shows s JOIN whatnot_order_items i ON i.show_id = s.id JOIN whatnot_orders o ON o.id = i.order_id
+        WHERE s.status IN ('ended', 'live', 'stopped') AND s.show_date BETWEEN ? AND ? AND s.store IN (${inList})
+          AND COALESCE(i.shipment_id, '') <> '' AND ${KEPT}
+        GROUP BY s.store, s.show_date`).bind(from, to, ...stores)
+      : env.DB.prepare("SELECT NULL AS store WHERE 0"),
   ]);
-  const days = new Map();
-  for (const r of api.results || []) days.set(r.store + "|" + r.date, { store: r.store, date: r.date, shows: r.shows, apiSales: r.sales, pendingShows: r.pending + (r.unsettled || 0), lost: r.lost, ordersPending: r.unloaded, recap: null });
-  for (const r of recap.results || []) {
-    const k = r.store + "|" + r.date;
-    const d = days.get(k) || { store: r.store, date: r.date, shows: 0, apiSales: 0, pendingShows: 0, lost: 0, ordersPending: 0 };
-    d.recap = r.total == null ? null : roundCents(Number(r.total));
-    days.set(k, d);
-  }
-  return [...days.values()].map(d => {
-    // diff only where the two can be compared: a pending day's API figure is not final.
-    const pending = d.date >= today || d.pendingShows > 0;
-    const diff = pending || d.recap == null ? null : roundCents(d.apiSales - d.recap);
-    // 🔑 The recap is gross at Whatnot's end-of-show summary; Whatnot's show `sales` leaves out
-    // EVERY cancelled or failed order (checked to the cent on four October store-days). So a recap
-    // ABOVE Whatnot by no more than the day's lost orders is the same sales falling through after
-    // the summary — "cancelled", not a gap. The first prod run pushed 9 store-days of exactly that.
-    // A recap BELOW Whatnot, or above it by more than the lost orders, is still a gap; and with a
-    // show's orders not synced yet the range is unknown, so the day waits rather than alarms.
-    const excess = diff == null ? null : roundCents(-diff - (d.lost || 0));
-    const status = pending ? "pending"
-      : d.recap == null ? "no_recap"
-      : Math.abs(diff) < 1 ? "match"
-      : diff < 0 && d.ordersPending > 0 ? "pending"
-      : diff < 0 && excess < 1 ? "cancelled"
-      : "gap";
-    return { ...d, diff, status };
-  }).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.store < b.store ? -1 : 1));
+  const shipments = new Map((ship.results || []).map(r => [r.store + "|" + r.date, r.shipments]));
+  return (days.results || []).map(r => ({
+    store: r.store, date: r.date, shows: r.shows, total: r.total, items: r.items, new_buyers: r.new_buyers ?? null,
+    shipments: shipCol ? (shipments.get(r.store + "|" + r.date) || 0) : null, lost: r.lost, pendingShows: r.pending,
+  })).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.store < b.store ? -1 : 1));
 }
 
-// The last 7 complete days, once a run. A gap is pushed once per store-day, all in ONE push.
-async function whatnotCrossCheckAlert(env, at) {
-  const today = whatnotEt(at).date, to = addDaysYmd(today, -1), from = addDaysYmd(to, -6);
-  const rows = await whatnotCrossCheck(env, from, to, WHATNOT_STORES, today);
-  const gaps = rows.filter(r => r.status === "gap");
-  const fresh = [];
-  for (const g of gaps) if ((await whatnotState(env, `xcheck:${g.store}:${g.date}`)) == null) fresh.push(g);
-  if (!fresh.length) return { checked: rows.length, gaps: gaps.length, pushed: 0 };
-  const money = (n) => "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const line = (g) => `${STORE_LABELS[g.store] || g.store} ${g.date.slice(5).replace("-", "/")}: API ${money(g.apiSales)} vs recap ${money(g.recap)}`;
-  const push = await pushSuperusers(env, {
-    title: fresh.length === 1 ? "Whatnot API and recap disagree" : `Whatnot API and recap disagree on ${fresh.length} days`,
-    body: fresh.slice(0, 4).map(line).join("\n") + (fresh.length > 4 ? `\n+${fresh.length - 4} more` : ""),
-    tag: "whatnot-xcheck",
-  });
-  await env.DB.batch(fresh.map(g => whatnotSetState(env, `xcheck:${g.store}:${g.date}`, String(g.diff), at)));
-  return { checked: rows.length, gaps: gaps.length, pushed: fresh.length, sent: push.sent };
+// The API writes Whatnot's live sales (replaces the recap feeder). Each run re-derives every Eastern
+// day from max(WHATNOT_API_FROM, today − 7) through today for WHATNOT_STORES into channel_sales
+// (channel 'whatnot', $0 on a day with no show, as the recap did) and projects them into
+// daily_sales.auction, so Bargain Lane's net sales, the Executive Summary and the dashboard read the
+// API's gross. Seven days back so late cancellations and Whatnot's own revisions land; older days
+// freeze. Only rows whose values changed are written. Before WHATNOT_API_FROM the recap's rows stay.
+const WHATNOT_API_FROM = "2026-11-01";
+const WHATNOT_DAILY_DAYS = 7;
+async function syncWhatnotDaily(env, at, out) {
+  const today = whatnotEt(at).date;
+  const back = addDaysYmd(today, -WHATNOT_DAILY_DAYS);
+  const from = back > WHATNOT_API_FROM ? back : WHATNOT_API_FROM;
+  if (from > today) return;
+  const computed = new Map((await whatnotDays(env, from, today, WHATNOT_STORES)).map(d => [d.store + "|" + d.date, d]));
+  const shipCol = await whatnotItemShipments(env);
+  const have = new Map(((await env.DB.prepare(
+    `SELECT store, date, total, count, meta FROM channel_sales WHERE channel = 'whatnot' AND date BETWEEN ? AND ? AND store IN (${WHATNOT_STORES.map(() => "?").join(",")})`
+  ).bind(from, today, ...WHATNOT_STORES).all()).results || []).map(r => [r.store + "|" + r.date, r]));
+  const stmt = env.DB.prepare(
+    `INSERT INTO channel_sales (channel, store, date, total, count, meta, source_file, ingested_at)
+     VALUES ('whatnot', ?, ?, ?, ?, ?, 'Whatnot API', ?)
+     ON CONFLICT(channel, store, date) DO UPDATE SET total = excluded.total, count = excluded.count, meta = excluded.meta,
+       source_file = excluded.source_file, ingested_at = excluded.ingested_at`);
+  const writes = [], changed = [];
+  for (let d = from; d <= today; d = addDaysYmd(d, 1)) {
+    for (const store of WHATNOT_STORES) {
+      const c = computed.get(store + "|" + d);
+      const total = c ? roundCents(Number(c.total) || 0) : 0, count = c ? c.shows : 0;
+      const meta = JSON.stringify({ items: c ? Number(c.items) || 0 : 0, shipments: shipCol ? (c ? c.shipments : 0) : null,
+                                    new_buyers: c ? c.new_buyers : 0, source: "whatnot-api" });
+      const h = have.get(store + "|" + d);
+      if (h && roundCents(Number(h.total)) === total && h.count === count && h.meta === meta) continue;
+      writes.push(stmt.bind(store, d, total, count, meta, at));
+      changed.push([store, d]);
+    }
+  }
+  if (!writes.length) { out.daily = { from, to: today, written: 0 }; return; }
+  await env.DB.batch(writes);
+  await projectLiveSales(env, changed);
+  out.daily = { from, to: today, written: writes.length };
 }
 
 // The hourly run (and POST ?action=whatnot-sync). Each step is bounded; a run that hits the
@@ -17049,8 +17267,9 @@ async function syncWhatnot(env, { now = new Date(), budget } = {}) {
     else { out.complete = false; out.error = String((e && e.message) || e).slice(0, 300); }
   }
   out.calls = api.calls;
-  try { out.crossCheck = await whatnotCrossCheckAlert(env, at); }
-  catch (e) { out.crossCheckError = String((e && e.message) || e).slice(0, 200); }
+  // From the database alone, so it runs even when a step above stopped on the call budget.
+  try { await syncWhatnotDaily(env, at, out); }
+  catch (e) { out.dailyError = String((e && e.message) || e).slice(0, 200); }
   await whatnotSetState(env, "last_run", JSON.stringify({ at, ...out }), at).run();
   return out;
 }
@@ -21099,30 +21318,6 @@ export default {
       return new Response(JSON.stringify({ ok: true, results }, null, 2), { headers: corsJson });
     }
 
-    // ── Live recap PDF: the BL-Live-Recap attachment for the Executive Summary.
-    //    POST /?action=live-recap-pdf&date=YYYY-MM-DD   body: the PDF's bytes
-    //    Header: X-Snapshot-Secret. The Whatnot recap feeder is the only writer
-    //    (scripts/whatnot-recap-ingest.gs). A re-send replaces that day's file.
-    //    See liveRecapAttachment for who receives it.
-    if (request.method === "POST" && url.searchParams.get("action") === "live-recap-pdf") {
-      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
-      if (unauth) return unauth;
-      const bad = (status, error) => new Response(JSON.stringify({ error }), { status, headers: corsJson });
-
-      // A real calendar date, and nothing else: it becomes part of the R2 key.
-      const date = url.searchParams.get("date") || "";
-      if (!isYmdDate(date)) return bad(400, "date must be YYYY-MM-DD");
-      if (Number(request.headers.get("content-length") || 0) > LIVE_RECAP_MAX_BYTES) return bad(413, "PDF is over 10 MB");
-      const bytes = new Uint8Array(await request.arrayBuffer());
-      if (bytes.length > LIVE_RECAP_MAX_BYTES) return bad(413, "PDF is over 10 MB");
-      if (new TextDecoder().decode(bytes.subarray(0, 5)) !== "%PDF-") return bad(400, "body is not a PDF");
-      if (!env.MEDIA) return bad(500, "MEDIA bucket is not configured");
-
-      await env.MEDIA.put(liveRecapKey(date), bytes, { httpMetadata: { contentType: "application/pdf" } });
-      return new Response(JSON.stringify({ ok: true, date, bytes: bytes.length }), { headers: corsJson });
-    }
-
     // ── Ingest: generic channel-sales sink (auction today; eon, labor next).
     //    POST /?action=ingest   { channel, source_file?, rows: [{store, date, total?, count?, meta?}] }
     //    Header: X-Snapshot-Secret. Feeders (Apps Script for Drive drops, worker
@@ -21142,6 +21337,11 @@ export default {
       const sourceFile = body.source_file ? body.source_file.toString() : null;
       if (!channel) return new Response(JSON.stringify({ error: "Missing channel" }), { status: 400, headers: corsJson });
       if (!rows)    return new Response(JSON.stringify({ error: "Missing rows[]" }), { status: 400, headers: corsJson });
+      // Brian (2026-11-04): Whatnot comes from the Whatnot API alone (syncWhatnotDaily). The recap
+      // feeder's posts are refused, so a forgotten Apps Script trigger cannot overwrite the API's rows.
+      if (channel === "whatnot") {
+        return new Response(JSON.stringify({ error: "Whatnot sales come from the Whatnot API now; the recap feeder is retired", code: "WHATNOT_FROM_API" }), { status: 410, headers: corsJson });
+      }
 
       const ingestedAt = new Date().toISOString();
       const stmt = env.DB.prepare(
@@ -21176,59 +21376,10 @@ export default {
 
       if (batch.length) await env.DB.batch(batch);
 
-      // Projection: the dashboard and the daily email read daily_sales.auction
-      // as the store-day's LIVE sales (online auction + Whatnot), folded into
-      // each store's total. The column is RECOMPUTED as the sum of every live
-      // channel's channel_sales row, never written from the request — when it
-      // was last-writer-wins, the auction feed overwrote Battle Creek's Whatnot
-      // on 11 days in Sep-Oct 2026 (~$23.9k gone). Manual-override rows are
-      // never touched. Only store-days this request STORED with a total are
-      // recomputed: a rejected or total-less row must not re-sum (and so wipe)
-      // a day it never wrote.
-      let projected = 0;
-      if (LIVE_CHANNELS.includes(channel) && priced.size) {
-        const proj = env.DB.prepare(
-          `INSERT INTO daily_sales (store, date, auction)
-           VALUES (?, ?, (SELECT ROUND(SUM(total), 2) FROM channel_sales
-                           WHERE store = ? AND date = ? AND channel IN (${LIVE_CHANNELS.map(() => "?").join(",")})))
-           ON CONFLICT(store, date) DO UPDATE SET
-             auction = CASE WHEN is_manual_override = 1 THEN auction ELSE excluded.auction END`
-        );
-        const projBatch = [...priced.values()].map(([store, date]) => proj.bind(store, date, store, date, ...LIVE_CHANNELS));
-        await env.DB.batch(projBatch);
-        projected = projBatch.length;
-      }
+      // Live sales re-sum into daily_sales.auction (projectLiveSales), for the store-days stored WITH a total.
+      const projected = LIVE_CHANNELS.includes(channel) ? await projectLiveSales(env, [...priced.values()]) : 0;
 
-      // Reconcile: a feeder that also reports its own month-to-date total per
-      // store (the Whatnot recap does) gets it checked against what is stored,
-      // so a recap that never arrived shows up the next morning, not at month
-      // end. { reconcile: { through: "YYYY-MM-DD", totals: { BL1: 11871 } } }
-      let reconcile = null;
-      const rec = body.reconcile;
-      if (rec && /^\d{4}-\d{2}-\d{2}$/.test(String(rec.through || "")) && rec.totals && typeof rec.totals === "object") {
-        const through = String(rec.through), monthStart = through.slice(0, 8) + "01";
-        reconcile = [];
-        for (const [rawStore, reported] of Object.entries(rec.totals)) {
-          const store = rawStore.toString().trim().toUpperCase();
-          if (reported == null || reported === "" || !Number.isFinite(Number(reported))) continue;
-          const row = await env.DB.prepare(
-            "SELECT SUM(total) AS t FROM channel_sales WHERE channel = ? AND store = ? AND date >= ? AND date <= ?"
-          ).bind(channel, store, monthStart, through).first();
-          const stored = roundCents(Number(row && row.t) || 0);
-          reconcile.push({ store, reported: Number(reported), stored, diff: roundCents(stored - Number(reported)) });
-        }
-        const off = reconcile.filter(r => Math.abs(r.diff) >= 1);
-        if (off.length) {
-          const span = `${monthStart.slice(5).replace("-", "/")}–${through.slice(5).replace("-", "/")}`;
-          await pushSuperusers(env, {
-            title: `${channel} totals disagree`,
-            body: off.map(r => `${STORE_LABELS[r.store] || r.store}: recap $${r.reported.toLocaleString("en-US")} vs app $${r.stored.toLocaleString("en-US")} (${span})`).join(" · "),
-            tag: `reconcile-${channel}`,
-          }).catch(e => console.error("reconcile push failed:", e.message));
-        }
-      }
-
-      return new Response(JSON.stringify({ ok: true, channel, written: batch.length, projected, reconcile, skipped: errors.length, errors }), { headers: corsJson });
+      return new Response(JSON.stringify({ ok: true, channel, written: batch.length, projected, skipped: errors.length, errors }), { headers: corsJson });
     }
 
     // ── Manual snapshot endpoint: ?action=snapshot&store=BL1[&date=2026-04-26]
@@ -24119,7 +24270,7 @@ export default {
     }
 
     // POST ?action=send-test-summary[&date=YYYY-MM-DD]   (date = the data-through day)
-    // ONE copy of the chain-wide Executive Summary, recap PDF included, to the
+    // ONE copy of the chain-wide Executive Summary, Whatnot PDF included, to the
     // signed-in superuser and nobody else. No push, and a fresh idempotency key
     // per call. send-daily-summary cannot do this: it re-runs the whole list, and
     // Resend refuses a same-day re-send whose body changed (409), because each
@@ -24137,18 +24288,18 @@ export default {
       }
       try {
         const exec = await buildExecSummaryData(env, date);
-        const recapPdf = await liveRecapAttachment(env, exec.through);
+        const livePdf = await whatnotDailyAttachment(env, exec.through);
         const reportDay = new Date(exec.reportDate + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
         const r = await resendSend(env, {
           from: 'RETJG HUB <noreply@retjghub.com>',
           to: currentUser.email,
           subject: `[Test] Executive Summary — ${reportDay}`,
           html: buildExecSummaryEmailHtml(exec),
-          ...(recapPdf ? { attachments: [recapPdf] } : {}),
+          ...(livePdf ? { attachments: [livePdf] } : {}),
         }, `daily-test-${date}-${currentUser.id}-${randomHex(8)}`);
         await logEmailAttempt(env, { userId: currentUser.id, eventType: 'daily-summary-test', result: r });
         return new Response(JSON.stringify({
-          ok: !!r.ok, to: currentUser.email, date, attached: recapPdf ? recapPdf.filename : null,
+          ok: !!r.ok, to: currentUser.email, date, attached: livePdf ? livePdf.filename : null,
           ...(r.ok ? {} : { error: r.error || 'not sent' }),
         }), { status: r.ok ? 200 : 502, headers: corsJson });
       } catch (e) {
@@ -24167,6 +24318,20 @@ export default {
     // 5 AM send — and "it will be right tomorrow" is not a verification.
     // Unknown codes are dropped rather than queried, so this cannot be used to
     // probe for stores that do not exist.
+    // ── The Whatnot daily PDF the 5 AM Executive Summary attaches, for a day (default yesterday).
+    //    GET ?action=live-daily-pdf[&date=YYYY-MM-DD]   superuser or admin secret, like the preview below.
+    //    404 when no show ran that day (the email attaches nothing then).
+    if (request.method === "GET" && url.searchParams.get("action") === "live-daily-pdf") {
+      if (!hasSnapshotSecret(request, env) && (!currentUser || currentUser.role !== 'superuser')) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      }
+      const date = url.searchParams.get("date") || addDaysYmd(getETToday().dateStr, -1);
+      if (!isYmdDate(date)) return new Response(JSON.stringify({ error: "date must be YYYY-MM-DD" }), { status: 400, headers: corsJson });
+      const rep = await whatnotDailyReport(env, date);
+      if (!rep) return new Response(JSON.stringify({ error: `No Whatnot show on ${date}` }), { status: 404, headers: corsJson });
+      return new Response(whatnotDailyPdfBytes(rep), { headers: { ...corsHeaders, "Content-Type": "application/pdf",
+        "Content-Disposition": `inline; filename="BL-Live-${date}.pdf"`, "Cache-Control": "no-store" } });
+    }
     if (request.method === "GET" && url.searchParams.get("action") === "preview-daily-summary") {
       const isAdminReq = hasSnapshotSecret(request, env);
       if (!isAdminReq && (!currentUser || currentUser.role !== 'superuser')) {
@@ -30871,7 +31036,7 @@ export default {
     // ─── Live Sales business (migration-085, phase 1), read-only ──
     //    GET ?action=live-sales&from=YYYY-MM-DD&to=YYYY-MM-DD[&store=BLn]
     // Everything the Live Sales pages draw, in one call: the live channel rows (online auction +
-    // Whatnot recap, with the recap's items/shipments/new buyers), each channel's coverage, Bargain
+    // Whatnot from the API, with items/shipments/new buyers), each channel's coverage, Bargain
     // Lane's own auction column for the same store-days (phase 1 moves no money, so the page can say
     // where the two differ), and the Whatnot shows with their analytics and lost orders.
     // Which stores: liveScope.
@@ -30889,7 +31054,7 @@ export default {
       const codes = units.map(u => u.code);
       // A Live Sales grant with no stores is a real state: it answers with nothing, never everything.
       if (!codes.length) {
-        return new Response(JSON.stringify({ ok: true, from, to, units: [], channels: [], coverage: [], bl: [], shows: [], early: [], ledger: [], ledgerSync, sync }), { headers: corsJson });
+        return new Response(JSON.stringify({ ok: true, from, to, units: [], channels: [], coverage: [], bl: [], shows: [], ledger: [], ledgerSync, sync }), { headers: corsJson });
       }
       const inList = codes.map(() => "?").join(","), chList = LIVE_CHANNELS.map(() => "?").join(",");
       const [rows, cover, bl] = await env.DB.batch([
@@ -30907,28 +31072,10 @@ export default {
         ).bind(from, to, ...codes),
       ]);
       const parseMeta = (m) => { if (m == null) return null; try { return JSON.parse(m); } catch (_) { return null; } };
-      // Before the recap: shows dated after the newest recap day, ended or still on air, from Whatnot's
-      // orders. Σ subtotal of the orders not cancelled or failed is Whatnot's own sales figure (to the cent,
-      // Oct 2026). Hourly, so it moves until the recap replaces it; the page never adds it to a total.
-      let early = [];
-      if (wnReady) {
-        const lastRecap = ((cover.results || []).find(r => r.channel === "whatnot") || {}).last || "";
-        early = ((await env.DB.prepare(
-          `SELECT s.id, s.title, s.store, s.show_date, COALESCE(s.started_at, s.scheduled_start_at) AS start_at, s.status,
-                  COUNT(o.id) AS orders, ROUND(COALESCE(SUM(o.subtotal), 0), 2) AS sales
-             FROM whatnot_shows s
-             LEFT JOIN whatnot_orders o ON o.show_id = s.id AND o.status NOT IN ('cancelled', 'failed')
-            WHERE s.status IN ('ended', 'live') AND s.show_date > ? AND s.show_date BETWEEN ? AND ? AND s.store IN (${inList})
-            GROUP BY s.id ORDER BY start_at`
-        ).bind(lastRecap, from, to, ...codes).all()).results || []).map(r => ({
-          showId: r.id, title: r.title, store: r.store, date: r.show_date, startAt: r.start_at, status: r.status,
-          orders: r.orders, sales: r.sales,
-        }));
-      }
       let shows = [];
       if (wnReady) {
-        // Lost = cancelled or failed. Whatnot's show `sales` leaves out every one of them; the recap
-        // keeps those that fell through after its end-of-show summary (Oct 2026, checked to the cent).
+        // Lost = cancelled or failed. Whatnot's show `sales` leaves out every one of them (Oct 2026,
+        // checked to the cent).
         shows = ((await env.DB.prepare(
           `WITH sh AS (SELECT * FROM whatnot_shows WHERE status = 'ended' AND show_date BETWEEN ? AND ? AND store IN (${inList})),
                 ord AS (SELECT o.show_id, COUNT(*) AS orders,
@@ -30971,7 +31118,7 @@ export default {
         channels: (rows.results || []).map(r => ({ channel: r.channel, store: r.store, date: r.date, total: r.total, count: r.count, meta: parseMeta(r.meta) })),
         coverage: cover.results || [],
         bl: (bl.results || []).map(r => ({ store: r.store, date: r.date, auction: r.auction, manualOverride: r.is_manual_override === 1 })),
-        shows, early, ledger, ledgerSync, sync,
+        shows, ledger, ledgerSync, sync,
       }), { headers: corsJson });
     }
 
@@ -30979,8 +31126,8 @@ export default {
     //    GET ?action=live-calendar&from=YYYY-MM-DD&to=YYYY-MM-DD[&store=BLn]
     // Every Whatnot show dated in the range — scheduled, live, ended or cancelled; a show deleted in
     // Whatnot is 'removed' and left out — with Whatnot's figures once it has them, the orders so far
-    // (for a show on air or still being counted: Σ subtotal of orders not cancelled or failed, the
-    // "before the recap" figure), and the cancelled or failed orders. `recent`: for each title scheduled
+    // (for a show on air or still being counted: Σ subtotal of orders not cancelled or failed), and
+    // the cancelled or failed orders. `recent`: for each title scheduled
     // in the range, the last five shows of that title that sold something, for "this show lately".
     // Same stores as live-sales (liveScope).
     if (url.searchParams.get("action") === "live-calendar" && request.method === "GET") {
@@ -31036,11 +31183,11 @@ export default {
     }
 
     // ─── Whatnot (2026-10-30): the Seller API mirror, read-only ──
-    //    GET  ?action=whatnot-shows&from&to[&store]   shows + analytics + the recap cross-check
+    //    GET  ?action=whatnot-shows&from&to[&store]   shows + analytics + per store-day totals
     //    GET  ?action=whatnot-items&from&to[&store]   items sold, by Whatnot category
     //    GET  ?action=whatnot-products[&limit][&cursor]  one page of products, live from Whatnot
     //    POST ?action=whatnot-sync                    run the hourly sync now (superuser)
-    // Store = whatnotStoreFor (the recap's split: BL1 before 3:30 PM Eastern, else BL14). A
+    // Store = whatnotStoreFor (BL1 before 3:30 PM Eastern, else BL14). A
     // cancelled order counts nowhere. An order sold outside a show (profile shop) has no store:
     // it is listed only when every store is asked for by someone who sees every store.
     if (url.searchParams.get("action") === "whatnot-sync" && request.method === "POST") {
@@ -31099,7 +31246,8 @@ export default {
           totals: { shows: shows.length, sales: sum(x => x.analytics && x.analytics.sales),
             estimatedEarnings: sum(x => x.analytics && x.analytics.estimatedEarnings),
             orders: sum(x => x.orders.count), units: sum(x => x.items.units), itemSales: sum(x => x.items.sales) },
-          days: await whatnotCrossCheck(env, from, to, stores),
+          days: (await whatnotDays(env, from, to, stores)).map(d => ({ store: d.store, date: d.date, shows: d.shows, sales: d.total,
+            items: d.items, newBuyers: d.new_buyers, shipments: d.shipments, lost: d.lost, pendingShows: d.pendingShows })),
           sync,
         }), { headers: corsJson });
       }
@@ -31791,7 +31939,7 @@ export default {
       ctx.waitUntil(ingestFacebookComments(env, {}).then(r => console.log("fb-comment-ingest:", JSON.stringify(r))).catch(e => console.error("fb-comment-ingest threw:", (e && e.stack) || e)));
       ctx.waitUntil(syncBufferPosts(env, new Date(), "older").then(r => console.log("buffer-sync older:", JSON.stringify(r))).catch(e => console.error("buffer-sync threw:", (e && e.stack) || e)));
       ctx.waitUntil(abortStaleVideoUploads(env, new Date()).catch(e => console.error("video-upload cleanup threw:", (e && e.stack) || e)));
-      // Whatnot Seller API mirror (read-only; cross-checks the recap, never writes live sales).
+      // Whatnot Seller API mirror: reads Whatnot, and writes Whatnot's live sales (syncWhatnotDaily).
       ctx.waitUntil(syncWhatnot(env, { now: new Date() })
         .then(r => { if (!r.skipped) console.log("whatnot-sync:", JSON.stringify(r)); })
         .catch(e => console.error("whatnot-sync threw:", (e && e.stack) || e)));
