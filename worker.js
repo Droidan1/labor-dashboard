@@ -2661,6 +2661,24 @@ async function fetchCloverOrders(store, env, sinceTimestamp, untilTimestamp = nu
   return allElements;
 }
 
+// ─── An order's total, in cents, or null when it sold nothing ───
+// Clover leaves `total` OFF an order paid as a keyed amount with no items rung: it is locked
+// and PAID, has no line items, and carries only its payment. BL1 Coliseum took card payments
+// this way on one device from 2026-11-02, and Clover's own Net Sales counts them. Skipping
+// every order whose total was missing left BL1 up to 17% short of Clover a day. Read such an
+// order's total as what it was successfully paid, so the `== null` skips below still drop the
+// orders that sold nothing (abandoned, declined) and keep these. The money then reaches no
+// item, so aggregateItemSales files it as "Other / Non-Item", as it already did custom amounts.
+// scripts/test-unitemized-orders.mjs drives the live, stored and hourly readers with one.
+function orderTotalCents(order) {
+  if (order.total != null) return order.total;
+  let paid = 0;
+  for (const p of (order.payments?.elements || [])) {
+    if (p.result === "SUCCESS") paid += (p.amount || 0);
+  }
+  return paid > 0 ? paid : null;
+}
+
 // ─── Aggregate raw orders into summary metrics ───────────────────
 function aggregateOrders(elements, sinceTimestamp) {
   let totalNet = 0, binNet = 0, retailNet = 0;
@@ -2670,7 +2688,8 @@ function aggregateOrders(elements, sinceTimestamp) {
   let cartNet = 0, cartCount = 0; // avg cart excludes bin-only orders
 
   for (const order of elements) {
-    if (order.total == null || order.total === 0) continue;
+    const orderTotal = orderTotalCents(order);
+    if (orderTotal == null || orderTotal === 0) continue;
     if (order.state !== "locked") continue;
     if (order.createdTime < sinceTimestamp) continue;
 
@@ -2689,7 +2708,7 @@ function aggregateOrders(elements, sinceTimestamp) {
         pmtSumCents += (pmt.amount || 0);
       }
     }
-    const totalCents = pmtSumCents > 0 ? pmtSumCents : order.total;
+    const totalCents = pmtSumCents > 0 ? pmtSumCents : orderTotal;
     const orderNet = totalCents - taxCents;
 
     // Classify line items as bin vs retail vs gift card.
@@ -3922,7 +3941,8 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
     // process them here, the negative line items get dumped into "Refund" L2
     // AND the same dollars get subtracted AGAIN as "Manual Refund" L2 — a
     // double-deduction equal to the manual-refund total per day.
-    if (order.total == null || order.total <= 0) continue;
+    const orderTotal = orderTotalCents(order);
+    if (orderTotal == null || orderTotal <= 0) continue;
     if (order.state !== "locked") continue;
 
     // Phase 2G: compute orderNetCents from payment.amount (original, pre-refund)
@@ -3942,7 +3962,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
     }
     // Use payment sum when available (covers refunded orders); fall back to
     // order.total for orders with no payment data (rare — usually voids).
-    const grossOrderCents = pmtSumCents > 0 ? pmtSumCents : order.total;
+    const grossOrderCents = pmtSumCents > 0 ? pmtSumCents : orderTotal;
     const orderNetCents = grossOrderCents - taxCents;
 
     const lineItems = order.lineItems?.elements || [];
@@ -30610,7 +30630,8 @@ export default {
         const hours = new Array(24).fill(0);
         for (const order of elements) {
           if (order.state !== "locked") continue;
-          if (order.total == null || order.total === 0) continue;
+          const orderTotal = orderTotalCents(order);
+          if (orderTotal == null || orderTotal === 0) continue;
 
           let taxCents = 0;
           if (order.payments?.elements) {
@@ -30618,7 +30639,7 @@ export default {
               taxCents += (pmt.taxAmount || 0);
             }
           }
-          const orderNetCents = order.total - taxCents;
+          const orderNetCents = orderTotal - taxCents;
 
           // Intl formatToParts returns "24" for midnight under hour12:false in some runtimes;
           // normalize by parsing the hour string mod 24.
