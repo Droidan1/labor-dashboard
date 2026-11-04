@@ -24,8 +24,14 @@ keeps Shipments (from `shipment_id` on order items).
       test-live-sales-channels 22/22; test-whatnot-daily-pdf 27/27 (content, xref, who gets it); exec-summary 43/43;
       test-send 23/23; browser-live-sales 339/339; npm test 129 suites all pass. Eight deliberate breaks each caught.
       PDF rendered from a fixture and looked at
-- [ ] Deploy: backup (Brian) → migration-088 → worker (🛑 rule 7: rewrites Nov 1+ whatnot rows + daily_sales.auction
-      for BL1/BL14) → Brian deletes the recap Apps Script trigger → merge. Verify rows, preview PDF, next 5 AM email
+- [x] Shipped 2026-11-04: backups in ~/labor-dashboard-backups/ (channel_sales whatnot + BL1/BL14 daily_sales from
+      Nov 1, checked); migration-088 on prod; worker ea1845b6 (byte-identical to 69e8acb's dry-run build; 100% on 3
+      status passes); PR #371 merged 7879b55; www serves its index.html + CACHE_NAME v297
+- [x] The 3 PM sync rewrote Nov 1–3 (netSales = POS total + API Whatnot, to the cent): BL1 11/2 $3,056 → $2,861,
+      11/3 $2,980 → $2,969; BL14 11/1 $789 → $785, 11/2 $788 → $781, 11/3 $1,039 → $1,032; BL1 11/1 $0
+- [ ] Brian: delete the recap Apps Script trigger (runDaily in whatnot-recap-ingest)
+- [ ] Check the 5 AM Executive Summary on 11/5 carries BL-Live-2026-11-04.pdf; shipments for 11/1–3 fill in as
+      November items are re-read (100 orders/hour)
 
 # Live Sales: Show Calendar (2026-11-03)
 
