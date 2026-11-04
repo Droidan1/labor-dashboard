@@ -16,7 +16,8 @@
 //   3. An old worker (403 UNCLASSIFIED_ACTION) gets a sentence, not a blank page or a throw.
 //   4. Every text node clears 4.5:1 against its composited background in light, dark and pure
 //      black, at desktop and phone width; the shows table's sticky column is opaque.
-//   6. Today's shows before the recap: listed beside the Overview total from Whatnot's orders, never
+//   6. Today from the Whatnot API: Whatnot's rows are written hourly, today included, so Today shows a
+//      total, and nothing on the page mentions the retired recap email or its "before the recap" figure.
 //      added to it (the totals in 1 hold with them present), filtered by store, gone for past ranges.
 //   5. Money back fills from Whatnot's financial report (refunds, carrier adjustments, tips), honours
 //      the store filter, and says what it waits on in every other state (not set up, needs
@@ -102,9 +103,9 @@ const STUB = () => {
     calendar, recent,
     channels, coverage: [{ channel: 'auction', first: add(et, -70), last: add(et, -1) }, { channel: 'whatnot', first: add(et, -70), last: add(et, -1) }],
     bl: [], shows, ledger,
-    // Today: no recap yet. Two shows from Whatnot's orders, one still on air.
-    early: [{ showId: 'e-1', title: '$1 Starts : Fashion Finds', store: 'BL1', date: et, startAt: et + 'T13:30:00Z', status: 'ended', orders: 150, sales: 698 },
-            { showId: 'e-2', title: '$10 Starts : Coat Finds', store: 'BL14', date: et, startAt: et + 'T23:00:00Z', status: 'live', orders: 20, sales: 240.5 }],
+    // Today: the Whatnot sync's rows so far (hourly).
+    today: [{ channel: 'whatnot', store: 'BL1', date: et, total: 698, count: 1, meta: { items: 150, shipments: 40, new_buyers: 3 } },
+            { channel: 'whatnot', store: 'BL14', date: et, total: 240.5, count: 1, meta: { items: 20, shipments: 8, new_buyers: 1 } }],
     ledgerSync: { ready: true, through: new Date(Math.floor(Date.now() / 3600e3) * 3600e3).toISOString(), error: null, waitingSince: null },
     sync: { connected: true, lastRun: { at: new Date(Math.floor(Date.now() / 3600e3) * 3600e3).toISOString() } } };
 };
@@ -141,8 +142,8 @@ async function open({ theme = 'dark', width = 1400, height = 900, live = true, w
         window.__lvCalls.push(s);
         if (worker === 'old') return J({ error: 'Unclassified action', code: 'UNCLASSIFIED_ACTION' }, 403);
         const q = new URL(s).searchParams, from = q.get('from'), to = q.get('to');
-        return J({ ...data, from, to, channels: data.channels.filter(r => r.date >= from && r.date <= to), shows: data.shows.filter(r => r.date >= from && r.date <= to),
-          ledger: data.ledger.filter(r => r.date >= from && r.date <= to), early: data.early.filter(r => r.date >= from && r.date <= to),
+        return J({ ...data, from, to, channels: [...data.channels, ...data.today].filter(r => r.date >= from && r.date <= to), shows: data.shows.filter(r => r.date >= from && r.date <= to),
+          ledger: data.ledger.filter(r => r.date >= from && r.date <= to),
           ledgerSync: ledgerSync || data.ledgerSync });
       }
       if (s.includes('action=live-calendar')) {
@@ -196,12 +197,12 @@ for (const theme of ['light', 'dark', 'oled']) {
     await page.evaluate(() => lvSetRange('last7'));
     await page.waitForTimeout(250);
     const big = await page.evaluate(() => document.querySelector('#lv-overview-body .lv-big')?.textContent);
-    // Last 7 Days = today and the 6 days before; the stub has i = 1..6 of them (today is not reported yet):
+    // Last 7 Days = today and the 6 days before: today's Whatnot rows so far (698 + 240.50) and i = 1..6:
     // Whatnot BL1 Σ(1000+i) = 6021, BL14 on odd i (3 × 700) = 2100, auction BL2 i=3,6 (400), BL14 i=4 (300), BL16 null.
-    check(big === '$8,821.00', `${tag}: Overview total for Last 7 Days — got ${big}`);
+    check(big === '$9,759.50', `${tag}: Overview total for Last 7 Days (8,821 + today's 938.50) — got ${big}`);
     await page.evaluate(() => lvSetStore('BL14'));
     const big14 = await page.evaluate(() => document.querySelector('#lv-overview-body .lv-big')?.textContent);
-    check(big14 === '$2,400.00', `${tag}: store filter re-renders (Battle Creek 2,100 + 300) — got ${big14}`);
+    check(big14 === '$2,640.50', `${tag}: store filter re-renders (Battle Creek 2,100 + 300 + today's 240.50) — got ${big14}`);
     await page.evaluate(() => lvSetStore('all'));
     await page.evaluate(() => lvSetView('table'));
     check(await page.evaluate(() => document.querySelectorAll('#lv-overview-body .lv-dt tbody tr').length >= 7), `${tag}: chart → table view renders`);
@@ -284,11 +285,11 @@ for (const theme of ['light', 'dark', 'oled']) {
   // i = 3..10: BL1 Σ(1000+i) = 8052, BL14 odd i 3,5,7,9 = 2800, auction BL2 i=3,6,9 = 600, BL14 i=4,8 = 600.
   check(after.big === '$12,052.00' && after.title === 'Daily sales', `custom range totals the right days, by day (${after.big}, ${after.title})`);
 
-  // Today: nothing is reported until the next morning, so "—" and a sentence, never $0.00.
-  await page.evaluate(() => lvSetRange('today'));
+  // A range with nothing reported reads "—" and a sentence, never $0.00.
+  await page.evaluate(() => lvSetRange('custom', '2025-01-02', '2025-01-02'));
   await page.waitForTimeout(300);
-  const today = await page.evaluate(() => ({ big: document.querySelector('#lv-overview-body .lv-big')?.textContent, text: document.querySelector('#lv-overview-body .lv-hero')?.innerText || '' }));
-  check(today.big === '—' && /Nothing reported for this range yet/.test(today.text), `Today reads "—" with why (${today.big})`);
+  const empty = await page.evaluate(() => ({ big: document.querySelector('#lv-overview-body .lv-big')?.textContent, text: document.querySelector('#lv-overview-body .lv-hero')?.innerText || '' }));
+  check(empty.big === '—' && /No live sales in this range yet/.test(empty.text), `a range with nothing reported reads "—" with why (${empty.big})`);
   check(errs.length === 0, `picker: no JS errors${errs.length ? ': ' + errs[0] : ''}`);
   await ctx.close();
 }
@@ -342,32 +343,26 @@ for (const live of [false, true]) {
   await ctx.close();
 }
 
-// ── 6. Before the recap ─────────────────────────────────────────────────────
+// ── 6. Today from the Whatnot API ───────────────────────────────────────────
 for (const theme of ['light', 'dark']) {
   const { ctx, page, errs } = await open({ theme, width: 393 });
   await go(page, 'live-overview');
-  const read = () => page.evaluate(() => { const e = document.querySelector('#lv-overview-body .lv-early');
-    return { big: document.querySelector('#lv-overview-body .lv-big')?.textContent, has: !!e, amt: e?.querySelector('.h .a')?.textContent,
-      rows: e ? e.querySelectorAll('li').length : 0, live: e ? e.querySelectorAll('.lv-chip').length : 0, text: e?.innerText || '',
-      overflow: e ? e.scrollWidth > e.clientWidth + 1 : null }; });
   await page.evaluate(() => lvSetRange('today'));
   await page.waitForTimeout(250);
-  let r = await read();
-  check(r.big === '—' && r.has && r.amt === '$938.50' && r.rows === 2 && r.live === 1, `${theme}: Today — total stays "—", the early block lists both shows ($938.50, one live): ${JSON.stringify(r)}`);
-  check(/before the recap/i.test(r.text) && /Not in the total above/.test(r.text) && /as of/.test(r.text), `${theme}: it says what it is and when it was read`);
-  check(r.overflow === false, `${theme}: the block fits a phone`);
-  const a = await page.evaluate(AUDIT);
-  check(a.fails.length === 0, `${theme}: overview with the early block ≥ 4.5:1 (min ${a.min})${a.fails.length ? ' FAIL ' + a.fails.join(' | ') : ''}`);
-  if (process.env.SHOTS) await page.locator('#lv-overview-body .lv-early').screenshot({ path: `${process.env.SHOTS}/early-${theme}.png` });   // eyeballing aid
-  await page.evaluate(() => lvSetStore('BL14'));
-  r = await read();
-  check(r.amt === '$240.50' && r.rows === 1, `${theme}: store filter — Battle Creek's show only (${r.amt}, ${r.rows})`);
-  await page.evaluate(() => lvSetStore('all'));
-  await page.evaluate(() => lvSetRange('lastMonth'));
+  const r = await page.evaluate(() => ({ big: document.querySelector('#lv-overview-body .lv-big')?.textContent,
+    early: !!document.querySelector('#lv-overview-body .lv-early'), text: document.getElementById('page-live-overview').innerText }));
+  check(r.big === '$938.50' && !r.early, `${theme}: Today's total is the API's rows so far ($698 + $240.50), with no separate early block (${r.big})`);
+  check(!/recap/i.test(r.text), `${theme}: nothing on the Overview mentions the recap`);
+  await page.evaluate(() => lvSetRange('last7'));
   await page.waitForTimeout(250);
-  r = await read();
-  check(!r.has, `${theme}: a past range has no early block`);
-  check(errs.length === 0, `${theme} early: no JS errors${errs.length ? ': ' + errs[0] : ''}`);
+  const legend = await page.evaluate(() => document.querySelector('#lv-overview-body .lv-legend')?.innerText || '');
+  check(/Whatnot API/.test(legend) && !/recap/i.test(legend), `${theme}: the chart says Whatnot comes from the Whatnot API (${legend.slice(0, 90)})`);
+  const a = await page.evaluate(AUDIT);
+  check(a.fails.length === 0, `${theme}: overview ≥ 4.5:1 (min ${a.min})${a.fails.length ? ' FAIL ' + a.fails.join(' | ') : ''}`);
+  await go(page, 'live-money');
+  const mb = await page.evaluate(() => [...document.querySelectorAll('#lv-money-body .lv-mb')].map(c => c.querySelector('.l').textContent));
+  check(mb[0] === 'Cancelled or failed' && !mb.some(l => /after the show/i.test(l)), `${theme}: Money back's first card is Whatnot's cancelled or failed orders (${mb[0]})`);
+  check(errs.length === 0, `${theme} today: no JS errors${errs.length ? ': ' + errs[0] : ''}`);
   await ctx.close();
 }
 

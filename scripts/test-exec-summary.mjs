@@ -31,7 +31,7 @@ const worker = await loadWorker(repo);
 const OPEN = ['BL1', 'BL4', 'BL2', 'BL14', 'BL16'];
 const day = (d) => new Date(Date.UTC(2026, 8, 27 + d)).toISOString().slice(0, 10);   // d=0 -> 2026-09-27
 
-function setup({ whatnotThrough = null } = {}) {
+function setup({ whatnotSync = null } = {}) {
   const h = makeEnv(repo);
   h.db.exec(fs.readFileSync(path.join(repo, 'migration-015.sql'), 'utf8'));
   applyMigrationAlters(h.db, repo);
@@ -48,9 +48,12 @@ function setup({ whatnotThrough = null } = {}) {
       ins.run(s, date, total, auction, budget, reported ? date + 'T23:55:00Z' : null);
     }
   }
-  if (whatnotThrough) {
-    const w = h.db.prepare("INSERT INTO channel_sales (channel, store, date, total, ingested_at) VALUES ('whatnot', ?, ?, 0, 'x')");
-    for (let d = 4; day(d) <= whatnotThrough; d++) { w.run('BL1', day(d)); w.run('BL14', day(d)); }
+  // Whatnot's sales come from the hourly Whatnot sync (the recap is retired): 'fresh' = it ran just now,
+  // 'stale' = 3 hours ago (the email then says when Whatnot was last read).
+  if (whatnotSync) {
+    h.db.exec(fs.readFileSync(path.join(repo, 'migration-084.sql'), 'utf8'));
+    const at = new Date(Date.now() - (whatnotSync === 'stale' ? 3 * 3600e3 : 0)).toISOString();
+    h.db.prepare("INSERT INTO whatnot_sync (key, value, updated_at) VALUES ('last_run', ?, ?)").run(JSON.stringify({ at, complete: true }), at);
   }
   return h;
 }
@@ -61,7 +64,7 @@ const preview = async (h, qs) => {
 
 // ── Chain-wide, through Wed Oct 7 ───────────────────────────────────────────
 {
-  const h = setup({ whatnotThrough: '2026-10-07' });
+  const h = setup({ whatnotSync: 'fresh' });
   const { status, html } = await preview(h, 'date=2026-10-07');
   ok(status === 200, 'preview renders');
   has(html, 'Thursday, October 8, 2026', 'report date is the send day');
@@ -93,13 +96,15 @@ const preview = async (h, qs) => {
   // Closed store and settled data.
   lacks(html, 'Holland', 'Holland is not reported');
   lacks(html, 'No sales data yet', 'no missing-data warning when every store reported');
-  lacks(html, 'Whatnot recap', 'no Whatnot warning when the recap arrived');
+  lacks(html, "Whatnot's figures", 'no Whatnot warning when the sync ran just now');
+  lacks(html, 'recap', 'nothing about a Whatnot recap');
+  has(html, "Whatnot's\n        gross sales from the Whatnot API", 'the footer says Whatnot is gross sales from the Whatnot API');
   has(html, '>All Stores &nbsp;·&nbsp;', 'scope line names All Stores');
 }
 
 // ── One store: pace exactly AT plan is on track ─────────────────────────────
 {
-  const h = setup({ whatnotThrough: '2026-10-07' });
+  const h = setup({ whatnotSync: 'fresh' });
   const { html } = await preview(h, 'date=2026-10-07&stores=BL1');
   // Coliseum: WTD 400 + last week's Thu-Sat 300 = 700 vs week plan 700.
   has(html, 'Projected <strong>$700</strong> vs full-week plan <strong>$700</strong>', 'single-store pace');
@@ -108,16 +113,16 @@ const preview = async (h, qs) => {
   lacks(html, 'Dupont', 'a scoped preview shows no other store');
 }
 
-// ── A Whatnot recap that has not arrived, and a store with no data ──────────
+// ── A Whatnot sync that has not run lately, and a store with no data ────────
 {
-  const h = setup({ whatnotThrough: '2026-10-06' });
+  const h = setup({ whatnotSync: 'stale' });
   // What a failed nightly snapshot leaves in prod: the pre-made row, untouched.
   h.db.prepare("UPDATE daily_sales SET total = 0, snapshot_time = NULL WHERE store = 'BL4' AND date = '2026-10-07'").run();
   const { html } = await preview(h, 'date=2026-10-07');
-  has(html, 'The Whatnot recap for Wed, Oct 7 has not arrived', 'a missing recap is said, not silently $0');
+  has(html, "Whatnot's figures were last read at", 'a sync that has not run in 2 hours is said, not silently short');
   has(html, 'No sales data yet for Dupont on Wed, Oct 7', 'a store with no figure is named');
   const { html: dupont } = await preview(h, 'date=2026-10-07&stores=BL4');
-  lacks(dupont, 'Whatnot recap', 'a store Whatnot never covers gets no Whatnot warning');
+  lacks(dupont, "Whatnot's figures", 'a store Whatnot never covers gets no Whatnot warning');
 }
 
 // ── No plan at all (a week past the last budget row) is not "on track" ──────
@@ -131,7 +136,7 @@ const preview = async (h, qs) => {
 
 // ── A refund-only day: live share never prints Infinity or NaN ──────────────
 {
-  const h = setup({ whatnotThrough: '2026-10-07' });
+  const h = setup({ whatnotSync: 'fresh' });
   h.db.prepare("UPDATE daily_sales SET total = -50 WHERE store = 'BL1' AND date = '2026-10-07'").run();
   const { html } = await preview(h, 'date=2026-10-07&stores=BL1');
   lacks(html, 'Infinity', 'no Infinity%');
@@ -141,7 +146,7 @@ const preview = async (h, qs) => {
 
 // ── A manager whose stores include closed Holland ───────────────────────────
 {
-  const h = setup({ whatnotThrough: '2026-10-07' });
+  const h = setup({ whatnotSync: 'fresh' });
   const { html } = await preview(h, 'date=2026-10-07&stores=BL1,BL8');
   has(html, '>Total</td>', 'one reported store reads as a single-store body (footer "Total")');
   lacks(html, 'My Stores', 'not "My Stores" for one visible store');

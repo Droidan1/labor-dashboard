@@ -167,35 +167,15 @@ const counts = (db) => ['channel_sales', 'daily_sales', 'whatnot_shows', 'whatno
   ok(su.body.channels.length === 1 && su.body.channels[0].total === 210.5, 'superuser &store=BL2 → South Bend only');
 }
 
-// ── 7. Before the recap: today's shows from Whatnot's orders (2026-11-02) ─────
-// The newest recap is 10-29. Shows after it, ended or still live, come back as `early`: Σ subtotal of the
-// orders not cancelled or failed (Whatnot's own sales definition). Never a recapped day, a scheduled or
-// cancelled show, or a profile-shop order.
+// ── 7. No "before the recap" figure (retired 2026-11-04) ───────────────────
+// Whatnot's daily rows come from the API hourly (syncWhatnotDaily), today included, so the separate
+// early figure is gone.
 {
-  const { db, env } = freshEnv();
-  const sh = db.prepare('INSERT INTO whatnot_shows (id,title,status,scheduled_start_at,started_at,show_date,store,synced_at) VALUES (?,?,?,?,?,?,?,?)');
-  sh.run('sh-e1', 'Morning tops', 'ended', '2026-10-30T12:30:00Z', '2026-10-30T12:30:00Z', '2026-10-30', 'BL1', 'x');
-  sh.run('sh-e3', 'Quiet one', 'ended', '2026-10-31T20:00:00Z', null, '2026-10-31', 'BL14', 'x');
-  sh.run('sh-e2', 'Coat finds', 'live', '2026-10-31T23:00:00Z', null, '2026-10-31', 'BL14', 'x');
-  sh.run('sh-x', 'Called off', 'cancelled', '2026-10-30T14:00:00Z', null, '2026-10-30', 'BL1', 'x');
-  const or = db.prepare('INSERT INTO whatnot_orders (id,show_id,status,created_at,order_date,subtotal,items_synced,synced_at) VALUES (?,?,?,?,?,?,?,?)');
-  [['e1', 'sh-e1', 'completed', 10], ['e2', 'sh-e1', 'pending_fulfillment', 5.5], ['e3', 'sh-e1', 'cancelled', 99], ['e4', 'sh-e1', 'failed', 7],
-   ['e5', 'sh-e2', 'pending', 20], ['e6', 'sh-x', 'completed', 50], ['e7', null, 'completed', 30]]
-    .forEach(([id, show, st, amt]) => or.run(id, show, st, '2026-10-30T13:00:00Z', '2026-10-30', amt, 1, 'x'));
+  const { env } = freshEnv();
   const r = await call(env, Q, 'u-su');
-  eq(r.body.early, [
-    { showId: 'sh-e1', title: 'Morning tops', store: 'BL1', date: '2026-10-30', startAt: '2026-10-30T12:30:00Z', status: 'ended', orders: 2, sales: 15.5 },
-    { showId: 'sh-e3', title: 'Quiet one', store: 'BL14', date: '2026-10-31', startAt: '2026-10-31T20:00:00Z', status: 'ended', orders: 0, sales: 0 },
-    { showId: 'sh-e2', title: 'Coat finds', store: 'BL14', date: '2026-10-31', startAt: '2026-10-31T23:00:00Z', status: 'live', orders: 1, sales: 20 },
-  ], 'early: shows after the newest recap (10-29), ended or live, cancelled/failed orders left out; no recapped day, cancelled show or profile-shop order');
-  ok(!r.body.shows.some(s => s.showId === 'sh-e2'), 'a live show stays out of `shows` (finished shows only)');
-  eq((await call(env, '&from=2026-10-01&to=2026-10-29', 'u-su')).body.early, [], 'a range the recap covers has nothing early');
-  eq((await call(env, Q + '&store=BL1', 'u-su')).body.early.map(e => e.showId), ['sh-e1'], '&store= filters it');
-  db.prepare("INSERT INTO user_grants (user_id,business_id,role,units) VALUES ('u-mgr1','live','manager','[\"BL14\"]')").run();
-  eq((await call(env, Q, 'u-mgr1')).body.early.map(e => e.showId), ['sh-e3', 'sh-e2'], 'a BL14 grant sees BL14 only');
-  const before = counts(db);
-  await call(env, Q, 'u-su');
-  eq(counts(db), before, 'the read writes nothing');
+  ok(r.status === 200 && !('early' in r.body), 'live-sales has no early figure');
+  const none = await call(env, Q + '&store=BL14', 'u-su');
+  ok(!('early' in none.body), 'nor with a store');
 }
 
 // ── 8. The Show calendar (?action=live-calendar, 2026-11-03) ────────────────
