@@ -1,3 +1,35 @@
+# The same polish on every other page (2026-11-05)
+
+**Ask (Brian, Nov 5):** "Do all the pages", the Dashboard direction approved Nov 4, on the same draft PR (#373).
+**Scope:** every `#page-*` in `index.html` and the JS templates that draw into them, plus their page `<style>` blocks.
+**Not touched:** printed output (the dashboard print report, Sign Studio's SignRender, price-sticker ZPL/SVG, the
+PDF exports), the Lilita One page titles (§3.3), worker, auth, D1.
+
+- [x] Labels: drop `uppercase` and positive tracking (classes and `text-transform`/`letter-spacing` in page CSS);
+      fix the few Title Case literals that the capitals hid
+- [x] Weights: `font-bold` / `font-extrabold` / `font-black` and CSS 700+ to 600 (not on Lilita / Luckiest)
+- [x] Sizes: nothing under 11px (8-10.5px to 11px), 11.5px to 12px; check tight spots (bottom nav, calendars, badges)
+- [x] Colour: neutral matrix tiles off the Dashboard too (no watermark); `inkDimmer` never as text; decorative
+      washes and loops out (skeletons and live-urgent stay)
+- [x] Transitions name what they animate
+- [x] Keep every JS hook that reads one of these classes working (the PDF export reads `.uppercase`)
+- [x] DESIGN.md §2.2 / §4.8 updated to the new rule; a test pins it; `npm test` passes; sw.js cache bump
+- [x] Push to PR #373; staging NOT redeployed without asking
+- [ ] Before/after page for the other pages: NOT DONE. Each page is drawn from live data by its own JS, so a
+      sample-data copy of 40 pages is not practical; staging is the way to look, on Brian's yes
+
+## Review (2026-11-05)
+- One script pass over every page's classes and page CSS, with the printed blocks cut out; then by hand: the
+  Store Detail, Retail Summary and landing Matrix-style tiles (neutral, no watermark, `matrixTileWatermark` deleted),
+  five hero radial washes, the hourly snapshot's live dot (static; pulses only while refreshing), 26 catch-all
+  `transition` classes and 5 `transition:` shorthands, the bottom nav label (11px/500, ellipsis instead of overlap).
+- Kept on purpose: loading pulses and skeletons, spinners, the bell's critical ring, the Halloween theme, the
+  swipe-back hint, selection and active-state green tints, the small green page pills, Chart.js axis sizes.
+- The Retail Summary PDF/CSV found KPI labels by `.uppercase`; they now use `.kpi-l`.
+- `npm test`: 132 suites pass. New `scripts/test-pages-polish.mjs`: 24 pass here, 18 fail on main.
+- NOT RUN: any browser render (no Chromium in the container). Bottom nav at 360px width with "Sign Studio" /
+  "Price Scan" is the tightest spot; it truncates rather than overlaps.
+
 # Dashboard polish with the unslop skill (2026-11-04)
 
 **Ask (Brian):** run the unslop design skill (github heydamir/unslop) on the Hub, audit one page, propose a direction,

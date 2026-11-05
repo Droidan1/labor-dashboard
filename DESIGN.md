@@ -194,12 +194,18 @@ no kerning tables.
 
 All currency / count displays use `tabular-nums` for column alignment.
 
-**Dashboard labels and weights (polish pass, 2026-11-04).** On `#page-dashboard` and the
-store cards: labels are sentence case at `text-[12px] font-medium` (tile labels
+**Labels and weights (polish pass: the Dashboard 2026-11-04, every other page 2026-11-05).**
+On every page and the templates that draw into them: labels are sentence case at `text-[12px] font-medium` (tile labels
 `text-[11px]`), with no `uppercase` and no `tracking-[…]`; nothing is set under 11px; figures
 and buttons stop at `font-semibold` (600), never `font-bold` / `font-extrabold`. The one
-uppercase line is the Lilita One page title (§3.3). `scripts/test-dashboard-polish.mjs`
-pins this. Other pages still use the older uppercase labels until they get the same pass.
+uppercase line is the Lilita One page title (§3.3). The same holds in page `<style>` blocks:
+no `text-transform: uppercase`, no positive `letter-spacing`, no `font-weight` above 600, no
+`font-size` under 11px. Two kinds of text keep their letter-spacing because it is read
+character by character: a code in `font-mono` (the six-digit associate code) and the typed
+scan/key inputs (`.ir-in.key`, `.mos-in`). **Paper is exempt:** the dashboard print report,
+Sign Studio's renderer, the price-sticker drawer and the jsPDF exports keep their own sizes
+and caps, because they are judged on paper. `scripts/test-dashboard-polish.mjs` and
+`scripts/test-pages-polish.mjs` pin this.
 
 ### 2.3 Spacing & radius
 
@@ -395,7 +401,8 @@ an `inkDim` label, ink value, no watermark icon). Until 2026-11-04 they were
 accent-green tiles with a 7% corner icon, which put brand green on every
 card and left the pace colour nothing to stand out from. Contrast of the
 label on the tile: 5.53 light, 5.41 dark, 7.99 pure black, 7.46 Halloween.
-(Store Detail and the All Stores page still draw the green tiles.)
+Store Detail's Matrix, the Retail Summary's reporting tiles and the landing page's business
+tiles use the same neutral tile since 2026-11-05, and `matrixTileWatermark()` is gone.
 **Responsive grid:** `grid-cols-4 lg:grid-cols-2` — single row on
 mobile, 2×2 on desktop (because the Matrix sits in a narrower 1fr
 column at lg+ where 4-up would crowd).
@@ -530,11 +537,11 @@ bare table with controls floating over the page:
 - **Panel**: `background: panel`, `1px` border, `border-radius: 14px`,
   `overflow: hidden`.
 - **Bar**: `panelHi` background, bottom border, `padding: 13px 18px`,
-  `gap: 14px`, `flex-wrap`. Opens with a small uppercase label naming the
+  `gap: 14px`, `flex-wrap`. Opens with a small sentence-case label naming the
   table. Controls that ACT ON THE TABLE live here — not in the page header.
   Page-level actions (Publish, Discard) stay in the page header.
 - **Rows**: `height: 42px`, `padding: 0 10px`, 1px bottom border. Header row
-  `34px`, `10.5px` uppercase, `letter-spacing: .05em`, on `panelHi`.
+  `34px`, `11px` sentence case at weight 600, no letter-spacing, on `panelHi`.
 - **Numbers**: right-aligned, `font-variant-numeric: tabular-nums` on the
   table so columns line up.
 - **Legend**: every visual state the table uses gets a row in it. If a colour
@@ -604,7 +611,7 @@ Every one of these shipped broken first. Check them on the next table.
 Same panel, different payload — a hero, an action list and a heatmap instead of
 editable cells:
 
-- **Hero**: two or three big tabular numbers with small uppercase captions, then
+- **Hero**: two or three big tabular numbers with small sentence-case captions, then
   ONE plain-English sentence reading the numbers back. The sentence says only
   what is knowable — with no shelf counts in, it says so instead of printing a
   floor figure.

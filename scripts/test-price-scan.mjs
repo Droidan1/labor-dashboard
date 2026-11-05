@@ -2658,7 +2658,7 @@ console.log('Price Scan');
     return (x + 0.05) / (y + 0.05);
   };
   ok(!/color:#8a8371/.test(css), '\🛑 the 3.77:1 dim is gone from the file');
-  ok(/\.ps-recent-sub\{font-size:11\.5px;color:#6b6453/.test(css),
+  ok(/\.ps-recent-sub\{font-size:12px;color:#6b6453/.test(css),
      '…replaced by a dim already in this file, not a new token');
   ok(ratio('#6b6453', '#ffffff') >= 4.5,
      `the reprint sub-line clears 4.5:1 on the light panel (${ratio('#6b6453', '#ffffff').toFixed(2)}:1)`);
