@@ -1521,9 +1521,8 @@
           <h1 class="text-xl font-brand text-accent-green uppercase tracking-wide leading-none">Dashboard</h1>
           <!-- Live freshness pill — pulsing dot + last-update time. Replaces the
                "Updated 7:53:53 PM" stacked timestamp from the old header. -->
-          <div id="last-updated" class="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11.5px] font-semibold whitespace-nowrap border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.03)] text-opl-inkDim dark:text-op-inkDim">
+          <div id="last-updated" class="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12px] font-medium whitespace-nowrap border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.03)] text-opl-inkDim dark:text-op-inkDim">
             <span class="relative inline-flex w-1.5 h-1.5">
-              <span class="absolute inset-0 rounded-full bg-accent-green/40 animate-ping"></span>
               <span class="relative inline-block w-1.5 h-1.5 rounded-full bg-accent-green"></span>
             </span>
             <span id="last-updated-time" class="tabular-nums">—</span>
@@ -1532,8 +1531,8 @@
             <!-- Manual refresh (matches Weekly Retail) — desktop affordance
                  alongside pull-to-refresh on mobile. -->
             <button id="dash-refresh-btn" type="button" onclick="dashRefresh(this)" aria-label="Refresh" title="Refresh"
-              class="order-last w-[38px] h-[38px] rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim hidden lg:flex items-center justify-center transition-colors hover:border-accent-green/40 hover:text-opl-ink dark:hover:text-op-ink focus:outline-none focus:ring-1 focus:ring-accent-green">
-              <svg class="w-[17px] h-[17px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              class="order-last w-10 h-10 rounded-[10px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim hidden lg:flex items-center justify-center transition-colors hover:border-accent-green/40 hover:text-opl-ink dark:hover:text-op-ink focus:outline-none focus:ring-1 focus:ring-accent-green">
+              <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
             </button>
             <!-- Notifications bell — pace alerts, milestones, offline events.
                  Badge color reflects highest-severity unread. Pulsing halo
@@ -1541,9 +1540,9 @@
             <div class="relative" id="notif-bell-wrap">
               <button id="notif-bell-trigger" type="button" onclick="toggleNotifPanel(event)"
                 aria-haspopup="true" aria-expanded="false" aria-label="Notifications"
-                class="relative w-[38px] h-[38px] rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink flex items-center justify-center transition-colors hover:border-accent-green/40 focus:outline-none focus:ring-1 focus:ring-accent-green">
-                <svg class="w-[17px] h-[17px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
-                <span id="notif-bell-badge" class="hidden absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1.5 rounded-full text-[10.5px] font-extrabold tabular-nums flex items-center justify-center text-white bg-op-bad border-2 border-opl-panel dark:border-op-panel">0</span>
+                class="relative w-10 h-10 rounded-[10px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink flex items-center justify-center transition-colors hover:border-accent-green/40 focus:outline-none focus:ring-1 focus:ring-accent-green">
+                <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+                <span id="notif-bell-badge" class="hidden absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1.5 rounded-full text-[11px] font-semibold tabular-nums flex items-center justify-center text-white bg-op-bad border-2 border-opl-panel dark:border-op-panel">0</span>
               </button>
 
               <!-- Desktop: anchored under the bell (absolute, right-aligned).
@@ -1554,10 +1553,10 @@
               <div id="notif-bell-panel"
                 class="hidden absolute top-[calc(100%+10px)] right-0 w-[380px] max-w-[90vw]
                        max-sm:!fixed max-sm:!top-[calc(env(safe-area-inset-top)+72px)] max-sm:!left-3 max-sm:!right-3 max-sm:!w-auto max-sm:!max-w-none
-                       bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi rounded-[15px] shadow-2xl z-50 origin-top-right overflow-hidden">
+                       bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi rounded-[16px] shadow-2xl z-50 origin-top-right overflow-hidden">
                 <div class="flex items-center justify-between gap-2 px-3.5 py-3 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
-                  <h4 class="text-[14px] font-extrabold tracking-[0.01em] text-opl-ink dark:text-op-ink">Notifications <span id="notif-panel-count" class="text-[11px] text-opl-inkDim dark:text-op-inkDim font-semibold ml-1">· all clear</span></h4>
-                  <button id="notif-mark-all" onclick="markAllNotifsRead()" class="text-[11px] font-bold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hidden">Mark all read</button>
+                  <h4 class="text-[14px] font-semibold text-opl-ink dark:text-op-ink">Notifications <span id="notif-panel-count" class="text-[12px] text-opl-inkDim dark:text-op-inkDim font-medium ml-1">· all clear</span></h4>
+                  <button id="notif-mark-all" onclick="markAllNotifsRead()" class="text-[12px] font-medium text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hidden">Mark all read</button>
                 </div>
                 <div id="notif-bell-list" class="max-h-[60vh] overflow-y-auto"></div>
               </div>
@@ -1569,16 +1568,16 @@
             <div class="relative" id="day-chip-wrap">
               <button id="day-chip-trigger" type="button" onclick="toggleDayPanel(event)"
                 aria-haspopup="true" aria-expanded="false" aria-label="Change date range"
-                class="relative h-[38px] px-3 gap-2 rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink flex items-center justify-center transition-colors hover:border-accent-green/40 focus:outline-none focus:ring-1 focus:ring-accent-green">
-                <svg class="w-[17px] h-[17px] text-accent-green flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/></svg>
-                <span id="day-chip-label" class="hidden sm:inline text-[13px] font-bold whitespace-nowrap max-w-[180px] truncate">—</span>
-                <svg id="day-chip-chev" class="w-3.5 h-3.5 text-opl-inkDim dark:text-op-inkDim flex-shrink-0 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                class="relative h-10 px-3 gap-2 rounded-[10px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink flex items-center justify-center transition-colors hover:border-accent-green/40 focus:outline-none focus:ring-1 focus:ring-accent-green">
+                <svg class="w-[18px] h-[18px] text-accent-green flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/></svg>
+                <span id="day-chip-label" class="hidden sm:inline text-[13px] font-medium whitespace-nowrap max-w-[180px] truncate">—</span>
+                <svg id="day-chip-chev" class="w-4 h-4 text-opl-inkDim dark:text-op-inkDim flex-shrink-0 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
               </button>
 
               <div id="day-chip-panel" onclick="event.stopPropagation()"
                 class="hidden absolute top-[calc(100%+10px)] right-0 w-[300px] max-w-[92vw]
                        max-sm:!fixed max-sm:!top-[calc(env(safe-area-inset-top)+64px)] max-sm:!left-3 max-sm:!right-3 max-sm:!w-auto max-sm:!max-w-none
-                       bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi rounded-[15px] shadow-2xl z-50 origin-top-right overflow-hidden">
+                       bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi rounded-[16px] shadow-2xl z-50 origin-top-right overflow-hidden">
                 <!-- Preset list -->
                 <div id="range-preset-list" class="max-h-[70vh] overflow-y-auto py-1"></div>
 
@@ -1587,7 +1586,7 @@
                   <div class="flex items-center justify-between gap-2 px-3.5 py-2.5">
                     <button type="button" onclick="rangeCalNav(-1)" aria-label="Previous month"
                       class="w-7 h-7 flex items-center justify-center rounded-[8px] text-base leading-none border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors">‹</button>
-                    <span id="range-cal-title" class="text-[12px] font-bold text-opl-ink dark:text-op-ink text-center flex-1"></span>
+                    <span id="range-cal-title" class="text-[12px] font-semibold text-opl-ink dark:text-op-ink text-center flex-1"></span>
                     <button type="button" onclick="rangeCalNav(1)" aria-label="Next month"
                       class="w-7 h-7 flex items-center justify-center rounded-[8px] text-base leading-none border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors">›</button>
                   </div>
@@ -1595,9 +1594,9 @@
                   <div class="flex items-center justify-between gap-2 px-3.5 py-3 border-t border-[rgba(20,16,8,0.1)] dark:border-op-border">
                     <span id="range-custom-summary" class="text-[12px] font-medium text-opl-inkDim dark:text-op-inkDim truncate">Pick a start date</span>
                     <div class="flex items-center gap-1.5 flex-shrink-0">
-                      <button type="button" onclick="rangeCustomCancel()" class="px-2.5 py-1.5 rounded-[8px] text-[12px] font-bold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Cancel</button>
+                      <button type="button" onclick="rangeCustomCancel()" class="px-2.5 py-1.5 rounded-[8px] text-[12px] font-semibold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Cancel</button>
                       <button id="range-custom-apply" type="button" onclick="rangeCustomApply()" disabled
-                        class="px-3 py-1.5 rounded-[8px] text-[12px] font-bold bg-accent-green text-[#0b1220] disabled:opacity-40 disabled:cursor-not-allowed transition-opacity">Apply</button>
+                        class="px-3 py-1.5 rounded-[8px] text-[12px] font-semibold bg-accent-green text-[#0b1220] disabled:opacity-40 disabled:cursor-not-allowed transition-opacity">Apply</button>
                     </div>
                   </div>
                 </div>
@@ -1612,26 +1611,25 @@
 
       <!-- V1 Operator hero — unified "Today's Sales · All Stores" card -->
       <section id="today-total-card" class="relative overflow-hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 lg:p-6 transition-colors">
-        <div class="pointer-events-none absolute inset-0" style="background:radial-gradient(120% 80% at 100% 0%, rgb(var(--accent-green) / 0.12), transparent 60%)"></div>
         <div class="relative">
           <!-- top row: label + LIVE pill (pill right-aligned, like store cards) -->
           <div class="flex items-center justify-between gap-2.5">
-            <span id="c-today-card-label" class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Today's Sales · All Stores</span>
-            <span id="hero-live-pill" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold tracking-[0.06em] flex-shrink-0" style="border:1px solid rgba(34,197,94,0.4);color:var(--v1-good)">
-              <span class="w-1.5 h-1.5 rounded-full" style="background:#22c55e"></span><span id="hero-live-text">LIVE</span>
+            <span id="c-today-card-label" class="text-[12px] font-medium text-opl-inkDim dark:text-op-inkDim">Today's Sales · All Stores</span>
+            <span id="hero-live-pill" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12px] font-medium flex-shrink-0" style="border:1px solid rgba(34,197,94,0.4);color:var(--v1-good)">
+              <span class="w-1.5 h-1.5 rounded-full" style="background:#22c55e"></span><span id="hero-live-text">Live</span>
             </span>
           </div>
 
           <!-- hero row: total + pace -->
           <div class="mt-3 flex items-start justify-between gap-4">
             <div class="min-w-0">
-              <div id="c-today-total" class="font-geist font-bold tabular-nums tracking-tight leading-none text-4xl sm:text-5xl text-opl-ink dark:text-op-ink truncate">—</div>
+              <div id="c-today-total" class="font-geist font-semibold tabular-nums tracking-tight leading-none text-4xl sm:text-5xl text-opl-ink dark:text-op-ink truncate">—</div>
               <div class="mt-3 text-sm"><span id="c-today-diff" class="font-semibold"></span></div>
             </div>
             <div class="text-right flex-shrink-0">
-              <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Pace</div>
-              <div id="h-pace" class="mt-1 font-geist font-extrabold tabular-nums leading-none text-4xl sm:text-5xl tracking-tight text-op-good">—</div>
-              <div id="h-reporting" class="mt-1.5 text-[11px] text-opl-inkDim dark:text-op-inkDim"></div>
+              <div class="text-[12px] font-medium text-opl-inkDim dark:text-op-inkDim">Pace</div>
+              <div id="h-pace" class="mt-1 font-geist font-semibold tabular-nums leading-none text-4xl sm:text-5xl tracking-tight text-op-good">—</div>
+              <div id="h-reporting" class="mt-1.5 text-[12px] text-opl-inkDim dark:text-op-inkDim"></div>
             </div>
           </div>
 
@@ -1657,8 +1655,8 @@
                 <!-- Channel Mix -->
                 <div>
                   <div class="flex items-center justify-between">
-                    <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Channel Mix</div>
-                    <div id="cm-count" class="text-[11px] text-opl-inkDimmer dark:text-op-inkDimmer">3 channels</div>
+                    <div class="text-[12px] font-medium text-opl-inkDim dark:text-op-inkDim">Channel mix</div>
+                    <div id="cm-count" class="text-[12px] text-opl-inkDim dark:text-op-inkDim">3 channels</div>
                   </div>
                   <div class="mt-4 flex gap-[2px] h-2.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
                     <span id="cm-retail-seg" class="h-full bg-accent-green transition-[width] duration-500" style="width:0%"></span>
@@ -1666,28 +1664,28 @@
                     <span id="cm-auction-seg" class="h-full bg-accent-violet transition-[width] duration-500" style="width:0%"></span>
                   </div>
                   <div class="mt-4 grid grid-cols-3 gap-1.5 text-[13px]">
-                    <div id="cm-retail-col" role="button" tabindex="0" onclick="setDashChannel('retail')" title="Tap to filter the metrics to Retail" class="transition rounded-lg px-2.5 py-2 cursor-pointer hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.05)]">
+                    <div id="cm-retail-col" role="button" tabindex="0" onclick="setDashChannel('retail')" title="Tap to filter the metrics to Retail" class="transition-colors rounded-[8px] px-2.5 py-2 cursor-pointer hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.05)]">
                       <div class="flex items-center gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-green flex-shrink-0"></span>Retail · <span id="cm-retail-pct">—</span></div>
-                      <div id="cm-retail-val" class="mt-1 font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div>
+                      <div id="cm-retail-val" class="mt-1 font-semibold tabular-nums text-opl-ink dark:text-op-ink">—</div>
                     </div>
-                    <div id="cm-bin-col" role="button" tabindex="0" onclick="setDashChannel('bin')" title="Tap to filter the metrics to BIN" class="text-center transition rounded-lg px-2.5 py-2 cursor-pointer hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.05)]">
+                    <div id="cm-bin-col" role="button" tabindex="0" onclick="setDashChannel('bin')" title="Tap to filter the metrics to BIN" class="text-center transition-colors rounded-[8px] px-2.5 py-2 cursor-pointer hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.05)]">
                       <div class="flex items-center justify-center gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-blue flex-shrink-0"></span>BIN · <span id="cm-bin-pct">—</span></div>
-                      <div id="cm-bin-val" class="mt-1 font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div>
+                      <div id="cm-bin-val" class="mt-1 font-semibold tabular-nums text-opl-ink dark:text-op-ink">—</div>
                     </div>
-                    <div id="cm-auction-col" class="text-right transition rounded-lg px-2.5 py-2">
+                    <div id="cm-auction-col" class="text-right transition-colors rounded-[8px] px-2.5 py-2">
                       <div class="flex items-center justify-end gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-violet flex-shrink-0"></span>Live Sales · <span id="cm-auction-pct">—</span></div>
-                      <div id="cm-auction-val" class="mt-1 font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div>
+                      <div id="cm-auction-val" class="mt-1 font-semibold tabular-nums text-opl-ink dark:text-op-ink">—</div>
                     </div>
                   </div>
                 </div>
                 <!-- Matrix -->
                 <div class="mt-5 pt-5 border-t border-[rgba(20,16,8,0.08)] dark:border-op-border lg:mt-0 lg:pt-0 lg:border-t-0">
-                  <div id="dash-matrix-label" class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Matrix · Today</div>
+                  <div id="dash-matrix-label" class="text-[12px] font-medium text-opl-inkDim dark:text-op-inkDim">Matrix · Today</div>
                   <div class="mt-3.5 grid grid-cols-4 gap-2">
-                    <div class="relative overflow-hidden rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="relative text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Avg Cart</div><div id="mx-cart" class="relative mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div><span class="absolute -right-1 -bottom-1 text-accent-green pointer-events-none" style="opacity:.07"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="w-[42px] h-[42px]"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 2h3l2.7 13.5a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6L23 6H6"/></svg></span></div>
-                    <div class="relative overflow-hidden rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="relative text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Avg Items</div><div id="mx-items" class="relative mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div><span class="absolute -right-1 -bottom-1 text-accent-green pointer-events-none" style="opacity:.07"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="w-[42px] h-[42px]"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></span></div>
-                    <div class="relative overflow-hidden rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="relative text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Orders</div><div id="mx-orders" class="relative mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div><span class="absolute -right-1 -bottom-1 text-accent-green pointer-events-none" style="opacity:.07"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="w-[42px] h-[42px]"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M16 8h-6"/><path d="M14 12h-4"/></svg></span></div>
-                    <div class="relative overflow-hidden rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="relative text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">ASP</div><div id="mx-asp" class="relative mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div><span class="absolute -right-1 -bottom-1 text-accent-green pointer-events-none" style="opacity:.07"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="w-[42px] h-[42px]"><path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82Z"/><circle cx="7" cy="7" r="1"/></svg></span></div>
+                    <div class="rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.025)] px-2.5 py-2.5 text-center"><div class="text-[11px] font-medium text-opl-inkDim dark:text-op-inkDim">Avg cart</div><div id="mx-cart" class="mt-1 text-sm font-semibold tabular-nums text-opl-ink dark:text-op-ink">—</div></div>
+                    <div class="rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.025)] px-2.5 py-2.5 text-center"><div class="text-[11px] font-medium text-opl-inkDim dark:text-op-inkDim">Avg items</div><div id="mx-items" class="mt-1 text-sm font-semibold tabular-nums text-opl-ink dark:text-op-ink">—</div></div>
+                    <div class="rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.025)] px-2.5 py-2.5 text-center"><div class="text-[11px] font-medium text-opl-inkDim dark:text-op-inkDim">Orders</div><div id="mx-orders" class="mt-1 text-sm font-semibold tabular-nums text-opl-ink dark:text-op-ink">—</div></div>
+                    <div class="rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.025)] px-2.5 py-2.5 text-center"><div class="text-[11px] font-medium text-opl-inkDim dark:text-op-inkDim">ASP</div><div id="mx-asp" class="mt-1 text-sm font-semibold tabular-nums text-opl-ink dark:text-op-ink">—</div></div>
                   </div>
                 </div>
               </div>
@@ -1698,9 +1696,9 @@
           <div class="mt-4 flex items-center justify-between gap-3">
             <button id="hero-more-toggle" type="button" onclick="toggleHeroExtra()"
               aria-expanded="false" aria-controls="hero-extra"
-              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11.5px] font-bold tracking-[0.02em] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/35 transition-colors">
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-[12px] font-medium border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/35 transition-colors">
               <span id="hero-more-label">More</span>
-              <svg id="hero-more-chev" class="w-[11px] h-[11px] transition-transform duration-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              <svg id="hero-more-chev" class="w-3 h-3 transition-transform duration-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
             <button onclick="showAllStoresDetail()" class="text-xs font-semibold text-accent-green hover:underline">View Details →</button>
           </div>
@@ -1713,12 +1711,12 @@
         <!-- Collapsed summary (mobile only; hidden when expanded / on desktop) -->
         <div id="budget-summary" class="lg:hidden p-5 flex items-start gap-3 cursor-pointer" onclick="toggleBudget()">
           <div class="flex-1 min-w-0">
-            <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim"><span id="bgt-sum-wk">—</span></div>
-            <div class="mt-1"><div id="bgt-sum-wt" class="text-lg font-bold tabular-nums tracking-tight text-opl-ink dark:text-op-ink leading-tight">—</div><div class="text-[12px] font-semibold tabular-nums text-opl-inkDim dark:text-op-inkDim leading-tight">/ <span id="bgt-sum-wb">—</span></div></div>
+            <div class="text-[12px] font-medium text-opl-inkDim dark:text-op-inkDim"><span id="bgt-sum-wk">—</span></div>
+            <div class="mt-1"><div id="bgt-sum-wt" class="text-lg font-semibold tabular-nums tracking-tight text-opl-ink dark:text-op-ink leading-tight">—</div><div class="text-[12px] font-semibold tabular-nums text-opl-inkDim dark:text-op-inkDim leading-tight">/ <span id="bgt-sum-wb">—</span></div></div>
           </div>
           <div class="flex-1 min-w-0 pl-3 border-l border-[rgba(20,16,8,0.08)] dark:border-op-border text-right">
-            <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim"><span id="bgt-sum-mo">Monthly</span></div>
-            <div class="mt-1"><div id="bgt-sum-mt" class="text-lg font-bold tabular-nums tracking-tight text-opl-ink dark:text-op-ink leading-tight">—</div><div class="text-[12px] font-semibold tabular-nums text-opl-inkDim dark:text-op-inkDim leading-tight">/ <span id="bgt-sum-mb">—</span></div></div>
+            <div class="text-[12px] font-medium text-opl-inkDim dark:text-op-inkDim"><span id="bgt-sum-mo">Monthly</span></div>
+            <div class="mt-1"><div id="bgt-sum-mt" class="text-lg font-semibold tabular-nums tracking-tight text-opl-ink dark:text-op-ink leading-tight">—</div><div class="text-[12px] font-semibold tabular-nums text-opl-inkDim dark:text-op-inkDim leading-tight">/ <span id="bgt-sum-mb">—</span></div></div>
           </div>
           <svg class="bgt-chev w-[18px] h-[18px] mt-0.5 flex-shrink-0 text-opl-inkDim dark:text-op-inkDim" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </div>
@@ -1732,34 +1730,34 @@
 
           <!-- Weekly block -->
           <div class="lg:bg-opl-panel lg:dark:bg-op-panel lg:border lg:border-[rgba(20,16,8,0.08)] lg:dark:border-op-border lg:rounded-card p-5 transition-colors">
-            <div id="c-period-label" class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Weekly</div>
+            <div id="c-period-label" class="text-[12px] font-medium text-opl-inkDim dark:text-op-inkDim">Weekly</div>
             <div class="flex items-baseline gap-2 mt-1.5">
-              <span id="c-total" class="text-2xl font-bold tabular-nums tracking-tight text-opl-ink dark:text-op-ink">—</span>
+              <span id="c-total" class="text-2xl font-semibold tabular-nums tracking-tight text-opl-ink dark:text-op-ink">—</span>
               <span class="text-opl-inkDim dark:text-op-inkDim text-sm">/</span>
               <span id="c-budget" class="text-base font-semibold text-opl-inkDim dark:text-op-inkDim">—</span>
-              <span id="c-variance" class="ml-auto text-sm font-bold">—</span>
+              <span id="c-variance" class="ml-auto text-sm font-semibold">—</span>
             </div>
             <div class="mt-3 h-2 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
               <div id="bgt-w-bar" class="h-full rounded-full bg-op-good transition-[width] duration-500" style="width:0%"></div>
             </div>
-            <div class="flex justify-between mt-1.5 text-[10.5px] tracking-[0.04em] text-opl-inkDim dark:text-op-inkDim">
+            <div class="flex justify-between mt-1.5 text-[12px] text-opl-inkDim dark:text-op-inkDim">
               <span id="bgt-w-pct">—</span><span id="bgt-w-rem"></span>
             </div>
           </div>
 
           <!-- Monthly block -->
           <div class="lg:bg-opl-panel lg:dark:bg-op-panel lg:border lg:border-[rgba(20,16,8,0.08)] lg:dark:border-op-border lg:rounded-card p-5 max-lg:border-t max-lg:border-[rgba(20,16,8,0.08)] max-lg:dark:border-op-border transition-colors">
-            <div id="c-month-label" class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Monthly</div>
+            <div id="c-month-label" class="text-[12px] font-medium text-opl-inkDim dark:text-op-inkDim">Monthly</div>
             <div class="flex items-baseline gap-2 mt-1.5">
-              <span id="c-month-total" class="text-2xl font-bold tabular-nums tracking-tight text-opl-ink dark:text-op-ink">—</span>
+              <span id="c-month-total" class="text-2xl font-semibold tabular-nums tracking-tight text-opl-ink dark:text-op-ink">—</span>
               <span class="text-opl-inkDim dark:text-op-inkDim text-sm">/</span>
               <span id="c-month-budget" class="text-base font-semibold text-opl-inkDim dark:text-op-inkDim">—</span>
-              <span id="c-month-variance" class="ml-auto text-sm font-bold">—</span>
+              <span id="c-month-variance" class="ml-auto text-sm font-semibold">—</span>
             </div>
             <div class="mt-3 h-2 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
               <div id="bgt-m-bar" class="h-full rounded-full bg-op-good transition-[width] duration-500" style="width:0%"></div>
             </div>
-            <div class="flex justify-between mt-1.5 text-[10.5px] tracking-[0.04em] text-opl-inkDim dark:text-op-inkDim">
+            <div class="flex justify-between mt-1.5 text-[12px] text-opl-inkDim dark:text-op-inkDim">
               <span id="bgt-m-pct">—</span><span id="bgt-m-rem"></span>
             </div>
           </div>
@@ -11423,7 +11421,7 @@
       pill.style.border = `1px solid ${on ? "rgba(34,197,94,0.4)" : "rgb(var(--op-inkDim) / 0.35)"}`;
       pill.style.color = on ? liveCol : offCol;
       if (dot) dot.style.background = on ? dotCol : offCol;
-      if (txt) txt.textContent = on ? "LIVE" : "OFFLINE";
+      if (txt) txt.textContent = on ? "Live" : "Offline";
     }
 
     if (isLoading) {
@@ -11433,7 +11431,7 @@
     }
 
     // Pace % + progress bar (good ≥ budget, warn below)
-    const paceBase = 'mt-1 font-geist font-extrabold tabular-nums leading-none text-4xl sm:text-5xl tracking-tight ';
+    const paceBase = 'mt-1 font-geist font-semibold tabular-nums leading-none text-4xl sm:text-5xl tracking-tight ';
     const paceEl = el("h-pace");
     const barEl = el("h-bar-fill");
     if (darkNote) {
@@ -11458,7 +11456,7 @@
     }
     const repEl = el("h-reporting");
     repEl.textContent = hasData ? `${storesWithData} of ${STORES.length} reporting` : '';
-    repEl.className = 'mt-1.5 text-[11px] ' + (darkNote
+    repEl.className = 'mt-1.5 text-[12px] ' + (darkNote
       ? 'font-semibold text-op-warn'
       : 'text-opl-inkDim dark:text-op-inkDim');
 
@@ -12273,8 +12271,8 @@
       // Bar caps at 100% (target met = full). Matches the hero bar's logic.
       const v1BarW = v1Pct != null ? Math.min(100, Math.max(0, v1Pct)) : 0;
       const v1NetLabel = dateRange.presetId === 'today'
-        ? "Today's Net"
-        : `${periodLabel} Net`;
+        ? "Today's net"
+        : `${periodLabel} net`;
       // The channel filter (tap Retail/BIN → per-channel matrix) works on every
       // range: fetchStoreChannels sums the same days this card is showing. It
       // was previously today-only because the loader was hardcoded to today and
@@ -12291,10 +12289,10 @@
       const v1SparkDate = dateRange.to;   // hourly spark = last day of the range
       const v1Spark = '<div id="' + v1SparkId + '" style="width:104px;height:44px;flex:0 0 auto;display:flex;align-items:center;justify-content:center">' + v1SparkSkel + '</div>';
       const cardCode = m.store.split('/')[0];
-      const tile = (l, v, lySlot) => `<div class="rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.025)] px-3 py-2.5"><div class="text-[10px] font-semibold uppercase tracking-[0.07em] text-opl-inkDim dark:text-op-inkDim">${l}</div><div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div>${lySlot ? `<div id="${lySlot}"></div>` : ''}</div>`;
+      const tile = (l, v, lySlot) => `<div class="rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.025)] px-3 py-2.5"><div class="text-[11px] font-medium text-opl-inkDim dark:text-op-inkDim">${l}</div><div class="mt-1 text-sm font-semibold tabular-nums text-opl-ink dark:text-op-ink">${v}</div>${lySlot ? `<div id="${lySlot}"></div>` : ''}</div>`;
       // Clickable channel tile (Retail / BIN) — taps filter this card's matrix.
-      const chTile = (l, v, ch, lySlot) => `<div data-ch="${ch}" role="button" tabindex="0" onclick="setCardChannel('${cardCode}','${ch}')" title="Tap to filter metrics to ${l}" class="rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.025)] px-3 py-2.5 cursor-pointer transition hover:border-accent-green/40"><div class="text-[10px] font-semibold uppercase tracking-[0.07em] text-opl-inkDim dark:text-op-inkDim">${l}</div><div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div>${lySlot ? `<div id="${lySlot}"></div>` : ''}</div>`;
-      const mtile = (l, v, icon) => `<div class="relative overflow-hidden rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="relative text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">${l}</div><div data-mx="${icon}" class="relative mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div>${icon ? matrixTileWatermark(icon) : ''}</div>`;
+      const chTile = (l, v, ch, lySlot) => `<div data-ch="${ch}" role="button" tabindex="0" onclick="setCardChannel('${cardCode}','${ch}')" title="Tap to filter metrics to ${l}" class="rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.025)] px-3 py-2.5 cursor-pointer transition-colors hover:border-accent-green/40"><div class="text-[11px] font-medium text-opl-inkDim dark:text-op-inkDim">${l}</div><div class="mt-1 text-sm font-semibold tabular-nums text-opl-ink dark:text-op-ink">${v}</div>${lySlot ? `<div id="${lySlot}"></div>` : ''}</div>`;
+      const mtile = (l, v, key) => `<div class="rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.025)] px-2.5 py-2.5 text-center"><div class="text-[11px] font-medium text-opl-inkDim dark:text-op-inkDim">${l}</div><div data-mx="${key}" class="mt-1 text-sm font-semibold tabular-nums text-opl-ink dark:text-op-ink">${v}</div></div>`;
 
       const div = document.createElement("div");
       div.dataset.storeCode = cardCode;
@@ -12306,24 +12304,24 @@
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
             <div class="font-brand text-2xl leading-none tracking-wide text-opl-ink dark:text-op-ink truncate">${escapeHtml(m.name)}</div>
-            <div class="mt-1.5 text-xs tracking-[0.05em] text-opl-inkDim dark:text-op-inkDim">${escapeHtml(m.store.split("/")[0])}</div>
+            <div class="mt-1.5 text-xs text-opl-inkDim dark:text-op-inkDim">${escapeHtml(m.store.split("/")[0])}</div>
           </div>
           <div class="flex items-center gap-2">
-            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold tracking-[0.06em]"
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12px] font-medium"
                   style="border:1px solid ${v1Live ? 'rgba(34,197,94,0.4)' : 'rgb(var(--op-inkDim) / 0.35)'};color:${v1Live ? T1G : 'rgb(var(--op-inkDim))'}">
-              <span style="width:6px;height:6px;border-radius:9999px;background:${v1Live ? V1G : 'rgb(var(--op-inkDim))'}"></span>${v1Live ? 'LIVE' : 'OFFLINE'}
+              <span style="width:6px;height:6px;border-radius:9999px;background:${v1Live ? V1G : 'rgb(var(--op-inkDim))'}"></span>${v1Live ? 'Live' : 'Offline'}
             </span>
           </div>
         </div>
 
         <div class="mt-4 flex items-end justify-between gap-3">
           <div class="min-w-0">
-            <div class="text-[11px] font-semibold uppercase tracking-[0.08em] text-opl-inkDim dark:text-op-inkDim">${v1NetLabel}</div>
-            <div class="mt-1 font-geist font-bold tabular-nums tracking-tight leading-none text-[28px] text-opl-ink dark:text-op-ink truncate">
+            <div class="text-[12px] font-medium text-opl-inkDim dark:text-op-inkDim">${v1NetLabel}</div>
+            <div class="mt-1 font-geist font-semibold tabular-nums tracking-tight leading-none text-[28px] text-opl-ink dark:text-op-ink truncate">
               ${v1Loading
                 ? '<span class="skel" style="width:7ch;height:0.85em"></span>'
                 : v1Error
-                  ? `<div class="text-sm font-medium text-opl-bad dark:text-[#f87171]">Couldn’t load</div><button type="button" onclick="event.stopPropagation();retryStore(${JSON.stringify(m.store)})" class="mt-1 text-xs font-bold text-accent-green hover:underline">Retry</button>`
+                  ? `<div class="text-sm font-medium text-opl-bad dark:text-[#f87171]">Couldn’t load</div><button type="button" onclick="event.stopPropagation();retryStore(${JSON.stringify(m.store)})" class="mt-1 text-xs font-semibold text-accent-green hover:underline">Retry</button>`
                   : (v1OfflineNow
                     ? '<span class="text-base font-medium text-opl-inkDim dark:text-op-inkDim">No transactions yet</span>'
                     : fmtDollar(v1Total))}</div>
@@ -12335,8 +12333,8 @@
 
         <div class="mt-4">
           <div class="flex items-center justify-between mb-1.5">
-            <span class="text-[11px] font-semibold uppercase tracking-[0.08em] text-opl-inkDim dark:text-op-inkDim">Pace</span>
-            <span class="text-xs font-bold tabular-nums" style="color:${v1PaceInk}">${v1Pct != null ? v1Pct + '%' : '—'}</span>
+            <span class="text-[12px] font-medium text-opl-inkDim dark:text-op-inkDim">Pace</span>
+            <span class="text-xs font-semibold tabular-nums" style="color:${v1PaceInk}">${v1Pct != null ? v1Pct + '%' : '—'}</span>
           </div>
           <div class="h-1.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
             <div class="h-full rounded-full transition-[width] duration-500" style="width:${v1BarW}%;background:${v1PaceColor}"></div>
@@ -12355,7 +12353,7 @@
         </div>
 
         <div class="mt-4 flex justify-end">
-          <button type="button" onclick="showStoreDetail(${JSON.stringify(m.store).replace(/"/g, '&quot;')})" class="text-xs font-semibold text-accent-green hover:underline group-hover:translate-x-1 transition-transform">View Details →</button>
+          <button type="button" onclick="showStoreDetail(${JSON.stringify(m.store).replace(/"/g, '&quot;')})" class="text-xs font-semibold text-accent-green hover:underline">View Details →</button>
         </div>`;
       container.appendChild(div);
       // Stash this card's blended matrix values + re-apply any active channel

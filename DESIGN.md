@@ -194,6 +194,13 @@ no kerning tables.
 
 All currency / count displays use `tabular-nums` for column alignment.
 
+**Dashboard labels and weights (polish pass, 2026-11-04).** On `#page-dashboard` and the
+store cards: labels are sentence case at `text-[12px] font-medium` (tile labels
+`text-[11px]`), with no `uppercase` and no `tracking-[…]`; nothing is set under 11px; figures
+and buttons stop at `font-semibold` (600), never `font-bold` / `font-extrabold`. The one
+uppercase line is the Lilita One page title (§3.3). `scripts/test-dashboard-polish.mjs`
+pins this. Other pages still use the older uppercase labels until they get the same pass.
+
 ### 2.3 Spacing & radius
 
 V1 "comfortable" density:
@@ -204,7 +211,8 @@ V1 "comfortable" density:
 | Card padding (mobile) | `p-5` |
 | Grid gap (top sections) | `gap-4` (desktop), `gap-0` (mobile, dividers handle it) |
 | Card radius | `rounded-card` (16px) for hero/budget; `rounded-[10px]`/`[8px]` for tiles |
-| Pill radius | `rounded-full` for LIVE/OFFLINE and section dividers |
+| Pill radius | `rounded-full` for the Live / Offline status pills and section dividers |
+| Control radius | `rounded-[10px]` for the 40px app-bar buttons, `rounded-[8px]` for small buttons and tiles, `rounded-[16px]` for dropdown panels |
 | Inner tile radius | `rounded-[8px]` |
 
 ### 2.4 Effects
@@ -215,6 +223,11 @@ V1 "comfortable" density:
   ≈ 0.28s, ease `cubic-bezier(0.4, 0, 0.2, 1)`.
 - **Skeleton shimmer:** `.skel` class (defined in `<style>`). Linear
   gradient sweeping 1.6s; respects `prefers-reduced-motion`.
+- **No decorative loops or washes.** Nothing loops unless it reports
+  something live and urgent (the critical-alert ring on the bell is the
+  case that stays). The dashboard's freshness dot is static, the hero has
+  no radial accent wash, and nothing slides on hover: a hover is a colour
+  or border step (`transition-colors`), never a catch-all `transition`.
 
 ---
 
@@ -345,13 +358,13 @@ cards; Channel Mix + Matrix render as inner divider-separated
 sections inside the hero card on mobile.
 
 **Inside the hero card:**
-- Top label "TODAY'S SALES · ALL STORES" (live label dynamically
-  prefixed; in non-live views the label becomes
-  `${periodLabel} · All Stores`).
-- Big tabular total (`text-4xl sm:text-5xl`, Geist 700, tracking-tight).
+- Top label "Today's Sales · All Stores" in sentence-weight grey, not
+  uppercase (in non-live views the label becomes
+  `${periodLabel} · All Stores`). No background wash on the card.
+- Big tabular total (`text-4xl sm:text-5xl`, Geist 600, tracking-tight).
 - Delta line: **colored ± delta** + **white "vs $budget"** (the budget
   side is larger and white so it reads as a separate important number).
-- Pace block (right): "PACE" label + big pct % + "X of Y reporting".
+- Pace block (right): "Pace" label + big pct % (Geist 600) + "X of Y reporting".
   Pct color follows the pacing scheme (green / amber / red).
 - Progress bar: 8 px track + accent fill. **Bar caps at 100% width**
   even when pct > 100 (target met = full).
@@ -375,9 +388,14 @@ proportional horizontal bar (`h-1.5`) scaled to the max of
 
 ### 4.3 Matrix · Today
 
-Four metric tiles: Avg Cart, Avg Items, Orders, ASP. Same chrome as
-the store-card metric tiles (`rounded-[8px]`, `border-accent-green/20`,
-`bg-accent-green/10`, accent-green uppercase label, **white value**).
+Four metric tiles: Avg cart, Avg items, Orders, ASP. Same **neutral**
+chrome as the store-card channel and metric tiles (`rounded-[8px]`, the
+hairline border, `bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.025)]`,
+an `inkDim` label, ink value, no watermark icon). Until 2026-11-04 they were
+accent-green tiles with a 7% corner icon, which put brand green on every
+card and left the pace colour nothing to stand out from. Contrast of the
+label on the tile: 5.53 light, 5.41 dark, 7.99 pure black, 7.46 Halloween.
+(Store Detail and the All Stores page still draw the green tiles.)
 **Responsive grid:** `grid-cols-4 lg:grid-cols-2` — single row on
 mobile, 2×2 on desktop (because the Matrix sits in a narrower 1fr
 column at lg+ where 4-up would crowd).
@@ -433,10 +451,10 @@ template that adapts its values by mode.
 
 **Card anatomy:**
 1. **Header row** — store name (`font-brand`, brand font, 2xl) +
-   code, with a LIVE / OFFLINE pill on the right. Pill border + dot
+   code, with a Live / Offline pill on the right. Pill border + dot
    color: green when actually transacting today; dim otherwise.
-2. **"Today's Net" line** — uppercase label (or `${period} Net` in
-   non-live views), big Geist tabular total, **delta line** with
+2. **"Today's net" line** — sentence-case label (or `${period} net` in
+   non-live views), big Geist 600 tabular total, **delta line** with
    colored ± part and the **white "vs $budget"** side larger for
    emphasis.
 3. **Sparkline** (right of the total) — see §4.7.
@@ -446,10 +464,12 @@ template that adapts its values by mode.
    plain dim chrome (not accent). Always **exact $** values
    (`fmtDollar`).
 6. **Metric tiles** (`grid-cols-4`) — Cart / Items / Orders / ASP;
-   accent-green tinted chrome, accent-green label, white value.
+   the same neutral chrome as the channel tiles (§4.3), keyed by
+   `data-mx` so the channel filter can repaint them.
    Single row 4-up at all sizes (the cards are narrow enough that
    2×2 felt cramped, and the handoff's mobile artboards used 4-up).
-7. **View Details →** button at bottom-right. **Clicking the card
+7. **View Details →** button at bottom-right (it does not move on
+   hover). **Clicking the card
    body itself does nothing** — only the button navigates (gives
    us room for richer in-card interactions later).
 
@@ -831,12 +851,12 @@ flagging when you pick them up:
             border border-[rgba(20,16,8,0.08)] dark:border-op-border
             rounded-card p-5 transition-colors">…</div>
 
-<!-- Small uppercase label -->
-<div class="text-[11px] font-semibold uppercase tracking-[0.1em]
-            text-opl-inkDim dark:text-op-inkDim">Channel Mix</div>
+<!-- Small label (sentence case, no tracking) -->
+<div class="text-[12px] font-medium
+            text-opl-inkDim dark:text-op-inkDim">Channel mix</div>
 
 <!-- Big tabular total -->
-<div class="font-geist font-bold tabular-nums tracking-tight
+<div class="font-geist font-semibold tabular-nums tracking-tight
             text-4xl sm:text-5xl text-opl-ink dark:text-op-ink">$35,091.54</div>
 
 <!-- Page heading (brand font) -->
@@ -850,20 +870,21 @@ flagging when you pick them up:
               transition-[width] duration-500" style="width:0%"></div>
 </div>
 
-<!-- Accent metric tile (matches store-card mtile + hero matrix tiles) -->
-<div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10
+<!-- Metric tile (matches store-card mtile + hero matrix tiles) -->
+<div class="rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border
+            bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.025)]
             px-2.5 py-2.5 text-center">
-  <div class="text-[10px] font-bold uppercase tracking-[0.06em]
-              text-accent-green">CART</div>
-  <div class="mt-1 text-sm font-bold tabular-nums
+  <div class="text-[11px] font-medium
+              text-opl-inkDim dark:text-op-inkDim">Cart</div>
+  <div class="mt-1 text-sm font-semibold tabular-nums
               text-opl-ink dark:text-op-ink">$24.77</div>
 </div>
 
-<!-- LIVE pill (inline style for dynamic color) -->
+<!-- Live pill (inline style for dynamic color) -->
 <span class="inline-flex items-center gap-1.5 px-2.5 py-1
-             rounded-full text-[11px] font-bold tracking-[0.06em]"
+             rounded-full text-[12px] font-medium"
       style="border:1px solid rgba(34,197,94,0.4);color:#22c55e">
   <span style="width:6px;height:6px;border-radius:9999px;background:#22c55e"></span>
-  LIVE
+  Live
 </span>
 ```
