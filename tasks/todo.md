@@ -1,3 +1,62 @@
+# The same polish on every other page (2026-11-05)
+
+**Ask (Brian, Nov 5):** "Do all the pages", the Dashboard direction approved Nov 4, on the same draft PR (#373).
+**Scope:** every `#page-*` in `index.html` and the JS templates that draw into them, plus their page `<style>` blocks.
+**Not touched:** printed output (the dashboard print report, Sign Studio's SignRender, price-sticker ZPL/SVG, the
+PDF exports), the Lilita One page titles (§3.3), worker, auth, D1.
+
+- [x] Labels: drop `uppercase` and positive tracking (classes and `text-transform`/`letter-spacing` in page CSS);
+      fix the few Title Case literals that the capitals hid
+- [x] Weights: `font-bold` / `font-extrabold` / `font-black` and CSS 700+ to 600 (not on Lilita / Luckiest)
+- [x] Sizes: nothing under 11px (8-10.5px to 11px), 11.5px to 12px; check tight spots (bottom nav, calendars, badges)
+- [x] Colour: neutral matrix tiles off the Dashboard too (no watermark); `inkDimmer` never as text; decorative
+      washes and loops out (skeletons and live-urgent stay)
+- [x] Transitions name what they animate
+- [x] Keep every JS hook that reads one of these classes working (the PDF export reads `.uppercase`)
+- [x] DESIGN.md §2.2 / §4.8 updated to the new rule; a test pins it; `npm test` passes; sw.js cache bump
+- [x] Push to PR #373; staging NOT redeployed without asking
+- [ ] Before/after page for the other pages: NOT DONE. Each page is drawn from live data by its own JS, so a
+      sample-data copy of 40 pages is not practical; staging is the way to look, on Brian's yes
+
+## Review (2026-11-05)
+- One script pass over every page's classes and page CSS, with the printed blocks cut out; then by hand: the
+  Store Detail, Retail Summary and landing Matrix-style tiles (neutral, no watermark, `matrixTileWatermark` deleted),
+  five hero radial washes, the hourly snapshot's live dot (static; pulses only while refreshing), 26 catch-all
+  `transition` classes and 5 `transition:` shorthands, the bottom nav label (11px/500, ellipsis instead of overlap).
+- Kept on purpose: loading pulses and skeletons, spinners, the bell's critical ring, the Halloween theme, the
+  swipe-back hint, selection and active-state green tints, the small green page pills, Chart.js axis sizes.
+- The Retail Summary PDF/CSV found KPI labels by `.uppercase`; they now use `.kpi-l`.
+- `npm test`: 132 suites pass. New `scripts/test-pages-polish.mjs`: 24 pass here, 18 fail on main.
+- NOT RUN: any browser render (no Chromium in the container). Bottom nav at 360px width with "Sign Studio" /
+  "Price Scan" is the tightest spot; it truncates rather than overlaps.
+
+# Dashboard polish with the unslop skill (2026-11-04)
+
+**Ask (Brian):** run the unslop design skill (github heydamir/unslop) on the Hub, audit one page, propose a direction,
+then make the changes as a draft PR after his yes. **Page:** Dashboard. **Verdict:** light slop, so polish mode: keep
+the V1 Operator tokens, Geist + Lilita One, the layout and every section. **Approved direction (Nov 4):** colour only
+where it means something (pace green/amber/red, the channel bar, the main actions); everything else neutral; sentence
+case labels; sizes on a 4px grid; figures one weight lighter; no looping or hover-nudge motion.
+
+- [x] Header: static freshness dot (no `animate-ping`); 40px icon buttons, 10px radius, icons 18px at stroke 2
+- [x] Hero: drop the radial accent wash; sentence-case labels; total and pace at 600; Live/Offline in sentence case
+- [x] Hero Matrix + store-card Matrix tiles: neutral tile chrome like the channel tiles, no watermark icon
+- [x] Budget cards + store cards: sentence-case labels, 11-12px minimum, figures at 600, no `group-hover:translate-x-1`
+- [x] `scripts/test-dashboard-polish.mjs`: pins the above in the markup; fails on main
+- [x] Update `scripts/browser-live-sales-label.mjs` badge regex for Live/Offline
+- [x] Contrast of every changed text role vs its real ground, light / dark / pure black / Halloween (≥ 4.5:1)
+- [ ] Render the dashboard in Playwright (stubbed API) in both themes, phone + desktop, and look: NOT RUN, no Chromium in
+      this container (`/opt/pw-browsers` absent). `scripts/browser-live-sales-label.mjs` covers the cards in both themes
+      and widths; run it on a Mac before merging
+- [x] DESIGN.md §2.2, §2.3, §2.4, §4.1, §4.3, §4.6 and the §12 cheat sheet updated; `npm test` passes
+- [x] Draft PR from `claude/project-thread-vand6m`
+
+**Review.** `scripts/test-dashboard-polish.mjs` 26/26; on main's index.html 3 pass, 23 fail. `npm test`: 131 suites,
+11,404 assertions, all pass (CACHE_NAME v297 → v298 and the shell-cache fixture re-recorded). Contrast, computed against
+the real grounds: tile label 5.53 light / 5.41 dark / 7.99 pure black / 7.46 Halloween; panel labels unchanged at
+5.88 / 5.74 / 8.33 / 7.85. Scope: `#page-dashboard` and the store-card template only. Store Detail, All Stores and the
+other pages keep their green Matrix tiles and uppercase labels; `matrixTileWatermark` stays for them.
+
 # BL1 net sales short of Clover: paid orders with no total (2026-11-04)
 
 **Ask (Brian):** "Some stores are reporting that the apps net sales are not matching clovers net sales this week."

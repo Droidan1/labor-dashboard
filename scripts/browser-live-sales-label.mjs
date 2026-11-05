@@ -113,7 +113,7 @@ for (const scheme of ['light', 'dark']) {
         auctionWord: /\bauction\b/i.test(visible),
         labels: labels.length, fits,
         hero: hero ? hero.parentElement.textContent.replace(/\s+/g, ' ').trim() : null,
-        badges: [...document.querySelectorAll('#store-cards span')].filter(s => /^(LIVE|OFFLINE)$/.test(s.textContent.trim())).length,
+        badges: [...document.querySelectorAll('#store-cards span')].filter(s => /^(Live|Offline)$/.test(s.textContent.trim())).length,
         overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
         color: l0 ? getComputedStyle(l0).color : null, bg: l0 ? opaque(l0) : null,
       };
@@ -122,7 +122,7 @@ for (const scheme of ['light', 'dark']) {
     ok(dash.labels === 5, `${tag} every store card has a "Live Sales" tile (${dash.labels})`);
     ok(dash.fits.every(f => f.label && f.tile), `${tag} "Live Sales" fits its tile without clipping`);
     ok(dash.hero && dash.hero.startsWith('Live Sales ·'), `${tag} the hero channel mix says "Live Sales ·" (got ${JSON.stringify(dash.hero)})`);
-    ok(dash.badges === 5, `${tag} the green LIVE/OFFLINE badge is still on every card (${dash.badges})`);
+    ok(dash.badges === 5, `${tag} the green Live/Offline badge is still on every card (${dash.badges})`);
     ok(dash.overflow <= 0, `${tag} no horizontal page scroll (${dash.overflow}px)`);
     const cr = dash.color && contrast(dash.color, dash.bg);
     ok(cr >= 4.5, `${tag} tile label contrast ${cr && cr.toFixed(2)}:1 ≥ 4.5 (${dash.color} on ${dash.bg})`);
