@@ -192,6 +192,15 @@ Never set app text in them; the page around the sign is Geist and
 Lilita One like everything else. `fonts/README.md` says why they carry
 no kerning tables.
 
+**Sign Studio's multi-buy line (design 3, Nov 2026)** sits under a Price sign's unit:
+`2 FOR $24 · 3 FOR $30`, up to two tiers, in quantity order. Quantities and prices are
+`SS Luckiest Guy`; FOR and the dot are `SS Poppins Bold`, FOR at 72% of the numbers'
+capitals. Capitals are 0.5 in at most and 0.3 in at least; a line that would go under 0.3 in
+(two tiers with cents in half a landscape sign) refuses that orientation instead of shrinking.
+The price stays the hero: the line is never over 60% of the price's capitals, and is capped
+there when a crowded half of a portrait sign squeezes the price (both prices with tiers and a
+note). The name (never under 0.6 in) always reads bigger. % Off and Us vs Them have no multi-buy.
+
 All currency / count displays use `tabular-nums` for column alignment.
 
 **Labels and weights (polish pass: the Dashboard 2026-11-04, every other page 2026-11-05).**

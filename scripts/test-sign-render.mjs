@@ -185,14 +185,118 @@ ok(R.unsupportedChars('Straße ÿ Œuvre “Deal” – 50% ™ €').length ===
 // normalizeSign: whatever a saved draft holds becomes a well-formed sign.
 const junk = R.normalizeSign({ template: 'poster', sale: 'mega', two: 'yes', them: 5, custom: null,
   groups: [{ name: 7, price: {}, unit: 'dozen', dot: 'true' }, 'x'], extra: '<img src=x>' });
+const NO_DEALS = [{ qty: '', price: '' }, { qty: '', price: '' }];
 eq(JSON.stringify(junk), JSON.stringify({ template: 'price', sale: 'none', custom: '', two: false, them: '5',
-  groups: [{ name: '7', price: '', pct: '', unit: '', qual: '', dot: false }, { name: '', price: '', pct: '', unit: '', qual: '', dot: false }] }),
+  groups: [{ name: '7', price: '', pct: '', unit: '', qual: '', dot: false, deals: NO_DEALS }, { name: '', price: '', pct: '', unit: '', qual: '', dot: false, deals: NO_DEALS }] }),
   'normalizeSign keeps known ids and strings only, and drops unknown fields');
 eq(JSON.stringify(R.normalizeSign(null)), JSON.stringify(R.blankSign()), 'normalizeSign(null) is a blank sign');
 eq(R.normalizeSign({ template: 'uvt', two: true }).two, false, 'Us vs Them is always one product');
 const dots = R.normalizeSign({ two: true, groups: [{ dot: true }, { dot: true }] });
 eq(`${dots.groups[0].dot},${dots.groups[1].dot}`, 'true,false', 'one dot, one group');
 eq(R.normalizeSign({ groups: [{ name: 'x'.repeat(5000) }] }).groups[0].name.length, 200, 'a planted 5,000-character name is cut to 200, so the fit loop stays short');
+
+// ── 4b. Multi-buy ("2 for $24"), Nov 2026 ────────────────────────────────────
+console.log('Multi-buy');
+eq(`${R.LIMIT.deals} ${R.DEAL_QTY.min}-${R.DEAL_QTY.max}`, '2 2-9', 'two tiers per price, 2 to 9 items each');
+const QTYS = [['2', 2], ['9', 9], [' 3 ', 3], ['02', 2], ['1', 'err'], ['10', 'err'], ['0', 'err'], ['', 'err'], ['x', 'err'], ['2.5', 'err'], ['-2', 'err'], ['2x', 'err'], ['1e1', 'err']];
+for (const [s, want] of QTYS) { const r = R.parseQty(s); eq(r.err ? 'err' : r.n, want, `parseQty(${JSON.stringify(s)})`); }
+eq(R.parseQty('x').err, 'Use a whole number, like 2.', 'a quantity that is not a whole number says so');
+eq(R.parseQty('10').err, 'Multi-buy is 2 to 9 items.', 'a quantity out of range says the range');
+// A sign saved before multi-buy, and junk where the tiers go, both become two empty tiers.
+const OLD_SHAPE = { template: 'price', sale: 'none', custom: '', two: false, them: '',
+  groups: [{ name: 'Shoes', price: '15', pct: '', unit: 'pair', qual: '', dot: false }, { name: '', price: '', pct: '', unit: '', qual: '', dot: false }] };
+eq(JSON.stringify(R.normalizeSign(OLD_SHAPE).groups.map(g => g.deals)), JSON.stringify([NO_DEALS, NO_DEALS]), 'a sign saved before multi-buy normalizes to two empty tiers');
+for (const deals of ['2 for 24', { qty: '2' }, null, 7, [null, 'x'], [[], {}]])
+  eq(JSON.stringify(R.normalizeSign({ groups: [{ name: 'Shoes', deals }] }).groups[0].deals), JSON.stringify(NO_DEALS), `junk tiers (${JSON.stringify(deals)}) become two empty tiers`);
+eq(JSON.stringify(R.normalizeSign({ groups: [{ deals: [{ qty: 2, price: 24, x: 1 }, { qty: '3', price: '30' }, { qty: '4', price: '36' }] }] }).groups[0].deals),
+   '[{"qty":"2","price":"24"},{"qty":"3","price":"30"}]', 'tiers keep qty and price as strings, drop other keys, and stop at two');
+eq(JSON.stringify(R.normalizeSign(R.blankSign())), JSON.stringify(R.blankSign()), 'a blank sign is already normal, tiers and all');
+ok(R.blankGroup().deals !== R.blankGroup().deals, 'each blank group gets its own tiers, not a shared array');
+const SHOES = { name: 'Shoes', price: '15', unit: 'pair', deals: [{ qty: '2', price: '24' }, { qty: '3', price: '30' }] };
+const PREMIUM = { name: 'Premium shoes', price: '20', unit: 'pair', qual: 'Yellow dot on bottom', dot: true };
+const PLAN_SIGN = { two: true, groups: [SHOES, PREMIUM] };   // the plan's §1 sign
+const tiersOf = (o, k = 0) => R.signModel(sign(o)).groups[k].deals.map(d => `${d.k}:${d.qty.n || d.qty.err}/${d.price.cents || d.price.err}`).join(' ');
+eq(tiersOf(PLAN_SIGN), '0:2/2400 1:3/3000', 'the model reads both tiers, with their slots');
+eq(tiersOf({ groups: [{ name: 'Shoes', price: '15', deals: [{ qty: '', price: '' }, { qty: '3', price: '30' }] }] }), '1:3/3000', 'an empty tier is off; the other keeps its slot');
+eq(tiersOf({ template: 'pct', groups: [{ name: 'Shoes', pct: '20', deals: SHOES.deals }] }), '', 'no multi-buy on % Off');
+eq(tiersOf({ template: 'uvt', them: '50', groups: [{ name: 'Shoes', price: '15', deals: SHOES.deals }] }), '', 'no multi-buy on Us vs Them');
+// Refusals, each on the field to change, and each blocking both orientations.
+const dealSign = (deals, extra) => ({ groups: [Object.assign({ name: 'Shoes', price: '15', unit: 'pair', deals }, extra)] });
+const dealMsg = (deals, key, want, what, extra) => {
+  const r = V(dealSign(deals, extra));
+  ok(r.msgs[key] === want && both(r) === 'true,true', `${what}: ${key} says "${want}" and both orientations are blocked (${JSON.stringify(r.msgs)})`);
+};
+dealMsg([{ qty: 'x', price: '24' }, { qty: '', price: '' }], 'dealq-0-0', 'Use a whole number, like 2.', 'a quantity that is not a number');
+dealMsg([{ qty: '', price: '24' }, { qty: '', price: '' }], 'dealq-0-0', 'Use a whole number, like 2.', 'a price with no quantity');
+dealMsg([{ qty: '1', price: '24' }, { qty: '', price: '' }], 'dealq-0-0', 'Multi-buy is 2 to 9 items.', '1 for $24');
+dealMsg([{ qty: '10', price: '24' }, { qty: '', price: '' }], 'dealq-0-0', 'Multi-buy is 2 to 9 items.', '10 for $24');
+dealMsg([{ qty: '2', price: '' }, { qty: '', price: '' }], 'dealp-0-0', 'Enter a price.', 'a quantity with no price');
+dealMsg([{ qty: '2', price: '24.505' }, { qty: '', price: '' }], 'dealp-0-0', 'Use at most two decimal places. Nothing is rounded for you.', 'a tier price with three decimals');
+dealMsg([{ qty: '2', price: '30' }, { qty: '', price: '' }], 'dealp-0-0', "2 for $30 isn't a saving on $15 a pair.", '2 for $30 on $15 a pair');
+dealMsg([{ qty: '2', price: '30' }, { qty: '', price: '' }], 'dealp-0-0', "2 for $30 isn't a saving on $15 each.", '2 for $30 on $15 each', { unit: 'each' });
+dealMsg([{ qty: '2', price: '24' }, { qty: '3', price: '40' }], 'dealp-0-1', '3 for $40 has to cost less per item than 2 for $24.', '3 for $40 after 2 for $24');
+dealMsg([{ qty: '2', price: '24' }, { qty: '4', price: '48' }], 'dealp-0-1', '4 for $48 has to cost less per item than 2 for $24.', 'the same price per item is not a better deal');
+dealMsg([{ qty: '3', price: '40' }, { qty: '2', price: '24' }], 'dealp-0-0', '3 for $40 has to cost less per item than 2 for $24.', 'judged in quantity order, whichever was typed first');
+dealMsg([{ qty: '2', price: '24' }, { qty: '2', price: '20' }], 'dealq-0-1', 'Use a different quantity for each tier.', 'two tiers for 2');
+eq(JSON.stringify(V(dealSign([{ qty: '2', price: '29.99' }, { qty: '', price: '' }])).msgs), '{}', '2 for $29.99 on $15 is a saving, by a cent');
+eq(JSON.stringify(V(dealSign([{ qty: '3', price: '30' }, { qty: '2', price: '24' }])).msgs), '{}', 'tiers typed largest first are fine');
+eq(JSON.stringify(V(dealSign([{ qty: '2', price: '1' }, { qty: '3', price: '0.99' }], { price: '0.99', unit: '' })).msgs), '{}', 'under a dollar: 99¢, 2 for $1, 3 for 99¢');
+eq(JSON.stringify(V(dealSign([{ qty: '2', price: '24' }, { qty: '', price: '' }], { price: 'abc' })).msgs), '{"price-0":"Type a price like 2, 2.50 or 1,299.99."}',
+   'with no single price there is nothing to judge a tier against: only the price is refused');
+eq(JSON.stringify(V({ template: 'pct', groups: [{ name: 'Shoes', pct: '20', deals: [{ qty: 'x', price: 'y' }, { qty: '', price: '' }] }] }).msgs), '{}',
+   'tiers left over from a Price sign are ignored on % Off');
+// The plan's sign: what prints, in which face, how big.
+const capOf = it => it.size * metricsCap(it.font);
+const metricsCap = f => f === 'num' ? Math.max(...[...'0123456789'].map(fonts.num.up)) : fonts[f].up('H');
+const dealLine = L => L.items.filter(i => /^deal-/.test(i.role)).sort((a, b) => a.x - b.x);
+v = V(PLAN_SIGN);
+eq(both(v) + JSON.stringify(v.msgs), 'false,false{}', 'the plan\'s shoe sign prints both ways');
+for (const o of R.ORIENTS) {
+  const line = dealLine(v.layouts[o]);
+  eq(line.map(i => i.text).join(' '), '2 FOR $24 · 3 FOR $30', `${o}: the multi-buy line reads 2 FOR $24 · 3 FOR $30`);
+  eq(line.map(i => `${i.role}:${i.font}`).join(' '), 'deal-qty:num deal-for:small deal-price:num deal-sep:small deal-qty:num deal-for:small deal-price:num',
+     `${o}: numbers in Luckiest Guy, FOR and the dot in Poppins Bold`);
+  ok(line.every(i => i.group === 0 && i.y === line[0].y && (i.sx || 1) === 1), `${o}: one baseline, under the first price only, never narrowed`);
+  const nums = line.filter(i => i.font === 'num'), fors = line.filter(i => i.role === 'deal-for');
+  near(capOf(fors[0]) / capOf(nums[0]), R.G.deal.forR, 1e-9, `${o}: FOR is 72% of the numbers' height`);
+  // Centred on its column: half a landscape sign (51 + 325 / 2 pt), or the portrait sign's middle.
+  const last = line[line.length - 1], mid = o === 'landscape' ? 51 + (792 - 102 - 40) / 4 : 612 / 2;
+  near((line[0].x + last.x + last.w) / 2, mid, 0.01, `${o}: the line is centred on its column`);
+}
+const g0 = o => v.layouts[o].report.groups[0];
+eq(R.inches(g0('landscape').dealCap) + ' / ' + R.inches(g0('portrait').dealCap), '0.37 in / 0.5 in', 'its capitals: 0.37 in in half a landscape sign, 0.5 in (the most) in portrait');
+eq(R.inches(g0('landscape').priceCap) + ' / ' + R.inches(g0('portrait').priceCap), '2.13 in / 1.76 in', '…under prices of 2.13 in and 1.76 in');
+eq(dealLine(V(dealSign([{ qty: '3', price: '30' }, { qty: '2', price: '24' }])).layouts.portrait).map(i => i.text).join(' '), '2 FOR $24 · 3 FOR $30', 'tiers print in quantity order, however they were typed');
+eq(dealLine(V(dealSign([{ qty: '2', price: '1' }, { qty: '3', price: '0.99' }], { price: '0.99', unit: '' })).layouts.portrait).map(i => i.text).join(' '), '2 FOR $1 · 3 FOR 99¢', 'a tier under a dollar prints as 99¢');
+eq(dealLine(V(dealSign([{ qty: '', price: '' }, { qty: '3', price: '30' }])).layouts.portrait).map(i => i.text).join(' '), '3 FOR $30', 'one tier: no dot');
+const SALE_SIGN = { sale: 'sale', groups: [{ name: 'Shoes', price: '8', unit: 'pair', deals: [{ qty: '2', price: '14' }, { qty: '3', price: '18' }] }] };
+v = V(SALE_SIGN);
+eq(both(v) + JSON.stringify(v.msgs), 'false,false{}', 'SALE: $8 · 2 for $14 · 3 for $18 prints both ways');
+eq(R.inches(v.layouts.landscape.report.groups[0].dealCap) + ' / ' + R.inches(v.layouts.portrait.report.groups[0].dealCap), '0.5 in / 0.5 in', '…with the line at its 0.5 in most, both ways');
+// Too wide for half a landscape sign: refused there with a message, never drawn under 0.3 in.
+v = V({ two: true, groups: [Object.assign({}, SHOES, { price: '9.99', deals: [{ qty: '2', price: '17.50' }, { qty: '3', price: '24.99' }] }), PREMIUM] });
+eq(both(v), 'true,false', 'two tiers with cents in half a landscape sign: portrait only');
+eq(v.msgs['deals-0'], "The multi-buy line doesn't fit the landscape sign. Drop a tier, or use the other orientation.", '…and says what to do');
+ok(v.layouts.landscape.report.groups[0].dealCap < R.G.deal.min && v.layouts.portrait.report.groups[0].dealOk, `…because it would be ${R.inches(v.layouts.landscape.report.groups[0].dealCap)} tall there`);
+v = V({ two: true, groups: [Object.assign({}, SHOES, { price: '9999.99', deals: [{ qty: '2', price: '9999.98' }, { qty: '', price: '' }] }), PREMIUM] });
+eq(both(v) + R.inches(v.layouts.landscape.report.groups[0].dealCap), 'false,false0.5 in', 'one tier always fits: 2 FOR $9,999.98 in half a landscape sign, at 0.5 in');
+// Both halves of a portrait sign crowded (tiers and a note each) squeeze the price under 0.8 in.
+// The line is capped at 60% of it rather than left at 0.5 in, where it would be 63% (found in
+// review: a comment here once said this could not happen).
+v = V({ two: true, groups: [{ name: 'Socks', price: '2', unit: 'pair', qual: 'Yellow dot on bottom', dot: true, deals: [{ qty: '2', price: '3.50' }, { qty: '3', price: '5' }] },
+                            { name: 'Adult costumes', price: '20', unit: 'each', qual: 'Assorted sizes', deals: [{ qty: '2', price: '35' }, { qty: '', price: '' }] }] });
+{
+  const p = v.layouts.portrait.report.groups;
+  eq(both(v) + JSON.stringify(v.msgs), 'false,false{}', 'Socks / Adult costumes, both with tiers and a note: prints both ways');
+  ok(p.every(r => r.dealCap <= r.priceCap * R.G.deal.heroR + 0.01 && r.dealCap < R.G.deal.cap - 1 && r.dealCap >= R.G.deal.min),
+     `…portrait: each line capped at 60% of a ${R.inches(p[0].priceCap)} price (${p.map(r => R.inches(r.dealCap)).join(', ')}), still at least 0.3 in`);
+}
+// A sign with no tiers is drawn exactly as before multi-buy: same items, no deal roles.
+{
+  const before = E.layoutSign(R.signModel(R.normalizeSign(OLD_SHAPE)), 'portrait');
+  ok(!before.items.some(i => /^deal/.test(i.role || '')) && before.report.groups[0].dealOk === true && before.report.groups[0].dealCap === null,
+     'a sign with no tiers has no multi-buy line, and nothing to refuse');
+}
 
 // ── 5. Known outcomes, with the real fonts ───────────────────────────────────
 console.log('Known outcomes');
@@ -265,9 +369,23 @@ for (const L of LABELS) for (const X of EXTRAS) for (const [a, name] of NAMES.en
   grid.push(Object.assign({}, L, { template: 'pct', two: true, groups: [{ name, pct: pc }, Object.assign({ name: NAMES[(a + 2) % NAMES.length], pct: '40' }, X)] }));
   grid.push(Object.assign({}, L, { template: 'uvt', them: ['1.49', '100', '9999.99'][a % 3], groups: [Object.assign({ name, price: ['0.99', '30', '1,299'][a % 3] }, X)] }));
 }
+// Multi-buy: two real-saving tiers under every price (capped at $9,999.99), alone and beside
+// a second price with a note and dot. Same invariants, plus the line's own limits below.
+const tiersFor = p => {
+  const c = R.parsePrice(p).cents, t = (n, f, less) => { const v = Math.min(Math.floor(n * c * f), 999999 - less); return (v / 100).toFixed(2); };
+  return [{ qty: '2', price: t(2, 0.8, 0) }, { qty: '3', price: t(3, 0.65, 1) }];
+};
+for (const L of LABELS) for (const [a, name] of NAMES.entries()) {
+  const p = OFFERS[a % OFFERS.length];
+  grid.push(Object.assign({}, L, { groups: [{ name, price: p, unit: 'pair', deals: tiersFor(p) }] }));
+  grid.push(Object.assign({}, L, { two: true, groups: [{ name, price: p, unit: 'pair', deals: tiersFor(p) }, Object.assign({ name: NAMES[(a + 4) % NAMES.length], price: '20' }, EXTRAS[2])] }));
+  // Both halves crowded: tiers and a note on each, where the price gets smallest.
+  grid.push(Object.assign({}, L, { two: true, groups: [{ name, price: p, unit: 'pair', qual: 'Yellow dot on bottom', dot: true, deals: tiersFor(p) },
+    { name: NAMES[(a + 4) % NAMES.length], price: '20', unit: 'each', qual: 'Assorted sizes', deals: tiersFor('20') }] }));
+}
 const faults = {};
 const fault = (k, s) => { (faults[k] = faults[k] || []).push(s); };
-let printable = 0, blockedCount = 0, narrowed = 0, freed = 0;
+let printable = 0, blockedCount = 0, narrowed = 0, freed = 0, dealsPrinted = 0;
 const NARROW = R.G.narrowMin, capEm = fonts.word.up('H');
 const t0 = Date.now();
 for (const s of grid) {
@@ -311,6 +429,11 @@ for (const s of grid) {
     for (const x of g) {
       if (x.nameCap != null && x.nameCap < R.G.minCap - 0.01) fault('name under 0.6 in', `${o} ${tag}`);
       if (x.nameCap != null && x.priceCap != null && x.priceCap < x.nameCap * R.G.priceFloorRatio - 0.01) fault('price not the biggest text', `${o} ${tag}`);
+      if (x.dealCap != null) {
+        dealsPrinted++;
+        if (x.dealCap < R.G.deal.min - 0.01 || x.dealCap > R.G.deal.cap + 0.01) fault('a multi-buy line outside 0.3 to 0.5 in', `${o} ${x.dealCap} ${tag}`);
+        if (x.dealCap > x.priceCap * R.G.deal.heroR + 0.01) fault('a multi-buy line over 60% of the price', `${o} ${tag}`);
+      }
     }
     if (g.length === 2) {
       const sizes = role => [...new Set(L.items.filter(i => i.role === role).map(i => i.size.toFixed(6)))];
@@ -325,12 +448,14 @@ for (const s of grid) {
 }
 const ms = Date.now() - t0;
 console.log(`  grid: ${grid.length} signs, ${printable} printable (${narrowed} with a narrowed name, ${freed} only by narrowing), ${blockedCount} blocked, ${ms} ms`);
-ok(grid.length === 600 && printable > 600 && blockedCount > 50, `the grid covers ${grid.length} signs: ${printable} printable orientations, ${blockedCount} blocked (${ms} ms)`);
+ok(grid.length === 720 && printable > 720 && blockedCount > 50, `the grid covers ${grid.length} signs: ${printable} printable orientations, ${blockedCount} blocked (${ms} ms)`);
 ok(narrowed > 20 && freed > 20, `the grid prints signs by narrowing a name (${narrowed} orientations, ${freed} of them blocked at full width)`);
+ok(dealsPrinted > 60, `the grid prints a multi-buy line in ${dealsPrinted} orientations`);
 for (const k of ['a sign that prints at full width changed', 'something other than a name narrowed', 'a narrowing past the floor, or not to 3 places',
                  'a narrowed name not exactly 0.6 in', 'one name at two widths',
                  'blocked with no message', 'ink outside the content box', 'overlap', 'name under 0.6 in', 'price not the biggest text',
-                 'two names at two sizes', 'two prices at two sizes', 'their price over 40% of the hero'])
+                 'two names at two sizes', 'two prices at two sizes', 'their price over 40% of the hero',
+                 'a multi-buy line outside 0.3 to 0.5 in', 'a multi-buy line over 60% of the price'])
   ok(!faults[k], `no printable sign has: ${k}${faults[k] ? ` (${faults[k].length}, e.g. ${faults[k][0]})` : ''}`);
 // The sale label's ink ends AT the content box's right edge, not near it. An italic letter
 // leans past its own advance (T by 0.065 em, V and Y by 0.075), so each line is pulled in by
@@ -400,7 +525,8 @@ const SAMPLES = [OKSIGN, { sale: 'blowout', two: true, groups: [{ name: 'Shoes',
   { template: 'uvt', sale: 'flash', them: '59.99', groups: [{ name: 'Stand mixer', price: '19.99', unit: 'each' }] },
   { template: 'pct', sale: 'custom', custom: 'Weekend deal', two: true, groups: [{ name: 'Shoes', pct: '20' }, { name: 'Premium shoes', pct: '40' }] },
   { sale: 'none', groups: [{ name: 'All candy', price: '0.99' }] },
-  { two: true, groups: [{ name: 'Adult costumes', price: '7', unit: 'each' }, { name: 'Kids costumes', price: '5', unit: 'each' }] }];
+  { two: true, groups: [{ name: 'Adult costumes', price: '7', unit: 'each' }, { name: 'Kids costumes', price: '5', unit: 'each' }] },
+  PLAN_SIGN, SALE_SIGN];
 for (const s of SAMPLES) for (const o of R.ORIENTS) {
   const model = R.signModel(sign(s)), L = E.layoutSign(model, o), tag = `${o} ${s.template || 'price'}${s.two ? ' ×2' : ''} ${s.groups[0].name}`;
   const svg = R.drawSVG(L, fakeDoc, { label: R.describe(model), logoHref: 'blob:logo' });
@@ -534,7 +660,7 @@ for (const s of SAMPLES) for (const o of R.ORIENTS) {
 // ── 9. The design version ────────────────────────────────────────────────────
 // A saved sign records the design it was saved under (SignRender.DESIGN_VERSION), for audit,
 // and a reprint always draws with the current design (PRD). So the number has to move whenever
-// what prints moves. This pins ten fixed signs, both ways, as the SVG draws them (section 7
+// what prints moves. This pins fixed signs (ten, and two more from 3), both ways, as the SVG draws them (section 7
 // shows the PDF draws the same), plus the font and logo files. Change anything a sign shows (a
 // place, a size, a font, a colour, a narrowing) and this fails until DESIGN_VERSION goes up by
 // one and a line is appended below. APPEND ONLY: saved rows carry these numbers. The signs and
@@ -544,6 +670,7 @@ const DESIGN_PINS = [
   // [version, from, what changed, print]
   [1, '2026-09-24', 'the design Brian approved', 'f4fafc1ae748f1248b4e1395bc364f6160654897e3fd40c49f30a94898d508ea'],   // index.html at beb036d, the last main before 2
   [2, '2026-09-29', 'a name that misses 0.6 in narrows, up to 10% (PR #309)', '6e48bc656a6d8eb3867043d3638a49ac890de020acfce4f2e7687791f893d17f'],
+  [3, '2026-11-09', 'multi-buy line under the price; two signs with tiers join the pinned ten', '0f996a3d9012e51d704b05e24315e4636992657e046c0fb2e9b88353341a3866'],
 ];
 {
   const DESIGN_SAMPLES = [
@@ -557,6 +684,10 @@ const DESIGN_PINS = [
     { template: 'pct', sale: 'custom', custom: 'Weekend deal', two: true, groups: [{ name: 'Shoes', pct: '20' }, { name: 'Premium shoes', pct: '40' }] },
     { template: 'uvt', sale: 'flash', them: '59.99', groups: [{ name: 'Stand mixer', price: '19.99', unit: 'each' }] },
     { template: 'uvt', them: '100', groups: [{ name: 'Kitchen storage bins', price: '30' }] },
+    // From 3: two signs with a multi-buy line (the plan's shoe sign, and one price on sale).
+    { two: true, groups: [{ name: 'Shoes', price: '15', unit: 'pair', deals: [{ qty: '2', price: '24' }, { qty: '3', price: '30' }] },
+                          { name: 'Premium shoes', price: '20', unit: 'pair', qual: 'Yellow dot on bottom', dot: true }] },
+    { sale: 'sale', groups: [{ name: 'Shoes', price: '8', unit: 'pair', deals: [{ qty: '2', price: '14' }, { qty: '3', price: '18' }] }] },
   ];
   // Every node drawSVG makes, with every attribute but the ones a screen reader or a test reads
   // (aria-*, data-*, role): those can change without the paper changing.
@@ -564,14 +695,19 @@ const DESIGN_PINS = [
     setAttribute(k, val) { this.attrs[k] = String(val); }, appendChild(c) { this.kids.push(c); return c; }, set textContent(t) { this.text = t; } }; } };
   const look = n => [n.tag, Object.keys(n.attrs).filter(k => !/^(aria-|data-|role$)/.test(k)).sort().map(k => [k, n.attrs[k]]), n.text, n.kids.map(look)];
   const sha = x => crypto.createHash('sha256').update(x).digest('hex');
-  const print = sha(JSON.stringify({
+  const printOf = samples => sha(JSON.stringify({
     files: [...FACE_KEYS.map(k => sha(fontBytes[k])), sha(logoBytes)],
-    signs: DESIGN_SAMPLES.map(s => R.ORIENTS.map(o => look(R.drawSVG(E.layoutSign(R.signModel(sign(s)), o), recDoc, { label: 'x', logoHref: 'logo' })))),
+    signs: samples.map(s => R.ORIENTS.map(o => look(R.drawSVG(E.layoutSign(R.signModel(sign(s)), o), recDoc, { label: 'x', logoHref: 'logo' })))),
   }));
+  const print = printOf(DESIGN_SAMPLES);
+  // 3 only added the multi-buy line: the ten signs pinned before it still print exactly as 2.
+  // (A later version that moves those signs retires this check by moving past 3.)
+  if (R.DESIGN_VERSION === 3)
+    eq(printOf(DESIGN_SAMPLES.slice(0, 10)), DESIGN_PINS[1][3], 'version 3 changes no sign without tiers: the ten earlier signs look exactly as version 2');
   const last = DESIGN_PINS[DESIGN_PINS.length - 1];
   eq(DESIGN_PINS.map(p => p[0]).join(), DESIGN_PINS.map((p, i) => i + 1).join(), 'the pins run 1, 2, 3… with none skipped or reordered');
   eq(R.DESIGN_VERSION, last[0], 'SignRender.DESIGN_VERSION is the newest pinned version');
-  ok(print === last[3], `the ten pinned signs look exactly as version ${last[0]} says${print === last[3] ? '' : `: something a sign shows changed. If that is meant, bump DESIGN_VERSION to ${last[0] + 1} and append [${last[0] + 1}, '<date>', '<what changed>', '${print}']`}`);
+  ok(print === last[3], `the ${DESIGN_SAMPLES.length} pinned signs look exactly as version ${last[0]} says${print === last[3] ? '' : `: something a sign shows changed. If that is meant, bump DESIGN_VERSION to ${last[0] + 1} and append [${last[0] + 1}, '<date>', '<what changed>', '${print}']`}`);
   eq(new Set(DESIGN_PINS.map(p => p[3])).size, DESIGN_PINS.length, 'each version looks different from every other');
 }
 

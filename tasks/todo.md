@@ -1,3 +1,43 @@
+# Multi-buy price in Sign Studio (2026-11-09)
+
+**Ask (Brian, Nov 9):** build `sign-studio-multibuy-plan.md` (shoes: $15 each, 2 for $24, 3 for $30; premium
+yellow-dot shoes $20), after a preview he approved, with three fixes to the plan found in review:
+1. the worker's `savedSignCheck` rebuilds each group from 6 named keys, so it must carry `deals` too or every
+   save silently drops the tiers;
+2. a v3 `DESIGN_PINS` entry only differs from v2 if a multi-buy sign joins `DESIGN_SAMPLES`;
+3. each tier needs a strictly lower price per item than the one before, judged and printed in quantity order.
+**Decided in the preview:** FOR at 72% of the numbers' cap (Us vs Them's label ratio); cents inline (`$17.50`);
+under $1 as `99¢`. The line is third-biggest (price, name, multi-buy).
+**Ship order:** worker first (accepts both shapes, inert until the page sends `deals`), then the frontend PR.
+
+- [x] SignRender: `deals` in the model, `parseQty`, the multi-buy line, `dealOk`, `validate` messages, v3
+- [x] Editor: "Multi-buy price" section (price signs only), saved-list summary
+- [x] Worker: accept old and new group shapes, mirror the rules, keep `deals` in the rebuilt sign
+- [x] Tests: render (fit, refusals, old shape unchanged, v3 pin), saved-signs parity, browser round trip
+- [x] DESIGN.md note, sw.js cache bump, `npm test`
+- [x] Commit, push, PR: 89ce874, draft PR #374 (draft until the worker is live)
+- [ ] Brian: worker deploy (staging, then production), then mark #374 ready and merge
+- [ ] Test print of the shoe sign at one store before it goes chain-wide
+
+## Review (2026-11-09)
+- 🛑 I first claimed the plan's 60%-of-price cap could never bind (worst 0.52 over 5,124 layouts) and cut
+  the refit. False: the fresh-eyes review found two-price portrait signs with tiers AND a note in both
+  halves, where the price prints at 0.67–0.79 in and a 0.5 in line is up to 75% of it. My search never
+  put tiers on the second group. Refit restored (planGroup), plus a refusal in reportGroup; the grid now
+  has crowded two-price rows. Those rows then found a second bug: the two-price final pass re-capped the
+  line against the matched price (which ignores height) and pushed a note 3 pt off the bottom. Fixed by
+  carrying each group's cap into the final pass (forced.dealMax).
+- Review also found: a draft saved by the old page kept its 6-key save JSON, so after the update the sign
+  read "Save sign" instead of "Saved". ssSaveFromDraft now normalizes it; browser §18 checks it.
+- Error keys are `dealq-g-k` / `dealp-g-k` (not the plan's single `deal-g-k`) so ssRefresh marks the right
+  input with no change to it; the fit message is `deals-g`.
+- Us vs Them's report has no `dealOk`, and `!undefined` blocked every UvT sign: `validate` tests `=== false`.
+  Caught by two existing UvT assertions.
+- The Desktop checkout's `index.html` and `node_modules` are iCloud-evicted (`dataless`, disk 98% full):
+  tailwind hung at 0% CPU. Built in a scratchpad worktree with tailwindcss / playwright-core installed there.
+- Measured: shoe sign line 0.37 in (landscape) / 0.50 in (portrait); prices 2.13 / 1.76 in. New section's
+  contrast ≥ 5.74:1 in light, dark and OLED (browser, real backgrounds).
+
 # The same polish on every other page (2026-11-05)
 
 **Ask (Brian, Nov 5):** "Do all the pages", the Dashboard direction approved Nov 4, on the same draft PR (#373).
