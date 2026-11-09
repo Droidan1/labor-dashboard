@@ -1,3 +1,27 @@
+# MCP: create, change, hide and delete Clover items (2026-11-09)
+
+**Ask (Brian):** build `retjg-mcp-clover-items-plan.md` so the agent can make changes like the Nov 9 shoe
+reprice (five stores still had last week's sale buttons) itself, with his OK: preview first, then write.
+**Decided (plan §2):** three tools over the Viewer's own handlers; preview unless `confirm: true`; hide before
+delete; same doors as update_supply_request (AGENT_WRITE_KEY, static key only, superuser); open stores only;
+no Clover discounts.
+**Where the plan was wrong against the code (fixed in the build, not product decisions):**
+1. The page REQUIRES a code (Code / SKU *); it never derives one, so `code` is required.
+2. create-clover-item does not copy `taxable` from a sibling (that is the sticker path); a missing value
+   means not taxable. `taxable` is required rather than defaulted.
+3. resolveCloverCategory CREATES a category it cannot find, and create also writes the global L3→L2 map,
+   so the tools refuse an `l3` that no item at that store is in.
+4. The main worker never reads the item before changing it, so it cannot log before → after; the MCP logs
+   before → after, the door logs what was asked.
+
+- [ ] `shapeInventory` rows carry `itemId`; get_inventory_items says so
+- [ ] worker.js: agent door takes the three Clover actions (POST), logs store/item/fields
+- [ ] mcp/writes.mjs: create/update/delete_clover_item, preview unless confirm, read back
+- [ ] mcp/worker.mjs: register under canWrite, agentWrite sends each action's method
+- [ ] Tests: doors, preview writes nothing, per-store confirm + failure, validation, read-back; each fails on main
+- [ ] `npm test`, ORIENT.md, commit, PR
+- [ ] Brian: deploy main worker (staging, prod), then retjg-mcp; first live use = one hidden test item
+
 # Sign Studio custom label tile in capitals again (2026-11-09)
 
 **Ask (Brian):** the step 2 custom tile shows "Weekend deal"; it should read WEEKEND DEAL, as it prints,

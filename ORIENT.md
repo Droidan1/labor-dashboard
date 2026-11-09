@@ -71,7 +71,12 @@ trimmed; a query with `next` reads every page, run once in `runQuery`). Two surf
   to Claude's static key, acting as `MCP_KEY_USER` (Brian, a var in `mcp/wrangler.toml`); OAuth stays read-only
   (its consent says so). It goes upstream with a separate secret, `AGENT_WRITE_KEY` (same value on both
   workers), to the main worker's agent door (`AGENT_WRITE_ACTIONS` in `worker.js`): PATCH, those two actions,
-  active non-associate superuser only. Without `AGENT_WRITE_KEY` on retjg-mcp, nobody is offered it. Deploy it
+  active non-associate superuser only. Without `AGENT_WRITE_KEY` on retjg-mcp, nobody is offered it.
+  **POS items (2026-11-09):** `create_clover_item`, `update_clover_item` (incl. `hidden: true`, the normal way to
+  retire a button) and `delete_clover_item` go through the same door (POST) to the Inventory Viewer's own
+  handlers. Each only PREVIEWS unless `confirm: true`; a confirm writes nothing if any store fails a check, then
+  writes one store at a time and reads each back. Open stores only (never BL8); never creates a category.
+  Test: `scripts/test-agent-clover-write.mjs` (stub Clover). Deploy it
   with `npx wrangler deploy -c <repo>/mcp/wrangler.toml` (dry-run first: ~282 KiB, bindings `API` and
   `OAUTH_KV`). 🛑 A bare `npx wrangler deploy` from the repo root deploys the MAIN worker.
   🛑 Every retjg-mcp deploy is a mixed-rollout risk: a client that settled on 2026-07-28 with a new instance

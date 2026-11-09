@@ -96,9 +96,9 @@ const patches = (from) => upstream.slice(from).filter(u => u.method === 'PATCH')
 {
   const names = (e) => rpc('tools/list', {}, e).then(b => b.result.tools.map(t => t.name));
   const all = await names(env);
-  eq(all.length, 26, 'static key + MCP_KEY_USER + AGENT_WRITE_KEY → the 25 reads and the write');
-  eq(all.at(-1), 'update_supply_request', 'the write tool is listed last');
-  const t = (await rpc('tools/list')).result.tools.at(-1);
+  eq(all.length, 29, 'static key + MCP_KEY_USER + AGENT_WRITE_KEY → the 25 reads and the 4 writes');
+  eq(all.slice(25), ['update_supply_request', 'create_clover_item', 'update_clover_item', 'delete_clover_item'], 'the write tools are listed last');
+  const t = (await rpc('tools/list')).result.tools.find(x => x.name === 'update_supply_request');
   eq(t.annotations, { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }, 'and marked as a write');
   ok(!(await names({ ...env, MCP_KEY_USER: undefined })).includes('update_supply_request'), 'no MCP_KEY_USER → not offered');
   ok(!(await names({ ...env, AGENT_WRITE_KEY: undefined })).includes('update_supply_request'), 'no AGENT_WRITE_KEY → not offered');
@@ -279,7 +279,7 @@ const patches = (from) => upstream.slice(from).filter(u => u.method === 'PATCH')
     body: JSON.stringify({ jsonrpc: '2.0', id: id++, method, params: { ...params, _meta: { [P + 'protocolVersion']: V, [P + 'clientCapabilities']: {} } } }),
   }), e, ctx).then(r => r.json());
   const list = await modern('tools/list');
-  eq(list.result?.tools?.at(-1)?.name, 'update_supply_request', '2026 era: the static key is offered the write');
+  ok(list.result?.tools?.some(x => x.name === 'update_supply_request'), '2026 era: the static key is offered the write');
   eq((await modern('tools/list', {}, { ...env, MCP_KEY_USER: '' })).result?.tools?.length, 25, '2026 era: and not without MCP_KEY_USER');
   const res = await modern('tools/call', { name: 'update_supply_request', arguments: { requestId: R3, status: 'ordered' } });
   await settle();

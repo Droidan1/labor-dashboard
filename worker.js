@@ -18942,17 +18942,26 @@ export default {
     // request, so the page's own handler runs: its superuser check, its history row
     // (recorded as that person), its push + email to the requester, its budget alert.
     //
+    // 2026-11-09: the Inventory Viewer's create / update / delete item handlers too (Brian:
+    // the agent reprices or hides a button at every store, with his OK), so the duplicate
+    // guard, isCloverId and category handling are the page's. retjg-mcp previews every
+    // change and writes only on confirm (mcp/writes.mjs).
+    //
     // 🛑 Its own key, never MORNING_BRIEFING_KEY: the Chief of Staff tool and the
     // retjg CLI hold that one too, and it stays read-only.
-    // 🛑 Only these actions, PATCH only, at "/" with no parameter but `action` (a
-    // request falls through the whole route chain, so a route above the handler that
-    // is chosen by anything else must not get a superuser), and only an active
-    // superuser who is not an associate, read from D1 on every write.
-    const AGENT_WRITE_ACTIONS = new Set(["supply-request-status", "supply-request-fulfillment"]);
-    const agentWrite = AGENT_WRITE_ACTIONS.has(url.searchParams.get("action")) && request.headers.has("X-Agent-Write-Key");
+    // 🛑 Only these actions, each with its handler's one method, at "/" with no parameter
+    // but `action` (a request falls through the whole route chain, so a route above the
+    // handler that is chosen by anything else must not get a superuser), and only an
+    // active superuser who is not an associate, read from D1 on every write.
+    const AGENT_WRITE_ACTIONS = new Map([
+      ["supply-request-status", "PATCH"], ["supply-request-fulfillment", "PATCH"],
+      ["create-clover-item", "POST"], ["update-clover-item", "POST"], ["delete-clover-item", "POST"],
+    ]);
+    const agentAction = url.searchParams.get("action");
+    const agentWrite = AGENT_WRITE_ACTIONS.has(agentAction) && request.headers.has("X-Agent-Write-Key");
     if (agentWrite) {
       const refuse = (status, error) => new Response(JSON.stringify({ error }), { status, headers: corsJson });
-      if (request.method !== "PATCH") return refuse(405, "Method not allowed");
+      if (request.method !== AGENT_WRITE_ACTIONS.get(agentAction)) return refuse(405, "Method not allowed");
       // The same value as the shared reporting key would hand every holder of that key this door.
       if (!env.AGENT_WRITE_KEY || env.AGENT_WRITE_KEY === env.MORNING_BRIEFING_KEY) return refuse(503, "Endpoint not configured");
       if (!timingSafeEqualStr(request.headers.get("X-Agent-Write-Key"), env.AGENT_WRITE_KEY)) return refuse(401, "Unauthorized");
@@ -18963,7 +18972,18 @@ export default {
         return refuse(503, "User lookup failed");
       }
       if (!currentUser) return refuse(403, "X-Agent-User is not an active superuser");
-      console.log(JSON.stringify({ agent_write: url.searchParams.get("action"), user: currentUser.id }));
+      // A POS change says what it asked for, so a bad one can be found in `wrangler tail`.
+      // This worker never reads the item first; retjg-mcp logs before → after (mcp_clover_write).
+      const asked = {};
+      if (agentAction.endsWith("-clover-item")) {
+        const b = await request.clone().json().catch(() => null);
+        if (b && typeof b === "object") {
+          for (const k of ["store", "itemId", "name", "code", "priceCents", "costCents", "hidden", "taxable", "l3"]) {
+            if (b[k] !== undefined) asked[k] = b[k];
+          }
+        }
+      }
+      console.log(JSON.stringify({ agent_write: agentAction, user: currentUser.id, ...asked }));
     }
     // reportingReadThrough: already authenticated by MORNING_BRIEFING_KEY at the
     // reporting gate, GET only, one of the REPORTING_READ_THROUGH reads. It carries no user,
