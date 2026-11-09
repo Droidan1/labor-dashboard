@@ -74,8 +74,10 @@ trimmed; a query with `next` reads every page, run once in `runQuery`). Two surf
   active non-associate superuser only. Without `AGENT_WRITE_KEY` on retjg-mcp, nobody is offered it.
   **POS items (2026-11-09):** `create_clover_item`, `update_clover_item` (incl. `hidden: true`, the normal way to
   retire a button) and `delete_clover_item` go through the same door (POST) to the Inventory Viewer's own
-  handlers. Each only PREVIEWS unless `confirm: true`; a confirm writes nothing if any store fails a check, then
-  writes one store at a time and reads each back. Open stores only (never BL8); never creates a category.
+  handlers. Each only PREVIEWS unless `confirm: true` plus the preview's `confirmToken` (a hash of the write plan),
+  so a write cannot skip the preview or differ from it; a confirm writes nothing if any store fails a check, then
+  writes one store at a time and reads each back. Open stores only (never BL8, refused at the door too); never
+  creates a category; create takes no cost (that handler writes the Hub's IM# cost map).
   Test: `scripts/test-agent-clover-write.mjs` (stub Clover). Deploy it
   with `npx wrangler deploy -c <repo>/mcp/wrangler.toml` (dry-run first: ~282 KiB, bindings `API` and
   `OAUTH_KV`). 🛑 A bare `npx wrangler deploy` from the repo root deploys the MAIN worker.

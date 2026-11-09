@@ -14,13 +14,28 @@ no Clover discounts.
 4. The main worker never reads the item before changing it, so it cannot log before → after; the MCP logs
    before → after, the door logs what was asked.
 
-- [ ] `shapeInventory` rows carry `itemId`; get_inventory_items says so
-- [ ] worker.js: agent door takes the three Clover actions (POST), logs store/item/fields
-- [ ] mcp/writes.mjs: create/update/delete_clover_item, preview unless confirm, read back
-- [ ] mcp/worker.mjs: register under canWrite, agentWrite sends each action's method
-- [ ] Tests: doors, preview writes nothing, per-store confirm + failure, validation, read-back; each fails on main
-- [ ] `npm test`, ORIENT.md, commit, PR
+- [x] `shapeInventory` rows carry `itemId`; get_inventory_items says so
+- [x] worker.js: agent door takes the three Clover actions (POST), logs store/item/fields
+- [x] mcp/writes.mjs: create/update/delete_clover_item, preview unless confirm, read back
+- [x] mcp/worker.mjs: register under canWrite, agentWrite sends each action's method
+- [x] Tests: doors, preview writes nothing, per-store confirm + failure, validation, read-back; each fails on main
+- [x] Fresh-eyes review fixes (below), each with a test; 9 mutations, all caught
+- [x] `npm test`, ORIENT.md, commit, PR
 - [ ] Brian: deploy main worker (staging, prod), then retjg-mcp; first live use = one hidden test item
+
+## Review (2026-11-09)
+Fresh-eyes review of the first build found, and this fixed:
+- 🛑 create's `cost` went into `item-costs:global`, which is keyed by IM# from item NAMES, not by Clover code:
+  a code like 12345 re-costed an unrelated product chain-wide, unseen in the preview. Create takes no cost now,
+  and the door refuses costCents on create.
+- `l2` was unchecked and `l3` was sent as typed, so the chain-wide L3→L2 mapping could land under a key that
+  never matches (exact-case maps). Now l2 ∈ VALID_L2 (pinned) and each store's own spelling is sent.
+- Delete answered "already gone" for another store's id. It is an error now.
+- A confirm was not tied to its preview (and could skip it). Now confirm needs the preview's confirmToken.
+- Read-backs trusted a possibly short Clover read (rule 4); they compare the catalog count and say so.
+- The door left BL8, "all" and extra fields to the MCP; it refuses them itself now.
+- 🔑 Staging's Clover merchant ids ARE production's (wrangler.toml), and retjg-mcp has no staging env: a
+  "staging" item write changes real registers. First live use = one hidden item at one store.
 
 # Sign Studio custom label tile in capitals again (2026-11-09)
 

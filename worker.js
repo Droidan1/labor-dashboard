@@ -18957,6 +18957,12 @@ export default {
       ["supply-request-status", "PATCH"], ["supply-request-fulfillment", "PATCH"],
       ["create-clover-item", "POST"], ["update-clover-item", "POST"], ["delete-clover-item", "POST"],
     ]);
+    const AGENT_POS_STORES = ALL_STORES.filter(s => s !== "BL8");  // BL8 Holland closed for good 2026-07-25
+    const AGENT_POS_FIELDS = {
+      "create-clover-item": ["store", "name", "code", "priceCents", "taxable", "hidden", "l2", "l3"],
+      "update-clover-item": ["store", "itemId", "name", "code", "priceCents", "costCents", "hidden", "l3"],
+      "delete-clover-item": ["store", "itemId"],
+    };
     const agentAction = url.searchParams.get("action");
     const agentWrite = AGENT_WRITE_ACTIONS.has(agentAction) && request.headers.has("X-Agent-Write-Key");
     if (agentWrite) {
@@ -18972,17 +18978,21 @@ export default {
         return refuse(503, "User lookup failed");
       }
       if (!currentUser) return refuse(403, "X-Agent-User is not an active superuser");
-      // A POS change says what it asked for, so a bad one can be found in `wrangler tail`.
-      // This worker never reads the item first; retjg-mcp logs before → after (mcp_clover_write).
+      // 🛑 A POS change from an agent: one open store (never BL8, never the handler's own
+      // "all", which includes BL8) and only the fields retjg-mcp sends, so the rules hold here
+      // too and not only in mcp/writes.mjs. No costCents on create: that handler also writes
+      // it into the Hub's item-master cost map (keyed by IM#, not by Clover code).
       const asked = {};
-      if (agentAction.endsWith("-clover-item")) {
+      if (AGENT_POS_FIELDS[agentAction]) {
         const b = await request.clone().json().catch(() => null);
-        if (b && typeof b === "object") {
-          for (const k of ["store", "itemId", "name", "code", "priceCents", "costCents", "hidden", "taxable", "l3"]) {
-            if (b[k] !== undefined) asked[k] = b[k];
-          }
-        }
+        if (!b || typeof b !== "object" || Array.isArray(b)) return refuse(400, "Invalid JSON");
+        if (!AGENT_POS_STORES.includes(b.store)) return refuse(400, "Store not open to agent changes");
+        const extra = Object.keys(b).filter(k => !AGENT_POS_FIELDS[agentAction].includes(k));
+        if (extra.length) return refuse(400, `Unsupported field: ${extra.join(", ")}`);
+        Object.assign(asked, b);
       }
+      // What was asked, so a bad change can be found in `wrangler tail`. This worker never
+      // reads the item first; retjg-mcp logs before → after (mcp_clover_write).
       console.log(JSON.stringify({ agent_write: agentAction, user: currentUser.id, ...asked }));
     }
     // reportingReadThrough: already authenticated by MORNING_BRIEFING_KEY at the

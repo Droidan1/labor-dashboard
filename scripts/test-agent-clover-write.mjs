@@ -45,6 +45,10 @@ for (const m of Object.values(MERCHANT)) {
   add('Brass Lamp', '5001', 1999, 'CD' + m, { cost: 600 });
   if (m !== 'M16') add('Clearance Bin', '7001', 500, 'CD' + m);   // none at BL16
   if (m === 'M2') add('Clearance Bin', '7002', 300, 'CD' + m);    // two at BL2
+  // A category the Hub has no main category for (not in L3_TO_L2), spelled the POS's way.
+  if (m === 'M1' || m === 'M2') { shop.cats.push({ id: 'CN' + m, name: 'FG BL NEW BITS' }); add('Odd bit', '6001', 100, 'CN' + m); }
+  // BL16's catalogue runs past one 1,000-item page, with a button on the second.
+  if (m === 'M16') { for (let k = 0; k < 1500; k++) add('Filler ' + k, 'F' + k, 100, 'CD' + m); add('Deep Item', '8001', 900, 'CD' + m); }
 }
 const itemAt = (store, name) => [...shops[MERCHANT[store]].items.values()].find(i => i.name === name);
 const shape = (shop, i) => ({ id: i.id, name: i.name, code: i.code, sku: i.sku, price: i.price, ...(i.cost != null && { cost: i.cost }),
@@ -52,6 +56,8 @@ const shape = (shop, i) => ({ id: i.id, name: i.name, code: i.code, sku: i.sku, 
   categories: { elements: i.cats.map(id => shop.cats.find(c => c.id === id)).filter(Boolean) } });
 const clover = [];
 const failPatch = new Set();   // merchants whose item POST answers 500
+const failCreate = new Set();  // merchants whose new-item POST answers 500
+let emptyRead = null;          // { m, skip }: after `skip` catalogue reads at m, one comes back EMPTY (Clover returning less)
 globalThis.fetch = async (u, init = {}) => {
   const url = new URL(String(u));
   if (url.hostname !== 'api.clover.com') throw new Error('outbound fetch blocked in harness: ' + String(u).slice(0, 80));
@@ -64,12 +70,16 @@ globalThis.fetch = async (u, init = {}) => {
   if (!shop) return J({ message: 'Unknown merchant' }, 401);
   if (kind === 'items' && !id) {
     if (method === 'POST') {
+      if (failCreate.has(m)) return J({ message: 'Clover is down' }, 500);
       const nid = 'N' + m + 'X' + (++shop.n);
       shop.items.set(nid, { id: nid, name: body.name, code: body.code, sku: body.sku, price: body.price, cost: body.cost,
         hidden: !!body.hidden, defaultTaxRates: !!body.defaultTaxRates, priceType: body.priceType || 'FIXED', cats: [] });
       return J(shape(shop, shop.items.get(nid)));
     }
     const off = Number(url.searchParams.get('offset') || 0), lim = Number(url.searchParams.get('limit') || 100);
+    if (emptyRead && emptyRead.m === m && url.searchParams.get('expand') === 'categories') {
+      if (emptyRead.skip-- <= 0) { emptyRead = null; return J({ elements: [] }); }
+    }
     return J({ elements: [...shop.items.values()].slice(off, off + lim).map(i => shape(shop, i)) });
   }
   if (kind === 'items' && id) {
@@ -130,6 +140,12 @@ async function tool(name, args, e = env) {
   if (!res) return { noResult: true };
   return res.isError ? { isError: true, text: res.content[0].text } : JSON.parse(res.content[0].text);
 }
+// Preview, then confirm with the preview's token: the only way a write happens.
+async function previewThenConfirm(name, args) {
+  const pv = await tool(name, args);
+  if (!pv.confirmToken) return { isError: true, text: 'preview gave no confirmToken: ' + JSON.stringify(pv).slice(0, 300) };
+  return tool(name, { ...args, confirm: true, confirmToken: pv.confirmToken });
+}
 const NAMES = ['create_clover_item', 'update_clover_item', 'delete_clover_item'];
 const OPEN = ['BL1', 'BL2', 'BL4', 'BL14', 'BL16'];
 
@@ -142,7 +158,7 @@ const OPEN = ['BL1', 'BL2', 'BL4', 'BL14', 'BL16'];
   eq([ann.delete_clover_item?.destructiveHint, ann.delete_clover_item?.idempotentHint], [true, true], 'delete: destructive, idempotent');
   ok(list.filter(t => NAMES.includes(t.name)).every(t => t.inputSchema.additionalProperties === false && t.inputSchema.properties.confirm?.type === 'boolean'),
     'strict schemas, each with confirm');
-  ok(list.filter(t => NAMES.includes(t.name)).every(t => /confirm false first.*only after they say yes/i.test(t.description)),
+  ok(list.filter(t => NAMES.includes(t.name)).every(t => /without confirm first.*only after they say yes.*confirmToken/i.test(t.description)),
     'each description tells the agent to preview, show the user, and confirm only after a yes');
   const names = async (e) => (await rpc('tools/list', {}, e)).result.tools.map(t => t.name);
   ok(!(await names({ ...env, AGENT_WRITE_KEY: undefined })).some(n => NAMES.includes(n)), 'no AGENT_WRITE_KEY → not offered');
@@ -193,6 +209,16 @@ const OPEN = ['BL1', 'BL2', 'BL4', 'BL14', 'BL16'];
     for (const m of ['PATCH', 'GET', 'DELETE']) eq((await door(action, body, good, { method: m })).status, 405, `${action}: ${m} → 405`);
     eq((await door(action, body, good, { qs: '&store=BL1' })).status, 400, `${action}: any parameter but action → 400`);
     eq((await door(action, body, good, { e: { ...mainEnv, AGENT_WRITE_KEY: UP } })).status, 503, `${action}: agent key = reporting key → 503`);
+    // The store and field rules hold at the door too, not only in the MCP.
+    for (const store of ['BL8', 'all', 'bl1', 'BL12', undefined]) {
+      eq((await door(action, { ...body, store }, good)).body?.error, 'Store not open to agent changes', `${action}: store ${store} → refused at the door`);
+    }
+    eq((await door(action, [body], good)).status, 400, `${action}: a body that is not an object → 400`);
+  }
+  for (const [action, extra] of [['create-clover-item', { costCents: 200 }], ['update-clover-item', { removeOtherCategories: true }],
+    ['update-clover-item', { taxable: false }], ['update-clover-item', { currentCategoryId: 'X' }], ['delete-clover-item', { stores: ['BL1'] }]]) {
+    const r = await door(action, { ...bodies[action], ...extra }, good);
+    eq([r.status, r.body?.error], [400, `Unsupported field: ${Object.keys(extra)[0]}`], `${action} + ${Object.keys(extra)[0]} → refused at the door`);
   }
   eq(writesSince(c).length, 0, 'no refusal wrote anything to Clover');
 
@@ -235,7 +261,10 @@ const OPEN = ['BL1', 'BL2', 'BL4', 'BL14', 'BL16'];
     ['create_clover_item', { ...create, taxable: undefined }, /taxable is required/],
     ['create_clover_item', { ...create, code: '=HYPERLINK(1)' }, /code may hold only/],
     ['create_clover_item', { ...create, name: 'x'.repeat(128) }, /at most 127/],
-    ['create_clover_item', { ...create, cost: 0 }, /cost must be a number of dollars from 0.01/],
+    ['create_clover_item', { ...create, cost: 2 }, /Unknown argument "cost"/],
+    ['create_clover_item', { ...create, l2: 'Bogus L2' }, /l2 must be one of: Softline - Apparel/],
+    ['update_clover_item', { storeId: 'BL1', itemId: sneaker, price: 1, confirmToken: 'abc' }, /confirmToken goes with confirm: true/],
+    ['update_clover_item', { storeId: 'BL1', itemId: sneaker, price: 1, confirm: true, confirmToken: 7 }, /confirmToken must be the string/],
     ['create_clover_item', { ...create, extra: 1 }, /Unknown argument "extra"/],
     ['delete_clover_item', { storeId: 'BL1', itemId: '..' }, /itemId must be/],
     ['delete_clover_item', { storeId: 'BL8', itemId: sneaker }, /BL8 \(Holland\) closed/],
@@ -264,6 +293,18 @@ const OPEN = ['BL1', 'BL2', 'BL4', 'BL14', 'BL16'];
   eq(itemAt('BL1', 'MASSIVE SHOE SALE')?.price, 800, 'BL1 still $8');
   const pf = await tool('update_clover_item', { storeIds: ['all'], matchName: 'massive shoe sale', name: 'Shoes', price: 15, confirm: false });
   eq([pf.preview && true, writesSince(n).length], [true, 0], 'confirm: false is a preview too');
+  ok(/^[0-9a-f]{16}$/.test(pv.confirmToken || '') && pf.confirmToken === pv.confirmToken, 'a preview hands back a confirmToken, the same for the same plan');
+  const args = { storeIds: ['all'], matchName: 'massive shoe sale', name: 'Shoes', price: 15 };
+  const bare = await tool('update_clover_item', { ...args, confirm: true });
+  ok(bare.isError && /confirm true needs the confirmToken/.test(bare.text), 'confirm without a token writes nothing: ' + bare.text);
+  const other = await tool('update_clover_item', { ...args, price: 16, confirm: true, confirmToken: pv.confirmToken });
+  ok(other.isError && /no longer match the preview/.test(other.text), "another preview's token (a $16 plan with the $15 token) writes nothing");
+  // Someone reprices BL2's button between the preview and the yes: the user's yes was for $8 → $15.
+  itemAt('BL2', 'MASSIVE SHOE SALE').price = 900;
+  const drift = await tool('update_clover_item', { ...args, confirm: true, confirmToken: pv.confirmToken });
+  ok(drift.isError && /no longer match the preview/.test(drift.text) && !/confirmToken[":]+ *[0-9a-f]{16}/.test(drift.text), 'a store that changed since the preview → nothing written, no new token handed over');
+  itemAt('BL2', 'MASSIVE SHOE SALE').price = 800;
+  eq(writesSince(n).length, 0, 'none of those wrote');
 }
 
 // ── 5. Confirm: one Clover write per store, a failing store reported alone ──
@@ -271,7 +312,7 @@ const OPEN = ['BL1', 'BL2', 'BL4', 'BL14', 'BL16'];
   const n = clover.length, l = logs.length;
   const ids = Object.fromEntries(OPEN.map(s => [s, itemAt(s, 'MASSIVE SHOE SALE').id]));
   failPatch.add('M4');
-  const out = await tool('update_clover_item', { storeIds: ['all'], matchName: 'massive shoe sale', name: 'Shoes', price: 15, confirm: true });
+  const out = await previewThenConfirm('update_clover_item', { storeIds: ['all'], matchName: 'massive shoe sale', name: 'Shoes', price: 15 });
   failPatch.delete('M4');
   eq(out.isError, undefined, 'the confirm answers per store: ' + (out.text || ''));
   const by = Object.fromEntries((out.stores || []).map(s => [s.store, s]));
@@ -297,9 +338,11 @@ const OPEN = ['BL1', 'BL2', 'BL4', 'BL14', 'BL16'];
   ok(again.isError && /Nothing was written: BL1: No item at BL1 named "massive shoe sale"/.test(again.text) && !/BL4:/.test(again.text),
     'repeating the chain-wide call writes nothing, naming the stores that no longer match: ' + again.text);
   eq(writesSince(n2).length, 0, 'not even BL4');
-  const bl4 = await tool('update_clover_item', { storeIds: ['BL4'], matchName: 'massive shoe sale', name: 'Shoes', price: 15, confirm: true });
+  const bl4 = await previewThenConfirm('update_clover_item', { storeIds: ['BL4'], matchName: 'massive shoe sale', name: 'Shoes', price: 15 });
   eq([bl4.stores?.[0]?.ok, bl4.stores?.[0]?.took], [true, true], 'retrying the failed store alone works: ' + (bl4.text || ''));
   eq(writesSince(n2).map(p => p.path), [`/v3/merchants/M4/items/${ids.BL4}`], 'and writes BL4 only');
+  const deep = await tool('update_clover_item', { storeIds: ['BL16'], matchName: 'deep item', price: 10 });
+  eq(deep.stores?.[0]?.changes, { price: { from: 9, to: 10 } }, 'an item on the second 1,000-item page is found (the read pages)');
 }
 
 // ── 6. Refusals: ambiguous names, missing names, no-ops ────────────────────
@@ -316,6 +359,7 @@ const OPEN = ['BL1', 'BL2', 'BL4', 'BL14', 'BL16'];
   eq(writesSince(n).length, 0, 'not even at the stores that passed');
   eq(itemAt('BL1', 'Clearance Bin').price, 500, 'BL1 unchanged');
 
+  ok(!pv.confirmToken, 'a preview with a refused store hands back no token');
   const noop = await tool('update_clover_item', { storeIds: ['BL1', 'BL2'], matchName: 'Sneaker', price: 12, confirm: true });
   ok(noop.isError && /Nothing would change at BL1, BL2/.test(noop.text), 'a no-op is refused, saying so: ' + noop.text);
   const clash = await tool('update_clover_item', { storeId: 'BL1', itemId: itemAt('BL1', 'Sneaker').id, code: '9002' });
@@ -332,14 +376,35 @@ const OPEN = ['BL1', 'BL2', 'BL4', 'BL14', 'BL16'];
   const prem = itemAt('BL1', 'Premium shoes');
   const n = clover.length;
   const pv = await tool('update_clover_item', { storeId: 'bl1', itemId: prem.id, hidden: true, l3: 'sku book items' });
-  eq(pv.stores?.[0]?.changes, { hidden: { from: false, to: true }, categories: { from: [SHOES], to: [SHOES, 'sku book items'] } }, 'hide + add a category, previewed');
+  eq(pv.stores?.[0]?.changes, { hidden: { from: false, to: true }, categories: { from: [SHOES], to: [SHOES, 'Sku Book Items'] } }, 'hide + add a category, previewed in the store\'s spelling');
   eq(pv.stores?.[0]?.refused, undefined, 'a category other items at the store are in passes (any case)');
   eq(writesSince(n).length, 0, 'preview: nothing written');
-  const out = await tool('update_clover_item', { storeId: 'bl1', itemId: prem.id, hidden: true, l3: 'sku book items', confirm: true });
+  const out = await tool('update_clover_item', { storeId: 'bl1', itemId: prem.id, hidden: true, l3: 'sku book items', confirm: true, confirmToken: pv.confirmToken });
   eq([out.stores?.[0]?.ok, out.stores?.[0]?.took, out.stores?.[0]?.after?.hidden], [true, true, true], 'hidden, and read back: ' + (out.text || ''));
   eq(out.stores?.[0]?.after?.categories, [SHOES, 'Sku Book Items'], 'in the existing category, beside its own');
   ok(!writesSince(n).some(p => p.path.endsWith('/categories')), 'no category was created');
   eq(itemAt('BL1', 'Premium shoes').price, 1500, 'the price was not touched');
+  ok(logs.some(l => l.includes('"agent_write":"update-clover-item"') && l.includes('"l3":"Sku Book Items"')), 'the handler was sent the store\'s own spelling');
+
+  // Clover returns less on the read-back: say so, never "did not take".
+  const sneaker = itemAt('BL1', 'Sneaker');
+  emptyRead = { m: 'M1', skip: 2 };   // the preview's read, the confirm's read, then the read-back
+  const shortOut = await previewThenConfirm('update_clover_item', { storeId: 'BL1', itemId: sneaker.id, price: 11 });
+  emptyRead = null;
+  const s0 = shortOut.stores?.[0] || {};
+  eq([s0.ok, s0.took, s0.after], [true, null, null], 'a short read-back: written, took unknown (null), not false');
+  ok(/listed 0 items where \d+ were expected/.test(s0.readBack || ''), 'and the answer says the read looks short: ' + s0.readBack);
+
+  // The patch is saved, then the category step fails: the answer says part of it was saved.
+  const sk = itemAt('BL1', 'Brass Lamp');
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init = {}) => (String(u).includes('/category_items') && !String(u).includes('delete=true')
+    ? new Response(JSON.stringify({ message: 'category service down' }), { status: 503 }) : realFetch(u, init));
+  const part = await previewThenConfirm('update_clover_item', { storeId: 'BL1', itemId: sk.id, price: 21, l3: SHOES });
+  globalThis.fetch = realFetch;
+  const p0 = part.stores?.[0] || {};
+  eq([p0.ok, p0.took, p0.after?.price], [false, false, 21], 'patch saved, category failed: ok false, read back at the new price');
+  ok(/part of it was saved/.test(p0.note || ''), 'and the answer says part of it was saved: ' + p0.note);
 }
 
 // ── 8. Create ──────────────────────────────────────────────────────────────
@@ -349,11 +414,14 @@ let created;
   const n = clover.length;
   const pv = await tool('create_clover_item', args);
   eq(pv.isError, undefined, 'create preview: ' + (pv.text || ''));
-  eq(pv.create, { name: 'Spring/Summer Shoe Clearance', code: '9100', price: 5, cost: null, category: SHOES, l2: 'Softline - Shoes', taxable: true, hidden: false }, 'shows the item to be created');
-  eq(pv.stores?.map(s => [s.store, s.willCreate]), [['BL1', true], ['BL14', true]], 'at each store');
+  eq(pv.create, { name: 'Spring/Summer Shoe Clearance', code: '9100', price: 5, l2: 'Softline - Shoes', taxable: true, hidden: false }, 'shows the item to be created');
+  eq(pv.stores?.map(s => [s.store, s.willCreate, s.category]), [['BL1', true, SHOES], ['BL14', true, SHOES]], 'at each store, in that store\'s category');
   eq(writesSince(n).length, 0, 'preview: nothing written');
-  const out = await tool('create_clover_item', { ...args, confirm: true });
+  ok(/^[0-9a-f]{16}$/.test(pv.confirmToken || ''), 'with a confirmToken');
+  const out = await tool('create_clover_item', { ...args, confirm: true, confirmToken: pv.confirmToken });
   eq(out.stores?.map(s => [s.store, s.ok, s.took]), [['BL1', true, true], ['BL14', true, true]], 'created at both, and read back');
+  eq(mainEnv.SALES_SNAPSHOTS._map.has('item-costs:global'), false, "no write to the Hub's item-master cost map");
+  eq(out.mapping, undefined, 'a category the Hub already maps: no mapping written or claimed');
   ok(out.stores?.every(s => /^N/.test(s.itemId || '') && s.after?.itemId === s.itemId), 'each with its new item id');
   const w = writesSince(n);
   eq(w.map(p => p.path.replace(/M\d+/, 'M')), ['/v3/merchants/M/items', '/v3/merchants/M/category_items', '/v3/merchants/M/items', '/v3/merchants/M/category_items'],
@@ -367,11 +435,25 @@ let created;
   const n2 = clover.length;
   const dupc = await tool('create_clover_item', { ...args, storeIds: ['BL14', 'BL2'], confirm: true });
   ok(dupc.isError && /Nothing was written: BL14/.test(dupc.text), 'and the confirm writes nothing');
-  const nocat = await tool('create_clover_item', { ...args, code: '9101', l3: 'FG BL SOFTLINES - SOCKS', confirm: true });
+  const nocat = await tool('create_clover_item', { ...args, code: '9101', l3: 'FG BL SOFTLINES - SOCKS', confirm: true, confirmToken: pv.confirmToken });
   ok(nocat.isError && /never creates a category/.test(nocat.text), 'a category a store lacks: nothing written');
   const taxw = await tool('create_clover_item', { ...args, storeIds: ['BL2'], code: '9102', taxable: false });
   ok(/taxable is false, but 3 of the 3 items/.test(taxw.stores?.[0]?.warnings?.join(' ') || ''), 'a tax setting unlike the category\'s is flagged');
   eq(writesSince(n2).length, 0, 'none of those wrote');
+
+  // An unmapped category typed in another case: the store's spelling is sent, so the mapping lands under it.
+  const nb = await previewThenConfirm('create_clover_item', { storeIds: ['BL1', 'BL2'], name: 'Odd bit 2', code: '6002', price: 1, l2: 'Hardlines', l3: 'fg bl new bits', taxable: true });
+  eq(nb.stores?.map(s => s.ok), [true, true], 'created in the unmapped category: ' + (nb.text || ''));
+  const ov = await mainEnv.SALES_SNAPSHOTS.get('item-overrides:global', 'json');
+  eq(ov?.l3Map, { 'FG BL NEW BITS': 'Hardlines' }, 'the one chain-wide mapping is keyed by the POS spelling');
+  ok(/"FG BL NEW BITS" had no main category in the Hub; it now books to "Hardlines"/.test(nb.mapping || ''), 'and the answer says so: ' + nb.mapping);
+
+  // One store's create fails partway: reported alone, the others still created.
+  failCreate.add('M14');
+  const mid = await previewThenConfirm('create_clover_item', { storeIds: ['BL1', 'BL14', 'BL2'], name: 'Sock bin', code: '9200', price: 2, l2: 'Softline - Shoes', l3: SHOES, taxable: true });
+  failCreate.delete('M14');
+  eq(mid.stores?.map(s => [s.store, s.ok, s.took]), [['BL1', true, true], ['BL14', false, false], ['BL2', true, true]], 'BL14 failed alone, BL1 and BL2 created');
+  ok(/Clover is down/.test(mid.stores?.[1]?.error || ''), "with Clover's reason: " + mid.stores?.[1]?.error);
 }
 
 // ── 9. Delete ──────────────────────────────────────────────────────────────
@@ -380,11 +462,21 @@ let created;
   const pv = await tool('delete_clover_item', { storeId: 'BL14', itemId: created.BL14 });
   ok(/PREVIEW/.test(pv.preview) && pv.item?.name === 'Spring/Summer Shoe Clearance' && /Prefer update_clover_item with hidden: true/.test(pv.prefer), 'delete previews the item and prefers hiding');
   eq(writesSince(n).length, 0, 'preview: nothing deleted');
-  const out = await tool('delete_clover_item', { storeId: 'BL14', itemId: created.BL14, confirm: true });
+  const wrongStore = await tool('delete_clover_item', { storeId: 'BL2', itemId: created.BL1 });
+  ok(wrongStore.isError && /No item .* at BL2, so nothing was deleted\. An item id belongs to one store/.test(wrongStore.text), "another store's id is an error, not \"already gone\": " + wrongStore.text);
+  const out = await tool('delete_clover_item', { storeId: 'BL14', itemId: created.BL14, confirm: true, confirmToken: pv.confirmToken });
   eq([out.deleted, out.before?.code], [true, '9100'], 'deleted, read back as gone');
   eq(writesSince(n).map(p => [p.method, p.path]), [['DELETE', `/v3/merchants/M14/items/${created.BL14}`]], 'one DELETE, at that store only');
-  const again = await tool('delete_clover_item', { storeId: 'BL14', itemId: created.BL14, confirm: true });
-  eq([again.alreadyGone, writesSince(n).length], [true, 1], 'again: already gone counts as done, nothing sent');
+  const again = await tool('delete_clover_item', { storeId: 'BL14', itemId: created.BL14, confirm: true, confirmToken: pv.confirmToken });
+  ok(again.isError && /nothing was deleted.*If it was deleted a moment ago, it is gone/.test(again.text), 'again: an error that says it may already be gone');
+  eq(writesSince(n).length, 1, 'and nothing sent');
+  // A short read-back after a delete is not proof it is gone.
+  const lamp = itemAt('BL2', 'Brass Lamp');
+  emptyRead = { m: 'M2', skip: 2 };
+  const sd = await previewThenConfirm('delete_clover_item', { storeId: 'BL2', itemId: lamp.id });
+  emptyRead = null;
+  eq(sd.deleted, null, 'deleted with a short read-back → deleted: null, not true');
+  ok(/may be short/.test(sd.readBack || ''), 'saying the read looks short');
   ok(itemAt('BL1', 'Spring/Summer Shoe Clearance'), 'BL1\'s item of the same code is untouched');
 }
 
@@ -393,6 +485,8 @@ let created;
   const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
   const all = JSON.parse((/const ALL_STORES = (\[[^\]]*\])/.exec(src) || [])[1] || '[]');
   eq(writes.CLOVER_STORES, all.filter(s => s !== 'BL8'), 'CLOVER_STORES = worker.js ALL_STORES without BL8');
+  const l2 = ((/const VALID_L2 = new Set\(\[([\s\S]*?)\]\)/.exec(src) || [])[1] || '').match(/"[^"]+"/g)?.map(x => JSON.parse(x)) || [];
+  eq(writes.L2_NAMES, l2, 'L2_NAMES = worker.js VALID_L2');
   ok(seen.every(t => !t.includes(WK) && !t.includes(UP)), 'no answer to the agent contains the write or reporting key');
   ok(logs.every(l => !l.includes(WK)), 'no log line contains the write key');
   ok(upstream.filter(u => u.method === 'POST').every(u => u.wk === WK && u.user === 'u-su' && !u.key && !u.auth), 'writes carry the write key and the user only');
