@@ -21,7 +21,18 @@ no Clover discounts.
 - [x] Tests: doors, preview writes nothing, per-store confirm + failure, validation, read-back; each fails on main
 - [x] Fresh-eyes review fixes (below), each with a test; 9 mutations, all caught
 - [x] `npm test`, ORIENT.md, commit, PR
-- [ ] Brian: deploy main worker (staging, prod), then retjg-mcp; first live use = one hidden test item
+- [x] Commit, push, PR #376 (bc011ee + bec254c)
+- [x] Deployed from a clean checkout of bec254c (byte-size = dry run): main worker prod 7f6b7cb5 (3 clean
+      wrong-key probes), staging 22ea9ec0, retjg-mcp efb819e2 (live: v1.5.0, 29 tools, 3 clean passes).
+      Live PREVIEW of the shoe change (no write): all five stores matched one "MASSIVE SHOE SALE" at $8.
+- [ ] Brian: merge #376 (prod is ahead of main until then)
+- [ ] First live write: one hidden test item at one store, created then deleted, with Brian watching
+- 🛑 The first deploy attempt ran from the Desktop checkout (claude/bl1-unitemized-orders @ 311e1f3, no
+  multi-buy worker change): prod ran 887a745b without #374's multi-buy support from 22:08:12 to 22:10:24 UTC,
+  staging likewise until 22ea9ec0. The tell was the upload size (1222.66 vs 1225.51 KiB). A rollback to
+  e34a3c87 was started after the fix landed and cancelled at its prompt. `!` commands run in the SESSION's
+  folder (Desktop), not the terminal tab's, so `$PWD` in a deploy line pointed at the Desktop checkout.
+- Staging has no AGENT_WRITE_KEY (door answers 503 there); left unset on purpose (staging Clover = prod).
 
 ## Review (2026-11-09)
 Fresh-eyes review of the first build found, and this fixed:
