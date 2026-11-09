@@ -1,3 +1,17 @@
+# Sign Studio custom label tile in capitals again (2026-11-09)
+
+**Ask (Brian):** the step 2 custom tile shows "Weekend deal"; it should read WEEKEND DEAL, as it prints,
+and browser-sign-studio's custom tile check should pass again.
+**Cause:** #373's polish pass (1c59e35) removed `text-transform:uppercase` from `.ss-tile .lbl-t`. The page
+polish rules ban that CSS, so the capitals now come from the text itself.
+
+- [x] `SignRender.printedText` (clean + caps, what the custom label prints); ssSyncTiles uses it,
+      including the empty-state YOUR WORDS
+- [x] Tests: printedText in test-sign-render (ß → SS, matches the model's label); browser §2 checks the text
+      itself is capitals with `text-transform: none`, and YOUR WORDS
+- [x] sw.js v301 + shell-cache fixture; `npm test` 11,596 pass; browser 342 pass, 4 fail (print/PDF
+      download sections 5, 6, 10, 11: fail on `main` in this Chrome too)
+
 # Multi-buy price in Sign Studio (2026-11-09)
 
 **Ask (Brian, Nov 9):** build `sign-studio-multibuy-plan.md` (shoes: $15 each, 2 for $24, 3 for $30; premium

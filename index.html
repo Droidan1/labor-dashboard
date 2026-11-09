@@ -8808,6 +8808,9 @@
     const nfc = s => String(s == null ? '' : s).normalize('NFC');
     const clean = s => nfc(s).trim().replace(/\s+/g, ' ');
     const caps = s => s.toUpperCase().normalize('NFC');
+    /* User text as the sign prints it: spaces collapsed, in capitals (ß prints as SS). The
+       step 2 tiles use it, so a custom label reads there exactly as it will on paper. */
+    const printedText = s => caps(clean(s));
     function unsupportedChars(text) {
       const bad = [];
       for (const ch of clean(text))
@@ -9667,7 +9670,7 @@
 
     window.SignRender = Object.freeze({
       SALE_LABELS, TEMPLATES, UNITS, LIMIT, DEAL_QTY, ORIENTS, FACES, COLORS, LOGO, PT, PAGE, G, DESIGN_VERSION,
-      parsePrice, parsePct, parseQty, priceParts, priceText, discountPct, unsupportedChars, printTiers,
+      parsePrice, parsePct, parseQty, priceParts, priceText, discountPct, unsupportedChars, printTiers, printedText,
       blankGroup, blankSign, normalizeSign, signModel,
       readFont, engine, validate, describe, inches,
       drawSVG, drawPDF, loadFontsInto,
@@ -35435,7 +35438,8 @@
     if (!root) return;
     root.querySelectorAll('[data-tile-text]').forEach(n => {
       const id = n.getAttribute('data-tile-text'), L = SignRender.SALE_LABELS.find(x => x.id === id);
-      const lines = id === 'custom' ? [ssSign.custom.trim() || 'Your words'] : L.lines;
+      // In capitals as it prints: the tile's CSS no longer uppercases (the polish pass, #373).
+      const lines = id === 'custom' ? [SignRender.printedText(ssSign.custom.trim() || 'Your words')] : L.lines;
       n.replaceChildren(...lines.flatMap((t, k) => k ? [ssH('br'), t] : [t]));
     });
   }

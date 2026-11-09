@@ -180,6 +180,10 @@ const decomposed = R.signModel(sign({ groups: [{ name: 'Cafe\u0301', price: '2' 
 eq(decomposed.groups[0].name, 'CAF\u00C9', 'a decomposed é is composed first, and prints as É');
 eq(JSON.stringify(R.validate(decomposed, E).msgs), '{}', '…so it is not refused');
 eq(R.signModel(sign({ groups: [{ name: '  all   cereal\t', price: '2' }] })).groups[0].name, 'ALL CEREAL', 'names are trimmed, spaces collapsed, capitals');
+// printedText is what step 2's custom tile shows: the label exactly as it prints.
+eq(R.printedText('  Weekend   deal '), 'WEEKEND DEAL', 'printedText: trimmed, spaces collapsed, in capitals');
+eq(R.printedText('Straße'), 'STRASSE', 'printedText: ß in capitals is SS, as on paper');
+eq(R.printedText('Hot buy'), R.signModel(sign({ sale: 'custom', custom: 'Hot buy', groups: [{ name: 'Tea', price: '2' }] })).label.text, '…the same text the sign\'s custom label prints');
 ok(R.unsupportedChars('Straße ÿ Œuvre “Deal” – 50% ™ €').length === 0, 'ß, ÿ, Œ, curly quotes, dashes, ™ and € all print');
 
 // normalizeSign: whatever a saved draft holds becomes a well-formed sign.
