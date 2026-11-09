@@ -15,7 +15,9 @@ under $1 as `99¢`. The line is third-biggest (price, name, multi-buy).
 - [x] Worker: accept old and new group shapes, mirror the rules, keep `deals` in the rebuilt sign
 - [x] Tests: render (fit, refusals, old shape unchanged, v3 pin), saved-signs parity, browser round trip
 - [x] DESIGN.md note, sw.js cache bump, `npm test`
-- [ ] Commit, push, PR; worker deploy asked under Blocked on me
+- [x] Commit, push, PR: 89ce874, draft PR #374 (draft until the worker is live)
+- [ ] Brian: worker deploy (staging, then production), then mark #374 ready and merge
+- [ ] Test print of the shoe sign at one store before it goes chain-wide
 
 ## Review (2026-11-09)
 - 🛑 I first claimed the plan's 60%-of-price cap could never bind (worst 0.52 over 5,124 layouts) and cut
