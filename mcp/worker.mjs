@@ -1,6 +1,6 @@
-// retjg-mcp — an MCP server over the RETJG HUB reporting API. Read-only, except one
-// tool (update_supply_request, mcp/writes.mjs) offered only to Claude's static-key
-// connector, which acts for MCP_KEY_USER.
+// retjg-mcp — an MCP server over the RETJG HUB reporting API. Read-only, except the
+// write tools in mcp/writes.mjs (update_supply_request; create/update/delete_clover_item),
+// offered only to Claude's static-key connector, which acts for MCP_KEY_USER.
 //
 // Two ways in (phase 2a, 2026-10-13):
 //   - Claude's custom connector sends a fixed `Authorization: Bearer <MCP_KEY>` (phase 1).
@@ -22,7 +22,7 @@ import { authorize, agentIdentity, admitted, AGENT_ROLES, SCOPES, ALLOWED_CLIENT
 // The tools come from QUERIES in cli/reporting.mjs, the table the retjg CLI's
 // commands come from too, so the two surfaces cannot drift.
 import { QUERIES, READING_RULES, UsageError, QueryError, checkArgs, inputSchema, runQuery } from '../cli/reporting.mjs';
-import { WRITE_TOOLS, updateSupplyRequest } from './writes.mjs';
+import { WRITE_TOOLS, runWrite } from './writes.mjs';
 
 // Two eras of MCP. 2025 clients open with `initialize` and agree one of these
 // (newest first: an unknown requested version is answered with the newest)…
@@ -33,14 +33,15 @@ const LEGACY_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26'];
 // to `initialize` (the spec's example does; the Python SDK falls back only then).
 const MODERN_VERSIONS = ['2026-07-28'];
 const P = 'io.modelcontextprotocol/';
-const SERVER_INFO = { name: 'retjg-hub', title: 'RETJG HUB sales, labor and inventory', version: '1.4.0' };
+const SERVER_INFO = { name: 'retjg-hub', title: 'RETJG HUB sales, labor and inventory', version: '1.5.0' };
 const CAPABILITIES = { tools: { listChanged: false } };
 // How long a 2026 client may reuse server/discover and tools/list. Short, because a
 // deploy that changes QUERIES should reach clients within minutes. 'private': this caller
 // only, never a shared cache.
 const CACHE = { ttlMs: 300_000, cacheScope: 'private' };
 const INSTRUCTIONS = 'Sales, Retail Summary, labor and inventory data for the Bargain Lane stores in RETJG HUB. '
-  + 'Every tool only reads, except update_supply_request where it is offered. '
+  + 'Every tool only reads, except update_supply_request and create/update/delete_clover_item where they are offered; '
+  + 'the clover ones only preview unless called with confirm true, which needs the user\'s yes first. '
   + 'Call list_stores for store ids. Dates are YYYY-MM-DD, Eastern time; yesterday is the latest complete day. '
   + 'Before drawing conclusions from the numbers:\n'
   + READING_RULES.map(r => '- ' + r).join('\n');
@@ -269,7 +270,7 @@ async function handle(method, params, env, caller) {
     if (!query && !writeTool) throw new RpcError(-32602, `Unknown tool: ${params.name}`);
     try {
       const out = writeTool
-        ? await updateSupplyRequest(params.arguments ?? {}, {
+        ? await runWrite(writeTool.name, params.arguments ?? {}, {
           read: (p) => report(env, p),
           write: (action, body) => agentWrite(env, caller.writeAs, action, body),
         })
@@ -307,14 +308,22 @@ async function report(env, params) {
   return body;
 }
 
+// Each action the agent door takes, with the one method its handler answers
+// (worker.js AGENT_WRITE_ACTIONS holds the same pairs).
+const AGENT_METHODS = {
+  'supply-request-status': 'PATCH', 'supply-request-fulfillment': 'PATCH',
+  'create-clover-item': 'POST', 'update-clover-item': 'POST', 'delete-clover-item': 'POST',
+};
+
 // One change through the main worker's agent door (worker.js AGENT_WRITE_ACTIONS),
 // as user `userId`; the main worker re-checks that they are an active superuser.
 // AGENT_WRITE_KEY goes upstream only, like REPORTING_API_KEY.
 async function agentWrite(env, userId, action, body) {
+  if (!AGENT_METHODS[action]) throw new ToolError(`No agent write is called ${action}.`);
   let res;
   try {
     res = await env.API.fetch(new Request(`https://api.retjghub.com/?action=${encodeURIComponent(action)}`, {
-      method: 'PATCH',
+      method: AGENT_METHODS[action],
       headers: { 'Content-Type': 'application/json', 'X-Agent-Write-Key': env.AGENT_WRITE_KEY, 'X-Agent-User': userId },
       body: JSON.stringify(body),
     }));
@@ -323,7 +332,11 @@ async function agentWrite(env, userId, action, body) {
   }
   let out = null;
   try { out = JSON.parse(await res.text()); } catch {}
-  if (!res.ok || !out || out.ok !== true) throw new ToolError(`RETJG HUB refused the change (${res.status}): ${out?.error || 'no detail'}`);
+  // The Clover create and delete handlers answer 200 with per-store `results` (each with its
+  // own ok), which the tool reads; every other handler answers ok: true.
+  if (!res.ok || !out || (out.ok !== true && !Array.isArray(out.results))) {
+    throw new ToolError(`RETJG HUB refused the change (${res.status}): ${String(out?.error || 'no detail').slice(0, 300)}`);
+  }
   return out;
 }
 

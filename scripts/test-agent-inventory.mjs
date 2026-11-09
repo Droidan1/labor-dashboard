@@ -130,6 +130,11 @@ const since = (n) => upstream.slice(n).map(u => new URL(u.url).searchParams);
   const lamp = (r.rows || []).find(x => x.name === 'Brass Lamp 0010');
   eq(lamp && [lamp.price, lamp.cost, lamp.gpPct, lamp.category, lamp.hidden, lamp.taxable], [19.99, 6, 70, 'FG BL HOME - DECOR', false, true],
     'money in dollars, GP % as the page computes it (price − cost) / price');
+  // The id update_clover_item / delete_clover_item take: without it an agent cannot target an item.
+  eq(lamp?.itemId, 'I10', 'each row carries the POS item id');
+  ok((r.rows || []).every(x => typeof x.itemId === 'string' && x.itemId), 'every row does');
+  const widest = await tool('get_inventory_items', { storeId: 'BL2', limit: 200 });
+  ok(widest.rows?.length === 200 && lastText.length < MAX_RESULT_CHARS, `200 rows with ids still fit one tool result (${lastText.length} chars)`);
   const s = await tool('get_inventory_items', { storeId: 'BL2', search: 'lamp', limit: 200 });
   eq([s.matched, s.rows?.every(x => x.name.startsWith('Brass Lamp'))], [lamps, true], 'search matches the name, any case');
   eq((await tool('get_inventory_items', { storeId: 'BL2', search: 'home - decor', limit: 1 })).matched, 1500, 'and the category');

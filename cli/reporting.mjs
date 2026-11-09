@@ -328,7 +328,7 @@ function shapeInventory(pages, a) {
     duplicateCodes: dup.size,
     matched: matched.length, listed: Math.min(limit, matched.length),
     rows: matched.slice(0, limit).map(i => ({
-      name: i.name, code: i.code, ...(i.sku && i.sku !== i.code && { sku: i.sku }),
+      itemId: i.id, name: i.name, code: i.code, ...(i.sku && i.sku !== i.code && { sku: i.sku }),
       price: dollars(i.price), cost: i.cost ? dollars(i.cost) : null,
       gpPct: i.price && i.cost ? Math.round((i.price - i.cost) / i.price * 1000) / 10 : null,
       category: i.category || null,
@@ -724,7 +724,8 @@ export const QUERIES = [
   {
     name: 'get_inventory_items', cli: 'items', title: 'Inventory items (Viewer)',
     description: "The Inventory Viewer: one store's POS catalog with price, POS cost (often empty; sales margins use the app's own costs), GP %, category and hidden flag, "
-      + 'plus counts of items, hidden, no-cost and duplicate codes. Search or filter it; reads the POS live, a few seconds.',
+      + 'plus counts of items, hidden, no-cost and duplicate codes. Search or filter it; reads the POS live, a few seconds. '
+      + "Each row's itemId is the POS item id, which update_clover_item and delete_clover_item take where they are offered.",
     args: [req('storeId'), opt('search'), opt('itemFilter'), opt('limit')],
     request: (a) => ({ action: 'inventory-items', store: upper(a.storeId), offset: 0 }),
     next: (b, p) => (b.hasMore ? { ...p, offset: p.offset + 1000 } : null),
