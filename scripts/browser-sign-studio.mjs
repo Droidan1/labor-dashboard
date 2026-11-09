@@ -328,6 +328,11 @@ await section('2. layout C', async () => {
   await page.click('.ss-tile[data-v="custom"]'); await settle(page);
   await type(page, '#ss-f-custom', 'Weekend deal');
   eq(await page.$eval('.ss-tile[data-v="custom"] .lbl-t', n => n.innerText), 'WEEKEND DEAL', 'the custom tile shows what was typed, as it prints');
+  // In capitals in the text itself, not by CSS: the page's polish rules ban text-transform (#373).
+  eq(await page.$eval('.ss-tile[data-v="custom"] .lbl-t', n => [n.textContent, getComputedStyle(n).textTransform]), ['WEEKEND DEAL', 'none'],
+     '…and the capitals are in the text, not a CSS transform');
+  await type(page, '#ss-f-custom', '');
+  eq(await page.$eval('.ss-tile[data-v="custom"] .lbl-t', n => n.textContent), 'YOUR WORDS', 'with nothing typed, the custom tile reads YOUR WORDS');
   // Hostile text is text: in the sign, the tiles and the messages.
   await type(page, '#ss-f-custom', '<b>x</b>');
   await page.click('[data-step="1"]'); await settle(page);
