@@ -5652,6 +5652,12 @@
         .ss-disclose summary::before{content:'+';display:inline-block;width:14px}
         .ss-disclose[open] summary::before{content:'−'}
         .ss-disclose[open] summary{margin-bottom:10px}
+        /* Multi-buy tier: how many · for · $ price · Remove, on one line down to 320 px. */
+        .ss-tierwrap{margin-bottom:10px}
+        .ss-tier{display:grid;grid-template-columns:64px auto minmax(0,1fr) auto;gap:8px;align-items:center}
+        .ss-for{font-size:13px;font-weight:600;color:var(--ss-inkDim)}
+        .ss-tierwrap .ss-msg{margin-top:4px}
+        .ss-tierhint{margin:-4px 0 10px}
         .ss-note{display:flex;gap:9px;align-items:flex-start;padding:10px 12px;border-radius:10px;font-size:13px;line-height:1.5;
           background:var(--ss-blueWash);border:1px solid var(--ss-blueEdge);color:var(--ss-ink)}
         .ss-note svg{width:16px;height:16px;flex-shrink:0;margin-top:2px;color:var(--ss-blue)}
@@ -8768,15 +8774,18 @@
     const TEMPLATES = [{ id: 'price', name: 'Price sign' }, { id: 'pct', name: '% Off' }, { id: 'uvt', name: 'Us vs Them' }];
     const UNITS = [{ id: '', name: 'None' }, { id: 'each', name: 'Each' }, { id: 'pair', name: 'Per pair' }];
     const UNIT_TEXT = { each: 'EACH', pair: 'PER PAIR' };
-    const LIMIT = { name: 22, qual: 32, custom: 12 };   // name: 22 (Brian, 24 Sep)
+    const LIMIT = { name: 22, qual: 32, custom: 12, deals: 2 };   // name: 22 (Brian, 24 Sep)
+    /* Multi-buy ("2 for $24"): up to LIMIT.deals tiers per price, on Price
+       signs only. A copy of this rule lives in worker.js (SAVED_SIGN.dealQty). */
+    const DEAL_QTY = { min: 2, max: 9 };
     const ORIENTS = ['landscape', 'portrait'];
     /* The design version. A saved sign records the one it was saved under,
        for audit; a reprint always draws with the current design (PRD). Any
        change that moves what a printed sign shows bumps it by one, and
        appends a pin to DESIGN_PINS in scripts/test-sign-render.mjs.
        1: the design approved 24 Sep. 2: a name that misses 0.6 in narrows,
-       up to 10% (29 Sep). */
-    const DESIGN_VERSION = 2;
+       up to 10% (29 Sep). 3: multi-buy line under the price (Nov 2026). */
+    const DESIGN_VERSION = 3;
 
     /* The faces (Brian, 24 Sep): Poppins for words, Luckiest Guy for numbers.
        Each file is its own family, drawn at weight 400 and style normal, so a
@@ -8850,9 +8859,20 @@
     function discountPct(themC, ourC) {
       return themC > 0 && ourC > 0 && ourC < themC ? Math.floor((themC - ourC) * 100 / themC) : null;
     }
+    /* Multi-buy quantity: a whole number from 2 to 9. */
+    function parseQty(raw) {
+      const s = String(raw == null ? '' : raw).trim();
+      if (!/^\d+$/.test(s)) return { err: 'Use a whole number, like 2.' };
+      const n = Number(s);
+      return n >= DEAL_QTY.min && n <= DEAL_QTY.max ? { n } : { err: `Multi-buy is ${DEAL_QTY.min} to ${DEAL_QTY.max} items.` };
+    }
+    /* A tier's price as the multi-buy line prints it: $24, $17.50, or 99¢. */
+    const dealText = c => c < 100 ? c + '¢' : priceText(c);
 
     /* ── 3. The sign being made, and the model the layout reads ──────────── */
-    const blankGroup = () => ({ name: '', price: '', pct: '', unit: '', qual: '', dot: false });
+    // deals: always LIMIT.deals slots, like groups, so the shape stays exact. An empty tier is off.
+    const blankGroup = () => ({ name: '', price: '', pct: '', unit: '', qual: '', dot: false,
+                                deals: Array.from({ length: LIMIT.deals }, () => ({ qty: '', price: '' })) });
     const blankSign = () => ({ template: 'price', sale: 'none', custom: '', two: false, them: '', groups: [blankGroup(), blankGroup()] });
     /* Anything that claims to be a sign (a saved draft, a stale version of one)
        becomes a well-formed one: known ids only, strings for text, capped so
@@ -8865,8 +8885,13 @@
       const template = pick(TEMPLATES, r.template, 'price');
       const groups = [0, 1].map(k => {
         const g = Array.isArray(r.groups) && r.groups[k] && typeof r.groups[k] === 'object' ? r.groups[k] : {};
+        // A sign saved before multi-buy has no deals: it gets empty tiers.
+        const deals = Array.from({ length: LIMIT.deals }, (_, j) => {
+          const d = Array.isArray(g.deals) && g.deals[j] && typeof g.deals[j] === 'object' ? g.deals[j] : {};
+          return { qty: str(d.qty), price: str(d.price) };
+        });
         return { name: str(g.name), price: str(g.price), pct: str(g.pct), unit: pick(UNITS, g.unit, ''),
-                 qual: str(g.qual), dot: g.dot === true };
+                 qual: str(g.qual), dot: g.dot === true, deals };
       });
       if (groups[0].dot && groups[1].dot) groups[1].dot = false;   // one dot, one group
       return { template, sale: pick(SALE_LABELS, r.sale, 'none'), custom: str(r.custom),
@@ -8879,9 +8904,13 @@
         const rawName = clean(g.name), rawQual = clean(g.qual);
         // On % Off the price is not on the sign ({}: neither cents nor an
         // error), and neither is the unit: a percentage has nothing to count.
+        // Multi-buy is on Price signs only. k is the tier's slot (its form field); a tier
+        // with neither field filled is off.
+        const deals = tpl !== 'price' ? [] : g.deals.map((d, k) => ({ k, q: d.qty.trim(), p: d.price.trim() }))
+          .filter(d => d.q || d.p).map(d => ({ k: d.k, qty: parseQty(d.q), price: parsePrice(d.p) }));
         return { i, kind: pct ? 'pct' : 'price', name: caps(rawName), rawName,
                  price: pct ? {} : parsePrice(g.price), pct: pct ? parsePct(g.pct) : null, unit: pct ? '' : g.unit,
-                 qual: caps(rawQual), rawQual, dot: g.dot };
+                 qual: caps(rawQual), rawQual, dot: g.dot, deals };
       });
       let label = null;
       if (sg.sale === 'custom') { const raw = clean(sg.custom); label = { custom: true, text: caps(raw), raw }; }
@@ -8891,6 +8920,8 @@
       }
       return { template: tpl, groups, label, them: tpl === 'uvt' ? parsePrice(sg.them) : null };
     }
+    /* The tiers that print, in quantity order (2 FOR … before 3 FOR …), however they were typed. */
+    const printTiers = g => (g.deals || []).filter(d => d.qty.n && d.price.cents).sort((a, b) => a.qty.n - b.qty.n);
     /* What a group's hero shows: its price, or on % Off its percentage. */
     function heroParts(g) {
       if (g.kind === 'pct') return g.pct.n ? { kind: 'pct', lead: '', dollars: String(g.pct.n), cents: '', tail: '' } : null;
@@ -8986,6 +9017,11 @@
               axisGap: 14, gapRows: 14, divider: 24, themRatio: 0.40, labelGap: 26,
               youLabel: { landscape: 0.42, portrait: 0.30 }, youLabelMin: 0.3 * PT,
               youLabelMax: { landscape: 60, portrait: 44 }, youGapR: 0.38 };
+    /* Multi-buy: one line under the unit, 2 FOR $24 · 3 FOR $30. Numbers in the number
+       face; FOR and the dot in the small face, FOR at 72% of the numbers' capitals (Us vs
+       Them's labelR). Capitals 0.3 to 0.5 in, and never over heroR (60%) of the price's,
+       so the price stays the hero (planGroup). Gaps are in the numbers' cap height. */
+    G.deal = { cap: 0.5 * PT, min: 0.3 * PT, forR: 0.72, gapR: 0.28, sepR: 0.55, heroR: 0.6 };
     const PCT = { sup: 0.6, off: 0.44, gap: 0.06 };   // % size, OFF size, gap before their column (em)
     /* Score = cap height, discounted a little per extra line, so ALL CEREAL stays
        on one line unless breaking buys real height. Labels break freely, so a
@@ -9128,10 +9164,34 @@
         return out;
       }
 
-      /* Unit and note, under a price. Shared by every template. */
-      function planExtras(g, width) {
+      /* The multi-buy line in pieces, measured per point of the numbers' cap height: its
+         width (advances and gaps) and its ink above and below the baseline ($ rises past
+         the digits and dips under them). */
+      function fitDeal(tiers, width, maxCap) {
+        const D = G.deal, pieces = [];
+        tiers.forEach((d, k) => {
+          if (k) pieces.push({ gap: D.sepR }, { text: '·', font: 'small', r: 1, role: 'deal-sep' }, { gap: D.sepR });
+          pieces.push({ text: String(d.qty.n), font: 'num', r: 1, role: 'deal-qty' }, { gap: D.gapR },
+                      { text: 'FOR', font: 'small', r: D.forR, role: 'deal-for' }, { gap: D.gapR },
+                      { text: dealText(d.price.cents), font: 'num', r: 1, role: 'deal-price' });
+        });
+        let wR = 0, upR = 0, downR = 0;
+        for (const p of pieces) {
+          if (p.gap != null) { wR += p.gap; continue; }
+          const s = p.r / metricsOf(p.font).cap;   // font size per point of cap
+          wR += w100(p.text, p.font) / 100 * s;
+          for (const ch of p.text) { upR = Math.max(upR, fonts[p.font].up(ch) * s); downR = Math.max(downR, fonts[p.font].down(ch) * s); }
+        }
+        const cap = Math.min(maxCap, width / wR);
+        return { pieces, cap, w: wR * cap, up: upR * cap, h: (upR + downR) * cap, ok: cap >= D.min - 0.01 };
+      }
+      /* Unit, multi-buy and note, under a price. Shared by every template. */
+      function planExtras(g, width, dealMax) {
         const extras = [];
         if (g.unit) extras.push({ kind: 'unit', h: G.unitCap });
+        const tiers = printTiers(g);
+        const dfit = tiers.length ? fitDeal(tiers, width, dealMax == null ? G.deal.cap : dealMax) : null;
+        if (dfit) extras.push({ kind: 'deal', h: dfit.h });
         let qfit = null;
         if (g.qual) {
           const dotW = g.dot ? G.qualCap * 1.5 + 8 : 0;
@@ -9144,7 +9204,7 @@
           extras.push({ kind: 'qual', h: qfit.rowH });
         }
         const gapE = 12;
-        return { extras, qfit, gapE, h: extras.reduce((a, e) => a + e.h + gapE, 0) };
+        return { extras, qfit, dfit, gapE, h: extras.reduce((a, e) => a + e.h + gapE, 0) };
       }
       function drawExtras(out, g, X, cx, y) {
         for (const e of X.extras) {
@@ -9152,6 +9212,15 @@
           if (e.kind === 'unit') {
             out.items.push({ t: 'text', role: 'unit', group: g.i, text: UNIT_TEXT[g.unit], anchor: 'middle',
               x: cx, y: y + G.unitCap, size: G.unitCap / metricsOf('small').cap, font: 'small', fill: 'ink', spacing: 0.08 });
+          } else if (e.kind === 'deal') {
+            const F = X.dfit, base = y + F.up;
+            let x = cx - F.w / 2;
+            for (const p of F.pieces) {
+              if (p.gap != null) { x += p.gap * F.cap; continue; }
+              const size = F.cap * p.r / metricsOf(p.font).cap;
+              out.items.push({ t: 'text', role: p.role, group: g.i, text: p.text, anchor: 'start', x, y: base, size, font: p.font, fill: 'ink' });
+              x += w100(p.text, p.font) * size / 100;
+            }
           } else {
             const q = X.qfit, widest = Math.max(...q.lines.map(l => w100(l, 'small'))) * q.size / 100;
             const left = cx - (widest + q.dotW) / 2, top = y + (q.rowH - q.h) / 2;   // the text centred in its row
@@ -9191,10 +9260,26 @@
         }
       }
 
-      /* One group's column: name → price → unit → note. `forced` = { nameCap,
-         priceCap } makes two groups match. */
-      function planGroup(g, area, orient, { maxName, forced, two }) {
-        const X = planExtras(g, area.w), avail = area.h - X.h;
+      /* One group's column: name → price → unit → multi-buy → note. `forced` = { nameCap,
+         priceCap } makes two groups match. The multi-buy line stays at or under heroR (60%)
+         of the price: over it, the column is planned again with the line capped there, which
+         frees height for the price. It binds in a crowded half of a portrait sign (both
+         halves with tiers and notes), where a price can print at 0.67 in. reportGroup refuses
+         whatever is still over it. forced.dealMax carries the cap a two-price sign's earlier
+         pass settled on: the matched price ignores height, so a taller line there than the
+         height was planned for would push the note off the bottom. */
+      function planGroup(g, area, orient, opts) {
+        let dealMax = opts.forced && opts.forced.dealMax != null ? opts.forced.dealMax : G.deal.cap;
+        let P = planGroupAt(g, area, orient, opts, dealMax);
+        for (let k = 0; k < 3 && P.X.dfit && P.price && P.X.dfit.cap > P.price.cap * G.deal.heroR + 0.01; k++) {
+          dealMax = Math.min(dealMax, P.price.cap * G.deal.heroR);
+          P = planGroupAt(g, area, orient, opts, dealMax);
+        }
+        P.dealMax = dealMax;
+        return P;
+      }
+      function planGroupAt(g, area, orient, { maxName, forced, two }, dealMax) {
+        const X = planExtras(g, area.w, dealMax), avail = area.h - X.h;
         const nameO = { font: 'word', boxW: area.w, boxH: avail * (two ? G.nameShareTwo : G.nameShare)[orient],
                         maxCap: maxName, minCap: G.minCap, maxLines: 2, gap: G.lineGap, perLine: PER_LINE.name, narrowMin: G.narrowMin };
         let name = g.name ? (forced && forced.nameCap ? atCap(g.name, forced.nameCap, nameO) : fitText(g.name, nameO)) : null;
@@ -9235,6 +9320,8 @@
         const own = freeP || P;
         out.report.groups[P.g.i] = { nameCap: P.name ? P.name.cap : null, nameOk: own.name ? own.name.ok : true,
           priceCap: P.price ? P.price.cap : null, qualOk: P.qfit ? P.qfit.ok : true, name: P.g.name,
+          dealCap: P.X.dfit ? P.X.dfit.cap : null,
+          dealOk: !P.X.dfit || (P.X.dfit.ok && (!P.price || P.X.dfit.cap <= P.price.cap * G.deal.heroR + 0.01)),
           priceOk: !(P.name && P.price) || P.price.cap >= P.name.cap * G.priceFloorRatio };
       }
       function layoutSingle(out, g, area, orient) {
@@ -9258,7 +9345,7 @@
         const named = [0, 1].map(k => plan(k, { nameCap }));
         const priceCaps = named.filter(P => P.price).map(P => P.price.cap);
         const priceCap = priceCaps.length ? Math.min(...priceCaps) : 0;
-        const plans = [0, 1].map(k => plan(k, { nameCap, priceCap }));
+        const plans = [0, 1].map(k => plan(k, { nameCap, priceCap, dealMax: named[k].dealMax }));
         // Landscape: names start on one line across both columns, so prices line up too.
         if (land) {
           const heights = plans.map(P => (P.name ? P.name.h + P.name.cap * 0.45 : 0) + (P.price ? P.price.up + P.price.down : 0) + P.extras.reduce((a, e) => a + e.h + P.gapE, 0));
@@ -9412,6 +9499,28 @@
         else chars(`name-${g.i}`, nm, g.rawName);
         if (g.kind === 'pct') { if (g.pct.err) add(`pct-${g.i}`, g.pct.err); }
         else if (g.price.err) add(`price-${g.i}`, g.price.err);
+        // Multi-buy, to the field to change: dealq (how many) or dealp (the price). Then the
+        // tiers against the price and each other, in quantity order: each one a real saving,
+        // each a lower price per item than the smaller tier.
+        g.deals.forEach(d => {
+          if (d.qty.err) add(`dealq-${g.i}-${d.k}`, d.qty.err);
+          if (d.price.err) add(`dealp-${g.i}-${d.k}`, d.price.err);
+        });
+        const seenQty = new Set();
+        g.deals.forEach(d => {
+          if (!d.qty.n) return;
+          if (seenQty.has(d.qty.n)) add(`dealq-${g.i}-${d.k}`, 'Use a different quantity for each tier.');
+          seenQty.add(d.qty.n);
+        });
+        let prevTier = null;
+        for (const d of printTiers(g)) {
+          const n = d.qty.n, c = d.price.cents, single = g.price.cents;
+          if (single && c >= n * single)
+            add(`dealp-${g.i}-${d.k}`, `${n} for ${priceText(c)} isn't a saving on ${priceText(single)}${g.unit === 'pair' ? ' a pair' : ' each'}.`);
+          else if (prevTier && prevTier.qty.n !== n && c * prevTier.qty.n >= prevTier.price.cents * n)
+            add(`dealp-${g.i}-${d.k}`, `${n} for ${priceText(c)} has to cost less per item than ${prevTier.qty.n} for ${priceText(prevTier.price.cents)}.`);
+          prevTier = d;
+        }
         if (g.dot && !g.qual) add(`qual-${g.i}`, 'Say what the dot means, for example: Yellow dot on bottom.');
         else if (g.rawQual.length > LIMIT.qual) add(`qual-${g.i}`, `Note: ${LIMIT.qual} characters at most.`);
         else chars(`qual-${g.i}`, 'Note', g.rawQual);
@@ -9441,6 +9550,7 @@
           if (!r.nameOk) (fails[`name-${i}`] = fails[`name-${i}`] || []).push({ o, cap: r.nameCap });
           else if (!r.priceOk) (fails[`${hero}-${i}`] = fails[`${hero}-${i}`] || []).push({ o });
           if (!r.qualOk) (fails[`qual-${i}`] = fails[`qual-${i}`] || []).push({ o });
+          if (r.dealOk === false) (fails[`deals-${i}`] = fails[`deals-${i}`] || []).push({ o });   // Us vs Them reports none
         });
         if (L.report.label && !L.report.label.ok) (fails.custom = fails.custom || []).push({ o });
         if (L.report.uvt && !L.report.uvt.themOk) (fails.them = fails.them || []).push({ o });
@@ -9455,6 +9565,9 @@
         } else if (k === 'custom') add(k, `Too long for the corner of ${where}. Shorten the label.`);
         else if (k.startsWith(hero)) add(k, `Too wide to stay the biggest text on ${where}. Use the other orientation, or one ${hero === 'pct' ? 'group' : 'price'} per sign.`);
         else if (k === 'them') add(k, `Their price would crowd what they pay on ${where}. Shorten the product name.`);
+        else if (k.startsWith('deals')) add(k, list.length === 2
+          ? "The multi-buy line doesn't fit either sign. Drop a tier, or use one price per sign."
+          : `The multi-buy line doesn't fit the ${list[0].o} sign. Drop a tier, or use the other orientation.`);
         else add(k, `The note doesn't fit ${where} legibly. Shorten it.`);
       }
       return { msgs: errs, blocked, layouts };
@@ -9472,7 +9585,8 @@
         const g0 = model.groups[0];
         return `Us vs Them sign: ${g0.rawName || 'no name'}, their price ${model.them.cents ? priceText(model.them.cents) : 'missing'}, you pay ${g0.price.cents ? priceText(g0.price.cents) : 'missing'}`;
       }
-      const offer = x => x.kind === 'pct' ? (x.pct.n ? `${x.pct.n}% off` : 'no percent') : (x.price.cents ? priceText(x.price.cents) : 'no price');
+      const tiers = x => { const t = printTiers(x); return t.length ? ` (${t.map(d => `${d.qty.n} for ${priceText(d.price.cents)}`).join(', ')})` : ''; };
+      const offer = x => x.kind === 'pct' ? (x.pct.n ? `${x.pct.n}% off` : 'no percent') : (x.price.cents ? priceText(x.price.cents) + tiers(x) : 'no price');
       const g = model.groups.map(x => `${x.rawName || 'no name'} ${offer(x)}`).join(' and ');
       const lab = model.label ? (model.label.custom ? model.label.text : model.label.lines.join(' ')) : 'no label';
       return `${model.template === 'pct' ? '% Off sign' : 'Sign'}: ${g}, ${lab}`;
@@ -9552,8 +9666,8 @@
     }
 
     window.SignRender = Object.freeze({
-      SALE_LABELS, TEMPLATES, UNITS, LIMIT, ORIENTS, FACES, COLORS, LOGO, PT, PAGE, G, DESIGN_VERSION,
-      parsePrice, parsePct, priceParts, priceText, discountPct, unsupportedChars,
+      SALE_LABELS, TEMPLATES, UNITS, LIMIT, DEAL_QTY, ORIENTS, FACES, COLORS, LOGO, PT, PAGE, G, DESIGN_VERSION,
+      parsePrice, parsePct, parseQty, priceParts, priceText, discountPct, unsupportedChars, printTiers,
       blankGroup, blankSign, normalizeSign, signModel,
       readFont, engine, validate, describe, inches,
       drawSVG, drawPDF, loadFontsInto,
@@ -34636,6 +34750,8 @@
   let ssAssets = 'idle';                       // idle | loading | ready | failed
   let ssKit = null;                            // { engine, fontBytes, logoBytes, logoUrl } once ready
   const ssOpenDisclose = new Set();            // which "Note and yellow dot" boxes are open
+  const ssOpenDeals = new Set();               // which "Multi-buy price" boxes are open
+  const ssDealRows = new Map();                // group → tier rows asked for with "Add another tier"
   const ssFacesAdded = new Set();              // FontFace families already given to the page
 
   function ssH(tag, attrs, ...kids) {
@@ -34885,7 +35001,11 @@
   // The draft's copy, read back like everything else in it: a planted value is dropped.
   function ssSaveFromDraft(x) {
     if (!x || typeof x !== 'object' || typeof x.id !== 'string' || !SS_UUID.test(x.id) || typeof x.sign !== 'string') return null;
-    return { id: x.id, sign: x.sign, where: ssIsWhere(x.where) ? { scope: x.where.scope, template: x.where.template, month: x.where.month } : null };
+    // Normalized like ssSign, so a draft from an older page (groups with no deals) still
+    // reads "Saved" once its sign is restored in today's shape.
+    let sign;
+    try { sign = JSON.stringify(SignRender.normalizeSign(JSON.parse(x.sign))); } catch (e) { return null; }
+    return { id: x.id, sign, where: ssIsWhere(x.where) ? { scope: x.where.scope, template: x.where.template, month: x.where.month } : null };
   }
   // The code is the useful half of a refusal (bdErr): "Forbidden" alone once sent someone
   // hunting a permission problem that was really a missing worker deploy.
@@ -35092,7 +35212,8 @@
     const name = m ? m.groups.map(g => g.rawName || 'No name').join(' · ') : "A sign this page can't open";
     const money = c => (c ? R.priceText(c) : 'no price'), unit = { each: ' each', pair: ' per pair' };
     const offer = !m ? '' : m.template === 'uvt' ? `You pay ${money(m.groups[0].price.cents)} · theirs ${money(m.them.cents)}`
-      : m.groups.map(g => g.kind === 'pct' ? (g.pct.n ? `${g.pct.n}% off` : 'no percent') : money(g.price.cents) + (unit[g.unit] || '')).join(' and ');
+      : m.groups.map(g => g.kind === 'pct' ? (g.pct.n ? `${g.pct.n}% off` : 'no percent') : money(g.price.cents) + (unit[g.unit] || '')
+        + (R.printTiers(g).length ? ` (${R.printTiers(g).map(d => `${d.qty.n} for ${money(d.price.cents)}`).join(', ')})` : '')).join(' and ');
     const label = !m ? '' : !m.label ? 'No label' : m.label.custom ? m.label.raw : R.SALE_LABELS.find(x => x.id === sign.sale).name;
     const t = new Date(s.saved_at), when = isNaN(t) ? '' : t.toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
     return ssH('li', { class: 'ss-signrow', 'data-sign': s.id },
@@ -35115,7 +35236,7 @@
     ssSign = sign;
     ssSave = { id: s.id, sign: json, where: { scope: s.scope, template: s.template, month: s.month } };
     ssSaveFail = null;
-    ssOpenDisclose.clear();
+    ssOpenDisclose.clear(); ssOpenDeals.clear(); ssDealRows.clear();
     ssView.mode = 'make';
     ssSyncLibBtn();
     ssGo(3);
@@ -35243,6 +35364,46 @@
     d.addEventListener('toggle', () => { if (d.open) ssOpenDisclose.add(gi); else ssOpenDisclose.delete(gi); });
     return d;
   }
+  /* Multi-buy ("2 for $24"), Price signs only: up to LIMIT.deals tiers, each how many and the
+     price for all of them. Rows past the first show once they hold something, or once "Add
+     another tier" asks. Remove takes the row out and moves any below it up. */
+  function ssDealsField(gi) {
+    const max = SignRender.LIMIT.deals, deals = ssSign.groups[gi].deals;
+    const filled = k => !!(deals[k].qty.trim() || deals[k].price.trim());
+    let last = 0;
+    deals.forEach((_, k) => { if (filled(k)) last = k; });
+    const shown = Math.min(max, Math.max(last + 1, ssDealRows.get(gi) || 1));
+    const remove = k => {
+      deals.splice(k, 1);
+      deals.push({ qty: '', price: '' });
+      ssDealRows.set(gi, Math.max(1, shown - 1));
+      ssRender();
+      const n = el(`ss-f-dealq-${gi}-${Math.max(0, Math.min(k, shown - 2))}`);
+      if (n) n.focus();
+    };
+    const row = k => {
+      const q = ssInput(`dealq-${gi}-${k}`, { inputmode: 'numeric', maxlength: 2, placeholder: String(k + 2), 'aria-label': `Tier ${k + 1}: how many` },
+        deals[k].qty, v => { ssSign.groups[gi].deals[k].qty = v; });
+      const p = ssInput(`dealp-${gi}-${k}`, { inputmode: 'decimal', placeholder: k ? '30' : '24', 'aria-label': `Tier ${k + 1}: price for all of them` },
+        deals[k].price, v => { ssSign.groups[gi].deals[k].price = v; });
+      return ssH('div', { class: 'ss-tierwrap' },
+        ssH('div', { class: 'ss-tier' }, q, ssH('span', { class: 'ss-for', 'aria-hidden': 'true' }, 'for'), ssH('div', { class: 'ss-money' }, p),
+          ssH('button', { type: 'button', class: 'ss-link', 'data-fk': `dealrm-${gi}-${k}`, 'aria-label': `Remove tier ${k + 1}`, onclick: () => remove(k) }, 'Remove')),
+        ssMsg(`dealq-${gi}-${k}`), ssMsg(`dealp-${gi}-${k}`));
+    };
+    const more = shown < max ? ssH('button', { type: 'button', class: 'ss-link', 'data-deal-add': gi, onclick: () => {
+      ssDealRows.set(gi, shown + 1);
+      ssRender();
+      const n = el(`ss-f-dealq-${gi}-${shown}`);
+      if (n) n.focus();
+    } }, '+ Add another tier') : null;
+    const d = ssH('details', { class: 'ss-disclose', 'data-deals': gi }, ssH('summary', null, 'Multi-buy price'),
+      ssH('div', { class: 'ss-hint ss-tierhint' }, 'How many, and the price for all of them. Prints under the price.'),
+      Array.from({ length: shown }, (_, k) => row(k)), more, ssMsg(`deals-${gi}`));
+    if (deals.some((_, k) => filled(k)) || ssOpenDeals.has(gi)) d.open = true;
+    d.addEventListener('toggle', () => { if (d.open) ssOpenDeals.add(gi); else ssOpenDeals.delete(gi); });
+    return d;
+  }
   function ssSecondToggle() {
     const what = ssSign.template === 'pct' ? 'group' : 'price';
     return ssH('button', { type: 'button', class: 'ss-link', 'data-two': '', onclick: () => {
@@ -35254,7 +35415,7 @@
   }
   function ssGroupBlock(gi) {
     const pct = ssSign.template === 'pct';
-    const offer = pct ? [ssPctField(gi)] : [ssPriceField(gi), ssUnitField(gi)];   // a percentage has no unit
+    const offer = pct ? [ssPctField(gi)] : [ssPriceField(gi), ssUnitField(gi), ssDealsField(gi)];   // a percentage has no unit or multi-buy
     if (!ssSign.two) return [ssNameField(gi), ...offer, ssExtrasField(gi)];
     return ssH('div', { class: 'ss-grp' },
       ssH('div', { class: 'ss-grp-h' }, (gi ? 'Second ' : 'First ') + (pct ? 'group' : 'price')),
@@ -35312,7 +35473,7 @@
   }
   function ssStartOver() {
     ssSign = SignRender.blankSign();
-    ssOpenDisclose.clear();
+    ssOpenDisclose.clear(); ssOpenDeals.clear(); ssDealRows.clear();
     ssGo(1);
   }
   function ssLayoutC() {

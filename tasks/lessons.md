@@ -272,6 +272,28 @@ covered this. I wrote the number before running the probe that would have produc
    the condition ("once the header wraps") and leave the number out.
 </rules>
 
+### Recurred (2026-11-09, Sign Studio multi-buy): I measured, then generalized past what I measured
+
+The plan said the multi-buy line must stay under 60% of the price. I searched 5,124 printable
+layouts, found the worst at 52%, wrote in a comment and DESIGN.md that the bound held "by
+arithmetic" (the smallest printable price is 0.96 in), and deleted the refit code that enforced
+it. The fresh-eyes reviewer broke it in one sign: a two-price PORTRAIT sign with tiers and a note
+in BOTH halves prints its price at 0.67–0.79 in, so a 0.5 in line is up to 75% of it. My search
+only ever put tiers on the first group. The second group copied the first, with its tiers stripped.
+
+This time the number was measured. The error was the claim that a sample bounds a space it never
+varied. Restoring the rule then exposed a second bug the same rows had hidden: the note pushed
+3 pt off the paper.
+
+<rules>
+10. **A search that "proves" a bound has to vary, independently, every input the bound depends
+    on.** For a two-group sign, that means each group's extras separately, not one group copied.
+    Write the search's corpus into the test grid, so the claim and its evidence stay together.
+11. **Don't delete the code that enforces a stated rule because a search says it never binds.**
+    Keep the enforcement (it costs a few lines) and pin the invariant as well. "It never binds"
+    is the claim most likely to be false the first time the inputs change.
+</rules>
+
 ## The third one today: my escalation lost a seven-second race (2026-09-21) · rule 6: re-read a PR's state before pushing to it (recurred 2026-09-25) · rule 7: push only verified work, because a merge can come before the verification (2026-09-28)
 
 Same trap as the entry below, and as 2026-09-18's. This time I did everything that entry

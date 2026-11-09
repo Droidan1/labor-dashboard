@@ -187,6 +187,23 @@ E = env0();
   const before = count();
   const forced = await rawSave('u-mgr1', JSON.stringify({ id: uid(), sign: OKS, design_version: 2, scope: 'all' }));
   eq([forced.status, (await J(forced)).code, count()], [400, 'BAD_REQUEST', before], '🛑 a manager\'s request naming scope:"all" is refused whole, and writes nothing');
+  // Multi-buy (Nov 2026). The worker rebuilds every sign from named keys, so a rebuild that
+  // forgot `deals` would answer 200 and store the sign without its tiers.
+  const shoes = sign({ two: true, groups: [{ name: 'Shoes', price: '15', unit: 'pair', deals: [{ qty: '2', price: '24' }, { qty: '3', price: '30' }] },
+                                           { name: 'Premium shoes', price: '20', unit: 'pair', qual: 'Yellow dot on bottom', dot: true }] });
+  const sid = uid(), sr = await save('u-mgr1', shoes, sid, 3), sj = await J(sr);
+  eq(sr.status, 200, 'a sign with two multi-buy tiers saves');
+  eq(rowOf(sid).sign_json, JSON.stringify(shoes), '🛑 …and is stored WITH its tiers, character for character');
+  eq((sj.sign || {}).sign, JSON.parse(JSON.stringify(shoes)), '…and comes back with them');
+  const listed = ((await J(await list('u-mgr1', 'own', 'price'))).signs || []).find(s => s.id === sid) || {};
+  eq(R.printTiers(R.signModel(R.normalizeSign(listed.sign)).groups[0]).map(d => `${d.qty.n} for ${d.price.cents}`), ['2 for 2400', '3 for 3000'],
+     '…and the saved list hands the page back both tiers, so reopening it prints them');
+  // An installed app keeps its cached page until sw.js updates: its groups have no deals.
+  const old = JSON.parse(JSON.stringify(OKS));
+  old.groups.forEach(g => { delete g.deals; });
+  const oid = uid(), or = await save('u-mgr1', old, oid);
+  eq([or.status, rowOf(oid).sign_json], [200, JSON.stringify(old)], 'a sign from the page before multi-buy (no deals) still saves, stored exactly as sent');
+  eq(JSON.stringify(R.normalizeSign(JSON.parse(rowOf(oid).sign_json || 'null'))), JSON.stringify(OKS), '…and today\'s page opens it with two empty tiers');
 }
 
 // ── 3. The save that can't be doubled ────────────────────────────────────────
@@ -264,6 +281,21 @@ E = env0();
     ['Us vs Them with no price of theirs', sign({ template: 'uvt', them: '', groups: [{ name: 'Table', price: '30' }] }), 'them'],
     ['Us vs Them paying what they charge', sign({ template: 'uvt', them: '100', groups: [{ name: 'Table', price: '100' }] }), 'price-0'],
     ['Us vs Them saving under 1%', sign({ template: 'uvt', them: '100', groups: [{ name: 'Table', price: '99.50' }] }), 'price-0'],
+    // Multi-buy: the shape (named `deals`, so a deploy can be told apart from the worker before it)…
+    ['tiers that are not a list', { ...OKS, groups: [{ ...OKS.groups[0], deals: 'x' }, OKS.groups[1]] }, 'deals'],
+    ['one tier', { ...OKS, groups: [{ ...OKS.groups[0], deals: [OKS.groups[0].deals[0]] }, OKS.groups[1]] }, 'deals'],
+    ['three tiers', { ...OKS, groups: [{ ...OKS.groups[0], deals: [...OKS.groups[0].deals, OKS.groups[0].deals[0]] }, OKS.groups[1]] }, 'deals'],
+    ['a tier with an extra key', { ...OKS, groups: [{ ...OKS.groups[0], deals: [{ qty: '2', price: '3', each: '1.50' }, OKS.groups[0].deals[1]] }, OKS.groups[1]] }, 'deals'],
+    ['a tier quantity as a number', { ...OKS, groups: [{ ...OKS.groups[0], deals: [{ qty: 2, price: '3' }, OKS.groups[0].deals[1]] }, OKS.groups[1]] }, 'deals'],
+    ['a 201-character tier price', { ...OKS, groups: [{ ...OKS.groups[0], deals: [{ qty: '2', price: 'x'.repeat(201) }, OKS.groups[0].deals[1]] }, OKS.groups[1]] }, 'deals'],
+    // …and the rules, on the field to change.
+    ['1 for $24', sign({ groups: [{ name: 'Shoes', price: '15', deals: [{ qty: '1', price: '24' }] }] }), 'dealq-0-0'],
+    ['10 for $24', sign({ groups: [{ name: 'Shoes', price: '15', deals: [{ qty: '10', price: '24' }] }] }), 'dealq-0-0'],
+    ['a tier price with three decimals', sign({ groups: [{ name: 'Shoes', price: '15', deals: [{ qty: '2', price: '24.505' }] }] }), 'dealp-0-0'],
+    ['2 for $30 on $15', sign({ groups: [{ name: 'Shoes', price: '15', deals: [{ qty: '2', price: '30' }] }] }), 'dealp-0-0'],
+    ['3 for $40 after 2 for $24', sign({ groups: [{ name: 'Shoes', price: '15', deals: [{ qty: '2', price: '24' }, { qty: '3', price: '40' }] }] }), 'dealp-0-1'],
+    ['two tiers for 2', sign({ groups: [{ name: 'Shoes', price: '15', deals: [{ qty: '2', price: '24' }, { qty: '2', price: '20' }] }] }), 'dealq-0-1'],
+    ['a bad tier on the second price', sign({ two: true, groups: [{ name: 'Tea', price: '2' }, { name: 'Shoes', price: '15', deals: [{ qty: '2', price: '30' }] }] }), 'dealp-1-0'],
   ];
   for (const [what, text, status, code] of variants) {
     const before = count(), r = await rawSave('u-mgr1', text), j = await J(r);
@@ -288,6 +320,9 @@ E = env0();
     ['a second group that does not print', sign({ groups: [{ name: 'Tea', price: '2' }, { name: 'x'.repeat(40), price: 'abc' }] })],
     ['a price field on a % Off sign', sign({ template: 'pct', groups: [{ name: 'Coats', pct: '20', price: 'abc' }] })],
     ['a 12-character custom label', sign({ sale: 'custom', custom: 'Weekend deal', groups: [{ name: 'Tea', price: '2' }] })],
+    ['tiers typed largest first', sign({ groups: [{ name: 'Shoes', price: '15', deals: [{ qty: '3', price: '30' }, { qty: '2', price: '24' }] }] })],
+    ['tiers left on a % Off sign, even bad ones', sign({ template: 'pct', groups: [{ name: 'Coats', pct: '20', deals: [{ qty: 'x', price: 'y' }] }] })],
+    ['bad tiers on a second group that does not print', sign({ groups: [{ name: 'Tea', price: '2' }, { name: 'Shoes', price: '15', deals: [{ qty: '1', price: '99' }] }] })],
   ]) eq((await save('u-mgr1', s)).status, 200, `${what}: saved`);
 }
 
@@ -303,6 +338,11 @@ E = env0();
   const workerList = (wsrc.match(/\n  chars: (\/\^\[[^\n]*?\]\$\/),/) || [])[1];
   ok(pageList && pageList.startsWith('/^[\\u0020-\\u007E'), `the page's list is found, spelled with escapes (${pageList && pageList.slice(0, 24)})`);
   eq(workerList, pageList, "the worker's printable-character list is the page's TEXT_CHARS, spelled the same way");
+  // Multi-buy's numbers, copied the same way: 2 tiers, 2 to 9 items.
+  const pageQty = (html.match(/const DEAL_QTY = (\{[^}\n]*\});/) || [])[1], workerQty = (wsrc.match(/\n  dealQty: (\{[^}\n]*\}),/) || [])[1];
+  ok(!!pageQty, `the page's DEAL_QTY is found (${pageQty})`);
+  eq(workerQty, pageQty, "the worker's dealQty is the page's DEAL_QTY, spelled the same way");
+  eq(`${R.LIMIT.deals}`, ((wsrc.match(/\n  limit: \{[^}\n]*\bdeals: (\d+) \}/) || [])[1]), "the worker's tier count is the page's LIMIT.deals");
   const a = wsrc.indexOf('/* ── Saved signs (Sign Studio)'), b = wsrc.indexOf('// Category code -> name', a);
   const r0 = wsrc.indexOf('// ── Saved signs (Sign Studio): folders'), r1 = wsrc.indexOf('// ── "What\'s New" announcement', r0);
   const nonAscii = s => [...s].filter(c => c.charCodeAt(0) > 127 && !'─→🔑…“”’'.includes(c)).map(c => 'U+' + c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0'));
@@ -340,6 +380,19 @@ E = env0();
       for (const qual of QUALS) for (const dot of [false, true]) cases.push([`${bn} qual-${k} ${JSON.stringify(qual)} dot ${dot}`, withGroup(base, k, { qual, dot })]);
     }
     for (const custom of CUSTOMS) cases.push([`${bn} custom ${JSON.stringify(custom)}`, { ...base, sale: 'custom', custom }]);
+  }
+  // Multi-buy, on each printing price group, on % Off and Us vs Them (ignored there), around every
+  // rule: the range, the parsers, a saving by a cent and not at all, per item lower, the same per
+  // item, typed in either order, and the same quantity twice.
+  const T0 = { qty: '', price: '' }, t = (qty, price) => ({ qty, price });
+  const DEALS = [[T0, T0], [t('2', '3.99'), T0], [t('2', '4'), T0], [t('2', '13.99'), T0], [t('2', '14'), T0], [t('2', '9.99'), T0], [t('2', '10'), T0],
+    [t('9', '1'), T0], [t('10', '1'), T0], [t('1', '1'), T0], [t('0', '1'), T0], [t('', '1'), T0], [t('2', ''), T0], [t(' 2 ', ' 3 '), T0], [t('02', '3'), T0],
+    [t('2.0', '3'), T0], [t('x', '3'), T0], [t('-2', '3'), T0], [t('2', '2.505'), T0], [t('2', '$3'), T0], [t('2', 'abc'), T0], [t('2', '0'), T0],
+    [t('2', '3'), t('3', '4.49')], [t('2', '3'), t('3', '4.50')], [t('3', '4.49'), t('2', '3')], [t('2', '3'), t('2', '2.50')], [T0, t('3', '5')],
+    [t('2', '0.01'), t('9', '0.02')], [t('2', '0.99'), t('3', '1')], [t('2', '12'), t('3', '17.99')], [t('2', '12'), t('3', '18')]];
+  for (const [bn, base] of Object.entries(BASES)) {
+    const n = base.two ? 2 : 1;
+    for (let k = 0; k < n; k++) for (const deals of DEALS) cases.push([`${bn} deals-${k} ${JSON.stringify(deals)}`, withGroup(base, k, { deals })]);
   }
   for (const them of ['', '100', '59.99', '19.99', '19.98', '20', '0.99', 'abc', '2.505'])
     for (const price of ['19.99', '59.99', '99.50', '100', '0.99']) cases.push([`uvt them ${them} price ${price}`, { ...BASES.uvt, them, groups: [{ ...BASES.uvt.groups[0], price }] }]);

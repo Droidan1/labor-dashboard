@@ -14120,7 +14120,8 @@ const SAVED_SIGN = {
   templates: ["price", "pct", "uvt"],
   sales: ["none", "sale", "flash", "manager", "blowout", "custom"],
   units: ["", "each", "pair"],
-  limit: { name: 22, qual: 32, custom: 12 },
+  limit: { name: 22, qual: 32, custom: 12, deals: 2 },   // SignRender's LIMIT
+  dealQty: { min: 2, max: 9 },                           // SignRender's DEAL_QTY: multi-buy "2 for $24"
   // What the sign's Poppins files can draw, judged in capitals: SignRender's TEXT_CHARS.
   chars: /^[\u0020-\u007E\u00A0-\u00AC\u00AE-\u00FF\u0152\u0153\u0178\u2013\u2014\u2018\u2019\u201C\u201D\u2022\u2026\u20AC\u2122]$/,
   uuid: /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
@@ -14155,9 +14156,15 @@ function savedSignCheck(raw) {
   if (!str(custom) || !str(them)) return bad("sign", "Not a sign.");
   if (typeof two !== "boolean" || (template === "uvt" && two)) return bad("two", "Us vs Them has one product.");
   if (!Array.isArray(groups) || groups.length !== 2) return bad("sign", "Not a sign.");
+  // A group is the 6 keys a page from before multi-buy sends, or those plus `deals` (Nov 2026).
+  // Both stay valid: an installed app keeps its cached page until sw.js updates.
+  const GROUP_KEYS = ["name", "price", "pct", "unit", "qual", "dot"];
   for (const g of groups) {
-    if (!exact(g, ["name", "price", "pct", "unit", "qual", "dot"]) || ![g.name, g.price, g.pct, g.qual].every(str)
+    const hasDeals = isObj(g) && Object.prototype.hasOwnProperty.call(g, "deals");
+    if (!exact(g, hasDeals ? GROUP_KEYS.concat("deals") : GROUP_KEYS) || ![g.name, g.price, g.pct, g.qual].every(str)
         || !SAVED_SIGN.units.includes(g.unit) || typeof g.dot !== "boolean") return bad("sign", "Not a sign.");
+    if (hasDeals && !(Array.isArray(g.deals) && g.deals.length === SAVED_SIGN.limit.deals
+        && g.deals.every(d => exact(d, ["qty", "price"]) && str(d.qty) && str(d.price)))) return bad("deals", "Not a multi-buy tier.");
   }
   if (groups[0].dot && groups[1].dot) return bad("qual-1", "Only one group can have the yellow dot.");
   // 2. What prints: signModel's rules, and validate's messages.
@@ -14174,6 +14181,27 @@ function savedSignCheck(raw) {
     if (g.dot && !qual) return bad(`qual-${i}`, "Say what the dot means.");
     if (qual.length > SAVED_SIGN.limit.qual) return bad(`qual-${i}`, `Notes are ${SAVED_SIGN.limit.qual} characters at most.`);
     if (!printable(qual)) return bad(`qual-${i}`, "The note has a character the sign can't print.");
+    // Multi-buy prints on Price signs only; elsewhere its tiers are kept but not judged.
+    // validate's rules: 2 to 9 items, a price, one tier per quantity, each a saving on the
+    // single price, and in quantity order each a lower price per item than the one before.
+    if (template === "price" && g.deals) {
+      const single = savedSignCents(g.price), tiers = [];
+      for (let k = 0; k < g.deals.length; k++) {
+        const q = g.deals[k].qty.trim(), p = g.deals[k].price.trim();
+        if (!q && !p) continue;   // an empty tier is off
+        const qn = /^\d+$/.test(q) ? Number(q) : NaN, c = savedSignCents(p);
+        if (!(qn >= SAVED_SIGN.dealQty.min && qn <= SAVED_SIGN.dealQty.max))
+          return bad(`dealq-${i}-${k}`, `Multi-buy is ${SAVED_SIGN.dealQty.min} to ${SAVED_SIGN.dealQty.max} items.`);
+        if (c === null) return bad(`dealp-${i}-${k}`, "Not a price the sign can print.");
+        if (tiers.some(t => t.qn === qn)) return bad(`dealq-${i}-${k}`, "Use a different quantity for each tier.");
+        if (c >= qn * single) return bad(`dealp-${i}-${k}`, "A multi-buy has to cost less than buying them one at a time.");
+        tiers.push({ qn, c, k });
+      }
+      tiers.sort((x, y) => x.qn - y.qn);
+      for (let j = 1; j < tiers.length; j++)
+        if (tiers[j].c * tiers[j - 1].qn >= tiers[j - 1].c * tiers[j].qn)
+          return bad(`dealp-${i}-${tiers[j].k}`, "Each tier has to cost less per item than the one before.");
+    }
   }
   if (sale === "custom") {
     const label = clean(custom);
@@ -14188,11 +14216,13 @@ function savedSignCheck(raw) {
     if (Math.floor((theirs - ours) * 100 / theirs) < 1) return bad("price-0", "What they pay has to be at least 1% under their price.");
   }
   // Rebuilt in normalizeSign's key order, so the stored JSON is the page's own
-  // JSON.stringify(normalizeSign(sign)), character for character.
+  // JSON.stringify(normalizeSign(sign)), character for character. 🔑 `deals` is carried
+  // whenever it was sent: leave it out here and every save succeeds with its tiers gone.
   return {
     template,
     sign: { template, sale, custom, two, them,
-            groups: groups.map(g => ({ name: g.name, price: g.price, pct: g.pct, unit: g.unit, qual: g.qual, dot: g.dot })) },
+            groups: groups.map(g => Object.assign({ name: g.name, price: g.price, pct: g.pct, unit: g.unit, qual: g.qual, dot: g.dot },
+              g.deals ? { deals: g.deals.map(d => ({ qty: d.qty, price: d.price })) } : {})) },
   };
 }
 // A row as the page sees it. Never the owner's id; "saved by" only where it isn't the reader.

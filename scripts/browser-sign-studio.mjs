@@ -181,9 +181,9 @@ const lum = c => { const f = c.slice(0, 3).map(v => { v /= 255; return v <= 0.03
 const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
 // Every piece of text on the page (the sign itself excluded: it is paper, checked in Node),
 // with its colour and the stack of backgrounds it is painted over, down to the page ground.
-async function textSamples(page) {
-  return page.evaluate(() => {
-    const out = [], rootEl = document.getElementById('page-merch-signs');
+async function textSamples(page, within) {   // within: a selector to measure only part of the page
+  return page.evaluate(sel => {
+    const out = [], rootEl = document.querySelector(sel || '#page-merch-signs');
     const layers = n => { const L = []; for (let e = n; e; e = e.parentElement) { const bg = getComputedStyle(e).backgroundColor; if (bg && bg !== 'rgba(0, 0, 0, 0)') L.push(bg); } return L; };
     const faded = n => { for (let e = n; e; e = e.parentElement) if (+getComputedStyle(e).opacity < 1) return true; return false; };
     const ground = getComputedStyle(document.body).backgroundColor;
@@ -200,7 +200,7 @@ async function textSamples(page) {
       }
     }
     return out;
-  });
+  }, within || null);
 }
 function contrastOf(samples) {
   return samples.map(s => {
@@ -1092,9 +1092,9 @@ await section('15. save', async () => {
   await waitSave(page, 'Saved');
   eq(await saveBtn(page), { label: 'Saved', disabled: true, title: '' }, 'the worker said ok: Saved, and nothing left to tap');
   eq(await saveNote(page), { text: `Saved in Price signs › ${MONTH}.`, tone: 'ok' }, '…and the note names the folder');
-  const d = await draftOf(page), r0 = rows()[0];
-  eq([r0.id, r0.owner_id, r0.scope, r0.template, r0.saved_month, r0.design_version], [pending.id, 'u-mgr1', 'own', 'price', YM, 2],
-     "one row: the page's id, this manager's, their own folder, a price sign, this month, design version 2");
+  const d = await draftOf(page), r0 = rows()[0], dv = await page.evaluate(() => window.SignRender.DESIGN_VERSION);
+  eq([r0.id, r0.owner_id, r0.scope, r0.template, r0.saved_month, r0.design_version], [pending.id, 'u-mgr1', 'own', 'price', YM, dv],
+     `one row: the page's id, this manager's, their own folder, a price sign, this month, the page's design version (${dv})`);
   eq(r0.sign_json, JSON.stringify(d.sign), '…holding the sign exactly as the page has it');
   eq(d.save.where, { scope: 'own', template: 'price', month: YM }, '…and the draft remembers it is saved');
   eq(Object.keys(JSON.parse(saves()[0].sent)).sort(), ['design_version', 'id', 'sign'], 'the request carries id, sign and design version only: no owner, no folder');
@@ -1424,6 +1424,91 @@ await section('17. saved signs: phone and contrast', async () => {
       check(all.some(x => x.state.includes(s)), `[${theme}] …measured in the state: ${s}`);
     check(!errs.length, `[${theme}] no page errors (${errs.slice(0, 2).join(' | ')})`);
   }
+});
+
+// ── 18. Multi-buy: typed, refused, previewed, saved, reopened (Nov 2026) ──
+// The plan's shoe sign ($15 a pair, 2 for $24, 3 for $30; premium $20 with the yellow dot),
+// built through the form as a manager would, saved through the real worker, and opened again.
+await section('18. multi-buy', async () => {
+  const W = workerDb();
+  const { page, errs } = await open({ role: 'mgr1', worker: { W, uid: 'u-mgr1' } });
+  const box = () => page.$$eval('#ss-root details[data-deals]', ns => ns.map(n => ({ gi: n.getAttribute('data-deals'), open: n.open,
+    rows: n.querySelectorAll('.ss-tier').length, add: !!n.querySelector('[data-deal-add]') })));
+  const line = sel => page.$$eval(`${sel} svg text[data-role^="deal-"]`, ns => ns.map(n => [+n.getAttribute('x'), n.textContent]).sort((a, b) => a[0] - b[0]).map(x => x[1]).join(' '));
+  await page.click('[data-step="1"]'); await settle(page);
+  eq(await box(), [{ gi: '0', open: false, rows: 1, add: true }], 'a Price sign has a closed Multi-buy price section: one tier row, and Add another tier');
+  for (const [tpl, what] of [['pct', '% Off'], ['uvt', 'Us vs Them']]) {
+    await page.click(`[data-chips="template"] [data-v="${tpl}"]`); await settle(page);
+    eq(await box(), [], `${what} has no Multi-buy price section`);
+  }
+  await page.click('[data-chips="template"] [data-v="price"]'); await settle(page);
+  if (!(await page.evaluate(() => !!document.getElementById('ss-f-name-1')))) { await page.click('[data-two]'); await settle(page); }
+  eq((await box()).map(x => x.gi), ['0', '1'], 'with a second price, each price has its own section');
+  for (const [k, val] of [['name-0', 'Shoes'], ['price-0', '15'], ['name-1', 'Premium shoes'], ['price-1', '20']]) await type(page, `#ss-f-${k}`, val);
+  for (const gi of [0, 1]) { await page.click(`[data-chips="unit-${gi}"] [data-v="pair"]`); await settle(page); }
+  await page.click('#ss-root details[data-deals="0"] > summary'); await settle(page);
+  await type(page, '#ss-f-dealq-0-0', '2'); await type(page, '#ss-f-dealp-0-0', '24');
+  await page.click('#ss-root [data-deal-add="0"]'); await settle(page);
+  eq(await page.evaluate(() => document.activeElement && document.activeElement.id), 'ss-f-dealq-0-1', 'Add another tier adds a row with the cursor in it');
+  eq((await box())[0], { gi: '0', open: true, rows: 2, add: false }, '…and at two tiers it is gone');
+  await type(page, '#ss-f-dealq-0-1', '3'); await type(page, '#ss-f-dealp-0-1', '40');
+  eq(await page.$eval('[data-msg="dealp-0-1"]', n => n.textContent), '3 for $40 has to cost less per item than 2 for $24.', '3 for $40 is refused under its own price, saying why');
+  eq(await page.$eval('#ss-f-dealp-0-1', n => [n.classList.contains('bad'), n.getAttribute('aria-invalid')]), [true, 'true'], '…and that field is marked');
+  await type(page, '#ss-f-dealp-0-1', '30');
+  eq(await page.$eval('[data-msg="dealp-0-1"]', n => n.textContent), '', '3 for $30 is fine');
+  await page.evaluate(() => { document.getElementById('ss-f-dot-1').closest('details').open = true; });
+  await page.click('#ss-f-dot-1'); await settle(page);
+  eq(await line('[data-preview="current"]'), '2 FOR $24 · 3 FOR $30', 'the preview beside the form shows the multi-buy line');
+  // Every word of the open section readable, in all three themes (the sign itself is paper).
+  for (const theme of ['light', 'dark', 'oled']) {
+    await page.evaluate(t => { document.documentElement.classList.toggle('dark', t !== 'light'); document.documentElement.classList.toggle('oled', t === 'oled'); }, theme);
+    await page.waitForTimeout(400);   // past any colour transition (lessons.md, 2026-09-10)
+    const words = contrastOf(await textSamples(page, '#ss-root details[data-deals="0"]'));
+    const low = words.filter(x => x.r < 4.5), min = words.reduce((m, x) => x.r < m.r ? x : m, { r: 99 });
+    measured.push(`[${theme}] multi-buy section: ${words.length} texts, lowest ${min.r.toFixed(2)}:1 (${min.what})`);
+    check(['"Multi-buy price"', '"How many', '"for"', '"Remove"', '::before'].every(s => words.some(x => x.what.includes(s))),
+          `[${theme}] the summary, hint, "for", Remove and the $ are all measured (${words.map(x => x.what).join(' | ')})`);
+    eq(low.map(x => `${x.what} ${x.r.toFixed(2)}`), [], `[${theme}] every word of the Multi-buy price section is at least 4.5:1`);
+  }
+  await page.evaluate(() => { document.documentElement.classList.remove('dark', 'oled'); });
+  await page.click('[data-step="3"]'); await settle(page);
+  eq(await pill(page), { cls: 'ok', text: 'Ready to print' }, 'the shoe sign is ready to print');
+  eq([await line('[data-preview="landscape"]'), await line('[data-preview="portrait"]')], ['2 FOR $24 · 3 FOR $30', '2 FOR $24 · 3 FOR $30'], '…with the line on both orientations');
+  await page.click('[data-save]'); await waitSave(page, 'Saved');
+  const row = W.db.prepare('SELECT sign_json, design_version FROM saved_signs').get() || {};
+  const stored = JSON.parse(row.sign_json || '{"groups":[{}]}');
+  eq([row.design_version, stored.groups[0].deals, stored.groups[1].deals], [3, [{ qty: '2', price: '24' }, { qty: '3', price: '30' }], [{ qty: '', price: '' }, { qty: '', price: '' }]],
+     '🛑 saved through the real worker WITH its tiers, under design 3');
+  // A new sign, then the saved one opened from the list: the tiers come back.
+  await page.click('[data-new]'); await settle(page);
+  await lib.open(page); await lib.go(page, 'own/price'); await lib.go(page, `own/price/${YM}`);
+  eq((await lib.rows(page)).map(r => r.meta.split(' · ')[0]), ['$15 per pair (2 for $24, 3 for $30) and $20 per pair'], 'the saved list says the tiers');
+  await page.click('#ss-root [data-open]'); await settle(page);
+  eq(await pill(page), { cls: 'ok', text: 'Ready to print' }, 'opened again, it is ready to print');
+  await page.click('[data-step="1"]'); await settle(page);
+  eq(await page.evaluate(() => ['dealq-0-0', 'dealp-0-0', 'dealq-0-1', 'dealp-0-1'].map(k => document.getElementById('ss-f-' + k).value)), ['2', '24', '3', '30'], '…with both tiers in the form');
+  eq((await box())[0], { gi: '0', open: true, rows: 2, add: false }, '…in an open section, since it holds tiers');
+  // Remove the first tier: the second moves up.
+  await page.click('#ss-root [data-fk="dealrm-0-0"]'); await settle(page);
+  eq(await page.evaluate(() => [document.getElementById('ss-f-dealq-0-0').value, document.getElementById('ss-f-dealp-0-0').value, !!document.getElementById('ss-f-dealq-0-1')]),
+     ['3', '30', false], 'Remove takes the first tier out, and the second moves up into its place');
+  eq(await line('[data-preview="current"]'), '3 FOR $30', '…and the preview follows');
+  // A draft written by the page before multi-buy (no deals anywhere, in the sign or in its save
+  // record) is restored by this page after the update: a sign it saved still reads Saved, and
+  // nothing is sent again.
+  await page.click('[data-step="3"]'); await settle(page);
+  await page.click('[data-new]'); await settle(page);
+  await makeSign(page, { fields: { 'name-0': 'Tea', 'price-0': '2' } });
+  await page.click('[data-save]'); await waitSave(page, 'Saved');
+  const nSaves = W.log.filter(x => x.action === 'saved-sign-save').length, d0 = await draftOf(page);
+  const strip = s => { const o = typeof s === 'string' ? JSON.parse(s) : s; o.groups.forEach(g => { delete g.deals; }); return o; };
+  await page.evaluate(d => localStorage.setItem('sign-studio-draft', JSON.stringify(d)),
+    Object.assign({}, d0, { sign: strip(d0.sign), save: Object.assign({}, d0.save, { sign: JSON.stringify(strip(d0.save.sign)) }) }));
+  check(!/deals/.test(JSON.stringify(await draftOf(page))), 'the draft is now in the old page\'s shape: no deals anywhere');
+  await reenter(page);
+  eq((await saveBtn(page)).label, 'Saved', 'after the update the old draft\'s sign still reads Saved');
+  eq(W.log.filter(x => x.action === 'saved-sign-save').length, nSaves, '…and nothing was saved again');
+  check(!errs.length, `multi-buy: no page errors (${errs.slice(0, 2).join(' | ')})`);
 });
 
 await b.close();
