@@ -239,8 +239,7 @@ V1 "comfortable" density:
 - **Skeleton shimmer:** `.skel` class (defined in `<style>`). Linear
   gradient sweeping 1.6s; respects `prefers-reduced-motion`.
 - **No decorative loops or washes.** Nothing loops unless it reports
-  something live and urgent (the critical-alert ring on the bell is the
-  case that stays). The dashboard's freshness dot is static, the hero has
+  something live and urgent. The dashboard's freshness dot is static, the hero has
   no radial accent wash, and nothing slides on hover: a hover is a colour
   or border step (`transition-colors`), never a catch-all `transition`.
 

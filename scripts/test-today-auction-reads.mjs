@@ -79,10 +79,10 @@ for (const [snippet, why] of ALLOWED) {
     `allowlisted read is still present — ${snippet.slice(0, 40)}… (${why.slice(0, 48)}…)`);
 }
 
-// The six sites this fixed must keep going through the helper. Anchored on the
-// receiver, which is what identifies a today-row read.
+// The sites this fixed must keep going through the helper. Anchored on the
+// receiver, which is what identifies a today-row read. (The sixth, the pace /
+// milestone alerts, went with the header bell on 2026-11-11.)
 const MUST_USE_HELPER = [
-  ['rowAuction(todayRow) ?? 0', 'pace / milestone alerts'],
   ['const todayRowAuction = rowAuction(todayRow);', 'All Stores headline, live branch'],
   ['const rAuction = rowAuction(r);', 'combined budget card, month to date'],
   ['cardShowLive ? rowAuction(getTodayRow(m.store)) : null', "store card Net + Auction tile"],
