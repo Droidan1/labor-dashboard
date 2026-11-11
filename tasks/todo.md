@@ -1,3 +1,23 @@
+# Remove the header notifications bell (2026-11-11)
+
+**Ask (Brian):** remove the in-app notifications that say which store is pacing at what % ("Battle
+Creek pacing 77% of day budget"); he wants the spot for something else later.
+**Decided:** the whole bell goes. Its three item kinds (pace < 80%, "day budget reached", "store is
+offline") were all computed in the browser from dashboard data and shown only in the bell, to admins
+and superusers. The Web Push "Sales Update" (Settings → Notifications) is a different feature and stays.
+
+- [x] index.html: bell markup, its CSS keyframes, the NOTIFICATIONS JS block, the empty
+      `#dashboard-attn-strip` it cleared, and the `renderNotifications()` call in renderDashboard
+- [x] sw.js cache v301 → v302 + shell-cache fixture; DESIGN.md motion note no longer cites the bell
+- [x] scripts/test-no-pace-bell.mjs (fails on main, 8 of 13) + scripts/browser-no-pace-bell.mjs
+- [x] test-today-auction-reads.mjs: drop the pace-alert site from MUST_USE_HELPER
+- [ ] Brian merges; Pages ships it (no worker, no migration)
+
+### Review
+Frontend only. Left in place: the `?view=hourly` deep link, the hero "Pace" figure and per-card pace
+colouring (not notifications), and each browser's stale `dashNotifState_v1` localStorage key (a few
+bytes, never read again).
+
 # MCP: create, change, hide and delete Clover items (2026-11-09)
 
 **Ask (Brian):** build `retjg-mcp-clover-items-plan.md` so the agent can make changes like the Nov 9 shoe

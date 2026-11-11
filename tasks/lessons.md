@@ -30,6 +30,18 @@ builders filter on `status` only. Someone who has never signed in still gets eve
 - When you can't read the data, ask what the screen shows (role, status pill, stores), not
   for a yes/no summary of it.
 
+### Recurred (2026-11-11): "notifications" meant the header bell, and I started removing the push
+Brian: "the app lets me know via notifications which store is pacing at what %… remove this".
+I grepped `worker.js` for push code, found the hourly "Sales Update" push (`dispatchIntervalSummary`,
+store $ / budget ±%), and was mid-removal when he sent a screenshot: he meant the in-app **bell**
+dropdown ("Battle Creek pacing 77% of day budget"), computed in the browser by
+`computeNotifications()` in `index.html`. The worker was never involved.
+- This app has TWO things called notifications that both report store pace: Web Push from the
+  worker (Settings → Notifications) and the header bell (admins/superusers). When a request names
+  one by what it says rather than where it shows, grep BOTH `index.html` and `worker.js` for the
+  quoted wording ("pacing", "of day budget") before touching either, and name the surface you
+  found back to the user in one line before cutting code.
+
 ## Fixing the escape at the source moved the injection one page along (2026-09-24)
 
 The Inventory Viewer's row built attributes with `escapeHtml`, which leaves quotes alone. So an
