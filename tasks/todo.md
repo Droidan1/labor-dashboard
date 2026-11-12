@@ -1,3 +1,31 @@
+# Discounts & Returns reporting (2026-11-12) — the page (PR 2 of 2)
+
+**Ask (Brian):** the page on top of the backend below (live in prod): discounts by store, button,
+category, employee, week and month, the largest single discounts, refunds with their flags, and an
+admin editor for planned vs manual. Frontend only; worker.js untouched.
+
+- [x] `#page-discounts` next to the Retail Summary: sidebar `nav-discounts` (Store section, so the phone's
+      Menu gets it with no second edit), `FINANCIAL_PAGES` + `seesMoney` like Labor, `NAV_BUSINESS` 'bl'
+- [x] Filters in one panel bar (store, dates, category, employee, planned/manual) driving both sections;
+      default last full month; previous period of equal length fetched alongside for the tile changes
+- [x] Discounts: 7 tiles with change, by store / button (sort $ or uses) / category (L2 → L3, §4.8) /
+      employee / week / month / largest; coverage sentence
+- [x] Returns: 4 tiles, by store / flagged / by employee / repeat refunders; the 3-day banking lag
+- [x] Editor (admins, superusers): every name seen, §4.8 three states, Save sends only changed names
+- [x] Loading / empty / error / 403 states; every API string escaped (`drEsc`, quote-safe)
+- [x] `CACHE_NAME` bump + shell-cache pin; browser-mobile-menu's EXPECT gains the row
+- [x] Verify: scripts/test-discounts-page.mjs (fails on base), scripts/browser-discounts-page.mjs in
+      light + dark (contrast computed, 375px, second render, Save payload, manager, hostile string)
+
+**Review (2026-11-12, local commit on `claude/discounts-page`, not pushed):** `npm test` 12,018 assertions /
+136 suites green (base 11,942 / 135); test-discounts-page.mjs 59, fails on base (14) and with `drEsc` made a
+no-op (12). browser-discounts-page.mjs 207/207: light, dark, pure black, Halloween; contrast minimums light
+5.53 (tile label) / dark 5.21 (header, muted) / errors 4.83 light; 375px no sideways scroll, sticky column
+pinned + opaque; store and date changes re-render; Save POSTs exactly the changed names; manager has no
+editor; staff refused; 403 has no Retry. browser-mobile-menu.mjs: 163 pass, 6 fail — the SAME 6 on the base
+build (associates get Submit Photos via `ASSOCIATE_OPEN_PAGES`, its EXPECT was never updated); not touched.
+- [ ] Brian: review, push, PR, merge (Pages deploys the frontend; no worker change, no migration)
+
 # Discounts & Returns reporting (2026-11-12) — backend (PR 1 of 2)
 
 **Ask (Brian):** a Discounts & Returns page from Clover data, so "why did October discounts jump" or
