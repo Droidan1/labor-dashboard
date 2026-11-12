@@ -1,3 +1,63 @@
+# Discounts & Returns reporting (2026-11-12) — backend (PR 1 of 2)
+
+**Ask (Brian):** a Discounts & Returns page from Clover data, so "why did October discounts jump" or
+"what were Coliseum's manual refunds" never needs clover.com. Step 0 = read only, show plan + fields.
+
+**What already exists (measured 2026-11-12, read-only):**
+- Credentials: per-store `BLx_API_TOKEN` Worker secrets + `BLx_MERCHANT_ID` vars. BL16 shares BL12's
+  merchant (`1AEWTY5Q9A3G1`); `ALL_STORES` excludes BL12. No new secrets needed.
+- Returns are ALREADY banked: `payment_archive` (kind refund | manual, employee name, reason, order_id,
+  refund_of) + `payment_archive_items` (receipt lines, `refunded` flag). Prod holds Sept 1 → Nov 8 for
+  all 6 stores, 69/69 days complete each. Coliseum Oct 22 + 24 manual = 6 refunds, $764.64 (matches Clover).
+- Discount DOLLARS exist per store-day (KV `items:<store>:<date>` totals/categories) and per item from
+  Oct 14 (`item_day_lines`, line vs order split). Hub: Sept $62,635.33, Oct $94,184.81 (Clover: ~$60.9K,
+  ~$92.9K). Discount NAMES, buttons and employees are stored nowhere.
+- Nightly 03:55 ET: snapshot + clientCreatedTime sweep of today and 2 prior days (aggregateItemSales with
+  an item-line sink), then payment archive banks T−3.
+
+**Clover docs (docs.clover.com reference, checked 2026-11-12):** Discount = {id, name, amount (cents,
+≤0), percentage (whole %), discount{id} = the register button, approver{id}}, same shape on order and
+line. Order: employee{id}, clientCreatedTime, modifiedTime (filterable). Refund: amount incl. tax, taxAmount,
+employee, payment, orderRef, lineItems, reason, voided, status (not `result`). Credit: amount, taxAmount,
+employee, orderRef, tender, reason, voided, result. 🛑 Expanded lists cap at 100 and can't be paged; docs
+allow 3 expansions per call (the hub already sends 4 and it works, so add none). 16 req/s, 5 concurrent per token.
+
+**Fields — `discount_lines`, one row per discount per receipt line it lands on**
+store · date (ET day of clientCreatedTime, the hub's own day) · ts · order_id · level (item | order) ·
+app_id (discount element id = one press) · button_id (`discount.id`) · name · percentage · fixed_amount ·
+value ($ on this line: item = amount or line gross × %; order = amount or subtotal × %, split by line net,
+the hub's existing rule) · line_id · line_name · item_id · l2 · l3 · employee (order.employee → name) ·
+approver (→ name) · banked_at. Ledger `discount_days`: store, date, apps, rows, total, expected (KV
+discount total), complete, note. `discount_classes`: name → planned | manual, editable by admins.
+Returns: no new table; read `payment_archive` + `payment_archive_items`. Going forward also bank a credit's
+`reason` (today it is written as null).
+
+**Decided (Brian, 2026-11-12):** the plan's defaults — day-bucketed nightly banking (not a modifiedTime
+cursor), backend first and to prod early so Sept 1 is banked before it ages out, owners/admins all stores +
+managers their own, % of gross retail without bins and live. "Make sure you update the MCP so it can read
+the discounts, then start the backend." The `payment_archive(order_id)` index was dropped: every payment
+refund links to its sale by `refund_of` (234 of 234 since Sept 1), a primary-key lookup.
+
+**Backend (this PR)**
+- [x] migration-089: `discount_lines`, `discount_days` (ledger), `discount_classes` (editable mapping)
+- [x] aggregateItemSales fills `lineSink.discounts` in the pass that books the Retail Summary's discounts;
+      `discountElementCents` is now the ONE copy of the amount/percentage rule (both loops call it)
+- [x] saveItemSalesSnapshot banks it beside item_day_lines (nightly sweep + items-snapshot); a day older
+      than the sweep's window (today − 2) is never shrunk
+- [x] `POST ?action=bank-discounts` backfill: superuser, dry unless dry=0, ≤ 62 store-days, writes ONLY the
+      discount tables, reconciles each day with its items: snapshot, WOULD_LOSE_ROWS unless force=1
+- [x] `GET ?action=discounts`, `?action=returns`, `GET/POST ?action=discount-classes` (POST = admins)
+- [x] MCP + CLI: get_discounts, get_discount_classes, get_returns (28 reads); retjg-mcp 1.6.0
+- [x] Manual refunds now bank Clover's `reason` (was always null)
+- [x] scripts/test-discount-record.mjs (73); read-through, MCP and CLI pins updated; `npm test` 135 suites green
+- [ ] Staging: migration-089, worker, dry-run backfill of a few days against real Clover
+- [ ] Prod (Brian's yes): migration-089, worker, retjg-mcp; then backfill Sept 1 → T−3 oldest first,
+      chunk 1 spot-checked; reconcile with Clover's Sales report
+- [ ] Seed `discount_classes` from the names the backfill finds (Brian confirms the planned/manual list)
+
+**Page (PR 2)**
+- [ ] Discounts & Returns page per DESIGN.md §4.8, both themes
+
 # Remove the header notifications bell (2026-11-11)
 
 **Ask (Brian):** remove the in-app notifications that say which store is pacing at what % ("Battle

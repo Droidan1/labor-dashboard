@@ -33,7 +33,7 @@ const LEGACY_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26'];
 // to `initialize` (the spec's example does; the Python SDK falls back only then).
 const MODERN_VERSIONS = ['2026-07-28'];
 const P = 'io.modelcontextprotocol/';
-const SERVER_INFO = { name: 'retjg-hub', title: 'RETJG HUB sales, labor and inventory', version: '1.5.0' };
+const SERVER_INFO = { name: 'retjg-hub', title: 'RETJG HUB sales, labor and inventory', version: '1.6.0' };
 const CAPABILITIES = { tools: { listChanged: false } };
 // How long a 2026 client may reuse server/discover and tools/list. Short, because a
 // deploy that changes QUERIES should reach clients within minutes. 'private': this caller

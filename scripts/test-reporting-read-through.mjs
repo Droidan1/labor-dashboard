@@ -63,7 +63,7 @@ for (const s of STORES) for (const [j, date] of days.entries()) {
 }
 
 // The Inventory pages' tables, a few real rows each, and Clover's item list for BL2.
-for (const m of ['002', '011', '015', '058', '062', '063', '064', '065', '078', '084']) db.exec(fs.readFileSync(path.join(repo, `migration-${m}.sql`), 'utf8'));
+for (const m of ['002', '011', '015', '058', '062', '063', '064', '065', '078', '084', '089']) db.exec(fs.readFileSync(path.join(repo, `migration-${m}.sql`), 'utf8'));
 applyMigrationAlters(db, repo);
 const ago = (h) => new Date(Date.now() - h * 3600e3).toISOString();
 db.prepare(`INSERT INTO sale_schedules (schedule_group, store, item_id, item_name, discount_kind, discount_value,
@@ -101,6 +101,17 @@ db.prepare(`INSERT INTO payment_archive_items (store, date, order_id, seq, name,
 db.prepare(`INSERT INTO item_day_lines (store, date, snapshot_time, item_count, net, items_json, other_json) VALUES ('BL2','2026-10-01','t',1,7.5,?,?)`)
   .run(JSON.stringify([{ itemId: 'I1', name: 'Brass lamp', code: 'BL-1', cloverCategory: 'FG BL HOME - DECOR', l2: 'Home', l3: 'FG BL HOME - DECOR', source: 'clover-category', qty: 1, gross: 7.5, lineDiscounts: 0, orderDiscounts: 0, refunds: 0, net: 7.5, cost: 2, costSource: 'category', orders: 1 }]),
        JSON.stringify({ nonItem: 0, crossDayRefunds: 0, unattributedRefunds: 0, manualRefunds: 0 }));
+// Discounts & Returns (2026-11-12): one BL1 discount with its class, its ledger day, and a
+// refund of the archived BL1 payment, so discounts, returns and discount-classes compare real payloads.
+db.exec(`INSERT INTO discount_lines (store, date, app_id, l2, l3, level, order_id, ts, button_id, name, name_key, percentage, fixed_cents,
+           value_cents, lines, line_id, line_name, item_id, employee_id, employee, approver_id, approver, snapshot_time)
+           VALUES ('BL1','2026-10-01','D1','Consumable Food','FG BL CONSUMABLES - FOOD - SNACKS','item','O1',1759330800000,'B1','$1 off','$1 off',
+                   NULL,100,100,1,'L1','Snacks','I9','E1','Pat','E2','Morgan','t');
+         INSERT INTO discount_days (store, date, snapshot_time, apps, rows, total_cents, expected_cents, complete, note, source)
+           VALUES ('BL1','2026-10-01','t',1,1,100,100,1,NULL,'snapshot');
+         INSERT INTO discount_classes (name_key, name, class, updated_by, updated_at) VALUES ('$1 off','$1 off','manual','u-su','t');
+         INSERT INTO payment_archive (id, store, date, kind, order_id, amount, tax, employee, reason, refund_of, banked_at)
+           VALUES ('R1','BL1','2026-10-02','refund','O1',-4.5,0,'Pat','Returned goods','P1','x');`);
 
 env.BL2_MERCHANT_ID = 'M2';
 env.BL2_API_TOKEN = 'clover-token-bl2';
@@ -170,6 +181,10 @@ const ACTIONS = {
   'whatnot-shows':       '?action=whatnot-shows&from=2026-10-01&to=2026-10-03',
   'whatnot-items':       '?action=whatnot-items&from=2026-10-01&to=2026-10-03',
   'whatnot-products':    '?action=whatnot-products&limit=5',
+  // Discounts & Returns (2026-11-12)
+  'discounts':           '?action=discounts&from=2026-10-01&to=2026-10-03&class=manual&limit=10',
+  'returns':             '?action=returns&from=2026-10-01&to=2026-10-03&kind=refund',
+  'discount-classes':    '?action=discount-classes&from=2026-10-01&to=2026-10-03',
 };
 
 const fetchW = (r) => worker.fetch(r, env, ctx);

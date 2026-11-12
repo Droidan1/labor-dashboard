@@ -2176,7 +2176,9 @@ function buildTransactions(orders, refunds, credits, tenderMap, employeeMap, sto
       source: "Device",
       cashTendered: null,
       result: c.result || null,
-      reason: null,
+      // Clover's Credit carries a `reason` (docs.clover.com, Get all credits). It was banked as
+      // null until 2026-11-12, so earlier manual refunds read as having none.
+      reason: c.reason || null,
     });
   }
 
@@ -2202,6 +2204,134 @@ function buildTransactions(orders, refunds, credits, tenderMap, employeeMap, sto
     store, date: dateStr, rows, counts,
     totals: { payments: r2(payments), count: counts.payment, tax: r2(tax), tip: r2(tip), refunded: r2(refunded) },
   };
+}
+
+// ═══ THE DISCOUNT RECORD (migration-089) ═══════════════════════════════════
+// Which discount, on what, rung by whom — one row per application and category, built by
+// aggregateItemSales' line sink in the pass that books the Retail Summary's discounts.
+// Brian, 2026-11-12: a Discounts & Returns page and agent reads instead of clover.com.
+
+// The nightly sweep re-snapshots today and the 2 days before it (SWEEP_LOOKBACK_DAYS), so a
+// day that young is still being corrected and its record may shrink — a voided order really
+// does take its discount with it. Older than that, a smaller answer is Clover thinning the day
+// out, and the record must not shrink with it.
+const DISCOUNT_FRESH_DAYS = 2;
+// How far the record may sit from the items: snapshot's discount total before the day is held
+// as incomplete. Both are whole cents from one rule (discountElementCents), so a healthy day
+// differs by rounding at most; anything more is a different set of orders.
+const DISCOUNT_RECONCILE_CENTS = 5;
+// Store-days one bank-discounts call will attempt. Each costs 1–3 Clover pages (the sweep's
+// 3-day-wide order window) plus a KV read and a few D1 batches; one store-month per call
+// keeps a run to a few minutes and well inside a Worker's subrequest and query ceilings.
+const DISCOUNT_BANK_MAX_STORE_DAYS = 62;
+
+// A snapshot's discounts (negative dollars) as positive whole cents, or null if it has none.
+function discountCentsOf(dollars) {
+  const n = Number(dollars);
+  return dollars == null || !Number.isFinite(n) ? null : Math.round(Math.abs(n) * 100);
+}
+
+// Write one store-day of the record, or say why not. Replaces the day whole: the wipe rides in
+// the first batch and the ledger in the last, so a day either has its new rows and ledger or —
+// if a middle batch fails — a ledger saying it is incomplete. Names (employee, approver) are
+// resolved now and stored, like payment_archive, so a deleted employee does not blank October.
+async function bankDiscountLines(env, store, dateStr, snapshotTime, rows, expectedCents, { source, allowShrink = false, dry = false } = {}) {
+  const apps = new Set(rows.map(r => r.appId)).size;
+  const totalCents = rows.reduce((s, r) => s + r.valueCents, 0);
+  const out = { store, date: dateStr, apps, rows: rows.length, totalCents, expectedCents: expectedCents ?? null,
+                complete: 0, note: null, wrote: false, skipped: null };
+  if (expectedCents == null) {
+    out.note = "no items: snapshot to compare against";
+  } else if (Math.abs(totalCents - expectedCents) <= DISCOUNT_RECONCILE_CENTS) {
+    out.complete = 1;
+  } else {
+    out.note = `record ${(totalCents / 100).toFixed(2)} vs snapshot ${(expectedCents / 100).toFixed(2)}`;
+  }
+
+  // 🛑 Never replace a banked day with a thinner one, unless it is young enough that Clover's
+  // answer is the correction (allowShrink) or the caller forces it.
+  const existing = await env.DB.prepare(
+    "SELECT apps, total_cents FROM discount_days WHERE store = ? AND date = ?"
+  ).bind(store, dateStr).first();
+  if (existing && apps < existing.apps && !allowShrink) {
+    out.skipped = "WOULD_LOSE_ROWS";
+    out.note = `already banked with ${existing.apps} discounts ($${(existing.total_cents / 100).toFixed(2)}); this fetch has ${apps}`;
+    return out;
+  }
+  if (dry) { out.skipped = "DRY_RUN"; return out; }
+
+  const names = await fetchCloverLabelMap(store, env, "employees").catch(() => ({}));
+  const nameOf = (id) => (id && names[id]) || null;
+  const lineStmt = env.DB.prepare(
+    `INSERT INTO discount_lines
+       (store, date, app_id, l2, l3, level, order_id, ts, button_id, name, name_key, percentage, fixed_cents,
+        value_cents, lines, line_id, line_name, item_id, employee_id, employee, approver_id, approver, snapshot_time)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+  );
+  const ledgerStmt = env.DB.prepare(
+    `INSERT OR REPLACE INTO discount_days
+       (store, date, snapshot_time, apps, rows, total_cents, expected_cents, complete, note, source)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`
+  );
+  // D1 caps bound parameters at 100 per statement (23 here) and runs each batch as one
+  // transaction, so 100 statements a batch; a small day is a single atomic batch.
+  const stmts = [
+    env.DB.prepare("DELETE FROM discount_lines WHERE store = ? AND date = ?").bind(store, dateStr),
+    ...rows.map(r => lineStmt.bind(store, dateStr, r.appId, r.l2, r.l3, r.level, r.orderId, r.ts ?? null,
+      r.buttonId, r.name, r.nameKey, r.percentage, r.fixedCents, r.valueCents, r.lines, r.lineId, r.lineName,
+      r.itemId, r.employeeId, nameOf(r.employeeId), r.approverId, nameOf(r.approverId), snapshotTime)),
+    ledgerStmt.bind(store, dateStr, snapshotTime, apps, rows.length, totalCents, expectedCents ?? null,
+      out.complete, out.note, source),
+  ];
+  try {
+    for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
+  } catch (e) {
+    // Rows may now be half-written: the ledger must not go on vouching for the old day.
+    await ledgerStmt.bind(store, dateStr, snapshotTime, apps, rows.length, totalCents, expectedCents ?? null,
+      0, `write failed partway, re-bank: ${e.message}`, source).run().catch(() => {});
+    throw e;
+  }
+  out.wrote = true;
+  return out;
+}
+
+// One ET day's orders as the nightly sweep sees them: a createdTime window `lookForwardDays`
+// wide (to catch orders rung offline and synced late), kept to those whose clientCreatedTime —
+// the register's own clock — falls on `dateStr`. Shared by snapshotDayByClientTime and the
+// discount backfill, so the backfill re-reads a day exactly as its items: snapshot was built.
+// null when Clover did not return a complete order list.
+async function fetchClientTimeBucket(store, env, dateStr, lookForwardDays) {
+  const etDay = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(ms));
+  const dayStart = getStartOfDayET(dateStr);
+  const dayEnd = getStartOfDayET(addDaysYmd(dateStr, 1));
+  const wideUntil = getStartOfDayET(addDaysYmd(dateStr, lookForwardDays + 1));
+  const wide = await fetchItemOrders(store, env, dayStart, wideUntil);
+  if (!wide) return null;
+  const bucket = wide.filter(o =>
+    etDay(o.clientCreatedTime != null ? o.clientCreatedTime : o.createdTime) === dateStr
+  );
+  return { wide, bucket, dayStart, dayEnd };
+}
+
+// Backfill one store-day of the discount record from Clover. Writes ONLY discount_lines and
+// discount_days — never the items: snapshot, item_day_lines or daily_sales, which is what makes
+// re-reading an old day safe here (Destructive Operations rule 1 is about overwriting those).
+// Refunds play no part in a discount's value, so none are fetched. Categories use today's
+// catalogue and overrides, so an item re-filed since may sit under its new L2; totals do not move.
+async function bankDiscountsDay(store, env, dateStr, { dry = true, force = false, catMap = {}, overrides, itemCosts } = {}) {
+  const closed = STORE_CLOSED_FROM[store];
+  if (closed && dateStr >= closed) return { store, date: dateStr, skipped: "CLOSED", note: `closed from ${closed}` };
+  const day = await fetchClientTimeBucket(store, env, dateStr, DISCOUNT_FRESH_DAYS);
+  if (!day) return { store, date: dateStr, skipped: "INCOMPLETE_FETCH", note: "Clover did not return a complete order list" };
+  const sink = {};
+  aggregateItemSales(day.bucket, catMap, store, dateStr, overrides, itemCosts, [], [], [], sink);
+  const snap = env.SALES_SNAPSHOTS
+    ? await env.SALES_SNAPSHOTS.get(`items:${store.toLowerCase()}:${dateStr}`, "json").catch(() => null)
+    : null;
+  const out = await bankDiscountLines(env, store, dateStr, new Date().toISOString(), sink.discounts || [],
+    discountCentsOf(snap?.totals?.discounts), { source: "backfill", allowShrink: force, dry });
+  out.orders = day.bucket.length;
+  return out;
 }
 
 // ═══ THE PAYMENT ARCHIVE ══════════════════════════════════════════════════
@@ -2928,6 +3058,19 @@ async function saveItemSalesSnapshot(env, store, dateStr, itemData, hourSlots = 
              JSON.stringify(itemLines.items), JSON.stringify(itemLines.other || {})).run();
     } catch (e) {
       console.warn(`[item-lines] bank failed ${store}/${dateStr}: ${e.message}`);
+    }
+    // The discount record (migration-089), from the same pass, so it matches this snapshot's
+    // discounts to the cent. An old date re-snapshotted by hand may not shrink it: Clover thins
+    // old days out, and the record of what was discounted would go with them.
+    if (Array.isArray(itemLines.discounts)) {
+      try {
+        const { dateStr: todayET } = getETToday();
+        const r = await bankDiscountLines(env, store, dateStr, snapshotTime, itemLines.discounts,
+          discountCentsOf(itemData?.totals?.discounts), { source: "snapshot", allowShrink: dateStr >= addDaysYmd(todayET, -DISCOUNT_FRESH_DAYS) });
+        if (r.skipped || !r.complete) console.warn(`[discounts] ${store}/${dateStr}: ${r.skipped || "incomplete"} ${r.note || ""}`);
+      } catch (e) {
+        console.warn(`[discounts] bank failed ${store}/${dateStr}: ${e.message}`);
+      }
     }
   }
 }
@@ -3810,7 +3953,9 @@ function matchOverridePattern(rawName, imNum, patterns) {
 // refusal. One store up to 92 days; every store up to 31 — a store-day is ~500 receipt
 // lines or ~800 items, so a call stays a bounded read, never the whole table. Stores are
 // what this caller holds (allowedStores; null = the key or a superuser = every store).
-function itemRangeScope(url, currentUser, corsJson) {
+// `allStoresMaxDays` widens the every-store cap for reads that aggregate in SQL (discounts,
+// returns), where a quarter of every store is still a bounded answer.
+function itemRangeScope(url, currentUser, corsJson, { allStoresMaxDays = 31 } = {}) {
   const refuse = (status, error) => ({ response: new Response(JSON.stringify({ error }), { status, headers: corsJson }) });
   const from = url.searchParams.get("from") || "", to = url.searchParams.get("to") || "";
   const realDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && new Date(s + "T12:00:00Z").toISOString().slice(0, 10) === s;
@@ -3822,7 +3967,7 @@ function itemRangeScope(url, currentUser, corsJson) {
   const allowed = allowedStores(currentUser);
   const stores = storeParam ? [storeParam] : (allowed === null ? ALL_STORES : ALL_STORES.filter(s => allowed.includes(s)));
   const days = Math.round((Date.parse(to + "T12:00:00Z") - Date.parse(from + "T12:00:00Z")) / 864e5) + 1;
-  if (days > (storeParam ? 92 : 31)) return refuse(400, storeParam ? "At most 92 days for one store" : "At most 31 days for every store; give a store for longer");
+  if (days > (storeParam ? 92 : allStoresMaxDays)) return refuse(400, storeParam ? "At most 92 days for one store" : `At most ${allStoresMaxDays} days for every store; give a store for longer`);
   return { from, to, stores, days };
 }
 
@@ -3863,13 +4008,58 @@ function itemLineSource(l2Source, l2, l3) {
   return l2Source || "custom";
 }
 
+// What one Clover discount element takes off, in cents, against `baseCents` (the line's
+// gross for an item discount; the post-line-discount subtotal for an order discount). Clover
+// gives a flat discount as `amount` (negative cents) and a percent one as `percentage` with no
+// amount (docs.clover.com, Discount). THE one place this rule lives: the Retail Summary's
+// discount totals and the discount record (migration-089) both come from it.
+function discountElementCents(d, baseCents) {
+  if (d.amount != null && d.amount !== 0) return Math.abs(d.amount);
+  if (d.percentage && baseCents > 0) return Math.round(baseCents * Number(d.percentage) / 100);
+  return 0;
+}
+
+// The key a discount NAME is classified by (discount_classes): the same button carries a
+// different Clover id at every merchant, but the same name.
+function discountNameKey(name) {
+  return String(name ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+// One row of the discount record per application and category (migration-089). An item-level
+// discount lands on one line; an order-level one is summed per L2/L3 over the lines it covered.
+function addDiscountRow(rows, order, d, level, cents, l2, l3, li, index) {
+  const appId = d.id || `${order.id || ""}:${level}:${li?.id || ""}:${index}`;
+  const key = [appId, l2, l3].join("\u0000");
+  let r = rows.get(key);
+  if (!r) {
+    const pct = d.percentage != null && d.percentage !== "" ? Number(d.percentage) : null;
+    r = {
+      level, appId, buttonId: d.discount?.id || null, name: d.name ?? null, nameKey: discountNameKey(d.name),
+      percentage: Number.isFinite(pct) ? pct : null,
+      fixedCents: d.amount != null && d.amount !== 0 ? Math.abs(d.amount) : null,
+      valueCents: 0, lines: 0, orderId: order.id || "",
+      ts: order.clientCreatedTime ?? order.createdTime ?? null,
+      // Who took the order. A keyed-amount order can carry none; the payment's employee then.
+      employeeId: order.employee?.id || (order.payments?.elements || []).find(p => p.employee?.id)?.employee?.id || null,
+      approverId: d.approver?.id || null,
+      lineId: li?.id || null, lineName: li?.name ?? null, itemId: li?.item?.id || null,
+      l2, l3,
+    };
+    rows.set(key, r);
+  }
+  r.valueCents += cents;
+  r.lines += 1;
+}
+
 // lineSink (optional, Brian 2026-10-16): when a caller passes {}, it is filled with the
-// per-ITEM record — { items: [...], other: {...} } — that saveItemSalesSnapshot banks to
-// D1 item_day_lines. It is filled from the same lines, discounts and refund shares as the
+// per-ITEM record — { items: [...], other: {...}, discounts: [...] } — that saveItemSalesSnapshot
+// banks to D1 item_day_lines (and, since 2026-11-12, the discounts to discount_lines). It is filled from the same lines, discounts and refund shares as the
 // categories below, so Σ items.net + Σ other == totals.netSales. Nothing is added to the
 // returned object: that object is spread into KV and served live.
 function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, itemCosts, refundElements = [], extraOrdersForRefundLookup = [], manualRefundElements = [], lineSink = null) {
   const _items = lineSink ? new Map() : null;
+  // The discount record (migration-089), filled beside the items: lineSink.discounts.
+  const _discRows = lineSink ? new Map() : null;
   // Cents that reach no item: the residual, refunds against orders not fetched today, refunds
   // that cannot be split, manual refunds. Signed as they move net.
   const _other = { nonItem: 0, crossDayRefunds: 0, unattributedRefunds: 0, manualRefunds: 0 };   // + rounding, at the end
@@ -3993,11 +4183,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       const liGrossCents = Math.abs((li.price || 0) * qty);
       let lineDiscCents = 0;
       for (const d of (li.discounts?.elements || [])) {
-        if (d.amount != null && d.amount !== 0) {
-          lineDiscCents += Math.abs(d.amount);
-        } else if (d.percentage) {
-          lineDiscCents += Math.round(liGrossCents * Number(d.percentage) / 100);
-        }
+        lineDiscCents += discountElementCents(d, liGrossCents);
       }
       liDiscCache.set(li, lineDiscCents);
       if ((li.price || 0) >= 0) {
@@ -4005,12 +4191,13 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       }
     }
     let orderDiscCents = 0;
+    // The order-level discounts one by one, for the discount record (lineSink only). Each
+    // is valued exactly as it is added to orderDiscCents, which is their sum.
+    const _orderApps = _discRows ? [] : null;
     for (const d of (order.discounts?.elements || [])) {
-      if (d.amount != null && d.amount !== 0) {
-        orderDiscCents += Math.abs(d.amount);
-      } else if (d.percentage && subtotalAfterLineDiscCents > 0) {
-        orderDiscCents += Math.round(subtotalAfterLineDiscCents * Number(d.percentage) / 100);
-      }
+      const c = discountElementCents(d, subtotalAfterLineDiscCents);
+      orderDiscCents += c;
+      if (_orderApps && c > 0) _orderApps.push({ d, cents: c });
     }
 
     for (const li of lineItems) {
@@ -4385,6 +4572,27 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
         const _b = (l2 === 'Bin Products') ? _ordCh.bin : _ordCh.retail;
         _b.net += (grossCents - discCents) / 100;
         _b.units += qty;
+
+        // The discount record: the cents just booked above, by the discount they came from.
+        // Item-level ones are valued element by element exactly as liDiscCache valued them;
+        // this line's share of the order-level ones (discCents − lineDiscOnly) is split over
+        // those discounts by size, floored, with the last taking the remainder, so the rows
+        // always add up to what the category was charged — never a cent more or less.
+        if (_discRows && discCents > 0) {
+          (li.discounts?.elements || []).forEach((d, i) => {
+            const c = discountElementCents(d, grossCents);
+            if (c > 0) addDiscountRow(_discRows, order, d, "item", c, l2, l3Key, li, i);
+          });
+          const share = discCents - lineDiscOnly;
+          if (share > 0 && _orderApps.length) {
+            let left = share;
+            _orderApps.forEach((a, i) => {
+              const c = i === _orderApps.length - 1 ? left : Math.floor(share * a.cents / orderDiscCents);
+              left -= c;
+              if (c > 0) addDiscountRow(_discRows, order, a.d, "order", c, l2, l3Key, null, i);
+            });
+          }
+        }
       }
     }
 
@@ -4693,6 +4901,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
     const itemsNet = lineSink.items.reduce((s, i) => s + i.net, 0) + Object.values(other).reduce((s, v) => s + v, 0);
     other.rounding = roundCents(roundCents(totalNet) - itemsNet);
     lineSink.other = other;
+    lineSink.discounts = [..._discRows.values()];
   }
 
   const totalGp = totalNet - totalCost;
@@ -4998,18 +5207,10 @@ async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, un
 // nightly snapshot. Honors the manual-override and zero-order guards. Returns
 // the snapshot result (or null if the store has no creds / fetch failed).
 async function snapshotDayByClientTime(store, env, dateStr, lookForwardDays = 3) {
-  const etDay = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(ms));
-  const addDays = (d, n) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
-  const dayStart = getStartOfDayET(dateStr);
-  const dayEnd = getStartOfDayET(addDays(dateStr, 1));
-  const wideUntil = getStartOfDayET(addDays(dateStr, lookForwardDays + 1));
-
   // Wide fetch (catch late syncs), then keep only this day's actual sales.
-  const wide = await fetchItemOrders(store, env, dayStart, wideUntil);
-  if (!wide) return null;
-  const bucket = wide.filter(o =>
-    etDay(o.clientCreatedTime != null ? o.clientCreatedTime : o.createdTime) === dateStr
-  );
+  const day = await fetchClientTimeBucket(store, env, dateStr, lookForwardDays);
+  if (!day) return null;
+  const { wide, bucket, dayStart, dayEnd } = day;
 
   // Category-based bin/retail/total (same derivation as the nightly cron), and
   // refresh the item-sales snapshot so the Item Sales tab stays correct too.
@@ -5337,6 +5538,10 @@ const ACTION_BUSINESS = new Map([
   ["thumbnail-upload", "bl"],
   ["thumbnails", "bl"],
   ["bank-transactions", "bl"],
+  ["bank-discounts", "bl"],
+  ["discounts", "bl"],
+  ["discount-classes", "bl"],
+  ["returns", "bl"],
   ["transactions", "bl"],
   ["item-sales", "bl"],
   ["item-lines", "bl"],
@@ -18058,6 +18263,10 @@ export default {
     // whatnot-shows, whatnot-items and whatnot-products joined 2026-10-30 (Brian: Whatnot in the
     // Hub and its MCP). The first two read the D1 mirror; whatnot-products reads Whatnot live
     // (GET only, one page). `cursor` is that page token. whatnot-sync (POST) is NOT here.
+    //
+    // discounts, returns and discount-classes joined 2026-11-12 (Brian: the MCP reads the
+    // discounts). D1 reads (plus items: snapshots for gross retail); discount-classes' POST and
+    // bank-discounts are writes and are NOT here — the gate refuses anything but GET anyway.
     const REPORTING_READ_THROUGH = new Set([
       "weekly-summary", "weekly-store-detail", "weekly-t13", "category-series", "category-hours",
       "labor", "labor-plan",
@@ -18066,6 +18275,7 @@ export default {
       "supply-requests", "supply-request", "supply-budgets",
       "item-sales", "item-lines",
       "whatnot-shows", "whatnot-items", "whatnot-products",
+      "discounts", "returns", "discount-classes",
     ]);
     // 🛑 And only the parameters those handlers read. A read-through
     // request falls through the whole route chain to its handler, so any route
@@ -18076,6 +18286,7 @@ export default {
     const READ_THROUGH_PARAMS = new Set([
       "action", "key", "from", "to", "store", "level", "grain", "week", "year", "end", "endWeek", "weeks",
       "offset", "filter", "months", "limit", "id", "status", "month", "cursor",
+      "category", "employee", "class", "search", "kind",
     ]);
     const reportingAction = url.searchParams.get("action");
     const reportingKeyGiven = request.headers.has("X-API-Key") || url.searchParams.has("key");
@@ -30940,6 +31151,63 @@ export default {
     }
 
     // ── Item sales by L2 category: ?action=items&store=BL1[&date=2026-04-08]
+    // ─── Backfill the discount record (migration-089) ────────────────────
+    //    POST ?action=bank-discounts&start=YYYY-MM-DD&end=YYYY-MM-DD[&store=BL1|ALL][&dry=0][&force=1]
+    // POST-only, superuser-only, and a DRY RUN unless dry=0. Re-reads each store-day from
+    // Clover the way the nightly sweep does and writes ONLY discount_lines / discount_days
+    // (bankDiscountsDay), so no healthy snapshot is overwritten. A day already banked is never
+    // replaced by one with fewer discounts unless force=1. Run oldest days first: they are the
+    // ones Clover is thinning out.
+    if (request.method === "POST" && url.searchParams.get("action") === "bank-discounts") {
+      const guard = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { superuserOnly: true });
+      if (guard) return guard;
+      const storeParam = (url.searchParams.get("store") || "").toUpperCase();
+      const stores = storeParam === "ALL" || !storeParam ? ALL_STORES : [storeParam];
+      if (stores.some(st => !ALL_STORES.includes(st))) {
+        return new Response(JSON.stringify({ error: `Unknown store ${storeParam}` }), { status: 400, headers: corsJson });
+      }
+      const start = url.searchParams.get("start") || "", end = url.searchParams.get("end") || "";
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+        return new Response(JSON.stringify({ error: "start and end are required (YYYY-MM-DD)" }), { status: 400, headers: corsJson });
+      }
+      if (end < start) {
+        return new Response(JSON.stringify({ error: "end precedes start" }), { status: 400, headers: corsJson });
+      }
+      const dry = url.searchParams.get("dry") !== "0";
+      const force = url.searchParams.get("force") === "1";
+      // Today has no items: snapshot to check against yet; the nightly writes it.
+      const { dateStr: discToday } = getETToday();
+      const days = enumDatesInclusive(start, end).filter(d => d < discToday);
+      const storeDays = days.length * stores.length;
+      if (storeDays > DISCOUNT_BANK_MAX_STORE_DAYS) {
+        return new Response(JSON.stringify({
+          error: "Range too wide for one invocation", code: "BUDGET_EXCEEDED", storeDays, limit: DISCOUNT_BANK_MAX_STORE_DAYS,
+          hint: "Narrow the range, or run one store at a time with &store=BL1",
+        }), { status: 413, headers: corsJson });
+      }
+      const [overrides, itemCosts] = await Promise.all([fetchItemOverrides(env), fetchItemCosts(env)]);
+      const report = [];
+      for (const st of stores) {
+        const catMap = await fetchItemCategoryMap(st, env);
+        for (const d of days) {
+          try {
+            report.push(await bankDiscountsDay(st, env, d, { dry, force, catMap, overrides, itemCosts }));
+          } catch (e) {
+            report.push({ store: st, date: d, skipped: "ERROR", note: e.message });
+          }
+        }
+      }
+      const attention = report.filter(r => (r.skipped && r.skipped !== "DRY_RUN" && r.skipped !== "CLOSED") || (!r.skipped && !r.complete) || (r.skipped === "DRY_RUN" && !r.complete));
+      return new Response(JSON.stringify({
+        ok: true, dry, force, start, end, stores,
+        wrote: report.filter(r => r.wrote).length,
+        totalCents: report.reduce((s, r) => s + (r.totalCents || 0), 0),
+        expectedCents: report.reduce((s, r) => s + (r.expectedCents || 0), 0),
+        needsAttention: attention.map(r => ({ store: r.store, date: r.date, skipped: r.skipped, note: r.note })),
+        report,
+      }), { headers: corsJson });
+    }
+
     // ─── Bank transaction detail into the archive ───────────────────────
     // POST-only and superuser-only: this WRITES. Seeds the archive with whatever
     // Clover still holds, so today's ~90-day window becomes permanent history.
@@ -31112,6 +31380,381 @@ export default {
         ok: true, from, to, stores, items, other, net: cents(net),
         coverage: { days: days.length, firstRecord: firstBy, missing, stale },
       }), { headers: corsJson });
+    }
+
+    // ─── Discounts: which discount, on what, rung by whom (migration-089) ──
+    //    GET ?action=discounts&from=YYYY-MM-DD&to=YYYY-MM-DD[&store=BL1][&category=<L2>][&employee=<name>]
+    //        [&class=planned|manual|unclassified][&level=item|order][&search=<text in the name>][&limit=N]
+    // Sums of discount_lines by store, category, discount (button), employee and day, the largest
+    // rows, and the share of gross retail they took (Bin Products and live sales left out of both
+    // sides). Every filter narrows every table. Read-only: D1 and the items: snapshots.
+    // Brian, 2026-11-12: so October's jump is answered here, not on clover.com.
+    if (url.searchParams.get("action") === "discounts" && request.method === "GET") {
+      const range = itemRangeScope(url, currentUser, corsJson, { allStoresMaxDays: 92 });
+      if (range.response) return range.response;
+      const { from, to, stores } = range;
+      const q = (k) => (url.searchParams.get(k) || "").trim();
+      const filters = {
+        category: q("category") || null, employee: q("employee") || null, class: q("class").toLowerCase() || null,
+        level: q("level").toLowerCase() || null, search: q("search") || null,
+      };
+      const bad = (error) => new Response(JSON.stringify({ error }), { status: 400, headers: corsJson });
+      if (filters.class && !["planned", "manual", "unclassified"].includes(filters.class)) return bad("class must be planned, manual or unclassified");
+      if (filters.level && !["item", "order"].includes(filters.level)) return bad("level must be item or order");
+      const limit = Math.min(Math.max(parseInt(q("limit") || "50", 10) || 50, 1), 500);
+      const $ = (cents) => Math.round(Number(cents) || 0) / 100;
+      if (!stores.length) {
+        return new Response(JSON.stringify({ ok: true, from, to, stores, filters, totals: null, byStore: [], byCategory: [],
+          byButton: [], byEmployee: [], byDay: [], byWeek: [], byMonth: [], largest: [], coverage: null }), { headers: corsJson });
+      }
+      const inList = stores.map(() => "?").join(",");
+      const CLS = "COALESCE(c.class, 'unclassified')";
+      const where = [`d.store IN (${inList})`, "d.date BETWEEN ? AND ?"];
+      const binds = [...stores, from, to];
+      if (filters.category) { where.push("d.l2 = ?"); binds.push(filters.category); }
+      if (filters.employee) { where.push("COALESCE(d.employee, d.employee_id) = ?"); binds.push(filters.employee); }
+      if (filters.class) { where.push(`${CLS} = ?`); binds.push(filters.class); }
+      if (filters.level) { where.push("d.level = ?"); binds.push(filters.level); }
+      if (filters.search) {
+        where.push("d.name_key LIKE ? ESCAPE '\\'");
+        binds.push(`%${discountNameKey(filters.search).replace(/[\\%_]/g, m => "\\" + m)}%`);
+      }
+      const FROM = `FROM discount_lines d LEFT JOIN discount_classes c ON c.name_key = d.name_key WHERE ${where.join(" AND ")}`;
+      const run = (sql, extra = []) => env.DB.prepare(sql).bind(...binds, ...extra).all().then(r => r.results || []);
+      let storeRows, orderRows, catRows, buttonRows, empRows, dayRows, largestRows, ledgerRows, salesRows;
+      try {
+        [storeRows, orderRows, catRows, buttonRows, empRows, dayRows, largestRows, ledgerRows, salesRows] = await Promise.all([
+          run(`SELECT d.store, d.level, ${CLS} AS cls, SUM(d.value_cents) AS cents, COUNT(DISTINCT d.app_id) AS apps,
+                      SUM(CASE WHEN d.l2 = 'Bin Products' THEN d.value_cents ELSE 0 END) AS bin_cents
+                 ${FROM} GROUP BY d.store, d.level, cls`),
+          run(`SELECT d.store, COUNT(DISTINCT d.order_id) AS orders ${FROM} GROUP BY d.store`),
+          run(`SELECT d.l2, d.l3, SUM(d.value_cents) AS cents, COUNT(DISTINCT d.app_id) AS apps ${FROM} GROUP BY d.l2, d.l3`),
+          run(`SELECT d.name_key, MAX(d.name) AS name, ${CLS} AS cls, SUM(d.value_cents) AS cents, COUNT(DISTINCT d.app_id) AS apps,
+                      COUNT(DISTINCT d.store) AS stores, GROUP_CONCAT(DISTINCT d.level) AS levels,
+                      MIN(d.percentage) AS pmin, MAX(d.percentage) AS pmax, MIN(d.fixed_cents) AS fmin, MAX(d.fixed_cents) AS fmax
+                 ${FROM} GROUP BY d.name_key, cls`),
+          run(`SELECT d.store, COALESCE(d.employee, d.employee_id, '(unknown)') AS employee, ${CLS} AS cls,
+                      SUM(d.value_cents) AS cents, COUNT(DISTINCT d.app_id) AS apps ${FROM} GROUP BY d.store, employee, cls`),
+          run(`SELECT d.date, ${CLS} AS cls, SUM(d.value_cents) AS cents, COUNT(DISTINCT d.app_id) AS apps ${FROM} GROUP BY d.date, cls`),
+          run(`SELECT d.store, d.date, d.ts, d.order_id, d.level, d.name, ${CLS} AS cls, d.percentage, d.fixed_cents,
+                      d.value_cents, d.lines, d.line_name, d.l2, d.l3, d.employee, d.approver
+                 ${FROM} ORDER BY d.value_cents DESC, d.date, d.ts, d.app_id, d.l2, d.l3 LIMIT ?`, [limit]),
+          env.DB.prepare(`SELECT store, date, complete, note, source FROM discount_days
+                           WHERE store IN (${inList}) AND date BETWEEN ? AND ?`).bind(...stores, from, to).all().then(r => r.results || []),
+          env.DB.prepare(`SELECT store, date, order_count FROM daily_sales
+                           WHERE store IN (${inList}) AND date BETWEEN ? AND ?`).bind(...stores, from, to).all().then(r => r.results || []),
+        ]);
+      } catch (e) {
+        return new Response(JSON.stringify({ error: "The discount record is not available (migration-089)", detail: String(e?.message || e) }), { status: 503, headers: corsJson });
+      }
+
+      // Gross retail per store from the items: snapshots: every category but Bin Products and
+      // live sales (an Auction category, where one exists), narrowed to the category filter.
+      const { dateStr: todayET } = getETToday();
+      const NOT_RETAIL = new Set(["Bin Products", "Auction", "Whatnot"]);
+      const grossBy = Object.fromEntries(stores.map(s => [s, 0]));
+      if (env.SALES_SNAPSHOTS) {
+        const keys = [];
+        for (const s of stores) for (const d of enumDatesInclusive(from, to)) if (d < todayET) keys.push([s, d]);
+        for (let i = 0; i < keys.length; i += 50) {
+          const snaps = await Promise.all(keys.slice(i, i + 50).map(([s, d]) =>
+            env.SALES_SNAPSHOTS.get(`items:${s.toLowerCase()}:${d}`, "json").catch(() => null)));
+          snaps.forEach((snap, j) => {
+            const s = keys[i + j][0];
+            for (const c of (Array.isArray(snap?.categories) ? snap.categories : [])) {
+              if (NOT_RETAIL.has(c.category)) continue;
+              if (filters.category && c.category !== filters.category) continue;
+              grossBy[s] += Math.round((Number(c.gross) || 0) * 100);
+            }
+          });
+        }
+      }
+      const pct = (num, den) => den > 0 ? Math.round(num / den * 10000) / 100 : null;
+
+      const blank = () => ({ cents: 0, apps: 0, item: 0, order: 0, planned: 0, manual: 0, unclassified: 0, bin: 0 });
+      const per = Object.fromEntries(stores.map(s => [s, blank()]));
+      for (const r of storeRows) {
+        const p = per[r.store]; if (!p) continue;
+        p.cents += r.cents; p.apps += r.apps; p[r.level] += r.cents; p[r.cls] += r.cents; p.bin += r.bin_cents;
+      }
+      const ordersBy = Object.fromEntries(orderRows.map(r => [r.store, r.orders]));
+      const shapeTotals = (p, gross, orders) => ({
+        discounts: $(p.cents), applications: p.apps, discountedOrders: orders,
+        itemLevel: $(p.item), orderLevel: $(p.order),
+        planned: $(p.planned), manual: $(p.manual), unclassified: $(p.unclassified),
+        onBins: $(p.bin), grossRetail: $(gross), pctOfGrossRetail: pct(p.cents - p.bin, gross),
+      });
+      const all = blank(); let allGross = 0, allOrders = 0;
+      const byStore = stores.map(s => {
+        const p = per[s];
+        for (const k of Object.keys(all)) all[k] += p[k];
+        allGross += grossBy[s]; allOrders += ordersBy[s] || 0;
+        return { store: s, ...shapeTotals(p, grossBy[s], ordersBy[s] || 0) };
+      });
+
+      const byButton = buttonRows.map(r => ({
+        name: r.name, class: r.cls, discounts: $(r.cents), applications: r.apps, stores: r.stores,
+        levels: String(r.levels || "").split(",").filter(Boolean),
+        percent: r.pmin == null ? null : (r.pmin === r.pmax ? r.pmin : [r.pmin, r.pmax]),
+        amount: r.fmin == null ? null : (r.fmin === r.fmax ? $(r.fmin) : [$(r.fmin), $(r.fmax)]),
+      })).sort((a, b) => b.discounts - a.discounts);
+
+      const empMap = new Map();
+      for (const r of empRows) {
+        const k = r.store + "\u0000" + r.employee;
+        const e = empMap.get(k) || { store: r.store, employee: r.employee, cents: 0, apps: 0, planned: 0, manual: 0, unclassified: 0 };
+        e.cents += r.cents; e.apps += r.apps; e[r.cls] += r.cents;
+        empMap.set(k, e);
+      }
+      const byEmployee = [...empMap.values()].map(e => ({ store: e.store, employee: e.employee, discounts: $(e.cents),
+        applications: e.apps, planned: $(e.planned), manual: $(e.manual), unclassified: $(e.unclassified) }))
+        .sort((a, b) => b.discounts - a.discounts);
+
+      // Chain-wide per day, then the same rolled into weeks (Sunday–Saturday, as the hub's weeks
+      // run) and months, for week-over-week and month-over-month.
+      const dayMap = new Map();
+      for (const r of dayRows) {
+        const e = dayMap.get(r.date) || { cents: 0, apps: 0, planned: 0, manual: 0, unclassified: 0 };
+        e.cents += r.cents; e.apps += r.apps; e[r.cls] += r.cents;
+        dayMap.set(r.date, e);
+      }
+      const roll = (keyOf) => {
+        const m = new Map();
+        for (const [d, e] of [...dayMap.entries()].sort()) {
+          const k = keyOf(d);
+          const t = m.get(k) || { cents: 0, apps: 0, planned: 0, manual: 0, unclassified: 0, days: 0 };
+          for (const f of ["cents", "apps", "planned", "manual", "unclassified"]) t[f] += e[f];
+          t.days++;
+          m.set(k, t);
+        }
+        return [...m.entries()].map(([k, t]) => ({ period: k, days: t.days, discounts: $(t.cents), applications: t.apps,
+          planned: $(t.planned), manual: $(t.manual), unclassified: $(t.unclassified) }));
+      };
+      const weekEnding = (d) => { const x = new Date(d + "T12:00:00Z"); x.setUTCDate(x.getUTCDate() + (6 - x.getUTCDay())); return x.toISOString().slice(0, 10); };
+      const byDay = roll(d => d).map(({ period, days, ...r }) => ({ date: period, ...r }));
+      const byWeek = roll(weekEnding).map(({ period, ...r }) => ({ weekEnding: period, ...r }));
+      const byMonth = roll(d => d.slice(0, 7)).map(({ period, ...r }) => ({ month: period, ...r }));
+
+      // Store-days that traded but have no record (before the backfill reached them, or a night
+      // that failed), and days recorded but not reconciled with their snapshot.
+      const banked = new Set(ledgerRows.map(r => r.store + "|" + r.date));
+      const missing = [];
+      for (const s of stores) {
+        const owed = salesRows.filter(r => r.store === s && Number(r.order_count) > 0 && r.date < todayET && !banked.has(s + "|" + r.date)).map(r => r.date).sort();
+        if (owed.length) missing.push({ store: s, days: owed.length, dates: owed.slice(0, 31) });
+      }
+      const incomplete = ledgerRows.filter(r => !r.complete).map(r => ({ store: r.store, date: r.date, note: r.note }));
+
+      return new Response(JSON.stringify({
+        ok: true, from, to, stores, filters,
+        totals: shapeTotals(all, allGross, allOrders),
+        byStore,
+        byCategory: catRows.map(r => ({ l2: r.l2, l3: r.l3, discounts: $(r.cents), applications: r.apps })).sort((a, b) => b.discounts - a.discounts),
+        byButton, byEmployee, byDay, byWeek, byMonth,
+        largest: largestRows.map(r => ({
+          store: r.store, date: r.date, time: r.ts ? new Date(r.ts).toISOString() : null, orderId: r.order_id, level: r.level,
+          name: r.name, class: r.cls, percent: r.percentage, amount: r.fixed_cents == null ? null : $(r.fixed_cents),
+          discount: $(r.value_cents), lines: r.lines, lineName: r.line_name, l2: r.l2, l3: r.l3,
+          employee: r.employee, approver: r.approver,
+        })),
+        coverage: { storeDays: ledgerRows.length, complete: ledgerRows.length - incomplete.length, incomplete, missing },
+      }), { headers: corsJson });
+    }
+
+    // ─── Returns: payment refunds and manual refunds, with their flags ──
+    //    GET ?action=returns&from=YYYY-MM-DD&to=YYYY-MM-DD[&store=BL1][&employee=<name>][&kind=refund|manual]
+    //        [&filter=flagged][&limit=N]
+    // From the payment archive (migration-063/064), which banks every store-day 3 days after it.
+    // A payment refund's items are the lines marked refunded on its sale's receipt; a manual
+    // refund's are the lines on its own ticket. Flags: no item recorded, over $100, and an
+    // employee with 3+ manual refunds in one Sunday–Saturday week (counted over whole weeks, so a
+    // range edge cannot hide one). Rate = refunds ÷ the till's payments, both including tax.
+    if (url.searchParams.get("action") === "returns" && request.method === "GET") {
+      const range = itemRangeScope(url, currentUser, corsJson, { allStoresMaxDays: 92 });
+      if (range.response) return range.response;
+      const { from, to, stores } = range;
+      const q = (k) => (url.searchParams.get(k) || "").trim();
+      const employee = q("employee") || null, kind = q("kind").toLowerCase() || null, flaggedOnly = q("filter") === "flagged";
+      if (kind && !["refund", "manual"].includes(kind)) {
+        return new Response(JSON.stringify({ error: "kind must be refund or manual" }), { status: 400, headers: corsJson });
+      }
+      const limit = Math.min(Math.max(parseInt(q("limit") || "500", 10) || 500, 1), 2000);
+      const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+      if (!stores.length) {
+        return new Response(JSON.stringify({ ok: true, from, to, stores, totals: null, byStore: [], byEmployee: [], repeatEmployees: [], rows: [] }), { headers: corsJson });
+      }
+      const inList = stores.map(() => "?").join(",");
+      const sunday = (d) => { const x = new Date(d + "T12:00:00Z"); x.setUTCDate(x.getUTCDate() - x.getUTCDay()); return x.toISOString().slice(0, 10); };
+      const wFrom = sunday(from), wTo = addDaysYmd(sunday(to), 6);
+      const ITEMS_OF = `FROM payment_archive_items i WHERE i.store = r.store AND i.date = COALESCE(p.date, r.date)
+                          AND i.order_id = r.order_id AND (r.kind = 'manual' OR i.refunded = 1)`;
+      let rows, manualRows, dayRows;
+      try {
+        [rows, manualRows, dayRows] = await Promise.all([
+          env.DB.prepare(`
+            SELECT r.id, r.store, r.date, r.kind, r.ts, r.amount, r.tax, r.tender, r.employee, r.reason, r.order_id,
+                   p.date AS sale_date,
+                   (SELECT COUNT(*) ${ITEMS_OF}) AS item_lines,
+                   (SELECT GROUP_CONCAT(COALESCE(i.name, '(no name)') || ' ' || printf('$%.2f', COALESCE(i.price, 0)), '; ') ${ITEMS_OF}) AS items
+              FROM payment_archive r LEFT JOIN payment_archive p ON p.id = r.refund_of
+             WHERE r.kind IN ('refund', 'manual') AND r.store IN (${inList}) AND r.date BETWEEN ? AND ?
+             ORDER BY r.ts DESC, r.id DESC`).bind(...stores, from, to).all().then(x => x.results || []),
+          env.DB.prepare(`SELECT store, date, employee FROM payment_archive
+                           WHERE kind = 'manual' AND store IN (${inList}) AND date BETWEEN ? AND ?`).bind(...stores, wFrom, wTo).all().then(x => x.results || []),
+          env.DB.prepare(`SELECT store, date, gross, complete FROM payment_archive_days
+                           WHERE store IN (${inList}) AND date BETWEEN ? AND ?`).bind(...stores, from, to).all().then(x => x.results || []),
+        ]);
+      } catch (e) {
+        return new Response(JSON.stringify({ error: "The payment archive is not available", detail: String(e?.message || e) }), { status: 503, headers: corsJson });
+      }
+
+      const weekCount = new Map();
+      for (const m of manualRows) {
+        const k = [m.store, m.employee || "(unknown)", sunday(m.date)].join("\u0000");
+        weekCount.set(k, (weekCount.get(k) || 0) + 1);
+      }
+      const repeatEmployees = [...weekCount.entries()].filter(([, n]) => n >= 3).map(([k, n]) => {
+        const [store, emp, wk] = k.split("\u0000");
+        return { store, employee: emp, weekStart: wk, weekEnding: addDaysYmd(wk, 6), manualRefunds: n };
+      }).filter(e => !employee || e.employee === employee);
+
+      const shaped = rows.map(r => {
+        const amount = Math.abs(Number(r.amount) || 0), tax = Math.abs(Number(r.tax) || 0);
+        const flags = [];
+        // A payment refund whose sale is not in the archive (sold before 2026-06-18) has no
+        // receipt to read, which is not the same as a refund with no item: say which.
+        const saleKnown = r.kind === "manual" || r.sale_date != null;
+        if (saleKnown && !Number(r.item_lines)) flags.push("no item recorded");
+        if (amount > 100) flags.push("over $100");
+        if (r.kind === "manual" && (weekCount.get([r.store, r.employee || "(unknown)", sunday(r.date)].join("\u0000")) || 0) >= 3) {
+          flags.push("3+ manual refunds that week");
+        }
+        return {
+          id: r.id, store: r.store, date: r.date, time: r.ts ? new Date(r.ts).toISOString() : null,
+          kind: r.kind === "manual" ? "manual refund" : "payment refund",
+          amount: r2(amount), tax: r2(tax), preTax: r2(amount - tax), tender: r.tender, employee: r.employee,
+          reason: r.reason, orderId: r.order_id, saleDate: r.sale_date,
+          items: r.items || null, itemLines: Number(r.item_lines) || 0, saleInArchive: saleKnown, flags,
+        };
+      }).filter(r => (!employee || r.employee === employee) && (!kind || (kind === "manual") === (r.kind === "manual refund")));
+
+      const sales = {};
+      for (const d of dayRows) sales[d.store] = (sales[d.store] || 0) + (Number(d.gross) || 0);
+      const sum = (list) => {
+        const t = { refunds: 0, refundAmount: 0, manual: 0, manualAmount: 0, flagged: 0 };
+        for (const r of list) {
+          if (r.kind === "manual refund") { t.manual++; t.manualAmount += r.amount; } else { t.refunds++; t.refundAmount += r.amount; }
+          if (r.flags.length) t.flagged++;
+        }
+        return t;
+      };
+      const totalsOf = (t, payments) => ({
+        paymentRefunds: { count: t.refunds, amount: r2(t.refundAmount) },
+        manualRefunds: { count: t.manual, amount: r2(t.manualAmount) },
+        total: r2(t.refundAmount + t.manualAmount), flagged: t.flagged,
+        payments: r2(payments), ratePct: payments > 0 ? Math.round((t.refundAmount + t.manualAmount) / payments * 10000) / 100 : null,
+      });
+      const byStore = stores.map(s => ({ store: s, ...totalsOf(sum(shaped.filter(r => r.store === s)), sales[s] || 0) }));
+      const empMap = new Map();
+      for (const r of shaped) {
+        const k = r.store + "\u0000" + (r.employee || "(unknown)");
+        if (!empMap.has(k)) empMap.set(k, []);
+        empMap.get(k).push(r);
+      }
+      const byEmployee = [...empMap.entries()].map(([k, list]) => {
+        const [store, emp] = k.split("\u0000");
+        const t = sum(list);
+        return { store, employee: emp, paymentRefunds: t.refunds, paymentRefundAmount: r2(t.refundAmount),
+                 manualRefunds: t.manual, manualRefundAmount: r2(t.manualAmount), flagged: t.flagged };
+      }).sort((a, b) => (b.paymentRefundAmount + b.manualRefundAmount) - (a.paymentRefundAmount + a.manualRefundAmount));
+      const listed = flaggedOnly ? shaped.filter(r => r.flags.length) : shaped;
+      const bankedDays = dayRows.length, incompleteDays = dayRows.filter(d => !d.complete).length;
+      return new Response(JSON.stringify({
+        ok: true, from, to, stores,
+        totals: totalsOf(sum(shaped), Object.values(sales).reduce((a, b) => a + b, 0)),
+        byStore, byEmployee, repeatEmployees,
+        rows: listed.slice(0, limit), rowsTotal: listed.length, rowsTruncated: listed.length > limit,
+        coverage: {
+          bankedStoreDays: bankedDays, incompleteStoreDays: incompleteDays,
+          bankedThrough: dayRows.reduce((m, d) => (d.date > m ? d.date : m), "") || null,
+          note: "Each store-day is banked 3 days after it, so the newest days of a range may not be in yet.",
+        },
+      }), { headers: corsJson });
+    }
+
+    // ─── Discount classes: planned or manual, by name (migration-089) ──
+    //    GET  ?action=discount-classes[&from=YYYY-MM-DD&to=YYYY-MM-DD]  — every class set, plus every
+    //         discount name rung in the range (default: the last 120 days) with its dollars and class
+    //    POST ?action=discount-classes  {name, class: "planned"|"manual"|null}  or  {classes: [...]}
+    //         — admins; class null clears a name back to unclassified
+    if (url.searchParams.get("action") === "discount-classes" && (request.method === "GET" || request.method === "POST")) {
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      if (request.method === "POST") {
+        const guard = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
+        if (guard) return guard;
+        const body = await request.json().catch(() => null);
+        const list = Array.isArray(body?.classes) ? body.classes : (body ? [body] : []);
+        if (!list.length || list.length > 200) {
+          return new Response(JSON.stringify({ error: "Give {name, class} or {classes: [...]} (at most 200)" }), { status: 400, headers: corsJson });
+        }
+        for (const c of list) {
+          const name = typeof c?.name === "string" ? c.name.trim() : "";
+          if (!name || name.length > 200 || !discountNameKey(name)) {
+            return new Response(JSON.stringify({ error: "Each entry needs a name (1–200 characters)" }), { status: 400, headers: corsJson });
+          }
+          if (c.class !== null && c.class !== "planned" && c.class !== "manual") {
+            return new Response(JSON.stringify({ error: `class must be planned, manual or null (${name})` }), { status: 400, headers: corsJson });
+          }
+        }
+        const now = new Date().toISOString(), who = currentUser?.id || (isAdminSecret ? "admin-secret" : null);
+        const upsert = env.DB.prepare(
+          `INSERT INTO discount_classes (name_key, name, class, updated_by, updated_at) VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(name_key) DO UPDATE SET name = excluded.name, class = excluded.class,
+             updated_by = excluded.updated_by, updated_at = excluded.updated_at`);
+        const clear = env.DB.prepare("DELETE FROM discount_classes WHERE name_key = ?");
+        try {
+          await env.DB.batch(list.map(c => {
+            const name = c.name.trim(), key = discountNameKey(name);
+            return c.class === null ? clear.bind(key) : upsert.bind(key, name, c.class, who, now);
+          }));
+        } catch (e) {
+          return new Response(JSON.stringify({ error: "Could not save (migration-089 applied?)", detail: String(e?.message || e) }), { status: 503, headers: corsJson });
+        }
+        return new Response(JSON.stringify({ ok: true, saved: list.length }), { headers: corsJson });
+      }
+      const { dateStr: todayET } = getETToday();
+      const from = url.searchParams.get("from") || addDaysYmd(todayET, -120);
+      const to = url.searchParams.get("to") || todayET;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || to < from) {
+        return new Response(JSON.stringify({ error: "from and to must be YYYY-MM-DD dates with from on or before to" }), { status: 400, headers: corsJson });
+      }
+      const allowed = allowedStores(currentUser);
+      const stores = allowed === null ? ALL_STORES : ALL_STORES.filter(s => allowed.includes(s));
+      if (!stores.length) return new Response(JSON.stringify({ ok: true, from, to, classes: [], seen: [] }), { headers: corsJson });
+      const inList = stores.map(() => "?").join(",");
+      try {
+        const [classes, seen] = await Promise.all([
+          env.DB.prepare("SELECT name, class, updated_by, updated_at FROM discount_classes ORDER BY name_key").all().then(r => r.results || []),
+          env.DB.prepare(`
+            SELECT d.name_key, MAX(d.name) AS name, c.class, SUM(d.value_cents) AS cents, COUNT(DISTINCT d.app_id) AS apps,
+                   COUNT(DISTINCT d.store) AS stores, MIN(d.date) AS first_date, MAX(d.date) AS last_date,
+                   MIN(d.percentage) AS pmin, MAX(d.percentage) AS pmax, MIN(d.fixed_cents) AS fmin, MAX(d.fixed_cents) AS fmax
+              FROM discount_lines d LEFT JOIN discount_classes c ON c.name_key = d.name_key
+             WHERE d.store IN (${inList}) AND d.date BETWEEN ? AND ?
+             GROUP BY d.name_key ORDER BY cents DESC`).bind(...stores, from, to).all().then(r => r.results || []),
+        ]);
+        const $ = (cents) => Math.round(Number(cents) || 0) / 100;
+        return new Response(JSON.stringify({
+          ok: true, from, to,
+          classes: classes.map(c => ({ name: c.name, class: c.class, updatedBy: c.updated_by, updatedAt: c.updated_at })),
+          seen: seen.map(s => ({ name: s.name, class: s.class || "unclassified", discounts: $(s.cents), applications: s.apps,
+            stores: s.stores, firstDate: s.first_date, lastDate: s.last_date,
+            percent: s.pmin == null ? null : (s.pmin === s.pmax ? s.pmin : [s.pmin, s.pmax]),
+            amount: s.fmin == null ? null : (s.fmin === s.fmax ? $(s.fmin) : [$(s.fmin), $(s.fmax)]) })),
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: "The discount record is not available (migration-089)", detail: String(e?.message || e) }), { status: 503, headers: corsJson });
+      }
     }
 
     // ─── Live Sales business (migration-085, phase 1), read-only ──
