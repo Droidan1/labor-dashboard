@@ -84,8 +84,18 @@ refund links to its sale by `refund_of` (234 of 234 since Sept 1), a primary-key
       prod's items: snapshot discounts to the cent, BL1 2026-09-02 $22.00 short on the same 341 orders
       (likely an order changed in Clover since its snapshot; the backfill will hold it incomplete). Rows per
       store-day 38–1,064 (Nov 8, all stores: 1,840); 7 BL1 days ran in 22 s.
-- [ ] Prod (Brian's yes): migration-089, worker, retjg-mcp; then backfill Sept 1 → T−3 oldest first,
-      chunk 1 spot-checked; reconcile with Clover's Sales report
+- [x] Prod (Brian's yes, 2026-11-12): migration-089 (3 empty tables, checked); worker 146408b8 (1262.58 KiB,
+      MEDIA/BL16/5 crons; reporting-key read of `discounts` 3 clean passes); retjg-mcp e7c809c3 (358.38 KiB,
+      v1.6.0, 32 tools, 3 clean passes, get_discounts answers). Live returns: Coliseum manual Oct 22 + 24 =
+      6 / $764.64; Jackie Harvey 5 manual refunds Oct 18–24 incl. "return fridge" $513.60, "return lights" $214.
+- [x] Backfill Sept 1 → Nov 9 (5 stores, 10-day windows, oldest first, 2026-11-12, ~13 min, from Brian's prod
+      session in Chrome). Chunk 1 (BL1 Sept 1–10) spot-checked first: ledger == rows written, every employee
+      named. 350 store-days, 0 errors, 343 complete; 7 short of their snapshot and held incomplete (BL1 09-02
+      $22, 09-25 $37, 10-03 $7.50, 10-07 $2, 10-08 $0.75; BL2 10-05 $2; BL4 10-24 $20). Record: Sept $62,576.33
+      (snapshots $62,635.33; Clover ~$60.9K), Oct $94,152.56 (snapshots $94,184.81; Clover ~$92.9K), Oct item-level
+      $61,532.68 (Clover $58.7K). Hub vs Clover still +1–3%: needs Brian's Clover report to reconcile one day.
+      The jump: Seasonal +$18.7K, Apparel +$9.0K; new 70% / 40% Off buttons + 25% Off = +$20.7K.
+- [ ] Merge #378 (prod is ahead of main until then); reinstall the `retjg` CLI from main
 - [ ] Seed `discount_classes` from the names the backfill finds (Brian confirms the planned/manual list)
 
 **Page (PR 2)**
