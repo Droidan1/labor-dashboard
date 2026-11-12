@@ -24,7 +24,13 @@ no-op (12). browser-discounts-page.mjs 207/207: light, dark, pure black, Hallowe
 pinned + opaque; store and date changes re-render; Save POSTs exactly the changed names; manager has no
 editor; staff refused; 403 has no Retry. browser-mobile-menu.mjs: 163 pass, 6 fail — the SAME 6 on the base
 build (associates get Submit Photos via `ASSOCIATE_OPEN_PAGES`, its EXPECT was never updated); not touched.
-- [ ] Brian: review, push, PR, merge (Pages deploys the frontend; no worker change, no migration)
+- [x] Brian: review, push, PR, merge (Pages deploys the frontend; no worker change, no migration)
+
+**Live (2026-11-12):** #379 had `claude/discounts-backend` as its base and merged INTO it (20:19Z), after #378
+had merged and with the branch kept, so GitHub never retargeted it and main had none of the page. Landed on
+main as fdb06da (merge of 3e23bae; diff = the page's 8 files only); `npm test` 12,018 / 136 green on the
+merged tree. Pages run for fdb06da succeeded; www.retjghub.com served `#page-discounts` + `dashboard-cache-v303`
+3 passes running, and the served index.html is byte-identical to main. See lessons.md (stacked PR).
 
 # Discounts & Returns reporting (2026-11-12) — backend (PR 1 of 2)
 
@@ -95,11 +101,13 @@ refund links to its sale by `refund_of` (234 of 234 since Sept 1), a primary-key
       (snapshots $62,635.33; Clover ~$60.9K), Oct $94,152.56 (snapshots $94,184.81; Clover ~$92.9K), Oct item-level
       $61,532.68 (Clover $58.7K). Hub vs Clover still +1–3%: needs Brian's Clover report to reconcile one day.
       The jump: Seasonal +$18.7K, Apparel +$9.0K; new 70% / 40% Off buttons + 25% Off = +$20.7K.
-- [ ] Merge #378 (prod is ahead of main until then); reinstall the `retjg` CLI from main
-- [ ] Seed `discount_classes` from the names the backfill finds (Brian confirms the planned/manual list)
+- [x] Merge #378 (prod is ahead of main until then); reinstall the `retjg` CLI from main (2026-11-12: installed
+      copies == main fdb06da; `retjg discounts` October = $94,152.56)
+- [x] Seed `discount_classes` from the names the backfill finds (Brian confirms the planned/manual list):
+      131 names prod + staging (84 manual, 47 planned); 10 promos left for Brian in the page's editor
 
 **Page (PR 2)**
-- [ ] Discounts & Returns page per DESIGN.md §4.8, both themes
+- [x] Discounts & Returns page per DESIGN.md §4.8, both themes (#379, live 2026-11-12)
 
 # Remove the header notifications bell (2026-11-11)
 

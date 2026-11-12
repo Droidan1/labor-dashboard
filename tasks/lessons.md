@@ -1,3 +1,19 @@
+## A stacked PR merged into its base branch, and main never got the page (2026-11-12)
+
+I opened #379 (the Discounts & Returns page) with `claude/discounts-backend` as its base, so its diff
+showed only the page while #378 was open. Brian merged #378, then #379. GitHub retargets a stacked PR to
+`main` only when its base branch is DELETED on merge, and this repo has `delete_branch_on_merge: false`.
+So #379 merged into `claude/discounts-backend`, showed "Merged", and main (and www.retjghub.com) had none
+of it. I found it only because the post-merge check compares `git log origin/main` with the branch.
+
+### The rule
+1. Never ask Brian to merge a PR whose base is not `main`. As soon as the PR below it merges, run
+   `gh pr edit <N> --base main` and re-read `gh pr view <N> --json baseRefName` before asking for the click.
+2. When two PRs must stack, say in the first one's body that the second will be retargeted, and put the
+   retarget in the todo entry as its own checkbox, so it is not left to memory.
+3. "Merged" on a PR is not "on main". After any merge, `git log --oneline origin/main..<head branch>` must
+   print nothing.
+
 ## My deploy command shipped someone else's worker without its migration (2026-10-27)
 
 I gave Brian `git switch main && git pull && git diff --stat origin/main -- worker.js && npx wrangler deploy`
