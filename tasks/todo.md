@@ -11,12 +11,18 @@ and superusers. The Web Push "Sales Update" (Settings → Notifications) is a di
 - [x] sw.js cache v301 → v302 + shell-cache fixture; DESIGN.md motion note no longer cites the bell
 - [x] scripts/test-no-pace-bell.mjs (fails on main, 8 of 13) + scripts/browser-no-pace-bell.mjs
 - [x] test-today-auction-reads.mjs: drop the pace-alert site from MUST_USE_HELPER
-- [ ] Brian merges; Pages ships it (no worker, no migration)
+- [x] Brian merges; Pages ships it (no worker, no migration). #377 merged 2026-11-11 as `b5351e2`;
+      www.retjghub.com serves it (`/` and `/sw.js` byte-identical to main, 3 clean passes; live
+      browser check 16/16, both themes)
 
 ### Review
 Frontend only. Left in place: the `?view=hourly` deep link, the hero "Pace" figure and per-card pace
 colouring (not notifications), and each browser's stale `dashNotifState_v1` localStorage key (a few
 bytes, never read again).
+
+⚠️ The GitHub Pages push run 43096726069 sat `queued` with 0 jobs and can't be cancelled ("already
+completed" / force-cancel 409 "not queued yet"); a manual dispatch, 43098758597, queued behind it. The
+site updated anyway (~21:04Z), so check the served bytes before treating a stuck run as "nothing shipped".
 
 # MCP: create, change, hide and delete Clover items (2026-11-09)
 
