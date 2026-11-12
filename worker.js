@@ -2178,7 +2178,7 @@ function buildTransactions(orders, refunds, credits, tenderMap, employeeMap, sto
       result: c.result || null,
       // Clover's Credit carries a `reason` (docs.clover.com, Get all credits). It was banked as
       // null until 2026-11-12, so earlier manual refunds read as having none.
-      reason: c.reason || null,
+      reason: typeof c.reason === "string" && c.reason ? c.reason : null,
     });
   }
 
@@ -2263,7 +2263,7 @@ async function bankDiscountLines(env, store, dateStr, snapshotTime, rows, expect
   const names = await fetchCloverLabelMap(store, env, "employees").catch(() => ({}));
   const nameOf = (id) => (id && names[id]) || null;
   const lineStmt = env.DB.prepare(
-    `INSERT INTO discount_lines
+    `INSERT OR REPLACE INTO discount_lines
        (store, date, app_id, l2, l3, level, order_id, ts, button_id, name, name_key, percentage, fixed_cents,
         value_cents, lines, line_id, line_name, item_id, employee_id, employee, approver_id, approver, snapshot_time)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
@@ -2274,9 +2274,16 @@ async function bankDiscountLines(env, store, dateStr, snapshotTime, rows, expect
      VALUES (?,?,?,?,?,?,?,?,?,?)`
   );
   // D1 caps bound parameters at 100 per statement (23 here) and runs each batch as one
-  // transaction, so 100 statements a batch; a small day is a single atomic batch.
+  // transaction, so 100 statements a batch; a small day is a single atomic batch. A bigger day
+  // spans batches, so the FIRST one — the one that wipes — also marks the day incomplete, and
+  // only the last marks it whole: a failure in between can never leave the old "complete"
+  // vouching for half a day, even if the failure path's own ledger write fails too.
+  // INSERT OR REPLACE, not INSERT: one writer never repeats a key (rows are keyed as the table
+  // is), but two writers on one store-day (the nightly and a backfill) must not fail each other.
   const stmts = [
     env.DB.prepare("DELETE FROM discount_lines WHERE store = ? AND date = ?").bind(store, dateStr),
+    ledgerStmt.bind(store, dateStr, snapshotTime, apps, rows.length, totalCents, expectedCents ?? null,
+      0, "being written", source),
     ...rows.map(r => lineStmt.bind(store, dateStr, r.appId, r.l2, r.l3, r.level, r.orderId, r.ts ?? null,
       r.buttonId, r.name, r.nameKey, r.percentage, r.fixedCents, r.valueCents, r.lines, r.lineId, r.lineName,
       r.itemId, r.employeeId, nameOf(r.employeeId), r.approverId, nameOf(r.approverId), snapshotTime)),
@@ -2321,6 +2328,10 @@ async function fetchClientTimeBucket(store, env, dateStr, lookForwardDays) {
 async function bankDiscountsDay(store, env, dateStr, { dry = true, force = false, catMap = {}, overrides, itemCosts } = {}) {
   const closed = STORE_CLOSED_FROM[store];
   if (closed && dateStr >= closed) return { store, date: dateStr, skipped: "CLOSED", note: `closed from ${closed}` };
+  // BL16 shares the closed BL12's Clover account: before the handover its orders are Wyoming's.
+  if (store === "BL16" && dateStr < WRS_CUTOVER) {
+    return { store, date: dateStr, skipped: "BEFORE_STORE_CUTOVER", note: `Indy East starts ${WRS_CUTOVER}` };
+  }
   const day = await fetchClientTimeBucket(store, env, dateStr, DISCOUNT_FRESH_DAYS);
   if (!day) return { store, date: dateStr, skipped: "INCOMPLETE_FETCH", note: "Clover did not return a complete order list" };
   const sink = {};
@@ -31412,7 +31423,9 @@ export default {
       const where = [`d.store IN (${inList})`, "d.date BETWEEN ? AND ?"];
       const binds = [...stores, from, to];
       if (filters.category) { where.push("d.l2 = ?"); binds.push(filters.category); }
-      if (filters.employee) { where.push("COALESCE(d.employee, d.employee_id) = ?"); binds.push(filters.employee); }
+      // "(unknown)" is how byEmployee labels a discount with no employee on its order.
+      if (filters.employee === "(unknown)") where.push("d.employee IS NULL AND d.employee_id IS NULL");
+      else if (filters.employee) { where.push("COALESCE(d.employee, d.employee_id) = ?"); binds.push(filters.employee); }
       if (filters.class) { where.push(`${CLS} = ?`); binds.push(filters.class); }
       if (filters.level) { where.push("d.level = ?"); binds.push(filters.level); }
       if (filters.search) {
@@ -31449,13 +31462,16 @@ export default {
       }
 
       // Gross retail per store from the items: snapshots: every category but Bin Products and
-      // live sales (an Auction category, where one exists), narrowed to the category filter.
+      // live sales (an Auction category, where one exists), narrowed to the category filter —
+      // and only for store-days the record holds, or a range reaching before the record began
+      // would divide its discounts by sales it has no discounts for.
       const { dateStr: todayET } = getETToday();
+      const inRecord = new Set(ledgerRows.map(r => r.store + "|" + r.date));
       const NOT_RETAIL = new Set(["Bin Products", "Auction", "Whatnot"]);
       const grossBy = Object.fromEntries(stores.map(s => [s, 0]));
       if (env.SALES_SNAPSHOTS) {
         const keys = [];
-        for (const s of stores) for (const d of enumDatesInclusive(from, to)) if (d < todayET) keys.push([s, d]);
+        for (const s of stores) for (const d of enumDatesInclusive(from, to)) if (inRecord.has(s + "|" + d)) keys.push([s, d]);
         for (let i = 0; i < keys.length; i += 50) {
           const snaps = await Promise.all(keys.slice(i, i + 50).map(([s, d]) =>
             env.SALES_SNAPSHOTS.get(`items:${s.toLowerCase()}:${d}`, "json").catch(() => null)));
@@ -31565,10 +31581,16 @@ export default {
     //    GET ?action=returns&from=YYYY-MM-DD&to=YYYY-MM-DD[&store=BL1][&employee=<name>][&kind=refund|manual]
     //        [&filter=flagged][&limit=N]
     // From the payment archive (migration-063/064), which banks every store-day 3 days after it.
-    // A payment refund's items are the lines marked refunded on its sale's receipt; a manual
-    // refund's are the lines on its own ticket. Flags: no item recorded, over $100, and an
-    // employee with 3+ manual refunds in one Sunday–Saturday week (counted over whole weeks, so a
-    // range edge cannot hide one). Rate = refunds ÷ the till's payments, both including tax.
+    // A payment refund's items are the lines marked refunded on its sale's receipt — but that
+    // receipt is banked ONCE, 3 days after the sale, so a return after that is never marked
+    // (52 of 234 since 2026-09-01 came back later; none of them marked). Only a receipt banked
+    // after the refund can say "no item": otherwise itemsChecked is false and the sale's whole
+    // receipt is listed instead. A manual refund's lines are on its own ticket, and that line is
+    // whatever the cashier typed ("forgot discount", "return fridge") or Clover's bare "Manual
+    // Transaction" — the bare one alone is "no item recorded". Flags: no item recorded, over
+    // $100, and a named employee with 3+ manual refunds in one Sunday–Saturday week (counted over
+    // whole weeks, so a range edge cannot hide one). Rate = refunds ÷ the till's payments, both
+    // including tax.
     if (url.searchParams.get("action") === "returns" && request.method === "GET") {
       const range = itemRangeScope(url, currentUser, corsJson, { allStoresMaxDays: 92 });
       if (range.response) return range.response;
@@ -31586,16 +31608,21 @@ export default {
       const inList = stores.map(() => "?").join(",");
       const sunday = (d) => { const x = new Date(d + "T12:00:00Z"); x.setUTCDate(x.getUTCDate() - x.getUTCDay()); return x.toISOString().slice(0, 10); };
       const wFrom = sunday(from), wTo = addDaysYmd(sunday(to), 6);
-      const ITEMS_OF = `FROM payment_archive_items i WHERE i.store = r.store AND i.date = COALESCE(p.date, r.date)
-                          AND i.order_id = r.order_id AND (r.kind = 'manual' OR i.refunded = 1)`;
+      const TICKET = `FROM payment_archive_items i WHERE i.store = r.store AND i.date = COALESCE(p.date, r.date) AND i.order_id = r.order_id`;
+      const DESCRIBED = `(r.kind = 'manual' AND lower(trim(COALESCE(i.name, 'Manual Transaction'))) <> 'manual transaction')
+                         OR (r.kind = 'refund' AND i.refunded = 1)`;
+      const SHOWN = `r.kind = 'manual' OR i.refunded = 1`;
+      const LINE = `COALESCE(i.name, '(no name)') || ' ' || printf('$%.2f', COALESCE(i.price, 0))`;
       let rows, manualRows, dayRows;
       try {
         [rows, manualRows, dayRows] = await Promise.all([
           env.DB.prepare(`
             SELECT r.id, r.store, r.date, r.kind, r.ts, r.amount, r.tax, r.tender, r.employee, r.reason, r.order_id,
                    p.date AS sale_date,
-                   (SELECT COUNT(*) ${ITEMS_OF}) AS item_lines,
-                   (SELECT GROUP_CONCAT(COALESCE(i.name, '(no name)') || ' ' || printf('$%.2f', COALESCE(i.price, 0)), '; ') ${ITEMS_OF}) AS items
+                   (SELECT COUNT(*) ${TICKET} AND (${DESCRIBED})) AS item_lines,
+                   (SELECT GROUP_CONCAT(${LINE}, '; ') ${TICKET} AND (${SHOWN})) AS items,
+                   (SELECT GROUP_CONCAT(${LINE}, '; ') ${TICKET}) AS receipt,
+                   (SELECT MAX(i.banked_at) ${TICKET}) AS receipt_banked_at
               FROM payment_archive r LEFT JOIN payment_archive p ON p.id = r.refund_of
              WHERE r.kind IN ('refund', 'manual') AND r.store IN (${inList}) AND r.date BETWEEN ? AND ?
              ORDER BY r.ts DESC, r.id DESC`).bind(...stores, from, to).all().then(x => x.results || []),
@@ -31613,7 +31640,7 @@ export default {
         const k = [m.store, m.employee || "(unknown)", sunday(m.date)].join("\u0000");
         weekCount.set(k, (weekCount.get(k) || 0) + 1);
       }
-      const repeatEmployees = [...weekCount.entries()].filter(([, n]) => n >= 3).map(([k, n]) => {
+      const repeatEmployees = [...weekCount.entries()].filter(([k, n]) => n >= 3 && !k.includes("(unknown)")).map(([k, n]) => {
         const [store, emp, wk] = k.split("\u0000");
         return { store, employee: emp, weekStart: wk, weekEnding: addDaysYmd(wk, 6), manualRefunds: n };
       }).filter(e => !employee || e.employee === employee);
@@ -31621,12 +31648,15 @@ export default {
       const shaped = rows.map(r => {
         const amount = Math.abs(Number(r.amount) || 0), tax = Math.abs(Number(r.tax) || 0);
         const flags = [];
-        // A payment refund whose sale is not in the archive (sold before 2026-06-18) has no
-        // receipt to read, which is not the same as a refund with no item: say which.
+        // Could the archive see which items came back? Not when the sale predates it (2026-06-18),
+        // and not when its receipt was banked before the refund happened (see above).
         const saleKnown = r.kind === "manual" || r.sale_date != null;
-        if (saleKnown && !Number(r.item_lines)) flags.push("no item recorded");
+        const bankedMs = Date.parse(r.receipt_banked_at || "");
+        const itemsChecked = r.kind === "manual" || (saleKnown && Number.isFinite(bankedMs) && r.ts != null && bankedMs >= r.ts);
+        if (itemsChecked && !Number(r.item_lines)) flags.push("no item recorded");
         if (amount > 100) flags.push("over $100");
-        if (r.kind === "manual" && (weekCount.get([r.store, r.employee || "(unknown)", sunday(r.date)].join("\u0000")) || 0) >= 3) {
+        // An unnamed employee is not one person, so pooled unknowns never trip this.
+        if (r.kind === "manual" && r.employee && (weekCount.get([r.store, r.employee, sunday(r.date)].join("\u0000")) || 0) >= 3) {
           flags.push("3+ manual refunds that week");
         }
         return {
@@ -31634,9 +31664,12 @@ export default {
           kind: r.kind === "manual" ? "manual refund" : "payment refund",
           amount: r2(amount), tax: r2(tax), preTax: r2(amount - tax), tender: r.tender, employee: r.employee,
           reason: r.reason, orderId: r.order_id, saleDate: r.sale_date,
-          items: r.items || null, itemLines: Number(r.item_lines) || 0, saleInArchive: saleKnown, flags,
+          items: r.items || null, itemLines: Number(r.item_lines) || 0, saleInArchive: saleKnown, itemsChecked,
+          // The sale's whole receipt, when the archive could not see which of it came back.
+          ...(r.kind !== "manual" && saleKnown && !itemsChecked ? { saleReceipt: r.receipt || null } : {}),
+          flags,
         };
-      }).filter(r => (!employee || r.employee === employee) && (!kind || (kind === "manual") === (r.kind === "manual refund")));
+      }).filter(r => (!employee || (r.employee || "(unknown)") === employee) && (!kind || (kind === "manual") === (r.kind === "manual refund")));
 
       const sales = {};
       for (const d of dayRows) sales[d.store] = (sales[d.store] || 0) + (Number(d.gross) || 0);

@@ -16,7 +16,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadWorker, makeEnv, ctx, req, applyMigrationAlters } from './lib/worker-harness.mjs';
+import { loadWorker, makeEnv, ctx, req, applyMigrationAlters, recordStatements, nestedScans } from './lib/worker-harness.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -206,7 +206,9 @@ const read = (q, user = 'u-su') => fetchW(req(`/?action=discounts&from=${D}&to=$
   eq((await fetchW(req('/?action=discount-classes', { user: 'u-mgr1', method: 'POST', body: { name: '$5 off', class: 'manual' } }))).status, 403,
     'a manager cannot');
 
+  const seen = recordStatements(env);
   const b = await (await read('')).json();
+  eq(nestedScans(db, seen), [], 'the discounts query plans: no nested full scans');
   const snap = await snapOf();
   const grossRetail = snap.categories.filter(c => c.category !== 'Bin Products').reduce((s, c) => s + Math.round(c.gross * 100), 0);
   eq([b.totals.discounts, b.totals.applications, b.totals.discountedOrders, b.totals.itemLevel, b.totals.orderLevel],
@@ -214,6 +216,12 @@ const read = (q, user = 'u-su') => fetchW(req(`/?action=discounts&from=${D}&to=$
   eq([b.totals.planned, b.totals.manual, b.totals.unclassified], [3.5, 2.99, 3.32], 'planned $3.50, manual $1 + $1.99, the rest unclassified');
   eq([b.totals.onBins, b.totals.grossRetail, b.totals.pctOfGrossRetail], [1.52, grossRetail / 100, Math.round((981 - 152) / grossRetail * 10000) / 100],
     'share of gross retail leaves the bins out: their $1 line discount and their $0.52 of the order discounts');
+  // A day before the record began has a snapshot (sales) but no discounts recorded: it must
+  // not dilute the share.
+  await env.SALES_SNAPSHOTS.put('items:bl1:2026-10-13', JSON.stringify({ categories: [{ category: 'Home', gross: 5000 }] }));
+  const wider = await (await fetchW(req(`/?action=discounts&from=2026-10-13&to=${D}`, { user: 'u-su' }))).json();
+  eq([wider.totals.grossRetail, wider.totals.pctOfGrossRetail], [b.totals.grossRetail, b.totals.pctOfGrossRetail],
+    'a range reaching before the record: the share counts only days the record holds');
   eq(b.byButton.slice(0, 2).map(x => [x.name, x.class, x.discounts, x.applications]), [['Halloween 10%', 'planned', 3.5, 1], ['Apparel 25%', 'unclassified', 2.5, 1]],
     'buttons by dollars, with their class');
   eq(b.byButton.find(x => x.name === '$2 off')?.amount, 2, 'a flat button says its amount');
@@ -247,42 +255,59 @@ const read = (q, user = 'u-su') => fetchW(req(`/?action=discounts&from=${D}&to=$
 {
   const R = (id, date, kind, amount, extra = {}) => db.prepare(`INSERT INTO payment_archive (id, store, date, kind, order_id, ts, amount, tax, employee, reason, refund_of, banked_at)
     VALUES (?, 'BL1', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'x')`).run(id, date, kind, extra.order ?? null, Date.parse(date + 'T16:00:00Z'), amount, extra.tax ?? 0,
-      extra.employee ?? 'Pat Cashier', extra.reason ?? null, extra.of ?? null);
-  const I = (date, order, seq, name, price, refunded) => db.prepare(`INSERT INTO payment_archive_items (store, date, order_id, seq, name, qty, price, refunded, banked_at)
-    VALUES ('BL1', ?, ?, ?, ?, 1, ?, ?, 'x')`).run(date, order, seq, name, price, refunded);
-  // Sales: two paid orders on 10-20, $500 of payments each day 10-20..10-25.
-  R('P1', '2026-10-20', 'payment', 60, { order: 'S1' }); I('2026-10-20', 'S1', 0, 'Lamp', 40, 1); I('2026-10-20', 'S1', 1, 'Mug', 20, 0);
-  R('P2', '2026-10-20', 'payment', 150, { order: 'S2' }); I('2026-10-20', 'S2', 0, 'Rug', 150, 0);
-  // A refund of the lamp (its line is marked), an amount-only $150 refund (no line marked),
-  // and a refund of a sale older than the archive.
+      'employee' in extra ? extra.employee : 'Pat Cashier', extra.reason ?? null, extra.of ?? null);
+  // A receipt line, banked when the nightly banks its day: 3 days after it (04:00 ET).
+  const I = (date, order, seq, name, price, refunded, bankedAt) => db.prepare(`INSERT INTO payment_archive_items (store, date, order_id, seq, name, qty, price, refunded, banked_at)
+    VALUES ('BL1', ?, ?, ?, ?, 1, ?, ?, ?)`).run(date, order, seq, name, price, refunded, bankedAt);
+  const SALE_BANKED = '2026-10-23T08:00:00.000Z';
+  R('P1', '2026-10-20', 'payment', 60, { order: 'S1' }); I('2026-10-20', 'S1', 0, 'Lamp', 40, 1, SALE_BANKED); I('2026-10-20', 'S1', 1, 'Mug', 20, 0, SALE_BANKED);
+  R('P2', '2026-10-20', 'payment', 150, { order: 'S2' }); I('2026-10-20', 'S2', 0, 'Rug', 150, 0, SALE_BANKED);
+  // Before the 10-20 receipts were banked: a refund of the lamp (its line is marked) and an
+  // amount-only $150 refund (no line marked). After: the mug comes back on 10-24, which the
+  // banked receipt can never show. And a refund of a sale older than the archive.
   R('RF1', '2026-10-22', 'refund', -40, { order: 'S1', of: 'P1', reason: 'Returned goods' });
   R('RF2', '2026-10-22', 'refund', -150, { order: 'S2', of: 'P2', reason: 'Damaged goods' });
   R('RF3', '2026-10-23', 'refund', -12, { order: 'S-OLD', of: 'P-OLD' });
+  R('RF4', '2026-10-24', 'refund', -20, { order: 'S1', of: 'P1' });
   // Manual refunds by Sam: Mon 10-19 and Tue 10-20 (before the range), Fri 10-23 — three in the
-  // week of Sun 10-18..Sat 10-24; one more by Pat on the Saturday. One of Sam's has an item on its ticket.
+  // week of Sun 10-18..Sat 10-24. Sam's third has a note typed on its ticket; Pat's two have
+  // Clover's bare "Manual Transaction" line or nothing. Three with no employee at all, which
+  // must not add up to a "3+" for nobody.
   R('M1', '2026-10-19', 'manual', -5, { order: 'C1', employee: 'Sam' });
   R('M2', '2026-10-20', 'manual', -6, { order: 'C2', employee: 'Sam' });
-  R('M3', '2026-10-23', 'manual', -120, { order: 'C3', employee: 'Sam' }); I('2026-10-23', 'C3', 0, 'Vacuum', -120, 0);
-  R('M4', '2026-10-24', 'manual', -7, { order: 'C4', employee: 'Pat Cashier' });
+  R('M3', '2026-10-23', 'manual', -120, { order: 'C3', employee: 'Sam' }); I('2026-10-23', 'C3', 0, 'return fridge', -120, 0, 'x');
+  R('M4', '2026-10-24', 'manual', -7, { order: 'C4' });
+  R('M5', '2026-10-24', 'manual', -3, { order: 'C5' }); I('2026-10-24', 'C5', 0, 'Manual Transaction', -3, 0, 'x');
+  R('M6', '2026-10-21', 'manual', -1, { order: 'C6', employee: null });
+  R('M7', '2026-10-22', 'manual', -1, { order: 'C7', employee: null });
+  R('M8', '2026-10-23', 'manual', -1, { order: 'C8', employee: null });
   const day = db.prepare(`INSERT INTO payment_archive_days (store, date, rows, payments, gross, net, expected_net, complete, note, banked_at) VALUES ('BL1', ?, 1, 1, 500, 450, 450, 1, NULL, 'x')`);
   for (const d of ['2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24']) day.run(d);
 
   const ret = (q, user = 'u-su') => fetchW(req(`/?action=returns&from=2026-10-21&to=2026-10-24${q}`, { user }));
+  const seen = recordStatements(env);
   const b = await (await ret('&store=BL1')).json();
+  eq(nestedScans(db, seen), [], 'the returns query plan: no full scan in a correlated subquery');
   const row = (id) => b.rows.find(x => x.id === id);
-  eq(b.rows.map(x => x.id), ['M4', 'RF3', 'M3', 'RF2', 'RF1'], 'the range\'s refunds, newest first, ties by id (M1, M2 are before it)');
-  eq([row('RF1').kind, row('RF1').amount, row('RF1').items, row('RF1').flags], ['payment refund', 40, 'Lamp $40.00', []],
+  eq(b.rows.map(x => x.id), ['RF4', 'M5', 'M4', 'RF3', 'M8', 'M3', 'RF2', 'RF1', 'M7', 'M6'], 'the range\'s refunds, newest first, ties by id (M1, M2 are before it)');
+  eq([row('RF1').kind, row('RF1').amount, row('RF1').items, row('RF1').itemsChecked, row('RF1').flags], ['payment refund', 40, 'Lamp $40.00', true, []],
     'a refund of a marked line: its item, no flags');
-  eq(row('RF2').flags, ['no item recorded', 'over $100'], 'an amount-only $150 refund: no item, over $100');
+  eq(row('RF2').flags, ['no item recorded', 'over $100'], 'an amount-only $150 refund before the receipt was banked: no item, over $100');
+  eq([row('RF4').itemsChecked, row('RF4').flags, row('RF4').saleReceipt], [false, [], 'Lamp $40.00; Mug $20.00'],
+    'a return after the receipt was banked cannot be checked: not flagged, and the sale\'s receipt is listed instead');
   eq([row('RF3').saleInArchive, row('RF3').flags], [false, []], 'a sale older than the archive is not "no item"');
-  eq(row('M3').flags, ['over $100', '3+ manual refunds that week'], 'Sam\'s third manual refund of the week, counted across the range edge');
-  eq([row('M3').items, row('M4').flags], ['Vacuum $-120.00', ['no item recorded']], 'a manual refund\'s items are on its own ticket');
-  eq(b.repeatEmployees, [{ store: 'BL1', employee: 'Sam', weekStart: '2026-10-18', weekEnding: '2026-10-24', manualRefunds: 3 }], 'repeat employees');
+  eq([row('M3').items, row('M3').flags], ['return fridge $-120.00', ['over $100', '3+ manual refunds that week']],
+    'Sam\'s note is the manual refund\'s item; his third of the week counts across the range edge');
+  eq([row('M5').items, row('M5').flags, row('M4').flags], ['Manual Transaction $-3.00', ['no item recorded'], ['no item recorded']],
+    'Clover\'s bare "Manual Transaction", or no line at all: no item recorded');
+  eq([row('M8').flags], [['no item recorded']], 'three manual refunds with no employee are not anybody\'s 3+');
+  eq(b.repeatEmployees, [{ store: 'BL1', employee: 'Sam', weekStart: '2026-10-18', weekEnding: '2026-10-24', manualRefunds: 3 }], 'repeat employees: Sam only');
   eq([b.totals.paymentRefunds, b.totals.manualRefunds, b.totals.total, b.totals.payments, b.totals.ratePct],
-    [{ count: 3, amount: 202 }, { count: 2, amount: 127 }, 329, 2000, 16.45], 'totals and the rate against the till\'s payments');
-  eq((await (await ret('&store=BL1&filter=flagged')).json()).rows.map(x => x.id), ['M4', 'M3', 'RF2'], 'filter=flagged');
-  eq((await (await ret('&store=BL1&kind=manual')).json()).rows.map(x => x.id), ['M4', 'M3'], 'kind=manual');
+    [{ count: 4, amount: 222 }, { count: 6, amount: 133 }, 355, 2000, 17.75], 'totals and the rate against the till\'s payments');
+  eq((await (await ret('&store=BL1&filter=flagged')).json()).rows.map(x => x.id), ['M5', 'M4', 'M8', 'M3', 'RF2', 'M7', 'M6'], 'filter=flagged');
+  eq((await (await ret('&store=BL1&kind=manual')).json()).rows.map(x => x.id), ['M5', 'M4', 'M8', 'M3', 'M7', 'M6'], 'kind=manual');
   eq((await (await ret('&store=BL1&employee=Sam')).json()).byEmployee.map(x => [x.employee, x.manualRefunds]), [['Sam', 1]], 'an employee filter');
+  eq((await (await ret('&store=BL1&employee=(unknown)')).json()).rows.map(x => x.id), ['M8', 'M7', 'M6'], 'and "(unknown)" finds the ones with none');
   eq((await ret('&store=BL4', 'u-mgr1')).status, 403, 'a BL1 manager cannot read BL4');
   eq((await ret('', 'u-staff')).status, 403, 'staff see no money');
 }
@@ -295,6 +320,47 @@ const read = (q, user = 'u-su') => fetchW(req(`/?action=discounts&from=${D}&to=$
   eq(r.status, 200, 'bank-transactions runs');
   eq(db.prepare("SELECT reason FROM payment_archive WHERE id = 'CR1'").get()?.reason, 'Damaged goods', 'the credit\'s reason is kept');
   credits = [];
+}
+
+// ── 9. A big day that fails partway is never left vouched for ──────────────
+{
+  const P = '2026-10-10', TP = Date.parse(`${P}T15:00:00Z`);
+  const big = order('OB', Array.from({ length: 120 }, (_, i) => li('b' + i, 'Shirt', 1000, 'I-APP',
+    { discounts: { elements: [{ id: 'DB' + i, name: '$1 off', amount: -100 }] } })), 0, { createdTime: TP, clientCreatedTime: TP });
+  big.payments.elements[0].amount = 108000; big.total = 108000;
+  orders = [big];
+  await snapshotDay(P);
+  eq([dayRow(P)?.apps, dayRow(P)?.complete], [120, 1], 'a 120-discount day: written whole across two batches');
+  const realBatch = env.DB.batch.bind(env.DB), realPrepare = env.DB.prepare.bind(env.DB);
+  let calls = 0;
+  env.DB.batch = async (st) => { if (++calls === 2) throw new Error('D1_ERROR: network'); return realBatch(st); };
+  // ...and the failure path's own ledger write fails too.
+  env.DB.prepare = (sql) => {
+    const st = realPrepare(sql);
+    if (!/^\s*INSERT OR REPLACE INTO discount_days/.test(sql)) return st;
+    return { ...st, bind: (...a) => { const b = st.bind(...a); const run = b.run; b.inBatch = () => run(); b.run = async () => { throw new Error('D1_ERROR: network'); }; return b; } };
+  };
+  const warn = console.warn; console.warn = () => {};
+  try { await snapshotDay(P); } finally { env.DB.batch = realBatch; env.DB.prepare = realPrepare; console.warn = warn; }
+  eq([dayRow(P)?.complete, dayRow(P)?.note], [0, 'being written'], 'the first batch marked it incomplete, so the old "complete" cannot stand over half a day');
+  await snapshotDay(P);
+  eq([dayRow(P)?.apps, dayRow(P)?.complete, lines(P).length], [120, 1, 120], 'and the next run writes it whole again');
+  orders = BASE;
+}
+
+// ── 10. Edges: BL16 before its handover; a discount with no employee ────────
+{
+  const r = await (await fetchW(req('/?action=bank-discounts&store=BL16&start=2026-06-01&end=2026-06-01', { user: 'u-su', method: 'POST' }))).json();
+  eq(r.report[0]?.skipped, 'BEFORE_STORE_CUTOVER', 'BL16 before 2026-06-14 is Wyoming\'s account: skipped');
+  const U = '2026-10-05';
+  db.prepare(`INSERT INTO discount_lines (store, date, app_id, l2, l3, level, order_id, ts, button_id, name, name_key, percentage, fixed_cents,
+    value_cents, lines, line_id, line_name, item_id, employee_id, employee, approver_id, approver, snapshot_time)
+    VALUES ('BL1', ?, 'DU', 'Home', 'FG BL HOME - DECOR', 'order', 'OU', NULL, NULL, '$3 off', '$3 off', NULL, 300, 300, 1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 't')`).run(U);
+  db.prepare(`INSERT INTO discount_days (store, date, snapshot_time, apps, rows, total_cents, expected_cents, complete, note, source) VALUES ('BL1', ?, 't', 1, 1, 300, 300, 1, NULL, 'backfill')`).run(U);
+  const u = await (await fetchW(req(`/?action=discounts&from=${U}&to=${U}`, { user: 'u-su' }))).json();
+  eq(u.byEmployee.map(x => [x.employee, x.discounts]), [['(unknown)', 3]], 'a discount with no employee on its order reads as (unknown)');
+  eq((await (await fetchW(req(`/?action=discounts&from=${U}&to=${U}&employee=(unknown)`, { user: 'u-su' }))).json()).totals.discounts, 3,
+    'and filtering by (unknown) finds it');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
