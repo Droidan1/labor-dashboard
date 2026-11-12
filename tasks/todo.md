@@ -50,7 +50,12 @@ refund links to its sale by `refund_of` (234 of 234 since Sept 1), a primary-key
 - [x] MCP + CLI: get_discounts, get_discount_classes, get_returns (28 reads); retjg-mcp 1.6.0
 - [x] Manual refunds now bank Clover's `reason` (was always null)
 - [x] scripts/test-discount-record.mjs (73); read-through, MCP and CLI pins updated; `npm test` 135 suites green
-- [ ] Staging: migration-089, worker, dry-run backfill of a few days against real Clover
+- [x] Staging (2026-11-12): migration-089 + worker 7ebb28d9 (1262.58 KiB). Staging also lacked migration-077
+      (`otp_attempts`), so nobody could sign in there since 10-13: applied. Dry-run `bank-discounts` against
+      real Clover (writes nothing): 13 store-days (BL1 Sept 1–7, BL1 Oct 22, every store Nov 8); 12 equal
+      prod's items: snapshot discounts to the cent, BL1 2026-09-02 $22.00 short on the same 341 orders
+      (likely an order changed in Clover since its snapshot; the backfill will hold it incomplete). Rows per
+      store-day 38–1,064 (Nov 8, all stores: 1,840); 7 BL1 days ran in 22 s.
 - [ ] Prod (Brian's yes): migration-089, worker, retjg-mcp; then backfill Sept 1 → T−3 oldest first,
       chunk 1 spot-checked; reconcile with Clover's Sales report
 - [ ] Seed `discount_classes` from the names the backfill finds (Brian confirms the planned/manual list)
