@@ -96,8 +96,8 @@ const patches = (from) => upstream.slice(from).filter(u => u.method === 'PATCH')
 {
   const names = (e) => rpc('tools/list', {}, e).then(b => b.result.tools.map(t => t.name));
   const all = await names(env);
-  eq(all.length, 29, 'static key + MCP_KEY_USER + AGENT_WRITE_KEY → the 25 reads and the 4 writes');
-  eq(all.slice(25), ['update_supply_request', 'create_clover_item', 'update_clover_item', 'delete_clover_item'], 'the write tools are listed last');
+  eq(all.length, 32, 'static key + MCP_KEY_USER + AGENT_WRITE_KEY → the 28 reads and the 4 writes');
+  eq(all.slice(28), ['update_supply_request', 'create_clover_item', 'update_clover_item', 'delete_clover_item'], 'the write tools are listed last');
   const t = (await rpc('tools/list')).result.tools.find(x => x.name === 'update_supply_request');
   eq(t.annotations, { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }, 'and marked as a write');
   ok(!(await names({ ...env, MCP_KEY_USER: undefined })).includes('update_supply_request'), 'no MCP_KEY_USER → not offered');
@@ -114,7 +114,7 @@ const patches = (from) => upstream.slice(from).filter(u => u.method === 'PATCH')
     body: JSON.stringify({ jsonrpc: '2.0', id: id++, method, params: method === 'tools/call' ? { name: 'update_supply_request', arguments: { requestId: R1, status: 'ordered' } } : {} }),
   }), env, { props: { userId: 'u-su', role: 'superuser', email: 'bhoward@bargainlane.com' }, auth: { scope: ['mcp:read'], clientId: 'chatgpt' } }).then(x => x.json());
   const ol = await oauth('tools/list');
-  eq(ol.result?.tools?.length, 25, 'an OAuth superuser is offered the 25 reads only');
+  eq(ol.result?.tools?.length, 28, 'an OAuth superuser is offered the 28 reads only');
   ok(ol.result?.tools?.every(x => x.annotations.readOnlyHint === true), 'all read-only');
   eq((await oauth('tools/call')).error?.code, -32602, 'and cannot call the write');
   eq(row(R1).status, 'pending', 'R1 untouched so far');
@@ -280,7 +280,7 @@ const patches = (from) => upstream.slice(from).filter(u => u.method === 'PATCH')
   }), e, ctx).then(r => r.json());
   const list = await modern('tools/list');
   ok(list.result?.tools?.some(x => x.name === 'update_supply_request'), '2026 era: the static key is offered the write');
-  eq((await modern('tools/list', {}, { ...env, MCP_KEY_USER: '' })).result?.tools?.length, 25, '2026 era: and not without MCP_KEY_USER');
+  eq((await modern('tools/list', {}, { ...env, MCP_KEY_USER: '' })).result?.tools?.length, 28, '2026 era: and not without MCP_KEY_USER');
   const res = await modern('tools/call', { name: 'update_supply_request', arguments: { requestId: R3, status: 'ordered' } });
   await settle();
   eq([res.result?.resultType, JSON.parse(res.result?.content?.[0]?.text || '{}').after?.status], ['complete', 'ordered'], '2026 era: the write runs');

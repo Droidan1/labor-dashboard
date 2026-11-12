@@ -39,6 +39,8 @@ export const READING_RULES = [
   'get_item_mapping is the app\'s own per-item record, built with each nightly snapshot from 2026-10-16 (see coverage.firstRecord; earlier days are not missing, they were never recorded). For each item: its Clover category, the L2/L3 it was filed under, and how (source): override = an admin\'s fix; clover-category = its Clover category; sku-book = the POS sku-book page, by name; unmapped-clover-category = a Clover category nobody mapped (lands in Uncategorized); name = its name is an L3; im = the IM# table; heuristic = a name rule (bins, gift cards, keywords); pattern = an admin pattern rule; custom = nothing matched (Custom Sales); sku-book-unmapped = on the sku-book page under a name nobody mapped (Custom Sales); refund-line = a return on a ticket. l3Rule=true: an admin L3 rule named the L3. guessed=true marks the sources where mis-filed items hide. Each item\'s net is as the Retail Summary counts it (line and order discounts and refunds allocated by share); items + other (service charges, refunds against another day\'s order or none, manual refunds, rounding) = the days\' net, see reconciles. So byL2 runs a little above the Retail Summary\'s L2 totals, which also carry those refunds. coverage.stale: days whose category snapshot was rewritten after the record (a repair), where items may not match the Retail Summary. Categories are as of the snapshot, not the moment of sale.',
   'Whatnot (get_whatnot_shows, get_whatnot_items, get_whatnot_products) reads the Whatnot Seller API: the first two from the Hub\'s mirror, synced hourly (sync.lastRun says when, and whether the run finished), the third live. Since 2026-11-01 the Whatnot API is also the only source of Whatnot\'s live-sales dollars in the sales tools: Whatnot\'s gross sales (before fees, cancelled and failed orders left out), updated hourly, so a day can still move for a few days as cancellations land. October and earlier are the figures already reported then. A show is filed by its start: before 3:30 PM Eastern = BL1 (Coliseum, "Fort Wayne"), later = BL14 (Battle Creek). days[] is per store-day from the API: shows, sales (the gross above), items, newBuyers, shipments, lost (cancelled or failed orders\' subtotal) and pendingShows (shows whose figures Whatnot has not finished, counted from their orders so far). analytics.sales and estimatedEarnings are Whatnot\'s own show figures (analytics is null until calculated); items.sales is unit price x quantity of items sold, before shipping, tax and fees. Cancelled orders count nowhere. category is Whatnot\'s own product category; Uncategorized = none set or the listing was deleted. coverage.ordersNotItemised or categoryNotLookedUp above 0 means the sync is still catching up and item totals are short. Orders from the profile shop (not in a show) have no store and are included only when no storeId is given. get_whatnot_products lists one page of products, newest first, with each variant\'s price and available quantity; pass nextCursor as cursor for the next page.',
   'Out of stock: monthly totals always cover the whole period; moreRows means only the newest limit entries are listed. shrinkCost is the cost of Stolen, Damaged and Expired; storeUseCost is Store Use. linesWithoutCost and linesWithoutPrice mean those totals are short.',
+  'Discounts (get_discounts) come from the discount record, written with each nightly snapshot by the same rule as the Retail Summary\'s discounts, so a store-day\'s total matches that day\'s Retail Summary discounts. An order-level discount is split over the order\'s lines by their share, so byCategory adds up to the total. applications counts uses (one press of a discount); discountedOrders counts orders with any. class is planned or manual as an admin set it for that discount NAME (get_discount_classes); unclassified = not set yet, so a large unclassified share means the split is not ready to read. pctOfGrossRetail = discounts not on bins ÷ gross retail sales (bins and live sales left out of both). Weeks end Saturday. Check coverage first: missing store-days are not in the record (before its history starts, or a night that failed), incomplete ones did not match their day\'s snapshot.',
+  'Returns (get_returns) come from the payment archive, banked 3 days behind; amounts include tax, as Clover\'s refund totals do. A payment refund\'s items are the lines marked refunded on its sale\'s receipt, but that receipt is banked once, 3 days after the sale, so a return after that can never show its item: itemsChecked false, saleReceipt lists the whole sale instead, and it is not flagged "no item recorded" (nor is a sale older than the archive, 2026-06-18, saleInArchive false). A manual refund\'s items are what the cashier typed on its ticket (often the real reason, e.g. "forgot discount"); Clover\'s bare "Manual Transaction" or nothing at all is "no item recorded". ratePct = refunds ÷ the till\'s payments for the same store-days. reason is what the cashier picked from Clover\'s list; most manual refunds carry none. "(unknown)" = no employee on the record, and is never counted toward "3+ manual refunds that week".',
 ];
 
 // The caller can fix this: a bad or missing argument. CLI exit 2; MCP tool error.
@@ -105,6 +107,16 @@ const ARG = {
   // Whatnot (2026-10-30)
   productLimit: { type: 'integer', flag: 'limit', min: 1, max: 50, description: 'Products on the page, 1-50. Default 20.' },
   cursor: { type: 'string', flag: 'cursor', description: 'nextCursor from the previous get_whatnot_products answer, for the next page.' },
+  // Discounts & Returns (2026-11-12)
+  category: { type: 'string', flag: 'category', description: 'Only discounts on this main category (L2), e.g. "Softline - Apparel" or "Seasonal".' },
+  employee: { type: 'string', flag: 'employee', description: 'Only this employee, by name as the POS has it (see byEmployee).' },
+  discountClass: { type: 'enum', flag: 'class', values: ['planned', 'manual', 'unclassified'], description: 'Only planned discounts (events, promotions), manual ones (flat-dollar buttons) or ones not classified yet.' },
+  discountLevel: { type: 'enum', flag: 'level', values: ['item', 'order'], description: 'Only discounts on one line (item) or on the whole order (order).' },
+  discountSearch: { type: 'string', flag: 'search', description: 'Only discounts whose name contains this text (any case), e.g. "halloween" or "$5".' },
+  discountLimit: { type: 'integer', flag: 'limit', min: 1, max: 200, description: 'How many of the largest single discounts to list. Default 50. Totals always cover everything.' },
+  returnKind: { type: 'enum', flag: 'kind', values: ['refund', 'manual'], description: 'Only payment refunds (refund) or only manual refunds (manual).' },
+  returnFilter: { type: 'enum', flag: 'filter', values: ['all', 'flagged'], description: 'all (default) or flagged: only refunds with no item recorded, over $100, or by an employee with 3+ manual refunds that week.' },
+  returnLimit: { type: 'integer', flag: 'limit', min: 1, max: 300, description: 'Most refunds to list, newest first. Default 150. Totals always cover everything.' },
 };
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -596,6 +608,12 @@ const itemRangeCheck = (a) => {
   if (daysBetween(a.from, a.to) + 1 > (a.storeId ? 92 : 31)) throw new UsageError(a.storeId ? 'at most 92 days for one store' : 'at most 31 days for every store; give a storeId for longer');
 };
 
+// Discounts and returns aggregate in SQL, so every store may span a quarter (the worker's cap).
+const discountRangeCheck = (a) => {
+  if (a.to < a.from) throw new UsageError('to is before from');
+  if (daysBetween(a.from, a.to) + 1 > 92) throw new UsageError('at most 92 days');
+};
+
 // ── Running a query ────────────────────────────────────────────────────────
 // One request, or for a query with `next`, every page (its shape then gets the
 // list of page bodies). The CLI and the MCP server both run queries through here.
@@ -855,5 +873,38 @@ export const QUERIES = [
     check: (a) => { if (a.cursor != null && String(a.cursor).length > 2048) throw new UsageError('cursor is too long'); },
     request: (a) => ({ action: 'whatnot-products', limit: a.productLimit, cursor: a.cursor }),
     shape: (b) => ({ products: b.products, nextCursor: b.nextCursor }),
+  },
+  // ── Discounts & Returns (2026-11-12) ──
+  {
+    name: 'get_discounts', cli: 'discounts', title: 'Discounts by store, category, button and employee',
+    description: 'Discounts given at the register for a date range: totals and the planned vs manual split per store, '
+      + 'by category (L2/L3), by discount name with its percent or dollar amount, by employee, and per day, week and month '
+      + '(compare two periods by calling it twice), plus the largest single discounts and the share of gross retail they took. '
+      + 'Filters narrow every table. At most 92 days.',
+    args: [req('from'), req('to'), opt('storeId'), opt('category'), opt('employee'), opt('discountClass'), opt('discountLevel'), opt('discountSearch'), opt('discountLimit')],
+    check: discountRangeCheck,
+    request: (a) => ({ action: 'discounts', from: a.from, to: a.to, store: upper(a.storeId), category: a.category, employee: a.employee,
+      class: a.discountClass, level: a.discountLevel, search: a.discountSearch, limit: a.discountLimit }),
+    shape: (b) => { const { ok, ...rest } = b; return rest; },
+  },
+  {
+    name: 'get_discount_classes', cli: 'discount-classes', title: 'Discount names and their planned / manual class',
+    description: 'Every discount name rung in a range (default the last 120 days) with its dollars, uses, stores and percent '
+      + 'or dollar amount, and the class an admin set for it: planned, manual or unclassified. Read-only.',
+    args: [opt('from'), opt('to')],
+    check: (a) => { if ((a.from == null) !== (a.to == null)) throw new UsageError('give both from and to, or neither'); if (a.from && a.to < a.from) throw new UsageError('to is before from'); },
+    request: (a) => ({ action: 'discount-classes', from: a.from, to: a.to }),
+    shape: (b) => ({ from: b.from, to: b.to, seen: b.seen, classes: b.classes }),
+  },
+  {
+    name: 'get_returns', cli: 'returns', title: 'Payment refunds and manual refunds',
+    description: 'Refunds for a date range: each payment refund and manual refund with time, amount (with tax), employee, '
+      + 'reason, order and the items on it, and its flags (no item recorded, over $100, an employee with 3+ manual refunds '
+      + 'that week); totals and refund rate per store, per employee, and the repeat-refund employees. At most 92 days.',
+    args: [req('from'), req('to'), opt('storeId'), opt('employee'), opt('returnKind'), opt('returnFilter'), opt('returnLimit')],
+    check: discountRangeCheck,
+    request: (a) => ({ action: 'returns', from: a.from, to: a.to, store: upper(a.storeId), employee: a.employee, kind: a.returnKind,
+      filter: a.returnFilter === 'flagged' ? 'flagged' : undefined, limit: a.returnLimit ?? 150 }),
+    shape: (b) => { const { ok, ...rest } = b; return rest; },
   },
 ];
