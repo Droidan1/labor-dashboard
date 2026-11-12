@@ -1,3 +1,31 @@
+# Discounts & Returns reporting (2026-11-12) — the page (PR 2 of 2)
+
+**Ask (Brian):** the page on top of the backend below (live in prod): discounts by store, button,
+category, employee, week and month, the largest single discounts, refunds with their flags, and an
+admin editor for planned vs manual. Frontend only; worker.js untouched.
+
+- [x] `#page-discounts` next to the Retail Summary: sidebar `nav-discounts` (Store section, so the phone's
+      Menu gets it with no second edit), `FINANCIAL_PAGES` + `seesMoney` like Labor, `NAV_BUSINESS` 'bl'
+- [x] Filters in one panel bar (store, dates, category, employee, planned/manual) driving both sections;
+      default last full month; previous period of equal length fetched alongside for the tile changes
+- [x] Discounts: 7 tiles with change, by store / button (sort $ or uses) / category (L2 → L3, §4.8) /
+      employee / week / month / largest; coverage sentence
+- [x] Returns: 4 tiles, by store / flagged / by employee / repeat refunders; the 3-day banking lag
+- [x] Editor (admins, superusers): every name seen, §4.8 three states, Save sends only changed names
+- [x] Loading / empty / error / 403 states; every API string escaped (`drEsc`, quote-safe)
+- [x] `CACHE_NAME` bump + shell-cache pin; browser-mobile-menu's EXPECT gains the row
+- [x] Verify: scripts/test-discounts-page.mjs (fails on base), scripts/browser-discounts-page.mjs in
+      light + dark (contrast computed, 375px, second render, Save payload, manager, hostile string)
+
+**Review (2026-11-12, local commit on `claude/discounts-page`, not pushed):** `npm test` 12,018 assertions /
+136 suites green (base 11,942 / 135); test-discounts-page.mjs 59, fails on base (14) and with `drEsc` made a
+no-op (12). browser-discounts-page.mjs 207/207: light, dark, pure black, Halloween; contrast minimums light
+5.53 (tile label) / dark 5.21 (header, muted) / errors 4.83 light; 375px no sideways scroll, sticky column
+pinned + opaque; store and date changes re-render; Save POSTs exactly the changed names; manager has no
+editor; staff refused; 403 has no Retry. browser-mobile-menu.mjs: 163 pass, 6 fail — the SAME 6 on the base
+build (associates get Submit Photos via `ASSOCIATE_OPEN_PAGES`, its EXPECT was never updated); not touched.
+- [ ] Brian: review, push, PR, merge (Pages deploys the frontend; no worker change, no migration)
+
 # Discounts & Returns reporting (2026-11-12) — backend (PR 1 of 2)
 
 **Ask (Brian):** a Discounts & Returns page from Clover data, so "why did October discounts jump" or
@@ -56,8 +84,18 @@ refund links to its sale by `refund_of` (234 of 234 since Sept 1), a primary-key
       prod's items: snapshot discounts to the cent, BL1 2026-09-02 $22.00 short on the same 341 orders
       (likely an order changed in Clover since its snapshot; the backfill will hold it incomplete). Rows per
       store-day 38–1,064 (Nov 8, all stores: 1,840); 7 BL1 days ran in 22 s.
-- [ ] Prod (Brian's yes): migration-089, worker, retjg-mcp; then backfill Sept 1 → T−3 oldest first,
-      chunk 1 spot-checked; reconcile with Clover's Sales report
+- [x] Prod (Brian's yes, 2026-11-12): migration-089 (3 empty tables, checked); worker 146408b8 (1262.58 KiB,
+      MEDIA/BL16/5 crons; reporting-key read of `discounts` 3 clean passes); retjg-mcp e7c809c3 (358.38 KiB,
+      v1.6.0, 32 tools, 3 clean passes, get_discounts answers). Live returns: Coliseum manual Oct 22 + 24 =
+      6 / $764.64; Jackie Harvey 5 manual refunds Oct 18–24 incl. "return fridge" $513.60, "return lights" $214.
+- [x] Backfill Sept 1 → Nov 9 (5 stores, 10-day windows, oldest first, 2026-11-12, ~13 min, from Brian's prod
+      session in Chrome). Chunk 1 (BL1 Sept 1–10) spot-checked first: ledger == rows written, every employee
+      named. 350 store-days, 0 errors, 343 complete; 7 short of their snapshot and held incomplete (BL1 09-02
+      $22, 09-25 $37, 10-03 $7.50, 10-07 $2, 10-08 $0.75; BL2 10-05 $2; BL4 10-24 $20). Record: Sept $62,576.33
+      (snapshots $62,635.33; Clover ~$60.9K), Oct $94,152.56 (snapshots $94,184.81; Clover ~$92.9K), Oct item-level
+      $61,532.68 (Clover $58.7K). Hub vs Clover still +1–3%: needs Brian's Clover report to reconcile one day.
+      The jump: Seasonal +$18.7K, Apparel +$9.0K; new 70% / 40% Off buttons + 25% Off = +$20.7K.
+- [ ] Merge #378 (prod is ahead of main until then); reinstall the `retjg` CLI from main
 - [ ] Seed `discount_classes` from the names the backfill finds (Brian confirms the planned/manual list)
 
 **Page (PR 2)**

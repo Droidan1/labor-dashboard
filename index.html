@@ -1141,6 +1141,10 @@
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
           <span class="nav-label">Retail Summary</span>
         </div>
+        <div id="nav-discounts" class="hidden nav-item" data-page="discounts" data-menu-section="Store" onclick="navigateToPage('discounts')">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg></span>
+          <span class="nav-label">Discounts &amp; Returns</span>
+        </div>
         <div id="nav-marketing-group" class="hidden">
           <div id="nav-marketing" class="nav-item" onclick="toggleMarketingMenu()">
             <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg></span>
@@ -2099,6 +2103,197 @@
         <section id="wrs-pane-store" class="wrs-pane hidden space-y-6"></section>
       </div>
     </div><!-- end #page-weekly-summary -->
+
+    <!-- ══ Discounts & Returns (Brian, 2026-11-12) ══════════════════════════
+         Reads ?action=discounts, ?action=returns and ?action=discount-classes
+         (worker.js, migration-089). Every table follows DESIGN.md §4.8: a panel
+         owns its bar, table and legend. Colour is stated for BOTH themes on the
+         PAGE through the --dr-* variables below — light literals are the opl-*
+         tokens, dark re-points through rgb(var(--op-*)) so pure black and
+         Halloween retint with it. Nothing on this page inherits a colour (trap 3).
+         Contrast is measured by scripts/browser-discounts-page.mjs, never by eye. -->
+    <div id="page-discounts" class="hidden">
+      <style>
+        #page-discounts{--dr-panel:#ffffff;--dr-panelHi:#fafaf6;--dr-ink:#14110a;--dr-dim:#6b6453;   /* opl-panel / panelHi / ink / inkDim */
+          --dr-hair:rgba(20,16,8,.10);--dr-border:rgba(20,16,8,.18);--dr-tile:rgba(20,16,8,.03);--dr-tileB:rgba(20,16,8,.08);
+          --dr-brand:#166534;--dr-brandB:rgba(22,101,52,.4);                                       /* green-800: accent text in light */
+          --dr-warn:#92400e;--dr-warnBg:rgba(245,158,11,.14);--dr-warnB:rgba(245,158,11,.55);      /* amber-800 on the amber wash */
+          --dr-bad:#c0392b;--dr-badBg:rgba(192,57,43,.08);color:var(--dr-ink)}
+        .dark #page-discounts{--dr-panel:rgb(var(--op-panel));--dr-panelHi:rgb(var(--op-panelHi));--dr-ink:rgb(var(--op-ink));
+          --dr-dim:rgb(var(--op-inkDim));--dr-hair:rgba(255,255,255,.09);--dr-border:rgba(255,255,255,.16);
+          --dr-tile:rgba(255,255,255,.025);--dr-tileB:var(--op-border);
+          --dr-brand:rgb(var(--accent-green));--dr-brandB:rgb(var(--accent-green) / .4);
+          --dr-warn:#f59e0b;--dr-warnBg:rgba(245,158,11,.16);--dr-bad:#f87171;--dr-badBg:rgba(239,68,68,.12)}
+        /* Native controls are UA-drawn and follow color-scheme, which the app never sets (trap 4). */
+        .dark #page-discounts select,.dark #page-discounts input{color-scheme:dark}
+        #page-discounts .dr-stack>*+*{margin-top:16px}
+        #page-discounts .dr-h2{font-size:15px;font-weight:600;color:var(--dr-ink);margin:28px 2px 10px}
+        #page-discounts .dr-panel{background:var(--dr-panel);border:1px solid var(--dr-hair);border-radius:14px;overflow:hidden;color:var(--dr-ink);min-width:0}
+        #page-discounts .dr-bar{display:flex;align-items:flex-end;gap:10px 14px;flex-wrap:wrap;padding:13px 18px;
+          background:var(--dr-panelHi);border-bottom:1px solid var(--dr-hair)}
+        #page-discounts .dr-barlbl{font-size:12px;font-weight:600;color:var(--dr-ink);align-self:center}
+        #page-discounts .dr-bar .dr-right{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+        #page-discounts .dr-ctl{display:flex;flex-direction:column;gap:4px;min-width:0}
+        #page-discounts .dr-ctl>span{font-size:12px;font-weight:500;color:var(--dr-dim)}
+        #page-discounts .dr-ctls{display:flex;gap:10px 14px;flex-wrap:wrap;align-items:flex-end}
+        #page-discounts .dr-ctls[hidden]{display:none!important}   /* a class that sets display outranks [hidden] */
+        #page-discounts .dr-sel{height:34px;border-radius:9px;border:1px solid var(--dr-border);background:var(--dr-panel);
+          color:var(--dr-ink);padding:0 9px;font-size:13px;font-weight:500;max-width:100%;min-width:0}
+        #page-discounts .dr-sel:focus{outline:none;border-color:rgb(var(--accent-green))}
+        #page-discounts .dr-status{padding:12px 18px;font-size:13px;line-height:1.5;color:var(--dr-dim)}
+        #page-discounts .dr-status b{color:var(--dr-ink);font-weight:600}
+        #page-discounts .dr-err{padding:14px 18px;font-size:13px;line-height:1.5;color:var(--dr-bad);background:var(--dr-badBg)}
+        #page-discounts .dr-empty{padding:18px;font-size:14px;color:var(--dr-dim)}
+        /* Buttons: the main one is the accent fill with #06210f (7.48:1), never white on green. */
+        #page-discounts .dr-go{height:34px;border:0;border-radius:9px;padding:0 14px;font-size:13px;font-weight:600;cursor:pointer;
+          background:rgb(var(--accent-green));color:#06210f}
+        #page-discounts .dr-go:disabled{opacity:.42;cursor:not-allowed}
+        #page-discounts .dr-btn{height:32px;border:1px solid var(--dr-border);border-radius:9px;padding:0 12px;font-size:13px;
+          font-weight:600;cursor:pointer;background:var(--dr-panel);color:var(--dr-ink)}
+        #page-discounts .dr-btn[hidden]{display:none!important}
+        #page-discounts .dr-more{display:block;width:100%;min-height:40px;border:0;border-top:1px solid var(--dr-hair);
+          background:var(--dr-panel);color:var(--dr-ink);font-size:13px;font-weight:600;cursor:pointer}
+        /* Sort toggle: a segmented control, neutral — colour is for pace and main buttons only. */
+        #page-discounts .dr-pills{display:inline-flex;border:1px solid var(--dr-border);border-radius:9px;overflow:hidden}
+        #page-discounts .dr-pills button{height:30px;padding:0 12px;font-size:12px;font-weight:500;border:0;cursor:pointer;
+          background:transparent;color:var(--dr-dim)}
+        #page-discounts .dr-pills button+button{border-left:1px solid var(--dr-border)}
+        #page-discounts .dr-pills button[aria-pressed="true"]{background:var(--dr-panel);color:var(--dr-ink);font-weight:600}
+
+        /* Tiles: the neutral Matrix tile (§4.3) — grey, an inkDim label, ink value. */
+        /* Two across on a phone, four from a tablet up: seven tiles as 4 + 3, never squeezed so
+           narrow that a six-figure total breaks onto a second line. */
+        #page-discounts .dr-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:4px 18px 18px}
+        @media (min-width:768px){#page-discounts .dr-tiles{grid-template-columns:repeat(4,minmax(0,1fr))}}
+        #page-discounts .dr-tile{border-radius:8px;border:1px solid var(--dr-tileB);background:var(--dr-tile);padding:10px 12px;min-width:0}
+        #page-discounts .dr-tile .l{font-size:11px;font-weight:500;color:var(--dr-dim)}
+        #page-discounts .dr-tile .v{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--dr-ink);margin-top:4px;overflow-wrap:anywhere}
+        #page-discounts .dr-tile .d{font-size:12px;color:var(--dr-dim);margin-top:3px;font-variant-numeric:tabular-nums}
+
+        /* One table per row: most have seven or eight columns, which a half-width panel would scroll
+           even on a desktop. minmax(0,…) or a wide table widens the track and the PAGE scrolls
+           sideways instead of the panel. */
+        #page-discounts .dr-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;margin-top:16px}
+
+        #page-discounts .dr-scroll{overflow-x:auto}
+        #page-discounts .dr-tbl{border-collapse:separate;border-spacing:0;width:100%;font-size:13px;color:var(--dr-ink);font-variant-numeric:tabular-nums}
+        #page-discounts .dr-tbl th,#page-discounts .dr-tbl td{text-align:right;padding:0 10px;height:42px;white-space:nowrap;
+          border-bottom:1px solid var(--dr-hair);background:var(--dr-panel)}
+        #page-discounts .dr-tbl th{font-size:11px;font-weight:600;height:34px;color:var(--dr-dim);background:var(--dr-panelHi)}
+        #page-discounts .dr-tbl .l{text-align:left}
+        #page-discounts .dr-tbl tbody tr:last-child td{border-bottom:0}
+        /* The first column pins while the numbers scroll sideways, so it needs its own opaque
+           background or the cells slide under it (trap 2). */
+        #page-discounts .dr-tbl .dr-first{position:sticky;left:0;z-index:2;text-align:left;white-space:normal;min-width:140px;max-width:240px}
+        #page-discounts .dr-tbl th.dr-first{z-index:3}
+        #page-discounts .dr-tbl tr.dr-total td{font-weight:600;background:var(--dr-panelHi)}
+        #page-discounts .dr-tbl .dr-dim,#page-discounts .dr-dim{color:var(--dr-dim)}
+        #page-discounts .dr-tbl .dr-sub{display:block;font-size:12px;color:var(--dr-dim);margin-top:1px}
+        #page-discounts .dr-tbl td.dr-wrap{white-space:normal;text-align:left;min-width:180px;max-width:340px;line-height:1.4;
+          padding-top:8px;padding-bottom:8px;overflow-wrap:anywhere}
+        #page-discounts .dr-tbl td.dr-first{padding-top:6px;padding-bottom:6px;line-height:1.35;overflow-wrap:anywhere}
+        /* Hierarchy (§4.8): a level badge, and an L3 indents with a rule drawn back up to its L2. */
+        #page-discounts .dr-lvl{display:inline-block;font-size:11px;font-weight:600;border:1px solid var(--dr-border);border-radius:4px;
+          padding:1px 5px;margin-right:8px;color:var(--dr-dim);vertical-align:1px}
+        #page-discounts .dr-tbl tr.dr-l2 td.dr-first{font-weight:600}
+        #page-discounts .dr-tbl tr.dr-l3 td.dr-first{padding-left:34px}
+        #page-discounts .dr-tbl tr.dr-l3 td.dr-first::before{content:"";position:absolute;left:18px;top:0;bottom:50%;width:9px;
+          border-left:1px solid var(--dr-border);border-bottom:1px solid var(--dr-border);border-bottom-left-radius:5px}
+        #page-discounts .dr-lvl.l3{color:var(--dr-brand);border-color:var(--dr-brandB)}
+        /* Chips. A type chip is neutral; unclassified is dashed and dim — the "inherited" look. A flag
+           is the one tinted chip: it is the thing to look at. */
+        #page-discounts .dr-chip{display:inline-block;font-size:11px;font-weight:600;border:1px solid var(--dr-border);border-radius:999px;
+          padding:2px 8px;color:var(--dr-ink);white-space:nowrap;background:transparent}
+        #page-discounts .dr-chip.unc{border-style:dashed;color:var(--dr-dim)}
+        #page-discounts .dr-chip.flag{color:var(--dr-warn);border-color:var(--dr-warnB);background:var(--dr-warnBg);margin:2px 4px 2px 0}
+
+        /* The editor's three cell states (§4.8): unclassified looks inherited, a set type has a box,
+           a change in this draft is amber. */
+        #page-discounts .dr-cls{height:30px;border-radius:6px;padding:0 6px;font-size:13px;border:1px solid transparent;
+          background:transparent;color:var(--dr-ink);cursor:pointer}
+        #page-discounts .dr-cls:hover{border-color:var(--dr-border)}
+        #page-discounts .dr-cls.inherit{color:var(--dr-dim)}
+        #page-discounts .dr-cls.own{background:var(--dr-panelHi);border-color:var(--dr-border)}
+        #page-discounts .dr-cls.dirty{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.55);color:var(--dr-ink)}
+        .dark #page-discounts .dr-cls.dirty{background:rgba(245,158,11,.16)}
+        #page-discounts .dr-cls option{background:var(--dr-panel);color:var(--dr-ink)}
+        #page-discounts .dr-legend{display:flex;gap:10px 20px;flex-wrap:wrap;padding:12px 18px;font-size:12px;line-height:1.5;
+          color:var(--dr-dim);border-top:1px solid var(--dr-hair)}
+        #page-discounts .dr-legend>span{display:flex;align-items:center;gap:7px}
+        #page-discounts .dr-legend i{width:22px;height:14px;border-radius:4px;display:inline-block;border:1px solid transparent;flex:none}
+        #page-discounts .dr-sw-inherit{border-color:var(--dr-hair)!important}
+        #page-discounts .dr-sw-own{background:var(--dr-panelHi);border-color:var(--dr-border)!important}
+        #page-discounts .dr-sw-dirty{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.55)!important}
+        #page-discounts .dr-skrow{padding:12px 18px;border-top:1px solid var(--dr-hair)}
+        @media (max-width:640px){
+          #page-discounts .dr-bar,#page-discounts .dr-status,#page-discounts .dr-legend,#page-discounts .dr-err{padding-left:12px;padding-right:12px}
+          #page-discounts .dr-tiles{padding-left:12px;padding-right:12px}
+          #page-discounts .dr-ctl{flex:1 1 140px}
+          /* 16px or iOS zooms the page when a control takes focus. */
+          #page-discounts .dr-sel{font-size:16px;width:100%}
+          #page-discounts .dr-tbl .dr-first{min-width:120px;max-width:170px}
+        }
+      </style>
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-[1500px] mx-auto flex items-end justify-between gap-4">
+          <div class="min-w-0">
+            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Discounts &amp; Returns</h1>
+            <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">What came off at the till and what came back, by store, button and employee. Bins and live sales are left out of the share of gross retail.</p>
+          </div>
+          <button id="dr-refresh" type="button" onclick="drRefresh()" title="Refresh" aria-label="Refresh"
+            class="w-[38px] h-[38px] flex-shrink-0 grid place-items-center rounded-lg border border-gray-300 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim hover:border-accent-green/50 hover:text-gray-700 dark:hover:text-op-ink transition-colors">
+            <svg class="w-[17px] h-[17px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="max-w-[1500px] mx-auto px-4 sm:px-6 pt-4 pb-10">
+        <!-- The filters drive BOTH sections, so they sit on a panel of their own above them. -->
+        <div id="dr-filters" class="dr-panel">
+          <div class="dr-bar">
+            <span class="dr-barlbl">Filters</span>
+            <label class="dr-ctl"><span>Store</span><select id="dr-f-store" class="dr-sel" onchange="drSetFilter('store', this.value)"></select></label>
+            <label class="dr-ctl"><span>Dates</span><select id="dr-f-range" class="dr-sel" onchange="drSetFilter('preset', this.value)"></select></label>
+            <span id="dr-f-custom" class="dr-ctls" hidden>
+              <label class="dr-ctl"><span>From</span><input id="dr-f-from" type="date" class="dr-sel"></label>
+              <label class="dr-ctl"><span>To</span><input id="dr-f-to" type="date" class="dr-sel"></label>
+              <button id="dr-f-apply" type="button" class="dr-go" onclick="drApplyCustom()">Apply</button>
+            </span>
+            <label class="dr-ctl"><span>Category</span><select id="dr-f-cat" class="dr-sel" onchange="drSetFilter('category', this.value)"></select></label>
+            <label class="dr-ctl"><span>Employee</span><select id="dr-f-emp" class="dr-sel" onchange="drSetFilter('employee', this.value)"></select></label>
+            <label class="dr-ctl"><span>Planned or manual</span><select id="dr-f-class" class="dr-sel" onchange="drSetFilter('cls', this.value)"></select></label>
+          </div>
+          <div id="dr-period" class="dr-status" aria-live="polite"></div>
+        </div>
+
+        <h2 class="dr-h2">Discounts</h2>
+        <section id="dr-disc"></section>
+
+        <h2 class="dr-h2">Returns</h2>
+        <section id="dr-ret"></section>
+
+        <!-- Admins and superusers only; drRenderEditor() reveals it. The bar and legend are
+             static, so only #dr-edit-body and #dr-edit-status are ever replaced (trap 7). -->
+        <div id="dr-edit-wrap" class="hidden">
+          <h2 class="dr-h2">Planned or manual</h2>
+          <div id="dr-edit" class="dr-panel">
+            <div class="dr-bar">
+              <span class="dr-barlbl">Discount names</span>
+              <span class="dr-right">
+                <button id="dr-edit-discard" type="button" class="dr-btn" onclick="drEditDiscard()" hidden>Discard changes</button>
+                <button id="dr-edit-save" type="button" class="dr-go" onclick="drEditSave()" disabled>Save</button>
+              </span>
+            </div>
+            <div id="dr-edit-status" class="dr-status" aria-live="polite"></div>
+            <div id="dr-edit-body"></div>
+            <div class="dr-legend">
+              <span><i class="dr-sw-inherit"></i> Unclassified: counts as neither planned nor manual</span>
+              <span><i class="dr-sw-own"></i> Set: planned or manual</span>
+              <span><i class="dr-sw-dirty"></i> Changed, not saved yet</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div><!-- end #page-discounts -->
 
     <!-- ══ Inventory (Add Item · Inventory Viewer · Schedule Sale) ═══════════
          One stylesheet for all three pages. It follows Buy Criteria's pattern
@@ -13724,7 +13919,7 @@
     // (NO_FINANCIAL_ACCESS) but the shell would still render, so gate here too.
     // Only fires for a role outside FINANCIAL_ROLES — today `staff` and anything
     // unrecognised. Every role in production is unaffected.
-    const FINANCIAL_PAGES = ['dashboard', 'weekly-summary', 'store-detail',
+    const FINANCIAL_PAGES = ['dashboard', 'weekly-summary', 'discounts', 'store-detail',
                              'all-stores-detail', 'inventory-add', 'inventory-viewer',
                              'inventory-sale', 'supply-request', 'labor',
                              'live-overview', 'live-shows', 'live-calendar', 'live-auction', 'live-promotion', 'live-money'];
@@ -13871,6 +14066,9 @@
     }
     if (page === 'labor') {
       try { initLabor(); } catch (_) {}
+    }
+    if (page === 'discounts') {
+      if (typeof initDiscounts === 'function') initDiscounts();
     }
     if (page === 'marketing') {
       initMarketing();
@@ -29980,6 +30178,615 @@
       </div>`;
   }
 
+  // ══ Discounts & Returns (Brian, 2026-11-12) ═════════════════════════════════════════════
+  // The page on the discount record (migration-089) and the payment archive. Three reads:
+  //   ?action=discounts  — twice: the range, and the period of equal length just before it, for
+  //                        the tiles' change and so week/month rows have something to compare with
+  //   ?action=returns    — once, &filter=flagged (totals still count every refund)
+  //   ?action=discount-classes — the planned/manual editor, admins and superusers only
+  // The worker is the gate: a manager's reads come back scoped to their own stores, and staff get
+  // 403. This page decides only what to offer.
+  //
+  // 🛑 Every string the API returns was typed by a person at a register — a discount's name, an
+  // employee, a cashier's note on a manual refund, an item, a reason. drEsc() at render, every
+  // time, text AND attributes (escapeHtml leaves quotes alone, so it cannot go in an attribute).
+  const DR_STORES = [['BL1', 'Coliseum'], ['BL2', 'South Bend'], ['BL4', 'Dupont'], ['BL8', 'Holland'], ['BL14', 'Battle Creek'], ['BL16', 'Indy East']];
+  const DR_STORE_NAME = Object.fromEntries(DR_STORES);
+  const DR_PRESETS = [['lastMonth', 'Last month'], ['thisMonth', 'This month'], ['lastWeek', 'Last week'], ['thisWeek', 'This week'],
+    ['last7', 'Last 7 days'], ['last30', 'Last 30 days'], ['last3mo', 'Last 3 months'], ['custom', 'Custom dates']];
+  const DR_MAX_DAYS = 92;     // the worker's cap on both reads
+  const DR_SHOW = 30;         // rows a long table shows before "Show all"
+  const DR_FRESH_MS = 5 * 60 * 1000;
+  let dr = null;
+
+  function drEsc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+  const drIsEditor = () => !!currentUser && ['superuser', 'admin'].includes(currentUser.role);
+  // null = every store; an array (or its JSON) is a restriction. The worker applies the same scope.
+  function drUserStores() {
+    if (!currentUser) return [];
+    if (['superuser', 'admin'].includes(currentUser.role)) return DR_STORES.slice();
+    let held = currentUser.stores;
+    if (typeof held === 'string') { try { held = JSON.parse(held); } catch (e) { held = []; } }
+    return Array.isArray(held) ? DR_STORES.filter(([k]) => held.includes(k)) : DR_STORES.slice();
+  }
+  // State lives for one signed-in person; a different account starts clean.
+  function drState() {
+    const who = currentUser ? `${currentUser.email || ''}|${currentUser.role || ''}` : '';
+    if (!dr || dr.who !== who) {
+      dr = { who, preset: 'lastMonth', cFrom: '', cTo: '', store: '', category: '', employee: '', cls: '',
+             sort: 'dollars', more: {}, seq: 0, loading: false, rangeErr: null, disc: null, prev: null, ret: null,
+             loadedFor: '', loadedAt: 0, opts: { key: '', cats: new Set(), emps: new Set() },
+             edit: { seq: 0, loading: false, seen: null, from: '', to: '', err: null, draft: new Map(), saving: false, note: '' } };
+    }
+    return dr;
+  }
+
+  // ── Formatting ──
+  const drNum = (n) => (Number(n) || 0).toLocaleString('en-US');
+  const drSign = (n) => n > 0 ? '+' : n < 0 ? '−' : '';
+  const drDays = (a, b) => Math.round((Date.parse(b + 'T12:00:00Z') - Date.parse(a + 'T12:00:00Z')) / 864e5) + 1;
+  function drDay(ymd, year) {
+    return new Date(ymd + 'T12:00:00Z').toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', ...(year ? { year: 'numeric' } : {}) });
+  }
+  function drRangeLabel(from, to) {
+    const y1 = from.slice(0, 4), y2 = to.slice(0, 4);
+    if (from === to) return drDay(from, true);
+    if (y1 !== y2) return `${drDay(from, true)} – ${drDay(to, true)}`;
+    if (from.slice(0, 7) === to.slice(0, 7)) return `${drDay(from)} – ${Number(to.slice(8))}, ${y1}`;
+    return `${drDay(from)} – ${drDay(to)}, ${y1}`;
+  }
+  const drMonthLabel = (ym) => new Date(ym + '-15T12:00:00Z').toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', year: 'numeric' });
+  // A refund's or discount's moment, on the stores' clock.
+  function drWhen(iso, date) {
+    if (!iso) return date ? drDay(date) : '—';
+    return new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  }
+  function drPctOrAmount(percent, amount) {
+    const one = (v, f) => Array.isArray(v) ? `${f(v[0])}–${f(v[1])}` : f(v);
+    if (percent != null) return one(percent, p => `${+p}%`);
+    if (amount != null) return one(amount, a => fmtDollar(+a));
+    return '<span class="dr-dim">—</span>';
+  }
+  function drChip(cls) {
+    if (cls === 'planned') return '<span class="dr-chip">Planned</span>';
+    if (cls === 'manual') return '<span class="dr-chip">Manual</span>';
+    return '<span class="dr-chip unc">Unclassified</span>';
+  }
+  const drStoreCell = (code) => `${drEsc(DR_STORE_NAME[code] || code)} <span class="dr-dim">${drEsc(code)}</span>`;
+  const drEmpCell = (e, none) => (!e || e === '(unknown)') ? `<span class="dr-dim">${none}</span>` : drEsc(e);
+  // The change against the previous period. Neutral on purpose: a rise in discounts is neither
+  // good nor bad on its own, and colour on this page is for pace and the main buttons only.
+  function drDelta(cur, prev, kind) {
+    if (cur == null || prev == null) return 'No comparison';
+    const diff = Math.round((cur - prev) * 100) / 100;
+    if (!diff) return 'No change';
+    if (kind === 'pts') return `${drSign(diff)}${Math.abs(diff).toFixed(2)} pts`;
+    const abs = kind === 'money' ? fmtDollar(Math.abs(diff)) : drNum(Math.abs(diff));
+    return prev > 0 ? `${drSign(diff)}${abs} · ${drSign(diff)}${Math.abs(diff / prev * 100).toFixed(1)}%` : `${drSign(diff)}${abs} · was ${kind === 'money' ? '$0.00' : '0'}`;
+  }
+
+  // ── Building blocks ──
+  // head: [[label, align], …] — align '' = a number (right), 'l' = text (left), 'w' = text that
+  // wraps. rows: [{ c: [html, …], cls }]. The first column is the sticky one and always text.
+  function drTable(head, rows, opts = {}) {
+    const cls = (i, td) => {
+      const a = (head[i] && head[i][1]) || '';
+      return [i ? '' : 'dr-first', i && a ? 'l' : '', td && i && a === 'w' ? 'dr-wrap' : ''].filter(Boolean).join(' ');
+    };
+    const th = head.map(([t], i) => `<th class="${cls(i, false)}">${t}</th>`).join('');
+    const body = rows.map(r => `<tr${r.cls ? ` class="${r.cls}"` : ''}>${r.c.map((v, i) => `<td class="${cls(i, true)}">${v}</td>`).join('')}</tr>`).join('');
+    return `<div class="dr-scroll"><table class="dr-tbl"${opts.label ? ` aria-label="${drEsc(opts.label)}"` : ''}><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table></div>`;
+  }
+  function drPanel(title, body, { right = '', note = '', legend = '' } = {}) {
+    return `<div class="dr-panel"><div class="dr-bar"><span class="dr-barlbl">${title}</span>${right ? `<span class="dr-right">${right}</span>` : ''}</div>`
+      + `${note ? `<div class="dr-status">${note}</div>` : ''}${body}${legend ? `<div class="dr-legend">${legend}</div>` : ''}</div>`;
+  }
+  function drMore(key, total) {
+    const s = drState();
+    if (total <= DR_SHOW) return '';
+    return `<button type="button" class="dr-more" onclick="drToggleMore('${key}')">${s.more[key] ? `Show the first ${DR_SHOW}` : `Show all ${drNum(total)}`}</button>`;
+  }
+  const drCut = (key, list) => drState().more[key] ? list : list.slice(0, DR_SHOW);
+  const drTile = (label, value, sub) => `<div class="dr-tile"><div class="l">${label}</div><div class="v">${value}</div><div class="d">${sub}</div></div>`;
+  function drSkeleton(tiles) {
+    const t = Array.from({ length: tiles }, () => '<div class="dr-tile"><span class="skel" style="width:60%;height:11px"></span><div><span class="skel" style="width:85%;height:20px;margin-top:8px"></span></div></div>').join('');
+    const r = [0, 1, 2].map(() => '<div class="dr-skrow"><span class="skel" style="width:100%;height:14px"></span></div>').join('');
+    return `<div class="dr-panel" aria-busy="true"><div class="dr-status">Loading…</div><div class="dr-tiles">${t}</div>${r}</div>`;
+  }
+  // §6: a failure says what failed and why, and offers Retry unless retrying cannot help.
+  function drError(what, res) {
+    const denied = res.status === 403;
+    const why = denied
+      ? (res.error === 'NO_FINANCIAL_ACCESS' || res.code === 'NO_FINANCIAL_ACCESS'
+          ? 'Your account does not have access to sales figures.'
+          : 'Your account cannot see this for the store or business selected.')
+      : res.status === 0 ? `The request did not reach the server (${res.error}).` : String(res.error || `HTTP ${res.status}`);
+    return `<div class="dr-panel"><div class="dr-err" role="alert"><b>Couldn't load ${what}.</b> ${drEsc(why)}`
+      + `${denied ? '' : ' <button type="button" class="dr-btn" onclick="drLoad(true)">Retry</button>'}</div></div>`;
+  }
+
+  // ── Filters ──
+  function drRange() {
+    const s = drState();
+    let from, to;
+    if (s.preset === 'custom') { from = s.cFrom; to = s.cTo; }
+    else ({ from, to } = resolvePreset(s.preset));
+    const real = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || '') && new Date(d + 'T12:00:00Z').toISOString().slice(0, 10) === d;
+    if (!real(from) || !real(to)) return { error: 'Pick a start date and an end date, then Apply.' };
+    if (to < from) return { error: 'The end date is before the start date.' };
+    const days = drDays(from, to);
+    if (days > DR_MAX_DAYS) return { error: `That range is ${days} days. This page reads at most ${DR_MAX_DAYS} days at a time.` };
+    const pTo = ymdShift(from, -1);
+    return { from, to, days, pFrom: ymdShift(pTo, -(days - 1)), pTo };
+  }
+  function drFillFilters() {
+    const s = drState();
+    const stores = drUserStores();
+    el('dr-f-store').innerHTML = `<option value="">${stores.length < DR_STORES.length ? 'All my stores' : 'All stores'}</option>`
+      + stores.map(([k, n]) => `<option value="${drEsc(k)}">${drEsc(n)}</option>`).join('');
+    if (s.store && !stores.some(([k]) => k === s.store)) s.store = '';
+    el('dr-f-store').value = s.store;
+    el('dr-f-range').innerHTML = DR_PRESETS.map(([k, n]) => `<option value="${k}">${n}</option>`).join('');
+    el('dr-f-range').value = s.preset;
+    el('dr-f-class').innerHTML = [['', 'All discounts'], ['planned', 'Planned'], ['manual', 'Manual'], ['unclassified', 'Unclassified']]
+      .map(([k, n]) => `<option value="${k}">${n}</option>`).join('');
+    el('dr-f-class').value = s.cls;
+    el('dr-f-custom').hidden = s.preset !== 'custom';
+    drFillOptionLists();
+  }
+  // Category and employee offer what this store and range actually hold, plus whatever is picked.
+  function drFillOptionLists() {
+    const s = drState();
+    const sorted = (set, keep) => [...new Set([...set, ...(keep ? [keep] : [])])].sort((a, b) => a.localeCompare(b));
+    el('dr-f-cat').innerHTML = '<option value="">All categories</option>'
+      + sorted(s.opts.cats, s.category).map(c => `<option value="${drEsc(c)}">${drEsc(c)}</option>`).join('');
+    el('dr-f-cat').value = s.category;
+    el('dr-f-emp').innerHTML = '<option value="">All employees</option>'
+      + sorted(s.opts.emps, s.employee).map(e => `<option value="${drEsc(e)}">${e === '(unknown)' ? 'No employee recorded' : drEsc(e)}</option>`).join('');
+    el('dr-f-emp').value = s.employee;
+  }
+  function drSetFilter(k, v) {
+    const s = drState();
+    if (k === 'preset') {
+      s.preset = v;
+      el('dr-f-custom').hidden = v !== 'custom';
+      if (v === 'custom') {
+        // Start from the range on screen, so Custom is an edit of it, not a blank form.
+        el('dr-f-from').value = s.cFrom || s.from || '';
+        el('dr-f-to').value = s.cTo || s.to || '';
+        return;
+      }
+    } else {
+      s[k] = v;
+    }
+    drLoad(true);
+  }
+  function drApplyCustom() {
+    const s = drState();
+    s.cFrom = el('dr-f-from').value; s.cTo = el('dr-f-to').value;
+    drLoad(true);
+  }
+  function drToggleMore(key) { const s = drState(); s.more[key] = !s.more[key]; drRender(); }
+  function drSort(by) { const s = drState(); s.sort = by; drRender(); }
+
+  // ── Loading ──
+  async function drGet(action, params) {
+    const q = new URLSearchParams({ action });
+    for (const [k, v] of Object.entries(params)) if (v !== '' && v != null) q.set(k, String(v));
+    try {
+      const r = await fetch(`${WORKER_BASE}?${q}`, { credentials: 'include' });
+      let j = null;
+      try { j = await r.json(); } catch (e) {}
+      if (!r.ok || !j || j.error) return { status: r.status, error: (j && (j.error || j.code)) || `HTTP ${r.status}`, code: j && j.code };
+      return { status: r.status, data: j };
+    } catch (e) {
+      return { status: 0, error: e.message || 'network error' };
+    }
+  }
+  async function drLoad(force) {
+    const s = drState();
+    const seq = ++s.seq;
+    const r = drRange();
+    s.rangeErr = r.error || null;
+    if (r.error) { s.loading = false; drRender(); return; }
+    Object.assign(s, { from: r.from, to: r.to, days: r.days, pFrom: r.pFrom, pTo: r.pTo });
+    const want = [s.store, r.from, r.to, s.category, s.employee, s.cls].join('|');
+    if (!force && s.loadedFor === want && Date.now() - s.loadedAt < DR_FRESH_MS) { drRender(); return; }
+    const optKey = [s.store, r.from, r.to].join('|');
+    if (s.opts.key !== optKey) s.opts = { key: optKey, cats: new Set(), emps: new Set() };
+    s.loading = true;
+    drRender();
+    const base = { store: s.store, employee: s.employee };
+    const disc = { ...base, category: s.category, class: s.cls };
+    const [cur, prev, ret] = await Promise.all([
+      drGet('discounts', { ...disc, from: r.from, to: r.to, limit: 25 }),
+      drGet('discounts', { ...disc, from: r.pFrom, to: r.pTo, limit: 1 }),
+      drGet('returns', { ...base, from: r.from, to: r.to, filter: 'flagged' }),
+    ]);
+    if (seq !== s.seq) return;    // a newer filter change owns the page now
+    Object.assign(s, { loading: false, disc: cur, prev, ret, loadedFor: want, loadedAt: Date.now() });
+    for (const c of (cur.data?.byCategory || [])) if (c.l2) s.opts.cats.add(c.l2);
+    for (const e of (cur.data?.byEmployee || [])) if (e.employee) s.opts.emps.add(e.employee);
+    for (const e of (ret.data?.byEmployee || [])) if (e.employee) s.opts.emps.add(e.employee);
+    drFillOptionLists();
+    drRender();
+  }
+  function initDiscounts() {
+    drState();
+    drFillFilters();
+    drLoad(false);
+    el('dr-edit-wrap').classList.toggle('hidden', !drIsEditor());
+    // An unsaved draft survives leaving the page; reloading the names would throw it away.
+    if (drIsEditor() && !drState().edit.draft.size) drLoadEditor();
+    else drRenderEditor();
+  }
+  function drRefresh() {
+    drLoad(true);
+    if (drIsEditor() && !drState().edit.draft.size) drLoadEditor();
+  }
+
+  // ── Rendering. Each render target holds only what its render owns (§4.8 trap 7). ──
+  function drRender() {
+    drRenderPeriod();
+    el('dr-disc').innerHTML = drDiscHtml();
+    el('dr-ret').innerHTML = drRetHtml();
+  }
+  function drRenderPeriod() {
+    const s = drState(), n = el('dr-period');
+    if (s.rangeErr) { n.innerHTML = `<span style="color:var(--dr-bad)">${drEsc(s.rangeErr)}</span>`; return; }
+    if (!s.from) { n.textContent = ''; return; }
+    let txt = `<b>${drRangeLabel(s.from, s.to)}</b> · changes compare with ${drRangeLabel(s.pFrom, s.pTo)}, the ${s.days} day${s.days === 1 ? '' : 's'} before.`;
+    const pc = !s.loading && s.prev?.data?.coverage;
+    if (pc) {
+      const owed = (pc.missing || []).reduce((a, m) => a + (Number(m.days) || 0), 0);
+      if (!pc.storeDays) txt += ' The discount record does not reach back that far, so there is nothing to compare with.';
+      else if (owed) txt += ` That period is missing ${drNum(owed)} store-day${owed === 1 ? '' : 's'} of record, so its figures read low.`;
+    }
+    n.innerHTML = txt;
+  }
+  function drCoverageSentence(cov) {
+    if (!cov) return '';
+    const n = Number(cov.storeDays) || 0;
+    const inc = cov.incomplete || [];
+    const owed = (cov.missing || []).reduce((a, m) => a + (Number(m.days) || 0), 0);
+    if (!n && !owed) return 'No store-day in this range has a discount record yet. Each day is recorded overnight.';
+    const bits = [];
+    if (inc.length) bits.push(`${drNum(inc.length)} of them incomplete (${inc.slice(0, 3).map(x => `${drEsc(DR_STORE_NAME[x.store] || x.store)} ${drDay(x.date)}`).join(', ')}${inc.length > 3 ? ', …' : ''})`);
+    if (owed) bits.push(`${drNum(owed)} store-day${owed === 1 ? '' : 's'} with sales have no record yet (${(cov.missing || []).map(m => `${drEsc(DR_STORE_NAME[m.store] || m.store)} ${drNum(m.days)}`).join(', ')})`);
+    return `Discounts are recorded for ${drNum(n)} store-day${n === 1 ? '' : 's'}${bits.length ? `; ${bits.join('; ')}` : ', all of them complete'}.`;
+  }
+
+  function drDiscHtml() {
+    const s = drState();
+    if (s.rangeErr) return '';
+    if (s.loading) return drSkeleton(7);
+    const res = s.disc;
+    if (!res) return '';
+    if (res.error) return drError('discounts', res);
+    const d = res.data || {}, t = d.totals;
+    const cov = drCoverageSentence(d.coverage);
+    if (!t || !Number(t.applications)) {
+      const filtered = s.category || s.employee || s.cls;
+      return drPanel('Totals', `<div class="dr-empty">No discounts recorded for this range${filtered ? ' with these filters' : ''}.</div>`, { note: cov });
+    }
+    const pd = s.prev && !s.prev.error && s.prev.data && s.prev.data.coverage && s.prev.data.coverage.storeDays ? s.prev.data : null;
+    const pt = pd && pd.totals ? pd.totals : null;
+    const P = (k) => pt ? Number(pt[k]) || 0 : null;
+    const tiles = [
+      drTile('Discounts', fmtDollar(+t.discounts), drDelta(+t.discounts, P('discounts'), 'money')),
+      drTile('Of gross retail', t.pctOfGrossRetail == null ? '—' : `${(+t.pctOfGrossRetail).toFixed(2)}%`,
+        drDelta(t.pctOfGrossRetail, pt ? pt.pctOfGrossRetail : null, 'pts')),
+      drTile('Planned', fmtDollar(+t.planned), drDelta(+t.planned, P('planned'), 'money')),
+      drTile('Manual', fmtDollar(+t.manual), drDelta(+t.manual, P('manual'), 'money')),
+      drTile('Unclassified', fmtDollar(+t.unclassified), drDelta(+t.unclassified, P('unclassified'), 'money')),
+      drTile('Uses', drNum(t.applications), drDelta(+t.applications, P('applications'), 'count')),
+      drTile('Discounted orders', drNum(t.discountedOrders), drDelta(+t.discountedOrders, P('discountedOrders'), 'count')),
+    ].join('');
+    const summary = drPanel('Totals', `<div class="dr-tiles">${tiles}</div>`, { note: cov });
+    return summary + `<div class="dr-grid">${[drByStore(d), drByButton(d), drByCategory(d), drByEmployee(d), drTrend(d, pd, 'week'), drTrend(d, pd, 'month'), drLargest(d)].join('')}</div>`;
+  }
+
+  function drByStore(d) {
+    const rows = (d.byStore || []).filter(r => Number(r.applications) || Number(r.grossRetail));
+    const pct = (v) => v == null ? '<span class="dr-dim">—</span>' : `${(+v).toFixed(2)}%`;
+    const line = (name, r, cls) => ({ cls, c: [name, fmtDollar(+r.discounts), pct(r.pctOfGrossRetail), fmtDollar(+r.planned), fmtDollar(+r.manual),
+      fmtDollar(+r.unclassified), drNum(r.applications), drNum(r.discountedOrders)] });
+    const body = rows.map(r => line(drStoreCell(r.store), r));
+    if (rows.length > 1 && d.totals) body.push(line('All stores', d.totals, 'dr-total'));
+    return drPanel('By store', drTable([['Store'], ['Discounts'], ['Of gross retail'], ['Planned'], ['Manual'], ['Unclassified'], ['Uses'], ['Orders']], body, { label: 'Discounts by store' }),
+      { note: 'Of gross retail leaves out bins and live sales on both sides.' });
+  }
+
+  function drByButton(d) {
+    const s = drState();
+    const all = [...(d.byButton || [])].sort(s.sort === 'uses'
+      ? (a, b) => (b.applications - a.applications) || (b.discounts - a.discounts)
+      : (a, b) => (b.discounts - a.discounts) || (b.applications - a.applications));
+    const lv = (l) => l.includes('item') && l.includes('order') ? 'Item and order' : l.includes('order') ? 'Order' : 'Item';
+    const rows = drCut('btn', all).map(b => ({ c: [b.name ? drEsc(b.name) : '<span class="dr-dim">No name</span>', drChip(b.class),
+      drPctOrAmount(b.percent, b.amount), fmtDollar(+b.discounts), drNum(b.applications), drNum(b.stores), lv(b.levels || [])] }));
+    const pill = (k, label) => `<button type="button" aria-pressed="${s.sort === k}" onclick="drSort('${k}')">${label}</button>`;
+    return drPanel('By discount button', drTable([['Discount'], ['Type', 'l'], ['Takes off'], ['Discounts'], ['Uses'], ['Stores'], ['Level', 'l']], rows, { label: 'Discounts by button' }) + drMore('btn', all.length), {
+      right: `<span class="dr-pills" role="group" aria-label="Sort by">${pill('dollars', 'Most dollars')}${pill('uses', 'Most uses')}</span>`,
+      legend: `<span>${drChip('planned')} a planned promotion</span><span>${drChip('manual')} a cashier's call at the register</span><span>${drChip('unclassified')} not decided yet${drIsEditor() ? ' — set it under Planned or manual below' : ' — an admin sets it'}</span>`,
+    });
+  }
+
+  function drByCategory(d) {
+    const s = drState();
+    const total = Number(d.totals?.discounts) || 0;
+    const groups = new Map();
+    for (const c of (d.byCategory || [])) {
+      const k = c.l2 || '';
+      const g = groups.get(k) || { l2: c.l2, discounts: 0, applications: 0, kids: [] };
+      g.discounts += Number(c.discounts) || 0; g.applications += Number(c.applications) || 0; g.kids.push(c);
+      groups.set(k, g);
+    }
+    const list = [...groups.values()].sort((a, b) => b.discounts - a.discounts);
+    const share = (v) => total > 0 ? `${(v / total * 100).toFixed(1)}%` : '—';
+    const rows = [];
+    for (const g of drCut('cat', list)) {
+      rows.push({ cls: 'dr-l2', c: [`<span class="dr-lvl">L2</span>${g.l2 ? drEsc(g.l2) : 'No category'}`, fmtDollar(Math.round(g.discounts * 100) / 100), share(g.discounts), drNum(g.applications)] });
+      // An L2 with one row and no L3 IS that row: no child line repeating it.
+      const kids = g.kids.length === 1 && !g.kids[0].l3 ? [] : [...g.kids].sort((a, b) => b.discounts - a.discounts);
+      for (const k of kids) rows.push({ cls: 'dr-l3', c: [`<span class="dr-lvl l3">L3</span>${k.l3 ? drEsc(k.l3) : 'No L3'}`, fmtDollar(+k.discounts), share(+k.discounts), drNum(k.applications)] });
+    }
+    return drPanel('By category', drTable([['Category'], ['Discounts'], ['Share'], ['Uses']], rows, { label: 'Discounts by category' }) + drMore('cat', list.length), {
+      legend: '<span><span class="dr-lvl">L2</span> department</span><span><span class="dr-lvl l3">L3</span> category within it</span><span>An order discount is split across the categories it covered, so it counts once in each.</span>',
+    });
+  }
+
+  function drByEmployee(d) {
+    const all = d.byEmployee || [];
+    const rows = drCut('emp', all).map(e => ({ c: [drEmpCell(e.employee, 'No employee recorded'), drStoreCell(e.store), fmtDollar(+e.discounts),
+      fmtDollar(+e.planned), fmtDollar(+e.manual), fmtDollar(+e.unclassified), drNum(e.applications)] }));
+    return drPanel('By employee', drTable([['Employee'], ['Store', 'l'], ['Discounts'], ['Planned'], ['Manual'], ['Unclassified'], ['Uses']], rows, { label: 'Discounts by employee' }) + drMore('emp', all.length),
+      { note: 'The employee on the order. A discount an approver signed off on still counts for whoever rang it.' });
+  }
+
+  // Week over week and month over month. The previous period is fetched anyway for the tiles, and
+  // the two ranges are back to back, so adding the two answers row by row gives whole weeks and
+  // months across the seam — the default month then compares with the month before it.
+  function drTrend(d, pd, grain) {
+    const s = drState();
+    const key = grain === 'week' ? 'weekEnding' : 'month';
+    const F = ['discounts', 'applications', 'planned', 'manual', 'unclassified'];
+    const m = new Map();
+    for (const r of [...((pd && pd[grain === 'week' ? 'byWeek' : 'byMonth']) || []), ...(d[grain === 'week' ? 'byWeek' : 'byMonth'] || [])]) {
+      const t = m.get(r[key]) || { k: r[key], discounts: 0, applications: 0, planned: 0, manual: 0, unclassified: 0 };
+      for (const f of F) t[f] = Math.round((t[f] + (Number(r[f]) || 0)) * 100) / 100;
+      m.set(r[key], t);
+    }
+    const lo = pd ? s.pFrom : s.from, hi = s.to;
+    const rows = [...m.values()].sort((a, b) => a.k < b.k ? -1 : 1).map(r => {
+      const start = grain === 'week' ? ymdShift(r.k, -6) : r.k + '-01';
+      const end = grain === 'week' ? r.k : ymdLastOfMonth(r.k + '-01');
+      const span = drDays(start, end);
+      const inRange = drDays(start < lo ? lo : start, end > hi ? hi : end);
+      return { ...r, start, end, span, inRange, full: inRange === span };
+    });
+    const out = rows.map((r, i) => {
+      const before = rows[i - 1];
+      const change = before && r.full && before.full ? drDelta(r.discounts, before.discounts, 'money') : '<span class="dr-dim">—</span>';
+      return { c: [grain === 'week' ? `${drDay(r.k)}` : drMonthLabel(r.k), r.full ? String(r.span) : `<span class="dr-dim">${r.inRange} of ${r.span}</span>`,
+        fmtDollar(r.discounts), change, fmtDollar(r.planned), fmtDollar(r.manual), fmtDollar(r.unclassified), drNum(r.applications)] };
+    });
+    const title = grain === 'week' ? 'Week by week' : 'Month by month';
+    const note = `${drRangeLabel(lo, hi)}${pd ? ', with the previous period' : ''}. ${grain === 'week' ? 'Weeks run Sunday to Saturday. ' : ''}A ${grain} only partly in range shows its days and no change.`;
+    return drPanel(title, out.length ? drTable([[grain === 'week' ? 'Week ending' : 'Month'], ['Days'], ['Discounts'], ['Change'], ['Planned'], ['Manual'], ['Unclassified'], ['Uses']], out, { label: title })
+      : '<div class="dr-empty">Nothing recorded.</div>', { note });
+  }
+
+  function drLargest(d) {
+    const rows = (d.largest || []).map(x => {
+      const cat = [x.l2, x.l3].filter(Boolean).map(drEsc).join(' › ');
+      const what = x.level === 'item'
+        ? `${x.lineName ? drEsc(x.lineName) : '<span class="dr-dim">No item name</span>'}${cat ? `<span class="dr-sub">${cat}</span>` : ''}`
+        : `Whole order<span class="dr-sub">${cat ? cat + ' · ' : ''}${drNum(x.lines)} line${Number(x.lines) === 1 ? '' : 's'}</span>`;
+      return { c: [`${drWhen(x.time, x.date)}`, drStoreCell(x.store), x.name ? drEsc(x.name) : '<span class="dr-dim">No name</span>', drChip(x.class),
+        drPctOrAmount(x.percent, x.amount), fmtDollar(+x.discount), what, drEmpCell(x.employee, 'Not recorded'), x.approver ? drEsc(x.approver) : '<span class="dr-dim">—</span>'] };
+    });
+    return drPanel('Largest single discounts', rows.length
+      ? drTable([['When'], ['Store', 'l'], ['Discount', 'l'], ['Type', 'l'], ['Takes off'], ['Discount $'], ['On', 'w'], ['Employee', 'l'], ['Approved by', 'l']], rows, { label: 'Largest single discounts' })
+      : '<div class="dr-empty">Nothing recorded.</div>', { note: 'One row per press of a button; an order discount is listed once for each category it covered.' });
+  }
+
+  function drLagSentence(cov, to) {
+    const thru = cov && cov.bankedThrough;
+    let txt = !thru ? 'Refunds are banked 3 days after each day, and no day of this range is in yet.'
+      : thru >= to ? 'Refunds are banked 3 days after each day; every day of this range is in.'
+      : `Refunds are banked 3 days after each day, so this range is in through ${drDay(thru, true)}. Later days are not counted yet.`;
+    const inc = Number(cov && cov.incompleteStoreDays) || 0;
+    if (inc) txt += ` ${drNum(inc)} store-day${inc === 1 ? ' is' : 's are'} marked incomplete.`;
+    return txt;
+  }
+
+  function drRetHtml() {
+    const s = drState();
+    if (s.rangeErr) return '';
+    if (s.loading) return drSkeleton(4);
+    const res = s.ret;
+    if (!res) return '';
+    if (res.error) return drError('refunds', res);
+    const d = res.data || {}, t = d.totals;
+    let note = drLagSentence(d.coverage, s.to);
+    if (s.category || s.cls) note += ' Category and planned or manual narrow discounts only: refunds are not split that way.';
+    const pr = t && t.paymentRefunds, mr = t && t.manualRefunds;
+    if (!t || !((Number(pr?.count) || 0) + (Number(mr?.count) || 0))) {
+      return drPanel('Totals', `<div class="dr-empty">No refunds recorded for this range${s.employee ? ' for this employee' : ''}.</div>`, { note });
+    }
+    const n = (Number(pr.count) || 0) + (Number(mr.count) || 0);
+    const tiles = [
+      drTile('Payment refunds', fmtDollar(+pr.amount), `${drNum(pr.count)} refund${pr.count === 1 ? '' : 's'}`),
+      drTile('Manual refunds', fmtDollar(+mr.amount), `${drNum(mr.count)} refund${mr.count === 1 ? '' : 's'}`),
+      drTile('Refund rate', t.ratePct == null ? '—' : `${(+t.ratePct).toFixed(2)}%`, t.payments ? `of ${fmtDollar(+t.payments)} taken` : 'No payments banked'),
+      drTile('Flagged', drNum(t.flagged), `of ${drNum(n)} refund${n === 1 ? '' : 's'}`),
+    ].join('');
+    return drPanel('Totals', `<div class="dr-tiles">${tiles}</div>`, { note: note + ' Amounts include tax.' })
+      + `<div class="dr-grid">${[drRetByStore(d), drFlagged(d), drRetByEmployee(d), drRepeat(d)].join('')}</div>`;
+  }
+
+  function drRetByStore(d) {
+    const rows = (d.byStore || []).filter(r => r.paymentRefunds?.count || r.manualRefunds?.count || r.payments).map(r => ({ c: [drStoreCell(r.store),
+      drNum(r.paymentRefunds?.count), fmtDollar(+(r.paymentRefunds?.amount || 0)), drNum(r.manualRefunds?.count), fmtDollar(+(r.manualRefunds?.amount || 0)),
+      fmtDollar(+r.total), r.ratePct == null ? '<span class="dr-dim">—</span>' : `${(+r.ratePct).toFixed(2)}%`, drNum(r.flagged)] }));
+    return drPanel('By store', rows.length ? drTable([['Store'], ['Payment refunds'], ['Amount'], ['Manual refunds'], ['Amount'], ['Total'], ['Refund rate'], ['Flagged']], rows, { label: 'Refunds by store' })
+      : '<div class="dr-empty">Nothing recorded.</div>', { note: 'Refund rate is refunds over the till\'s payments, both with tax.' });
+  }
+
+  function drRepeat(d) {
+    const rows = (d.repeatEmployees || []).map(e => ({ c: [drEsc(e.employee), drStoreCell(e.store), drRangeLabel(e.weekStart, e.weekEnding), drNum(e.manualRefunds)] }));
+    return drPanel('Repeat manual refunds', rows.length ? drTable([['Employee'], ['Store', 'l'], ['Week', 'l'], ['Manual refunds']], rows, { label: 'Repeat manual refunds' })
+      : '<div class="dr-empty">Nobody rang 3 or more manual refunds in one week.</div>', { note: 'Anyone with 3 or more manual refunds in one Sunday to Saturday week, counted over whole weeks.' });
+  }
+
+  // What came back. A payment refund's items are the lines its sale's receipt marks refunded — but
+  // that receipt is banked once, 3 days after the sale, so a later return was never marked: that is
+  // "not checked", not "no item". A manual refund has no sale; its ticket line is what the cashier
+  // typed, so it is the refund's note.
+  function drFlagged(d) {
+    const s = drState();
+    const all = d.rows || [];
+    const rows = drCut('flag', all).map(r => {
+      const manual = r.kind === 'manual refund';
+      const note = manual
+        ? [r.reason ? drEsc(r.reason) : '', r.items ? `<span class="dr-dim">Ticket:</span> ${drEsc(r.items)}` : ''].filter(Boolean).join('<br>') || '<span class="dr-dim">—</span>'
+        : (r.reason ? drEsc(r.reason) : '<span class="dr-dim">—</span>');
+      let items;
+      if (manual) items = '<span class="dr-dim">A manual refund has no sale</span>';
+      else if (!r.saleInArchive) items = '<span class="dr-dim">The sale is older than the receipt archive, so its items cannot be checked.</span>';
+      else if (!r.itemsChecked) items = `<span class="dr-dim">Not checked: the sale's receipt was archived before this return.${r.saleReceipt ? ` The sale's receipt: ${drEsc(r.saleReceipt)}` : ''}</span>`;
+      else items = r.items ? drEsc(r.items) : '<span class="dr-dim">No item marked refunded</span>';
+      const flags = (r.flags || []).map(f => `<span class="dr-chip flag">${drEsc(f.charAt(0).toUpperCase() + f.slice(1))}</span>`).join('');
+      return { c: [drWhen(r.time, r.date), drStoreCell(r.store), manual ? 'Manual refund' : 'Payment refund', fmtDollar(+r.amount),
+        drEmpCell(r.employee, 'Not recorded'), note, items, flags] };
+    });
+    const total = Number(d.rowsTotal) || all.length;
+    const capped = d.rowsTruncated ? ` Showing the first ${drNum(all.length)} of ${drNum(total)}.` : '';
+    return drPanel('Flagged refunds', rows.length
+      ? drTable([['When'], ['Store', 'l'], ['Kind', 'l'], ['Amount'], ['Employee', 'l'], ['Reason or note', 'w'], ['Items', 'w'], ['Flags', 'w']], rows, { label: 'Flagged refunds' }) + drMore('flag', all.length)
+      : '<div class="dr-empty">No refund in this range was flagged.</div>', {
+      note: `Newest first.${capped}`,
+      legend: `<span><span class="dr-chip flag">No item recorded</span> nothing on the receipt or ticket says what came back</span><span><span class="dr-chip flag">Over $100</span> with tax</span><span><span class="dr-chip flag">3+ manual refunds that week</span> by the same employee, Sunday to Saturday</span>`,
+    });
+  }
+
+  function drRetByEmployee(d) {
+    const all = d.byEmployee || [];
+    const rows = drCut('remp', all).map(e => ({ c: [drEmpCell(e.employee, 'Not recorded'), drStoreCell(e.store), drNum(e.paymentRefunds), fmtDollar(+e.paymentRefundAmount),
+      drNum(e.manualRefunds), fmtDollar(+e.manualRefundAmount), drNum(e.flagged)] }));
+    return drPanel('By employee', rows.length ? drTable([['Employee'], ['Store', 'l'], ['Payment refunds'], ['Amount'], ['Manual refunds'], ['Amount'], ['Flagged']], rows, { label: 'Refunds by employee' }) + drMore('remp', all.length)
+      : '<div class="dr-empty">Nothing recorded.</div>');
+  }
+
+  // ── Planned or manual: the editor (admins and superusers; the worker refuses anyone else's POST) ──
+  async function drLoadEditor() {
+    const e = drState().edit, seq = ++e.seq;
+    e.loading = true; e.err = null;
+    drRenderEditor();
+    const res = await drGet('discount-classes', {});
+    if (seq !== e.seq) return;
+    e.loading = false;
+    if (res.error) e.err = res;
+    else { e.seen = res.data.seen || []; e.from = res.data.from || ''; e.to = res.data.to || ''; }
+    drRenderEditor();
+  }
+  const drOrigClass = (row) => (row.class === 'planned' || row.class === 'manual') ? row.class : '';
+  function drEditState(row) {
+    const e = drState().edit;
+    if (e.draft.has(row.name)) return 'dirty';
+    return drOrigClass(row) ? 'own' : 'inherit';
+  }
+  function drEditBar() {
+    const e = drState().edit, n = e.draft.size;
+    const save = el('dr-edit-save');
+    save.disabled = !n || e.saving;
+    save.textContent = e.saving ? 'Saving…' : n ? `Save ${n} change${n === 1 ? '' : 's'}` : 'Save';
+    el('dr-edit-discard').hidden = !n || e.saving;
+  }
+  function drEditStatus() {
+    const e = drState().edit;
+    el('dr-edit-status').innerHTML = e.note ? drEsc(e.note)
+      : `Every discount name rung ${e.from && e.to ? `from ${drRangeLabel(e.from, e.to)}` : 'in the last 120 days'}, most dollars first. A name is planned or manual at every store, and an unclassified one counts as neither.`;
+  }
+  function drRenderEditor() {
+    const wrap = el('dr-edit-wrap');
+    if (!drIsEditor()) { wrap.classList.add('hidden'); return; }
+    wrap.classList.remove('hidden');
+    const e = drState().edit;
+    drEditBar();
+    const st = el('dr-edit-status'), body = el('dr-edit-body');
+    if (e.loading && !e.seen) { st.textContent = 'Loading discount names…'; body.innerHTML = '<div class="dr-skrow"><span class="skel" style="width:100%;height:14px"></span></div>'; return; }
+    if (e.err) {
+      st.innerHTML = `<span style="color:var(--dr-bad)">Couldn't load the discount names. ${drEsc(e.err.error)}</span> <button type="button" class="dr-btn" onclick="drLoadEditor()">Retry</button>`;
+      body.innerHTML = '';
+      return;
+    }
+    const seen = e.seen || [];
+    drEditStatus();
+    if (!seen.length) { body.innerHTML = '<div class="dr-empty">No discounts recorded yet.</div>'; return; }
+    const opt = (v, label, cur) => `<option value="${v}"${v === cur ? ' selected' : ''}>${label}</option>`;
+    const rows = seen.map((row, i) => {
+      const cur = e.draft.has(row.name) ? e.draft.get(row.name) : drOrigClass(row);
+      const sel = `<select class="dr-cls ${drEditState(row)}" data-i="${i}" aria-label="Planned or manual: ${drEsc(row.name)}" onchange="drEditSet(this)">`
+        + opt('', 'Unclassified', cur) + opt('planned', 'Planned', cur) + opt('manual', 'Manual', cur) + '</select>';
+      return { c: [row.name ? drEsc(row.name) : '<span class="dr-dim">No name</span>', drPctOrAmount(row.percent, row.amount), fmtDollar(+row.discounts),
+        drNum(row.applications), drNum(row.stores), row.lastDate ? drDay(row.lastDate, true) : '—', sel] };
+    });
+    body.innerHTML = drTable([['Discount'], ['Takes off'], ['Discounts'], ['Uses'], ['Stores'], ['Last rung'], ['Type', 'l']], rows, { label: 'Planned or manual, by discount name' });
+  }
+  function drEditSet(sel) {
+    const e = drState().edit, row = (e.seen || [])[Number(sel.dataset.i)];
+    if (!row) return;
+    if (sel.value === drOrigClass(row)) e.draft.delete(row.name); else e.draft.set(row.name, sel.value);
+    e.note = '';
+    // Only this cell and the bar change: re-rendering the table would drop the focus mid-edit.
+    sel.className = `dr-cls ${drEditState(row)}`;
+    drEditBar();
+    drEditStatus();
+  }
+  async function drEditSave() {
+    const s = drState(), e = s.edit;
+    if (!e.draft.size || e.saving) return;
+    // Only the names changed in this draft; '' (unclassified) is null, which clears a name.
+    const classes = [...e.draft.entries()].map(([name, v]) => ({ name, class: v || null }));
+    e.saving = true;
+    drEditBar();
+    let err = null;
+    for (let i = 0; i < classes.length && !err; i += 200) {     // the worker takes at most 200 a call
+      try {
+        const r = await fetch(`${WORKER_BASE}?action=discount-classes`, {
+          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ classes: classes.slice(i, i + 200) }),
+        });
+        let j = null;
+        try { j = await r.json(); } catch (x) {}
+        if (!r.ok || !j || !j.ok) err = (j && (j.error || j.code)) || `HTTP ${r.status}`;
+      } catch (x) {
+        err = x.message || 'network error';
+      }
+    }
+    e.saving = false;
+    if (err) { e.note = `Not saved: ${err}. Your changes are still here.`; drRenderEditor(); return; }
+    e.draft.clear();
+    e.note = `Saved ${classes.length} change${classes.length === 1 ? '' : 's'}. The figures above now use them.`;
+    drLoad(true);
+    await drLoadEditor();
+  }
+  async function drEditDiscard() {
+    const e = drState().edit, n = e.draft.size;
+    if (!n) return;
+    const yes = await uiConfirm(`Discard ${n} unsaved change${n === 1 ? '' : 's'} to planned or manual? Nothing has been saved.`,
+      { title: 'Discard changes?', okText: 'Discard', cancelText: 'Keep editing', danger: true, defaultCancel: true });
+    if (!yes) return;
+    e.draft.clear(); e.note = '';
+    drRenderEditor();
+  }
+  Object.assign(window, { initDiscounts, drSetFilter, drApplyCustom, drLoad, drRefresh, drSort, drToggleMore,
+    drLoadEditor, drEditSet, drEditSave, drEditDiscard });
+
   // ── Coverage scorecard ────────────────────────────────────────────────────
   let cvData = null, cvWindow = 7;
 
@@ -38766,6 +39573,7 @@
     'nav-opportunity-buys': 'bl',
     'nav-mos': 'bl',
     'nav-labor': 'bl',
+    'nav-discounts': 'bl',
     'nav-supply-request': 'bl',
     'nav-users': 'bl',
     'nav-admin-settings': 'bl',
@@ -39217,6 +40025,10 @@
     // gated separately (laborApplyRole), because entry is chain-wide.
     const navLabor = el('nav-labor');
     if (navLabor) navLabor.classList.toggle('hidden', !seesMoney);
+    // Discounts & Returns: the same audience. The worker limits a manager to their own stores,
+    // and the planned/manual editor inside the page is admins' and superusers' only.
+    const navDiscounts = el('nav-discounts');
+    if (navDiscounts) navDiscounts.classList.toggle('hidden', !seesMoney);
 
     // Merchandising: the GROUP is visible to anyone who may enter Shelf Count, so a
     // store manager can reach the form; Buy Criteria is gated to admins beneath it.

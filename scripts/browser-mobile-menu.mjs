@@ -51,7 +51,8 @@ await new Promise(r => srv.listen(8096, r));
 const URL_ = 'http://127.0.0.1:8096/index.html';
 
 const BL = { id: 'bl', name: 'Bargain Lane' }, ECOM = { id: 'ecom', name: 'E-Commerce' }, LIVE = { id: 'live', name: 'Live Sales' };
-const STORE = ['dashboard', 'weekly-summary', 'labor', 'supply-request'];
+// Discounts & Returns (2026-11-12) sits after the Retail Summary for everyone who may see money.
+const STORE = ['dashboard', 'weekly-summary', 'discounts', 'labor', 'supply-request'];
 const MARKETING = ['marketing', 'flow-calendar', 'comments', 'content', 'submit-photos'];
 const MERCH = ['merch-scan', 'merch-signs', 'merch-coverage', 'merch-products', 'merch-velocity', 'merch-manifests', 'merch-criteria', 'merch-shelf-count'];
 const INVENTORY = ['inventory-add', 'inventory-viewer', 'inventory-sale', 'bin-dump', 'inventory-receiver', 'mos', 'opportunity-buys'];
@@ -75,7 +76,7 @@ const EXPECT = {
   // Merchandising header used to hide both from them. No Supply, so four tabs, not five.
   executive: { role: 'executive', businesses: [BL], biz: 'bl',
     bar: ['Dashboard', 'Retail', 'Submit', 'Menu'],
-    menu: [['Store', ['dashboard', 'weekly-summary', 'labor']], ['Marketing', ['submit-photos']], ['Merchandising', ['merch-scan']],
+    menu: [['Store', ['dashboard', 'weekly-summary', 'discounts', 'labor']], ['Marketing', ['submit-photos']], ['Merchandising', ['merch-scan']],
            ['Inventory', ['bin-dump', 'inventory-receiver', 'mos', 'opportunity-buys']], ['Account', ['settings', '@signout']]] },
   // Receiver is granted but has no bar tab of its own, so it lives on the Menu.
   associate: { role: 'associate', associate: true, businesses: [BL], biz: 'bl',

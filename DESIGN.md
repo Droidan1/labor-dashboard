@@ -660,6 +660,23 @@ by type and then by date:
 - **The switch into the view is a page-level action**, so it goes in the page
   app bar, outside the render target.
 
+**Report variant (Discounts & Returns, `#page-discounts`, 2026-11-12)**
+
+Many read-only tables over one set of filters:
+
+- **The filters get a panel of their own** at the top: its bar holds every
+  filter, and one status line names the range and the period it is compared
+  with. This is the one exception to "controls live on the table's bar", because
+  these drive every table on the page. A control for one table (the button
+  table's sort) still sits on that table's bar.
+- **A tile can carry a third line**: the change against the previous period of
+  equal length, in `inkDim` and never coloured. A rise in discounts is neither
+  ahead nor behind, so it gets no pace colour.
+- **One table per row.** Seven or eight columns in a half-width panel scroll
+  sideways even on a desktop.
+- Colours are page-scoped variables (`--dr-*`): light literals, dark through
+  `rgb(var(--op-*))`, the same way Live Sales' `--lv-*` work.
+
 **Token literals for `<style>` blocks**
 
 
