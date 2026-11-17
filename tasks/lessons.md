@@ -322,6 +322,24 @@ varied. Restoring the rule then exposed a second bug the same rows had hidden: t
     is the claim most likely to be false the first time the inputs change.
 </rules>
 
+### Recurred (2026-11-17, live item sales plan): a time zone I copied, then built a rule on
+
+Brian's PDF and the agent reading rule (`cli/reporting.mjs:29`) both say "the 03:55 ET nightly
+run". I repeated it in my review and the revised plan, then found the sweep saving a row for
+"today" and wrote it up as a trap: a partial midnight → 03:55 row for the new day. The cron is
+`"55 3 * * *"`, and Cloudflare crons run in UTC. That is 22:55 EST / 23:55 EDT, and `wrangler.toml`
+says "11:55 PM ET" three lines above it. The "today" row the sweep saves is the day that is
+ending. The Phase 1 implementer caught it while writing a test that drove `worker.scheduled`.
+
+The rule I derived (a row is final only if written after its day ends) happened to be safe, but
+it would have kept yesterday live all day for a reason that did not exist.
+
+<rules>
+12. **Before a plan leans on when a cron runs, read the cron string and its time zone, not a
+    description of it.** Cloudflare crons are UTC. A "nightly" or "03:55" in prose, in a PDF, or in
+    a reading rule is a claim, and here all three were wrong in the same way.
+</rules>
+
 ## The third one today: my escalation lost a seven-second race (2026-09-21) · rule 6: re-read a PR's state before pushing to it (recurred 2026-09-25) · rule 7: push only verified work, because a merge can come before the verification (2026-09-28)
 
 Same trap as the entry below, and as 2026-09-18's. This time I did everything that entry

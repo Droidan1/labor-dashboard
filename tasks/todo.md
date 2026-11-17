@@ -10,7 +10,15 @@ revise it. Revised plan: [docs/plans/live-item-sales.md](../docs/plans/live-item
 - [x] Brian: WTD = Sun–Sat; a bin cycle = Fri–Wed. Added as `period=cycle` (on a Thursday, the cycle just ended)
 - [x] Brian: the "$1 / $3 / $8 XMAS" buttons (L2 Seasonal) count as Christmas bins, as their own `xmas buttons`
       subgroup, matched by name; back-check Christmas now 399 / $968.50
-- [ ] Build on `claude/live-item-sales` from the plan's kickoff prompt
+- [x] Phase 0 (2026-11-17): main unchanged since the review, every "What already exists" row holds
+- [x] Phase 1 (ec2b5ca, implementer subagent; reviewed): `pullLiveItemDay` (the nightly's seven inputs),
+      `liveItemDayCached` (5-min `live-items:` KV, `fresh` > 60 s), GET `?action=live-items`, business map +
+      read-through + `fresh`. scripts/test-live-items.mjs drives worker.fetch / worker.scheduled: 50 pass,
+      47 fail on main's worker.js; 16 mutants caught. `npm test` 12,068 / 137 green (base 12,018 / 136)
+- [x] Plan corrected: the nightly cron is 03:55 UTC (22:55 EST / 23:55 EDT), not 03:55 ET, so there is no
+      partial new-day row; final = `snapshot_time` ≥ D+1 03:55 UTC. Lesson added (recurrence, rule 12)
+- [ ] Brian: push + Phase 1 PR, merge, deploy the worker from main (inert until called)
+- [ ] Phase 2 (bin split) and Phase 3 (tools) on a fresh branch off main
 
 # Discounts & Returns reporting (2026-11-12) — the page (PR 2 of 2)
 

@@ -1,6 +1,6 @@
 # Live Item Sales & Bin Split — build plan (revised)
 
-2026-11-17 · Brian Howard · Revised from the PDF "RETJG HUB — Live Item Sales & Bin Split: Claude Code
+2026-11-17 · Brian Howard · Line numbers are `main` at 658a8d6. Revised from the PDF "RETJG HUB — Live Item Sales & Bin Split: Claude Code
 Build Plan" after checking it against `worker.js`, `cli/reporting.mjs` and live data. What changed and
 why is at the bottom.
 
@@ -8,7 +8,7 @@ why is at the bottom.
 
 One MCP/CLI call answers "how are bins vs Christmas bins doing?" for today, week to date, the current
 bin cycle, month to date or any range, by store, price or day, at any hour, without waiting for the
-03:55 ET nightly run.
+nightly run (03:55 UTC = 22:55 EST / 23:55 EDT).
 
 **Periods (Brian, 2026-11-17):**
 
@@ -38,7 +38,7 @@ bin cycle, month to date or any range, by store, price or day, at any hour, with
 | Live item pull for today | `?action=items` (no date) [worker.js:32321](../../worker.js) | Exists, but has two gaps (see Rule 2 and 3). Leave it alone; build beside it. |
 | Clover orders + line items | `fetchItemOrders` [worker.js:4968](../../worker.js) | Pages; returns `null` on a failed page. Filters on `createdTime`. |
 | 429 retry | `cloverFetch` | Exists. |
-| Nightly inputs | 03:55 cron [worker.js:32775](../../worker.js) | `fetchItemOrders` + `fetchRefundElements` + `fetchManualRefunds` + `fetchCrossDayOrdersForRefunds` + `fetchItemCategoryMap` + overrides + costs |
+| Nightly inputs | nightly cron (`55 3 * * *`, 03:55 UTC) [worker.js:32775](../../worker.js) | `fetchItemOrders` + `fetchRefundElements` + `fetchManualRefunds` + `fetchCrossDayOrdersForRefunds` + `fetchItemCategoryMap` + overrides + costs |
 | Saved per-item record | D1 `item_day_lines`, read by `?action=item-lines` [worker.js:31308](../../worker.js) | What `get_item_mapping` reads. Rows carry `code`, `l2`, `qty`, `net`, `orders`. From 2026-10-14. |
 | Range + store scope | `itemRangeScope` [worker.js:3969](../../worker.js) | Allowed stores; all stores ≤ 31 days, one store ≤ 92. |
 | Agent door | `REPORTING_READ_THROUGH` [worker.js:18281](../../worker.js), `READ_THROUGH_PARAMS` [:18297](../../worker.js) | New actions and params must be listed or they are refused. |
@@ -46,25 +46,35 @@ bin cycle, month to date or any range, by store, price or day, at any hour, with
 | Closed stores | `STORE_CLOSED_FROM` [worker.js:6230](../../worker.js) | BL8 closed. BL16 uses BL12's Clover merchant (`WRS_CUTOVER`). |
 | Tool table | `QUERIES` in `cli/reporting.mjs` | One entry serves the `retjg` CLI (Muse uses it, key `MORNING_BRIEFING_KEY`) and the MCP server (`mcp/worker.mjs` imports it). |
 
-**🛑 Trap found in review:** the 03:55 sweep runs `snapshotDayByClientTime` for *today* as well as the
-two days before ([worker.js:32831](../../worker.js)), and that writes an `item_day_lines` row for the new
-day covering only midnight → 03:55. So:
+**🛑 When a saved day is final (corrected 2026-11-17, after Phase 1).** The `"55 3 * * *"` cron is
+**03:55 UTC = 22:55 EST / 23:55 EDT** (Cloudflare crons are UTC; `wrangler.toml` says "11:55 PM ET"). So
+the nightly run saves the ET day that is *ending*, and its sweep (`snapshotDayByClientTime`,
+[worker.js:32831](../../worker.js)) then re-saves that day and the two before it. Day D's
+`item_day_lines` row first appears at D's own nightly run, about 23:00 ET on D, and is rewritten on the
+next two nights. The first draft of this plan said "03:55 ET" and described a partial row for the new
+day: that was wrong. The PDF, and the reading rule at `cli/reporting.mjs:29` that every agent sees, say
+"03:55 ET" too.
 
-- Today always has a partial saved row after 03:55. Never use it.
-- Between midnight and 03:55, *yesterday* also has a partial row (written at 03:55 the morning before).
-
-A saved row is **final only if its `snapshot_time` is after the end of its day (ET)**. Row existence
-proves nothing.
+A saved row for day D is **final only if its `snapshot_time` is at or after D+1 03:55 UTC** (the start of
+D's nightly run). A row written earlier, by a daytime repair or a manual re-snapshot, is not final.
+Today is always live, even late in the evening once a row exists. Yesterday is normally final from
+midnight, so it is pulled live only when its nightly run failed.
 
 ## Rules
 
 1. **Never write live pulls into saved data.** The only new write is the KV key `live-items:<store>:<date>`.
    No `items:`, `item-hours:`, `item_day_lines`, discount record, `daily_sales` or payment archive writes.
    New code never calls `saveItemSalesSnapshot`, `fetchAggregateAndSnapshot` or `bankDiscountLines`.
+   (`fetchItemCategoryMap` may refresh its own 24 h `item-cats:` copy, as it does for every caller: a
+   cache, not saved history.)
 2. **A failed Clover fetch is an error, not an empty day.** Any `null` from a fetch → the store reports
    `INCOMPLETE_FETCH` and nothing is cached. Never `|| []` (the existing `?action=items` does this at
    [worker.js:32358](../../worker.js); don't copy it).
-3. **File items exactly as the nightly run does.** Same seven inputs as the 03:55 cron, including
+   Known limit, found in Phase 1: only `fetchItemOrders` can report a failure. The refund and manual
+   refund fetchers answer `[]` when Clover fails, the cross-day fetcher drops an order it couldn't
+   fetch, and the category map answers what it got. The nightly run has the same blind spot; fixing
+   it means an opt-in failure signal on those shared fetchers, a separate change.
+3. **File items exactly as the nightly run does.** Same seven inputs as the nightly cron, including
    `fetchManualRefunds` and `fetchCrossDayOrdersForRefunds` (the existing live route skips both).
 4. **Live only for today, or yesterday while its saved row is not final.** Never pull an older date live,
    even read-only. An older day with no final row goes in `missingDays`. (A day with
@@ -159,14 +169,14 @@ only; the tool description says why.
 Branch `claude/live-item-sales`. Commit at the end of each phase with what changed and what was tested.
 
 **Phase 0: confirm (no code)**
-- [ ] Re-check every row of "What already exists" and the sweep trap against current `main`. Only if
+- [x] Re-check every row of "What already exists" and the sweep trap against current `main`. Only if
       something no longer holds: write it to `docs/live-items-notes.md`, stop and report.
 
 **Phase 1: live item pull (worker)**
-- [ ] `pullLiveItemDay` with the cron's seven inputs; incomplete → error (Rules 2–3)
-- [ ] `?action=live-items` + KV cache + `fresh`; closed stores; 3-at-a-time
-- [ ] Gate entries: business map, `REPORTING_READ_THROUGH`, `READ_THROUGH_PARAMS` (`fresh`)
-- [ ] `scripts/test-live-items.mjs`, driving `worker.fetch` with a recording env and stubbed Clover:
+- [x] `pullLiveItemDay` with the cron's seven inputs; incomplete → error (Rules 2–3)
+- [x] `?action=live-items` + KV cache + `fresh`; closed stores; 3-at-a-time
+- [x] Gate entries: business map, `REPORTING_READ_THROUGH`, `READ_THROUGH_PARAMS` (`fresh`)
+- [x] `scripts/test-live-items.mjs`, driving `worker.fetch` with a recording env and stubbed Clover:
   - the only write is `put live-items:*`; no D1 statement other than SELECT
   - a failed Clover page → `INCOMPLETE_FETCH`, nothing cached
   - same orders through the live helper and the cron's inputs give identical rows (golden fixture)
@@ -177,14 +187,18 @@ Branch `claude/live-item-sales`. Commit at the end of each phase with what chang
 - [ ] `readItemDayLines` extracted; `item-lines` output byte-identical before/after (test)
 - [ ] Final-row rule, stitching, `missingDays`, closed stores
 - [ ] `config:bin-groups` default + KV override + validation; tier parsing
-- [ ] Tests: today's partial saved row is ignored; yesterday with a pre-midnight `snapshot_time` goes
-      live; an old missing day is never pulled; the real-names table below; bad config falls back
+- [ ] Tests: a saved row for today is ignored; a row for D written before D+1 03:55 UTC (a daytime
+      repair) is not final; yesterday with no final row (nightly failed) goes live; an old missing day is
+      never pulled; the nightly time is pinned to `wrangler.toml`'s cron; the real-names table below;
+      bad config falls back
 
 **Phase 3: tools (CLI + MCP)**
 - [ ] Two `QUERIES` entries; extend `scripts/test-agent-queries.mjs` and
       `scripts/test-reporting-read-through.mjs`
 - [ ] Period dates tested for every weekday: `wtd` on Sun = Sun..Sun, on Sat = Sun..Sat; `cycle` on
       Fri = Fri..Fri, on Sun = Fri..Sun, on Wed = Fri..Wed, on Thu = previous Fri..Wed; `mtd` on the 1st
+- [ ] Correct the reading rule at `cli/reporting.mjs:29` ("after the 03:55 ET nightly run" → about
+      23:00 ET, 03:55 UTC); every agent reads it in the MCP instructions
 - [ ] `npm test` green; PR with the Testing results; do not merge or deploy
 
 ## Testing
@@ -194,7 +208,7 @@ Branch `claude/live-item-sales`. Commit at the end of each phase with what chang
 | Bin grouping on real names | `$3 Christmas Bin` / `BL-3CBIN`, `$1 Christmas Bin` / `BL-1CBIN` → christmas/bins; `$12 Bin` / `BL-BIN-12`, `$12 bin item`, `$6 Bin` → regular/bins; `Glass Case / Mystery Box`, `Fill A Bag`, `Ikea Bag` → regular/extras; `$3 Halloween bin item` → regular, tier `$3`; `$3 XMAS`, `$8 XMAS`, `$1 XMAS` (L2 Seasonal) → christmas/xmas buttons, tiers `$3` `$8` `$1`; any other Seasonal item, including one in the same Clover category → left out |
 | Back-check (prod, after deploy-ahead) | `get_bin_split` 2026-10-17 → 2026-11-16 = regular **141,173 units / $396,660.65**; Christmas **399 / $968.50** = bins **197 / $433.27** + xmas buttons **202 / $535.23** (all reproduced from `get_item_mapping` 2026-11-17; if `coverage.stale` lists a day, re-derive from it the same minute). Christmas bins began 2026-11-16 (one day in this range); the XMAS buttons run from 2026-10-23. |
 | Live vs till | Each store's live `totals.netSales` (all items + non-item money, not bins only) within 2% of `get_today_sales` `salesSoFarToday`, same minute |
-| Live vs saved, next morning | Yesterday's live Bin Products net (pulled before 03:55) within 1% of the saved figure after it |
+| Live vs saved, same night | A live pull just before the nightly run (22:45 EST / 23:45 EDT) is within 1% of the row that run saves, per store, Bin Products net |
 | Write guard | `test-live-items.mjs` write assertions pass, and fail if the helper calls `saveItemSalesSnapshot` |
 | Speed | All 5 stores cold < 10 s; cached < 0.5 s |
 | Auth | Works with the agent key and MCP OAuth; missing or wrong key → 401 |
@@ -213,10 +227,10 @@ upload size (see memory: deploy from main, not cwd).
 5. Brian deploys the MCP server: `npx wrangler deploy -c mcp/wrangler.toml` (worker first, then MCP),
    and reinstalls the CLI (ORIENT.md install line). Refresh the MCP connection in Claude.
 6. Brian adds the bin vs Christmas bin line to Muse's morning brief (outside this repo).
-7. One Fri–Wed cycle: each morning compare yesterday's live figure with the saved one; look into anything
-   over 1%.
+7. One Fri–Wed cycle: each night, pull live just before the nightly run and compare with the row it
+   saves; look into anything over 1%.
 
-Staging is skipped on purpose: it runs no 03:55 snapshot cron (`[env.staging.triggers]` in
+Staging is skipped on purpose: it runs no nightly snapshot cron (`[env.staging.triggers]` in
 `wrangler.toml`), so its `item_day_lines` isn't kept up and the back-check and stitching can't be shown
 there. Its Clover merchants are the prod registers anyway.
 
@@ -267,7 +281,7 @@ When all phases pass, open a PR with the Testing results. Don't merge, and don't
 | PDF | Revised | Why |
 |---|---|---|
 | Phase 1: refactor the nightly job, prove it with a dry run of 2026-11-16 | Dropped | `aggregateItemSales` is already shared. A new dry-run flag tested against prod writes the snapshot if broken (Destructive Ops rule 3), and a re-pull can't match "line for line" anyway (sweep bucketing, Clover drift). |
-| Saved day = "through yesterday" | Saved day = final row only | The 03:55 sweep saves a partial row for the new day. |
+| Saved day = "through yesterday" | Saved day = final row only | A day's row can be written before its nightly run (a daytime repair). The first draft's reason, a partial row for the new day, was wrong: the cron is 03:55 UTC. |
 | Price tiers `$12 $9 $6 $4 $2 $1 $0.50` | Any `$N` in the name | Christmas bins are mostly `$3`, which would all land in "other". |
 | Orders per group | Tickets per item only | Summing item ticket counts double-counts mixed tickets. |
 | Write guard on `items:` keys | Test driving `worker.fetch`, all writes recorded | Snapshots also write `item-hours:`, `item_day_lines`, discounts, `daily_sales`. |
