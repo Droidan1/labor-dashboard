@@ -5131,6 +5131,86 @@ async function liveItemDayCached(env, store, dateStr, fresh = false) {
   return { store, date: dateStr, status: "ok", asOf: day.asOf, cached: false, items: day.items, other: day.other, totals: day.totals };
 }
 
+// ─── The bin split: bins vs Christmas bins (?action=bin-split) ──────────
+// docs/plans/live-item-sales.md, Phase 2 (Brian, 2026-11-17).
+//
+// 🛑 WHEN A SAVED DAY IS FINAL. The nightly cron "55 3 * * *" (wrangler.toml; scheduled() runs
+// the rollup on exactly that string) is UTC, as every Cloudflare cron is: 03:55 UTC is 22:55 EST
+// or 23:55 EDT on the ET day that is ENDING. So day D is first saved by its own nightly run, at
+// D+1 03:55 UTC. A row stamped before then (a daytime repair, a manual re-snapshot) was taken
+// while D was still selling, so it is not final. Not "03:55 ET", as the plan's first draft and
+// the agents' reading rule in cli/reporting.mjs said. scripts/test-bin-split.mjs pins this
+// constant to both cron strings.
+const NIGHTLY_RUN_UTC = "03:55";
+function itemDayFinal(dateStr, snapshotTime) {
+  return Date.parse(snapshotTime) >= Date.parse(`${addDaysYmd(dateStr, 1)}T${NIGHTLY_RUN_UTC}:00Z`);
+}
+
+// Which items the bin split keeps, and how it files them: this built-in default, or KV
+// `config:bin-groups` when that holds a valid copy (Brian edits it with `wrangler kv key put`).
+//   christmas.codePattern, nameContains  a Bin Products item → christmas, "bins"
+//   addToChristmas.namePattern           an item OUTSIDE Bin Products → christmas, "xmas buttons":
+//                                        the $1/$3/$8 XMAS register buttons, L2 Seasonal (Brian,
+//                                        2026-11-17). By name, so the rest of their Clover
+//                                        category stays out.
+//   extras.names                         a Bin Products item → regular, "extras"; any other → "bins"
+// Patterns and names match in any case; an extras name matches the whole trimmed name.
+const BIN_GROUPS_DEFAULT = {
+  christmas: { codePattern: "^BL-\\d+CBIN$", nameContains: ["christmas bin"] },
+  extras: { names: ["Glass Case / Mystery Box", "Fill A Bag", "Ikea Bag"] },
+  addToChristmas: { namePattern: "^\\$\\d+(\\.\\d{1,2})? XMAS$" },
+};
+// Why a bin-groups config cannot be used, or null. Every field is required. A pattern must be a
+// non-empty string that compiles, and a list entry a non-empty string: an empty one matches
+// every item.
+function binGroupsProblem(c) {
+  const obj = (o) => !!o && typeof o === "object" && !Array.isArray(o);
+  const text = (s) => typeof s === "string" && s.trim() !== "";
+  const list = (a) => Array.isArray(a) && a.every(text);
+  if (!obj(c)) return "not an object";
+  if (!obj(c.christmas) || !text(c.christmas.codePattern) || !list(c.christmas.nameContains)) return "christmas needs codePattern and nameContains";
+  if (!obj(c.extras) || !list(c.extras.names)) return "extras needs names";
+  if (!obj(c.addToChristmas) || !text(c.addToChristmas.namePattern)) return "addToChristmas needs namePattern";
+  for (const [k, p] of [["christmas.codePattern", c.christmas.codePattern], ["addToChristmas.namePattern", c.addToChristmas.namePattern]]) {
+    try { new RegExp(p, "i"); } catch (e) { return `${k} does not compile: ${e.message}`; }
+  }
+  return null;
+}
+// → { source: "default" | "kv" | "default (kv invalid: <why>)" | "default (kv read failed: <why>)", rules }.
+// Never fails the request: a KV copy that cannot be read or used answers the default, and says so.
+async function loadBinGroups(env) {
+  let raw;
+  try { raw = env.SALES_SNAPSHOTS ? await env.SALES_SNAPSHOTS.get("config:bin-groups") : null; }
+  catch (e) { return { source: `default (kv read failed: ${e?.message || e})`, rules: BIN_GROUPS_DEFAULT }; }
+  if (raw == null) return { source: "default", rules: BIN_GROUPS_DEFAULT };
+  let rules;
+  try { rules = JSON.parse(raw); } catch { return { source: "default (kv invalid: not JSON)", rules: BIN_GROUPS_DEFAULT }; }
+  const why = binGroupsProblem(rules);
+  return why ? { source: `default (kv invalid: ${why})`, rules: BIN_GROUPS_DEFAULT } : { source: "kv", rules };
+}
+// One item record ({ name, code, l2, … }) → { group, subgroup, tier }, or null when the split
+// leaves it out. `rules` has passed binGroupsProblem. The tier is the first $N or $N.NN in the
+// name, written "$12" or "$0.50"; a name with none is "no price".
+function binSplitClassifier(rules) {
+  const code = new RegExp(rules.christmas.codePattern, "i");
+  const xmas = new RegExp(rules.addToChristmas.namePattern, "i");
+  const contains = rules.christmas.nameContains.map(s => s.toLowerCase());
+  const extras = new Set(rules.extras.names.map(s => s.trim().toLowerCase()));
+  return (item) => {
+    const name = String(item.name ?? "").trim(), lower = name.toLowerCase();
+    let group, subgroup;
+    if (item.l2 === "Bin Products") {
+      if (code.test(String(item.code ?? "")) || contains.some(s => lower.includes(s))) { group = "christmas"; subgroup = "bins"; }
+      else { group = "regular"; subgroup = extras.has(lower) ? "extras" : "bins"; }
+    } else if (xmas.test(name)) { group = "christmas"; subgroup = "xmas buttons"; }
+    else return null;
+    const m = /\$(\d+)(?:\.(\d{1,2}))?/.exec(name);
+    const cents = m ? Number(m[1]) * 100 + Number((m[2] || "0").padEnd(2, "0")) : null;
+    const tier = cents == null ? "no price" : cents % 100 ? `$${(cents / 100).toFixed(2)}` : `$${cents / 100}`;
+    return { group, subgroup, tier };
+  };
+}
+
 // ─── Save a snapshot to KV + D1 ─────────────────────────────────
 async function saveSnapshot(env, store, dateStr, data) {
   const snapshotTime = new Date().toISOString();
@@ -5644,6 +5724,7 @@ const ACTION_BUSINESS = new Map([
   ["item-sales", "bl"],
   ["item-lines", "bl"],
   ["live-items", "bl"],
+  ["bin-split", "bl"],
   ["whatnot-shows", "bl"],
   ["whatnot-items", "bl"],
   ["whatnot-products", "bl"],
@@ -18370,13 +18451,17 @@ export default {
     // live-items joined 2026-11-17 (Brian: live item sales and the bin split): today's items
     // pulled live from Clover. Its one write is its own 5-minute live-items: cache; `fresh`
     // asks for a re-pull. scripts/test-live-items.mjs pins both.
+    //
+    // bin-split joined 2026-11-17 (Brian: the bin vs Christmas bin split): final saved days from
+    // item_day_lines, with today (and yesterday until its nightly run saves it) pulled live
+    // through the same live-items: cache, its one write. scripts/test-bin-split.mjs pins it.
     const REPORTING_READ_THROUGH = new Set([
       "weekly-summary", "weekly-store-detail", "weekly-t13", "category-series", "category-hours",
       "labor", "labor-plan",
       "inventory-items", "list-sale-schedules", "bin-dump-list", "truck-current", "truck-detail",
       "truck-list", "mos-list",
       "supply-requests", "supply-request", "supply-budgets",
-      "item-sales", "item-lines", "live-items",
+      "item-sales", "item-lines", "live-items", "bin-split",
       "whatnot-shows", "whatnot-items", "whatnot-products",
       "discounts", "returns", "discount-classes",
     ]);
@@ -31513,6 +31598,114 @@ export default {
         days.push(...await Promise.all(stores.slice(i, i + 3).map(s => liveItemDayCached(env, s, date, fresh))));
       }
       return new Response(JSON.stringify({ ok: true, date, stores: days.map(({ date: _, ...d }) => d) }), { headers: corsJson });
+    }
+
+    // ─── Bin split: bins vs Christmas bins, per store, day, group and price ─
+    //    GET ?action=bin-split&from=YYYY-MM-DD&to=YYYY-MM-DD[&store=BL1][&fresh=1]
+    // Each store-day comes from ONE source, decided in this order: a closed store → closedStores;
+    // today → live, always, even once tonight's run has saved a row; a FINAL item_day_lines row
+    // (itemDayFinal) → saved; yesterday without one (its nightly run has not saved it) → live;
+    // before the store's record began → beforeRecord; a daily_sales order_count of 0 → a real
+    // zero day (saved, no rows); anything else → missingDays. 🛑 A day before yesterday is never
+    // pulled from Clover, even read-only. A live pull that fails (incomplete, no_credentials) is
+    // an incompleteDays entry with no rows, never an empty day. Items are kept and filed by
+    // loadBinGroups' rules. Read-only: D1 SELECTs, and the one write is liveItemDayCached's
+    // live-items: cache. Brian, 2026-11-17 (docs/plans/live-item-sales.md).
+    // → { ok: true, from, to, stores,
+    //     rows: [{ store, date, source: "saved"|"live", group, subgroup, tier, units, net, items, tickets }],
+    //     freshness: { savedThrough: { store: last saved date | null }, liveAsOf: { store: iso },
+    //                  liveDays: [{ store, date }], missingDays: [{ store, date }],
+    //                  incompleteDays: [{ store, date, status }], beforeRecord: [{ store, date }],
+    //                  closedStores: [{ store, closedFrom }] },
+    //     config: { source, rules } }
+    // One row per store × date × group × subgroup × tier. `items` = the item records merged into
+    // it (one per item as filed that day). `tickets` = the sum of their `orders`: exact when
+    // items is 1, otherwise an upper bound, since one ticket can carry two of them. No totals:
+    // tickets do not add up, so the tool does its own grouping.
+    if (url.searchParams.get("action") === "bin-split" && request.method === "GET") {
+      const range = itemRangeScope(url, currentUser, corsJson);
+      if (range.response) return range.response;
+      const { from, to, stores } = range;
+      const { dateStr: today } = getETToday();
+      if (to > today) return new Response(JSON.stringify({ error: "to is after today (ET)" }), { status: 400, headers: corsJson });
+      const yesterday = addDaysYmd(today, -1);
+      const fresh = url.searchParams.get("fresh") === "1";
+      const config = await loadBinGroups(env);
+      const classify = binSplitClassifier(config.rules);
+      const rows = [];
+      const freshness = { savedThrough: {}, liveAsOf: {}, liveDays: [], missingDays: [], incompleteDays: [], beforeRecord: [], closedStores: [] };
+      if (stores.length) {
+        const inList = stores.map(() => "?").join(",");
+        const scope = [...stores, from, to];
+        const f = (k) => `json_extract(j.value, '$.${k}')`;
+        let itemRows, firstRows, salesRows;
+        try { [itemRows, firstRows, salesRows] = await Promise.all([
+          // Each store-day's stamp, and only the fields the split reads of each item. Every item,
+          // not just Bin Products: which others it keeps is the config's call, made below.
+          env.DB.prepare(`
+            SELECT d.store AS store, d.date AS date, d.snapshot_time AS snapshot_time, ${f("name")} AS name,
+                   ${f("code")} AS code, ${f("l2")} AS l2, ${f("qty")} AS qty, ${f("net")} AS net, ${f("orders")} AS orders
+              FROM item_day_lines d LEFT JOIN json_each(d.items_json) j
+             WHERE d.store IN (${inList}) AND d.date BETWEEN ? AND ?`).bind(...scope).all(),
+          // Where the record begins, as item-lines reckons it: a months-late re-snapshot does not count.
+          env.DB.prepare(`SELECT store, MIN(date) AS first FROM item_day_lines
+              WHERE store IN (${inList}) AND julianday(snapshot_time) - julianday(date) <= 4 GROUP BY store`).bind(...stores).all(),
+          env.DB.prepare(`SELECT store, date, order_count FROM daily_sales
+              WHERE store IN (${inList}) AND date BETWEEN ? AND ?`).bind(...scope).all(),
+        ]); } catch (e) {
+          return new Response(JSON.stringify({ error: "item_day_lines is not available", detail: String(e?.message || e) }), { status: 503, headers: corsJson });
+        }
+        const saved = new Map();   // "store|date" → { snapshotTime, items }
+        for (const r of itemRows.results || []) {
+          const k = r.store + "|" + r.date;
+          if (!saved.has(k)) saved.set(k, { snapshotTime: r.snapshot_time, items: [] });
+          if (r.l2 != null || r.name != null) saved.get(k).items.push(r);
+        }
+        const firstBy = Object.fromEntries((firstRows.results || []).map(r => [r.store, r.first]));
+        // order_count 0, not null: null is unknown.
+        const zero = new Set((salesRows.results || []).filter(r => r.order_count != null && Number(r.order_count) === 0).map(r => r.store + "|" + r.date));
+        const addDay = (store, date, source, items) => {
+          const byKey = new Map();
+          for (const it of items) {
+            const c = classify(it);
+            if (!c) continue;
+            const k = `${c.group}|${c.subgroup}|${c.tier}`;
+            if (!byKey.has(k)) byKey.set(k, { store, date, source, ...c, units: 0, net: 0, items: 0, tickets: 0 });
+            const r = byKey.get(k);
+            r.units += Number(it.qty) || 0; r.net += Number(it.net) || 0; r.items += 1; r.tickets += Number(it.orders) || 0;
+          }
+          for (const r of byKey.values()) rows.push({ ...r, units: Math.round(r.units * 1000) / 1000, net: roundCents(r.net) });
+          if (source === "saved") freshness.savedThrough[store] = date;
+        };
+        const live = [];
+        for (const s of stores) {
+          freshness.savedThrough[s] = null;
+          const closedFrom = STORE_CLOSED_FROM[s] || null;
+          if (closedFrom && to >= closedFrom) freshness.closedStores.push({ store: s, closedFrom });
+          for (let d = from; d <= to; d = addDaysYmd(d, 1)) {
+            const k = s + "|" + d, row = saved.get(k);
+            if (closedFrom && d >= closedFrom) continue;
+            if (d === today) live.push([s, d]);
+            else if (row && itemDayFinal(d, row.snapshotTime)) addDay(s, d, "saved", row.items);
+            else if (d === yesterday) live.push([s, d]);
+            else if (!firstBy[s] || d < firstBy[s]) freshness.beforeRecord.push({ store: s, date: d });
+            else if (zero.has(k)) addDay(s, d, "saved", []);
+            else freshness.missingDays.push({ store: s, date: d });
+          }
+        }
+        // At most three pulls at a time, as live-items.
+        for (let i = 0; i < live.length; i += 3) {
+          for (const day of await Promise.all(live.slice(i, i + 3).map(([s, d]) => liveItemDayCached(env, s, d, fresh)))) {
+            if (day.status !== "ok") { freshness.incompleteDays.push({ store: day.store, date: day.date, status: day.status }); continue; }
+            addDay(day.store, day.date, "live", day.items || []);
+            freshness.liveDays.push({ store: day.store, date: day.date });
+            // A store with two live days is as old as its older pull.
+            if (!freshness.liveAsOf[day.store] || day.asOf < freshness.liveAsOf[day.store]) freshness.liveAsOf[day.store] = day.asOf;
+          }
+        }
+        rows.sort((a, b) => stores.indexOf(a.store) - stores.indexOf(b.store) || (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+      }
+      return new Response(JSON.stringify({ ok: true, from, to, stores, rows, freshness, config }), { headers: corsJson });
     }
 
     // ─── Discounts: which discount, on what, rung by whom (migration-089) ──
