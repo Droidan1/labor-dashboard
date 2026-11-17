@@ -5044,6 +5044,93 @@ async function fetchCrossDayOrdersForRefunds(store, env, elements, refundElement
   return await fetchOrdersByIds(store, env, [...crossDayIds]);
 }
 
+// ─── One store-day of per-item sales, pulled live from Clover ───────────
+// For ?action=live-items (docs/plans/live-item-sales.md, Brian 2026-11-17). The SAME
+// seven inputs the nightly pass (scheduled(), "55 3 * * *") gives aggregateItemSales,
+// called the same way: item overrides and costs; orders, refunds and manual refunds from
+// midnight ET; and, only when there are orders, the item→category map and the other days'
+// orders those refunds point at. So an item is filed as tonight's run will file it. The
+// window ends at the next midnight ET, or stays open for today, as the cron's does.
+//
+// 🛑 READ-ONLY. Nothing here writes: no items:, item-hours:, item_day_lines, discount
+// record or daily_sales, and saveItemSalesSnapshot, fetchAggregateAndSnapshot and
+// bankDiscountLines are never called. The one cache is liveItemDayCached's live-items:
+// key (fetchItemCategoryMap keeps its own 24 h item-cats: copy, as for every caller).
+//
+// 🛑 A FAILED FETCH IS NOT AN EMPTY DAY. fetchItemOrders answers null for a failed page
+// (credentials are checked first, so null here is always that); that, or anything
+// thrown, is "incomplete" with no items, never []. Know the limit: the refund and manual
+// refund fetchers answer [] when Clover fails, the cross-day fetcher drops an order it
+// could not fetch, and the category map answers what it got. Those are the nightly run's
+// own conventions, so a failure there is not seen here either.
+//
+// → { store, date, status: "ok", asOf, items, other, totals }   items as item_day_lines rows
+//   { store, date, status: "closed", closedFrom }                no Clover call
+//   { store, date, status: "no_credentials", error }             no Clover call
+//   { store, date, status: "incomplete", code: "INCOMPLETE_FETCH", error }
+async function pullLiveItemDay(env, store, dateStr) {
+  const closedFrom = STORE_CLOSED_FROM[store];
+  if (closedFrom && dateStr >= closedFrom) return { store, date: dateStr, status: "closed", closedFrom };
+  if (!env[`${store}_MERCHANT_ID`] || !env[`${store}_API_TOKEN`]) {
+    return { store, date: dateStr, status: "no_credentials", error: "No Clover credentials for this store" };
+  }
+  const incomplete = (error) => ({ store, date: dateStr, status: "incomplete", code: "INCOMPLETE_FETCH", error });
+  const asOf = new Date().toISOString();
+  const since = getStartOfDayET(dateStr);
+  const until = dateStr === getETToday().dateStr ? null : getStartOfDayET(addDaysYmd(dateStr, 1));
+  try {
+    const [overrides, itemCosts, elements, refundElements, manualRefundElements] = await Promise.all([
+      fetchItemOverrides(env),
+      fetchItemCosts(env),
+      fetchItemOrders(store, env, since, until),
+      fetchRefundElements(store, env, since, until),
+      fetchManualRefunds(store, env, since, until),
+    ]);
+    if (elements === null) return incomplete("Clover did not return a complete order list");
+    const lineSink = {};
+    let itemData;
+    if (elements.length > 0) {
+      const itemCatMap = await fetchItemCategoryMap(store, env);
+      const extraOrders = await fetchCrossDayOrdersForRefunds(store, env, elements, refundElements);
+      itemData = aggregateItemSales(elements, itemCatMap, store, dateStr, overrides, itemCosts, refundElements, extraOrders, manualRefundElements, lineSink);
+    } else {
+      // No orders yet. The cron's pass aggregates nothing for such a day (refunds included)
+      // and the saved record keeps no row for it, so this answers no items either: a real
+      // zero, in a day's shape, since null reads as unknown.
+      itemData = aggregateItemSales([], {}, store, dateStr, overrides, itemCosts, [], [], [], lineSink);
+    }
+    return { store, date: dateStr, status: "ok", asOf, items: lineSink.items, other: lineSink.other, totals: itemData.totals };
+  } catch (e) {
+    return incomplete(String(e?.message || e));
+  }
+}
+
+// pullLiveItemDay behind KV `live-items:<store>:<date>` = { asOf, items, other, totals }, kept
+// 5 minutes. `fresh` re-pulls only a copy over 60 s old, so no caller can pull a store from
+// Clover more than once a minute, with no rate-limit state of its own. Only an ok pull is
+// kept: never a closed, credential-less or incomplete one. A KV read or write that fails
+// costs the cache, never the answer.
+const LIVE_ITEMS_TTL_S = 300;
+const LIVE_ITEMS_FRESH_MS = 60 * 1000;
+async function liveItemDayCached(env, store, dateStr, fresh = false) {
+  const key = `live-items:${store.toLowerCase()}:${dateStr}`;
+  let hit = null;
+  try { hit = env.SALES_SNAPSHOTS ? await env.SALES_SNAPSHOTS.get(key, "json") : null; }
+  catch (e) { console.warn(`[live-items] cache read failed ${key}: ${e.message}`); }
+  if (hit && Array.isArray(hit.items) && (!fresh || Date.now() - Date.parse(hit.asOf) <= LIVE_ITEMS_FRESH_MS)) {
+    return { store, date: dateStr, status: "ok", asOf: hit.asOf, cached: true, items: hit.items, other: hit.other, totals: hit.totals };
+  }
+  const day = await pullLiveItemDay(env, store, dateStr);
+  if (day.status !== "ok") return day;
+  if (env.SALES_SNAPSHOTS) {
+    try {
+      await env.SALES_SNAPSHOTS.put(key, JSON.stringify({ asOf: day.asOf, items: day.items, other: day.other, totals: day.totals }),
+        { expirationTtl: LIVE_ITEMS_TTL_S });
+    } catch (e) { console.warn(`[live-items] cache write failed ${key}: ${e.message}`); }
+  }
+  return { store, date: dateStr, status: "ok", asOf: day.asOf, cached: false, items: day.items, other: day.other, totals: day.totals };
+}
+
 // ─── Save a snapshot to KV + D1 ─────────────────────────────────
 async function saveSnapshot(env, store, dateStr, data) {
   const snapshotTime = new Date().toISOString();
@@ -5556,6 +5643,7 @@ const ACTION_BUSINESS = new Map([
   ["transactions", "bl"],
   ["item-sales", "bl"],
   ["item-lines", "bl"],
+  ["live-items", "bl"],
   ["whatnot-shows", "bl"],
   ["whatnot-items", "bl"],
   ["whatnot-products", "bl"],
@@ -18278,13 +18366,17 @@ export default {
     // discounts, returns and discount-classes joined 2026-11-12 (Brian: the MCP reads the
     // discounts). D1 reads (plus items: snapshots for gross retail); discount-classes' POST and
     // bank-discounts are writes and are NOT here — the gate refuses anything but GET anyway.
+    //
+    // live-items joined 2026-11-17 (Brian: live item sales and the bin split): today's items
+    // pulled live from Clover. Its one write is its own 5-minute live-items: cache; `fresh`
+    // asks for a re-pull. scripts/test-live-items.mjs pins both.
     const REPORTING_READ_THROUGH = new Set([
       "weekly-summary", "weekly-store-detail", "weekly-t13", "category-series", "category-hours",
       "labor", "labor-plan",
       "inventory-items", "list-sale-schedules", "bin-dump-list", "truck-current", "truck-detail",
       "truck-list", "mos-list",
       "supply-requests", "supply-request", "supply-budgets",
-      "item-sales", "item-lines",
+      "item-sales", "item-lines", "live-items",
       "whatnot-shows", "whatnot-items", "whatnot-products",
       "discounts", "returns", "discount-classes",
     ]);
@@ -18297,7 +18389,7 @@ export default {
     const READ_THROUGH_PARAMS = new Set([
       "action", "key", "from", "to", "store", "level", "grain", "week", "year", "end", "endWeek", "weeks",
       "offset", "filter", "months", "limit", "id", "status", "month", "cursor",
-      "category", "employee", "class", "search", "kind",
+      "category", "employee", "class", "search", "kind", "fresh",
     ]);
     const reportingAction = url.searchParams.get("action");
     const reportingKeyGiven = request.headers.has("X-API-Key") || url.searchParams.has("key");
@@ -31391,6 +31483,36 @@ export default {
         ok: true, from, to, stores, items, other, net: cents(net),
         coverage: { days: days.length, firstRecord: firstBy, missing, stale },
       }), { headers: corsJson });
+    }
+
+    // ─── Live items: today's per-item sales, pulled from Clover now ────────
+    //    GET ?action=live-items[&store=BL1][&fresh=1]
+    // Today (ET) only, for every store the caller holds, filed by the nightly run's own
+    // inputs (pullLiveItemDay) and kept 5 minutes (liveItemDayCached; fresh=1 re-pulls a copy
+    // over 60 s old). An earlier day is the saved record's (item-lines). Read-only: the one
+    // write is the live-items: cache. Brian, 2026-11-17 (docs/plans/live-item-sales.md).
+    // → { ok: true, date: "YYYY-MM-DD", stores: [ one per store, in ALL_STORES order:
+    //      { store, status: "ok", asOf, cached, items: [item_day_lines rows], other, totals }
+    //      { store, status: "closed", closedFrom }
+    //      { store, status: "no_credentials", error }
+    //      { store, status: "incomplete", code: "INCOMPLETE_FETCH", error } ] }
+    // Only "ok" carries items, so a store that could not be read never reads as an empty day.
+    if (url.searchParams.get("action") === "live-items" && request.method === "GET") {
+      // The stores, as itemRangeScope picks them.
+      const storeParam = (url.searchParams.get("store") || "").trim().toUpperCase();
+      if (storeParam && !ALL_STORES.includes(storeParam)) return new Response(JSON.stringify({ error: "Invalid store" }), { status: 400, headers: corsJson });
+      if (storeParam && !canAccessStore(currentUser, storeParam)) return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      const allowed = allowedStores(currentUser);
+      const stores = storeParam ? [storeParam] : (allowed === null ? ALL_STORES : ALL_STORES.filter(s => allowed.includes(s)));
+      const fresh = url.searchParams.get("fresh") === "1";
+      const { dateStr: date } = getETToday();
+      // At most three stores at a time (the plan's limit), so a chain-wide call does not
+      // open every store's Clover requests at once.
+      const days = [];
+      for (let i = 0; i < stores.length; i += 3) {
+        days.push(...await Promise.all(stores.slice(i, i + 3).map(s => liveItemDayCached(env, s, date, fresh))));
+      }
+      return new Response(JSON.stringify({ ok: true, date, stores: days.map(({ date: _, ...d }) => d) }), { headers: corsJson });
     }
 
     // ─── Discounts: which discount, on what, rung by whom (migration-089) ──
