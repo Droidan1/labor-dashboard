@@ -1,3 +1,17 @@
+# Live Item Sales & Bin Split (2026-11-17) — plan only, not started
+
+**Ask (Brian):** review the PDF build plan for live item sales and the bin vs Christmas bin split, then
+revise it. Revised plan: [docs/plans/live-item-sales.md](../docs/plans/live-item-sales.md).
+
+- [x] Review the PDF against worker.js, cli/reporting.mjs and live data (back-check numbers reproduce exactly)
+- [x] Revised plan written: Phase 1 refactor dropped (aggregateItemSales already shared); final-row rule for
+      the 03:55 sweep's partial today row; tiers parsed from `$N`; tickets not summed; write guard via
+      worker.fetch; `?action=` routes + agent door + business gate; deploy-ahead instead of a preview env
+- [x] Brian: WTD = Sun–Sat; a bin cycle = Fri–Wed. Added as `period=cycle` (on a Thursday, the cycle just ended)
+- [x] Brian: the "$1 / $3 / $8 XMAS" buttons (L2 Seasonal) count as Christmas bins, as their own `xmas buttons`
+      subgroup, matched by name; back-check Christmas now 399 / $968.50
+- [ ] Build on `claude/live-item-sales` from the plan's kickoff prompt
+
 # Discounts & Returns reporting (2026-11-12) — the page (PR 2 of 2)
 
 **Ask (Brian):** the page on top of the backend below (live in prod): discounts by store, button,
