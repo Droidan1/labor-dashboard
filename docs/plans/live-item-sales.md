@@ -104,8 +104,9 @@ midnight, so it is pulled live only when its nightly run failed.
 
 - Scope via `itemRangeScope` (so the 31-day all-stores cap applies).
 - For each store-day:
-  - `date < today` and saved row final → **saved** (read with the same SQL as `item-lines`; extract it
-    into `readItemDayLines(env, stores, from, to)` and have `item-lines` call it, a read-path-only change).
+  - `date < today` and saved row final → **saved**, read per store-day from `item_day_lines` (selecting
+    only the item fields the split needs). `item-lines` sums across days, so it is not reused and stays
+    untouched (decided at Phase 2 start; replaces an earlier `readItemDayLines` extraction).
   - `date == today`, or `date == yesterday` with no final row → **live** (`pullLiveItemDay`, cached).
   - otherwise → `missingDays` (or a real zero, per Rule 4).
 - Keeps only items with `l2 === "Bin Products"`, plus the items the config's `addToChristmas` matches
@@ -184,10 +185,11 @@ Branch `claude/live-item-sales`. Commit at the end of each phase with what chang
 - [ ] Tell Brian it's ready to deploy ahead (see Rollout) as soon as this phase is pushed
 
 **Phase 2: bin split (worker)**
-- [ ] `readItemDayLines` extracted; `item-lines` output byte-identical before/after (test)
-- [ ] Final-row rule, stitching, `missingDays`, closed stores
-- [ ] `config:bin-groups` default + KV override + validation; tier parsing
-- [ ] Tests: a saved row for today is ignored; a row for D written before D+1 03:55 UTC (a daytime
+- [x] Per-day read of `item_day_lines` plus `daily_sales.order_count` (a 0 is a real zero day);
+      days before a store's first record are reported as such, not missing; `item-lines` untouched
+- [x] Final-row rule, stitching, `missingDays`, closed stores
+- [x] `config:bin-groups` default + KV override + validation; tier parsing
+- [x] Tests: a saved row for today is ignored; a row for D written before D+1 03:55 UTC (a daytime
       repair) is not final; yesterday with no final row (nightly failed) goes live; an old missing day is
       never pulled; the nightly time is pinned to `wrangler.toml`'s cron; the real-names table below;
       bad config falls back

@@ -24,7 +24,13 @@ revise it. Revised plan: [docs/plans/live-item-sales.md](../docs/plans/live-item
       `get_today_sales` to the cent; BL8 `closed`. Speed: cold chain-wide 4.8 s (target < 10 s); cached
       0.70-0.99 s end to end (target < 0.5 s NOT met as measured from a client: ~0.11 s TLS + ~0.2 s for the
       200 KB body; server ~0.37 s; saved `item-lines` for one day takes 1.2 s)
-- [ ] Phase 2 (bin split) and Phase 3 (tools) on a fresh branch off main
+- [x] Phase 2 (91e4c54 on `claude/bin-split`, implementer subagent; reviewed): GET `?action=bin-split` — one source
+      per store-day (closed → today live → final saved row, `snapshot_time` ≥ D+1 03:55 UTC → yesterday live →
+      beforeRecord → order_count 0 = zero day → missing; never pulls older than yesterday), `config:bin-groups`
+      (default + validated KV override), tiers from `$N`. test-bin-split.mjs 80 pass, 78 fail on main's worker
+      (the 2 are cron-string pins), 24 mutants caught, 5 repeat runs with no hang. `npm test` 12,148 / 138 green
+- [ ] Brian: merge the Phase 2 PR, deploy the worker from main
+- [ ] Phase 3 (tools) on a fresh branch off main; merges and deploys (MCP + CLI) only after Phase 2's worker
 
 # Discounts & Returns reporting (2026-11-12) — the page (PR 2 of 2)
 
