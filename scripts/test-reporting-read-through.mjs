@@ -385,7 +385,8 @@ for (const [action, q] of Object.entries(ACTIONS)) {
   ok(known.length > 100, `ACTION_BUSINESS was read (${known.length} actions)`);
   // live-items is a read-through too, pinned in its own suite (test-live-items.mjs): it pulls
   // Clover live and writes its live-items: cache, so it cannot sit in ACTIONS' "writes nothing".
-  const opened = new Set([...Object.keys(ACTIONS), 'live-items', 'morning-briefing', 'store-history', 'afternoon-briefing', 'agent-identity']);
+  // bin-split likewise (test-bin-split.mjs): its live days go through that same cache.
+  const opened = new Set([...Object.keys(ACTIONS), 'live-items', 'bin-split', 'morning-briefing', 'store-history', 'afternoon-briefing', 'agent-identity']);
   let same = 0;
   for (const action of known.filter(a => !opened.has(a))) {
     const before = d1Changes();
