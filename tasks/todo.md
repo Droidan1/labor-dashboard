@@ -17,7 +17,13 @@ revise it. Revised plan: [docs/plans/live-item-sales.md](../docs/plans/live-item
       47 fail on main's worker.js; 16 mutants caught. `npm test` 12,068 / 137 green (base 12,018 / 136)
 - [x] Plan corrected: the nightly cron is 03:55 UTC (22:55 EST / 23:55 EDT), not 03:55 ET, so there is no
       partial new-day row; final = `snapshot_time` ≥ D+1 03:55 UTC. Lesson added (recurrence, rule 12)
-- [ ] Brian: push + Phase 1 PR, merge, deploy the worker from main (inert until called)
+- [x] Phase 1 LIVE (2026-11-17): PR #380 merged (be5ad4d, all 3 commits on main); Brian deployed from a fresh
+      GitHub clone of be5ad4d: clover-sales-api a0a1d10c, upload 1266.86 KiB = the dry run. Landed: 3 clean
+      `?action=live-items` passes from 21:29:57Z (was 401 NO_SESSION before). Live vs till, same minute, fresh
+      pull: BL1 6,681.12 / BL2 4,126.69 / BL4 4,418.95 / BL14 4,705.10 / BL16 1,395.67, equal to
+      `get_today_sales` to the cent; BL8 `closed`. Speed: cold chain-wide 4.8 s (target < 10 s); cached
+      0.70-0.99 s end to end (target < 0.5 s NOT met as measured from a client: ~0.11 s TLS + ~0.2 s for the
+      200 KB body; server ~0.37 s; saved `item-lines` for one day takes 1.2 s)
 - [ ] Phase 2 (bin split) and Phase 3 (tools) on a fresh branch off main
 
 # Discounts & Returns reporting (2026-11-12) — the page (PR 2 of 2)
