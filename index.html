@@ -6649,6 +6649,36 @@
       </div>
     </div>
 
+    <!-- One E-Commerce company's View Details (Brian chose "Option A", 2026-11-18): Bargain Lane's
+         store detail shape — six summary figures, then Daily · Chart · Orders · Items tabs. From
+         ?action=ecom-company. Shares the Overview's date range. Drawn by ecRender(). -->
+    <div id="page-ecom-company" class="hidden">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-3 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-6xl mx-auto">
+          <button type="button" onclick="navigateToPage('ecom-overview')" class="text-[13px] font-semibold text-accent-green hover:opacity-80 transition-opacity">&larr; E-Commerce</button>
+          <div class="mt-1 flex items-end justify-between gap-x-4 gap-y-2 flex-wrap">
+            <div class="min-w-0">
+              <h1 id="ec-title" class="text-2xl font-brand text-accent-green uppercase tracking-wide truncate">&mdash;</h1>
+              <p id="ec-sub" class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5"></p>
+            </div>
+            <div class="flex items-center gap-2">
+              <div id="ec-range" class="relative"></div>
+              <button id="ec-refresh" type="button" onclick="ecRefresh(this)" aria-label="Refresh" title="Refresh"
+                class="w-10 h-10 rounded-[10px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim flex items-center justify-center transition-colors hover:border-accent-green/40 hover:text-opl-ink dark:hover:text-op-ink focus:outline-none focus:ring-1 focus:ring-accent-green disabled:opacity-50">
+                <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="max-w-6xl mx-auto px-4 sm:px-6 py-5 space-y-4">
+        <div id="ec-status" class="hidden"></div>
+        <div id="ec-kpis" class="grid gap-2.5 grid-cols-2 md:grid-cols-3 lg:grid-cols-6"></div>
+        <div id="ec-tabs" role="tablist" class="flex gap-1 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-x-auto"></div>
+        <div id="ec-body"></div>
+      </div>
+    </div>
+
     <div id="page-ebay-cases" class="hidden">
       <style>
         /* Urgency is the only colour that carries meaning on this page, so it is
@@ -14003,7 +14033,7 @@
                              'all-stores-detail', 'inventory-add', 'inventory-viewer',
                              'inventory-sale', 'supply-request', 'labor',
                              'live-overview', 'live-shows', 'live-calendar', 'live-auction', 'live-promotion', 'live-money',
-                             'ecom-overview'];
+                             'ecom-overview', 'ecom-company'];
     // Supply Request is the one on the list an associate may be granted (2026-11-02): the
     // worker strips its money for them, so the page is safe to open on the grant.
     if (FINANCIAL_PAGES.includes(page) && !canSeeFinancials(currentUser)
@@ -14080,7 +14110,7 @@
     // not your role — mirroring the worker's fail-closed business gate, which is
     // the real boundary. Without this a stale deep link or history entry would
     // render the shell for someone the API then 403s.
-    if (page === 'ebay-cases' || page === 'ecom-overview') {
+    if (page === 'ebay-cases' || page === 'ecom-overview' || page === 'ecom-company') {
       if (!userBusinesses(currentUser).some(b => b.id === 'ecom')) return;
     }
     // Live Sales' pages belong to that business, on the same terms as eBay Cases.
@@ -14127,8 +14157,10 @@
     try { applyBusinessNav(); } catch (_) {}
 
     // Update sidebar active state
+    // A company's View Details belongs to E-Commerce's Overview, so that item stays lit.
+    const navPage = page === 'ecom-company' ? 'ecom-overview' : page;
     document.querySelectorAll('.nav-item[data-page]').forEach(item => {
-      item.classList.toggle('active', item.dataset.page === page);
+      item.classList.toggle('active', item.dataset.page === navPage);
     });
 
     // Clean up state
@@ -14179,6 +14211,9 @@
     }
     if (page === 'ecom-overview') {
       if (typeof initEcomOverview === 'function') initEcomOverview();
+    }
+    if (page === 'ecom-company') {
+      if (typeof initEcomCompany === 'function') initEcomCompany();
     }
     // A Show Calendar panel left open must not cover the next page.
     if (page !== 'live-calendar' && typeof window.lcClose === 'function') window.lcClose();
@@ -38020,7 +38055,6 @@
   // for E-Commerce as a whole ($57,000 a month incl. shipping, spread by day — the worker owns the
   // number); the company cards carry no budget, so their bar is a share of today's sales instead.
   // Sales include shipping, and shipping is shown as its own amount (Brian, 2026-11-18).
-  // View Details is Phase 3, so the cards have no button yet rather than a dead one.
   let eoData = null, eoLoading = false, eoError = null, eoNotSetUp = false, eoRange = null;
   const EO_CHANNEL = '#3b82f6';   // accent-blue: the eBay series, the share bar, the sparkline
   const eoCard = 'bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors';
@@ -38201,6 +38235,9 @@
         <div class="mt-2 grid grid-cols-4 gap-2">
           ${eoMTile('Orders', o.orders)}${eoMTile('Avg order', o.orders ? fmtDollar(o.sales / o.orders) : '—')}${eoMTile('Units', o.units)}${eoMTile('Returns', o.returns)}
         </div>
+        <div class="mt-4 flex justify-end">
+          <button type="button" onclick="ecomOpenCompany(${c.id})" class="text-xs font-semibold text-accent-green hover:underline">View Details →</button>
+        </div>
       </div>`;
     }).join('');
 
@@ -38226,6 +38263,144 @@
     const t = new Date(ymd + 'T12:00:00Z'); t.setUTCDate(t.getUTCDate() + n);
     return t.toISOString().slice(0, 10);
   }
+
+  // ═══ One company's View Details (Option A, 2026-11-18) ═══
+  // Bargain Lane's store detail shape: six summary figures against the period just before and the
+  // same dates last year, then Daily · Chart · Orders · Items tabs. It shares the Overview's range
+  // (eoRange), so the range carries in and back out. Items needs each order's products stored,
+  // which is a separate step, so that tab says so.
+  let ecUnit = null, ecData = null, ecLoading = false, ecError = null, ecTab = 'daily';
+  const EC_STATUS_INK = { 3: 'var(--v1-good)', 100: 'var(--v1-bad)', 200: 'var(--v1-warn)' };
+  // Sellercloud's status codes, in words people use.
+  const EC_STATUS_LABEL = { 1: 'In cart', 2: 'In process', 3: 'Completed', 100: 'Problem', 200: 'On hold', 300: 'Quote', 999: 'Void', [-1]: 'Cancelled' };
+  window.ecomOpenCompany = (id) => { ecUnit = id; ecData = null; ecTab = 'daily'; navigateToPage('ecom-company'); };
+  function initEcomCompany() {
+    if (!ecUnit) { navigateToPage('ecom-overview'); return; }   // a reload or stale link with no company
+    rangePickerMount('ec-range', () => eoRange || resolvePreset('today'), (r) => { eoRange = r; ecLoad(); });
+    ecLoad();
+  }
+  window.initEcomCompany = initEcomCompany;
+  window.ecRefresh = async (btn) => {
+    const svg = btn && btn.querySelector('svg');
+    if (svg) { svg.style.transition = 'transform .6s ease'; svg.style.transform = 'rotate(360deg)'; }
+    try { await ecLoad(); }
+    finally { if (svg) setTimeout(() => { svg.style.transition = 'none'; svg.style.transform = ''; }, 650); }
+  };
+  window.ecPickTab = (k) => { ecTab = k; ecRender(); };
+  async function ecLoad() {
+    eoRange = !eoRange ? resolvePreset('today') : eoRange.presetId === 'custom' ? eoRange : resolvePreset(eoRange.presetId);
+    const unit = ecUnit;
+    ecLoading = true; ecError = null;
+    const btn = el('ec-refresh'); if (btn) btn.disabled = true;
+    ecRender();
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=ecom-company&company=${unit}&from=${eoRange.from}&to=${eoRange.to}`, { credentials: 'include', cache: 'no-store' });
+      const d = await r.json().catch(() => null);
+      if (r.status === 403) throw new Error('You do not have access to this company.');
+      if (!r.ok || !d || !d.ok) throw new Error((d && d.error) || `HTTP ${r.status}`);
+      if (!(d.company && d.totals && d.previous && d.lastYear && Array.isArray(d.daily) && Array.isArray(d.orders))) throw new Error('The server sent an answer this page cannot read.');
+      if (unit === ecUnit) ecData = d;
+    } catch (e) {
+      ecError = e.message || String(e); ecData = null;
+    } finally {
+      ecLoading = false;
+      if (btn) btn.disabled = false;
+      ecRender();
+    }
+  }
+  const ecPct = (a, b) => b > 0 ? Math.round((a - b) / b * 100) : null;
+  const ecChg = (a, b, label) => {
+    const p = ecPct(a, b);
+    if (p == null) return `<span>${label}: no sales</span>`;
+    return `<span><span class="font-semibold" style="color:${p >= 0 ? 'var(--v1-good)' : 'var(--v1-bad)'}">${p >= 0 ? '+' : '−'}${Math.abs(p)}%</span> ${label}</span>`;
+  };
+  const ecWhen = (t) => {                     // Sellercloud's wall-clock time, as it sends it
+    const d = new Date(String(t || '') + 'Z');
+    if (isNaN(d)) return escapeHtml(String(t || '—'));
+    return d.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' }) + ', '
+      + d.toLocaleTimeString('en-US', { timeZone: 'UTC', hour: 'numeric', minute: '2-digit' });
+  };
+  function ecRender() {
+    const d = ecData, R = eoRange || resolvePreset('today');
+    rangePickerPaint('ec-range');
+    const title = el('ec-title'), sub = el('ec-sub'), status = el('ec-status');
+    const kpis = el('ec-kpis'), tabs = el('ec-tabs'), body = el('ec-body');
+    if (!kpis) return;
+    if (status) {
+      status.innerHTML = ecError ? `<div class="rounded-[12px] border border-[rgba(239,68,68,0.35)] px-4 py-3 text-sm"><span class="font-semibold" style="color:var(--v1-bad)">Couldn’t load this company.</span> <span class="text-opl-inkDim dark:text-op-inkDim">${escapeHtml(ecError)}</span> <button type="button" onclick="ecRefresh()" class="ml-1 text-sm font-semibold text-accent-green hover:underline">Retry</button></div>` : '';
+      status.classList.toggle('hidden', !ecError);
+    }
+    if (!d) {
+      if (title && ecUnit) { const c = SELLERCLOUD_NAMES[ecUnit]; title.textContent = c || '—'; }
+      kpis.innerHTML = ecLoading ? [1, 2, 3, 4, 5, 6].map(() => `<div class="${eoCard} !p-3"><span class="skel" style="display:block;width:70%;height:34px;border-radius:6px"></span></div>`).join('') : '';
+      tabs.innerHTML = ''; body.innerHTML = '';
+      return;
+    }
+    const c = d.company, T = d.totals, P = d.previous, L = d.lastYear;
+    if (title) title.textContent = c.name;
+    if (sub) sub.textContent = `Sellercloud ${c.companyIds.join(' + ')} · ${c.companyIds.length > 1 ? 'eBay + Poshmark' : 'eBay'} · sales include shipping`;
+    const prevWord = d.range.days === 1 ? 'vs the day before' : `vs prior ${d.range.days} days`;
+    const k = (label, value, lines) => `<div class="${eoCard} !p-3.5 min-w-0"><div class="text-[11px] font-medium text-opl-inkDim dark:text-op-inkDim">${label}</div>
+      <div class="mt-1 text-[20px] font-semibold tabular-nums text-opl-ink dark:text-op-ink truncate">${value}</div>
+      <div class="mt-1 text-[12px] leading-snug text-opl-inkDim dark:text-op-inkDim tabular-nums">${lines}</div></div>`;
+    kpis.innerHTML =
+      k('Sales', fmtDollar(T.sales), `${ecChg(T.sales, P.sales, prevWord)}<br>${ecChg(T.sales, L.sales, 'vs same days last year')}`)
+      + k('Orders', T.orders.toLocaleString('en-US'), `${ecChg(T.orders, P.orders, prevWord)}<br>${ecChg(T.orders, L.orders, 'vs same days last year')}`)
+      + k('Avg order', T.orders ? fmtDollar(T.sales / T.orders) : '—', L.orders ? `Last year ${fmtDollar(L.sales / L.orders)}` : 'No sales last year')
+      + k('Units', T.units.toLocaleString('en-US'), T.orders ? `${(T.units / T.orders).toFixed(2)} per order` : '')
+      + k('Shipping', fmtDollar(T.shipping), T.sales > 0 ? `${Math.round(T.shipping / T.sales * 100)}% of sales` : '')
+      + k('Refunded', fmtDollar(T.refunded), `${T.returns.toLocaleString('en-US')} unit${T.returns === 1 ? '' : 's'} returned`);
+
+    const TABS = [['daily', 'Daily'], ['chart', 'Chart'], ['orders', `Orders · ${d.ordersInRange.toLocaleString('en-US')}`], ['items', 'Items']];
+    tabs.innerHTML = TABS.map(([key, label]) => {
+      const on = key === ecTab;
+      return `<button type="button" role="tab" aria-selected="${on}" onclick="ecPickTab('${key}')" class="px-3.5 py-2.5 text-[14px] whitespace-nowrap border-b-2 -mb-px transition-colors ${on ? 'border-accent-green text-accent-green font-semibold' : 'border-transparent text-opl-inkDim dark:text-op-inkDim font-medium hover:text-opl-ink dark:hover:text-op-ink'}">${label}${key === 'items' ? '<span class="ml-1.5 text-[11px] px-1.5 py-px rounded-full border border-[rgba(20,16,8,0.16)] dark:border-op-borderHi">next step</span>' : ''}</button>`;
+    }).join('');
+
+    const TH = 'py-2.5 px-3 text-right text-[12px] font-medium text-opl-inkDim dark:text-op-inkDim whitespace-nowrap bg-opl-panelHi dark:bg-op-panelHi';
+    const TD = 'py-2 px-3 text-right whitespace-nowrap border-t border-[rgba(20,16,8,0.06)] dark:border-op-border';
+    const wrap = (inner) => `<div class="overflow-x-auto rounded-[12px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-opl-panel dark:bg-op-panel"><table class="w-full text-[13px] tabular-nums text-opl-ink dark:text-op-ink">${inner}</table></div>`;
+    const dim = (v, s) => v ? s : `<span class="text-opl-inkDim dark:text-op-inkDim">${s}</span>`;
+
+    if (ecTab === 'chart') {
+      // One bar a day; a single day shows its hours; past three months the bars are weeks.
+      let pts;
+      if (d.hours) pts = d.hours.map((v, h) => ({ label: fmtHour(h), v })).filter((x, i, a) => a.slice(0, i + 1).some(y => y.v) && a.slice(i).some(y => y.v));
+      else if (d.daily.length > 92) {
+        const wk = new Map();
+        for (const x of d.daily) { const s = addDaysYmdLocal(x.date, -new Date(x.date + 'T12:00:00Z').getUTCDay()); wk.set(s, (wk.get(s) || 0) + x.sales); }
+        pts = [...wk].map(([s, v]) => ({ label: 'Week of ' + eoDayName(s), v }));
+      } else pts = d.daily.map(x => ({ label: eoDayName(x.date), v: x.sales }));
+      const w = 900, h = 220, n = Math.max(pts.length, 1), bw = w / n, max = Math.max(1, ...pts.map(x => x.v)) * 1.1;
+      const y = (v) => h - 22 - v / max * (h - 34);
+      const avg = pts.length ? pts.reduce((s, x) => s + x.v, 0) / pts.length : 0;
+      const step = Math.ceil(n / 8);
+      const bars = pts.map((x, i) => `<rect x="${(i * bw + Math.min(3, bw * 0.15)).toFixed(1)}" y="${y(x.v).toFixed(1)}" width="${Math.max(1, bw - 2 * Math.min(3, bw * 0.15)).toFixed(1)}" height="${(h - 22 - y(x.v)).toFixed(1)}" rx="2" fill="${EO_CHANNEL}"><title>${escapeHtml(x.label)}: ${fmtDollar(x.v)}</title></rect>`).join('');
+      const labels = pts.map((x, i) => (i % step === 0 || i === n - 1) ? `<text x="${(i * bw + bw / 2).toFixed(1)}" y="${h - 6}" text-anchor="middle" font-size="11" class="fill-opl-inkDim dark:fill-op-inkDim">${escapeHtml(x.label.replace('Week of ', ''))}</text>` : '').join('');
+      const unit = d.hours ? 'an hour' : d.daily.length > 92 ? 'a week' : 'a day';
+      body.innerHTML = `<div class="${eoCard}"><div class="flex items-center justify-between gap-3"><span class="${eoLbl}">Sales by ${d.hours ? 'hour' : d.daily.length > 92 ? 'week' : 'day'}</span><span class="${eoLbl}">Average ${fmtDollar(avg)} ${unit}</span></div>
+        ${pts.some(x => x.v) ? `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" class="mt-3 w-full h-[220px] block" role="img" aria-label="Sales by ${d.hours ? 'hour' : 'day'}">${bars}<line x1="0" x2="${w}" y1="${y(avg).toFixed(1)}" y2="${y(avg).toFixed(1)}" stroke="rgb(var(--op-inkDim))" stroke-dasharray="4 4"/>${labels}</svg>` : `<div class="mt-6 mb-4 text-sm text-opl-inkDim dark:text-op-inkDim">No sales in this range.</div>`}
+      </div>`;
+    } else if (ecTab === 'orders') {
+      // Completed / Problem / On hold carry the dashboard's AA-safe status inks; In process reads as
+      // ink; Cancelled, Void and the rest as the theme's dim ink.
+      const pill = (o) => `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[12px] font-medium border border-[rgba(20,16,8,0.16)] dark:border-op-borderHi ${EC_STATUS_INK[o.status] ? '' : o.status === 2 ? 'text-opl-ink dark:text-op-ink' : 'text-opl-inkDim dark:text-op-inkDim'}"${EC_STATUS_INK[o.status] ? ` style="color:${EC_STATUS_INK[o.status]}"` : ''}>${escapeHtml(EC_STATUS_LABEL[o.status] || o.statusName || 'Status ' + o.status)}</span>`;
+      body.innerHTML = (d.orders.length ? wrap(`<thead><tr><th class="${TH} text-left">Time</th><th class="${TH}">Order</th><th class="${TH} text-left">Status</th><th class="${TH} text-left">Channel</th><th class="${TH}">Units</th><th class="${TH}">Total</th><th class="${TH}">Shipping</th><th class="${TH}">Refunded</th></tr></thead>
+        <tbody>${d.orders.map(o => `<tr><td class="${TD} text-left">${ecWhen(o.time)}</td><td class="${TD} text-opl-inkDim dark:text-op-inkDim">#${o.id}</td><td class="${TD} text-left">${pill(o)}</td><td class="${TD} text-left">${o.channel}</td><td class="${TD}">${o.units}</td><td class="${TD} font-semibold">${fmtDollar(o.total)}</td><td class="${TD}">${fmtDollar(o.shipping)}</td><td class="${TD}">${dim(o.refunded, fmtDollar(o.refunded))}</td></tr>`).join('')}</tbody>`)
+        : `<div class="${eoCard} text-sm text-opl-inkDim dark:text-op-inkDim">No orders in this range.</div>`)
+        + (d.ordersInRange > d.orders.length ? `<p class="mt-2 ${eoLbl}">The latest ${d.orders.length} of ${d.ordersInRange.toLocaleString('en-US')} orders in this range, newest first. Pick a shorter range to see the rest.</p>`
+          : d.orders.length ? `<p class="mt-2 ${eoLbl}">Every order in this range, newest first, cancelled ones included.</p>` : '');
+    } else if (ecTab === 'items') {
+      body.innerHTML = `<div class="rounded-[12px] border border-dashed border-[rgba(20,16,8,0.16)] dark:border-[rgba(255,255,255,0.13)] px-6 py-8 text-center text-sm text-opl-inkDim dark:text-op-inkDim leading-relaxed"><span class="font-semibold text-opl-ink dark:text-op-ink">Top products</span><br>The hub keeps each order's total, not the products in it. Keeping them (SKU, name, quantity, line total) is the next step, and this tab fills in then.</div>`;
+    } else {
+      const rows = d.daily.slice().reverse();
+      body.innerHTML = wrap(`<thead><tr><th class="${TH} text-left">Day</th><th class="${TH}">Orders</th><th class="${TH}">Units</th><th class="${TH}">Sales</th><th class="${TH}">Product</th><th class="${TH}">Shipping</th><th class="${TH}">Refunded</th><th class="${TH}">Returns</th><th class="${TH}">Avg order</th></tr></thead>
+        <tbody>${rows.map(x => `<tr><td class="${TD} text-left">${eoDayName(x.date)}</td><td class="${TD}">${dim(x.orders, x.orders)}</td><td class="${TD}">${dim(x.units, x.units)}</td><td class="${TD} font-semibold">${dim(x.sales, fmtDollar(x.sales))}</td><td class="${TD}">${dim(x.sales, fmtDollar(x.sales - x.shipping))}</td><td class="${TD}">${dim(x.shipping, fmtDollar(x.shipping))}</td><td class="${TD}">${dim(x.refunded, fmtDollar(x.refunded))}</td><td class="${TD}">${dim(x.returns, x.returns)}</td><td class="${TD}">${x.orders ? fmtDollar(x.sales / x.orders) : dim(0, '—')}</td></tr>`).join('')}</tbody>
+        <tfoot><tr class="font-semibold bg-opl-panelHi dark:bg-op-panelHi"><td class="${TD} text-left">${d.range.days} day${d.range.days === 1 ? '' : 's'}</td><td class="${TD}">${T.orders.toLocaleString('en-US')}</td><td class="${TD}">${T.units.toLocaleString('en-US')}</td><td class="${TD}">${fmtDollar(T.sales)}</td><td class="${TD}">${fmtDollar(T.sales - T.shipping)}</td><td class="${TD}">${fmtDollar(T.shipping)}</td><td class="${TD}">${fmtDollar(T.refunded)}</td><td class="${TD}">${T.returns}</td><td class="${TD}">${T.orders ? fmtDollar(T.sales / T.orders) : '—'}</td></tr></tfoot>`);
+    }
+  }
+  // Company names before the first answer lands, so the title is not blank while loading.
+  const SELLERCLOUD_NAMES = { 163: 'Shoes and Fashions', 164: 'Harrison Avenue', 165: 'Bass River', 166: 'Detail Pro', 167: 'Dymoda' };
 
   // ── A date-range chip for a page that keeps its OWN range (E-Commerce Overview, the landing
   // page): the dashboard's chip, presets and custom calendar (RANGE_PRESETS, resolvePreset,
@@ -42701,8 +42876,8 @@
       // is reached from the Menu page, so Menu lights. This replaced `morePages`, a
       // hand-kept list every new page had to join and several never did.
       var barTab = cur && nav && nav.querySelector('.bn-tab[data-tab="' + cur + '"]:not(.hidden)');
-      var detailPages = { 'store-detail': 1, 'all-stores-detail': 1 };
-      var activeTab = barTab ? cur : (detailPages[cur] ? 'dashboard' : 'menu');
+      var detailPages = { 'store-detail': 'dashboard', 'all-stores-detail': 'dashboard', 'ecom-company': 'ecom-overview' };
+      var activeTab = barTab ? cur : (detailPages[cur] || 'menu');
       // One lit tab, never two: on Price Scan, Buy lights while a buy is being priced into.
       if (activeTab === 'merch-scan' && typeof psObActive === 'function' && psObActive()
           && nav.querySelector('#bn-merch-buy:not(.hidden)')) activeTab = 'merch-buy';
