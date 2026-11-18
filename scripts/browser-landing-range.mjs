@@ -38,8 +38,8 @@ const check = (c, m) => results.push([!!c, m]);
 const money = (s) => Number(String(s || '').replace(/[^0-9.\-−]/g, '').replace('−', '-'));
 
 const b = await chromium.launch({ executablePath: CHROME });
-async function open(theme) {
-  const ctx = await b.newContext({ viewport: { width: 1280, height: 900 }, serviceWorkers: 'block' });
+async function open(theme, width = 1280) {
+  const ctx = await b.newContext({ viewport: { width, height: 900 }, serviceWorkers: 'block' });
   const page = await ctx.newPage();
   const errs = [], asked = [];
   page.on('pageerror', e => errs.push(String(e)));
@@ -148,6 +148,20 @@ for (const theme of ['dark', 'light']) {
   check(LW.label === 'Last Week · All businesses' && !LW.livePill && LW.mtd === '', `${theme}: the hero names the range, with no Live pill and no month-to-date line`);
   check(LW.bl.includes('Last Week net') && LW.live.includes('Last Week'), `${theme}: Bargain Lane and Live Sales cards name the range`);
 
+  // The refresh button (Brian, 2026-11-18): reloads both businesses and keeps the range.
+  const before = { bl: LW.blTotal, hero: LW.hero };
+  asked.length = 0;
+  const histAsked = await page.evaluate(() => { window.__hist = 0; const f = window.fetch;
+    window.fetch = (u, o) => { if (String(u).includes('history_d1=true')) window.__hist++; return f(u, o); }; return true; });
+  const btn = await page.evaluate(() => { const b = document.getElementById('lp-refresh'); return { icon: !!(b && b.querySelector('svg')), text: b ? b.textContent.trim() : null }; });
+  check(btn.icon && btn.text === '', `${theme}: the landing has the dashboard's icon refresh button`);
+  await page.click('#lp-refresh');
+  await page.waitForTimeout(3000);
+  const R = await landing(page);
+  const hist = await page.evaluate(() => window.__hist);
+  check(hist >= 5 && asked.some(u => /from=\d{4}-\d{2}-\d{2}&to=/.test(u)), `${theme}: Refresh reloads Bargain Lane (${hist} store histories) and E-Commerce (${asked.length} asks)`);
+  check(R.chip === 'Last Week' && R.blTotal === before.bl && R.hero === before.hero, `${theme}: …keeps the range, and the same data gives the same figures (${R.blTotal}, ${R.hero})`);
+
   // Text contrast on the landing, with the chip's panel open.
   await page.click('#lp-range .rp-trigger');
   await page.waitForTimeout(150);
@@ -176,6 +190,16 @@ for (const theme of ['dark', 'light']) {
   });
   check(bad.length === 0, `${theme}: landing text clears AA, picker open` + (bad.length ? '\n     ' + bad.join('\n     ') : ''));
   check(errs.length === 0, `${theme}: no JS errors` + (errs.length ? ' — ' + errs.slice(0, 3).join(' | ') : ''));
+  await ctx.close();
+}
+
+// ── Phone: the title, the chip on its longest preset and the refresh button fit on one screen.
+{
+  const { ctx, page } = await open('dark', 390);
+  await pickLanding(page, 'Last 12 Months');
+  const fit = await page.evaluate(() => { const r = document.getElementById('lp-refresh').getBoundingClientRect(), c = document.querySelector('#lp-range .rp-trigger').getBoundingClientRect();
+    return { refreshRight: Math.round(r.right), chipRight: Math.round(c.right), width: window.innerWidth, sideways: document.documentElement.scrollWidth > window.innerWidth }; });
+  check(fit.refreshRight <= fit.width && fit.chipRight <= fit.width && !fit.sideways, `phone: the landing header fits at 390 px on "Last 12 Months" (${JSON.stringify(fit)})`);
   await ctx.close();
 }
 
