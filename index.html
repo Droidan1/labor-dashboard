@@ -38267,13 +38267,21 @@
   // ═══ One company's View Details (Option A, 2026-11-18) ═══
   // Bargain Lane's store detail shape: six summary figures against the period just before and the
   // same dates last year, then Daily · Chart · Orders · Items tabs. It shares the Overview's range
-  // (eoRange), so the range carries in and back out. Items needs each order's products stored,
-  // which is a separate step, so that tab says so.
+  // (eoRange), so the range carries in and back out. Items is the product table (Option A),
+  // fetched on its own from ?action=ecom-items when that tab is open.
   let ecUnit = null, ecData = null, ecLoading = false, ecError = null, ecTab = 'daily';
+  // Items tab state. ecItemsKey names what ecItems holds (company|from|to|sort|search); a refresh
+  // clears it so the products are read again.
+  let ecItems = null, ecItemsKey = null, ecItemsLoading = false, ecItemsError = null;
+  let ecItemsSort = 'sales', ecItemsQ = '', ecItemsAll = false, ecItemsTimer = null;
   const EC_STATUS_INK = { 3: 'var(--v1-good)', 100: 'var(--v1-bad)', 200: 'var(--v1-warn)' };
   // Sellercloud's status codes, in words people use.
   const EC_STATUS_LABEL = { 1: 'In cart', 2: 'In process', 3: 'Completed', 100: 'Problem', 200: 'On hold', 300: 'Quote', 999: 'Void', [-1]: 'Cancelled' };
-  window.ecomOpenCompany = (id) => { ecUnit = id; ecData = null; ecTab = 'daily'; navigateToPage('ecom-company'); };
+  window.ecomOpenCompany = (id) => {
+    ecUnit = id; ecData = null; ecTab = 'daily';
+    ecItems = null; ecItemsKey = null; ecItemsError = null; ecItemsSort = 'sales'; ecItemsQ = ''; ecItemsAll = false;
+    navigateToPage('ecom-company');
+  };
   function initEcomCompany() {
     if (!ecUnit) { navigateToPage('ecom-overview'); return; }   // a reload or stale link with no company
     rangePickerMount('ec-range', () => eoRange || resolvePreset('today'), (r) => { eoRange = r; ecLoad(); });
@@ -38283,10 +38291,123 @@
   window.ecRefresh = async (btn) => {
     const svg = btn && btn.querySelector('svg');
     if (svg) { svg.style.transition = 'transform .6s ease'; svg.style.transform = 'rotate(360deg)'; }
+    ecItemsKey = null;
     try { await ecLoad(); }
     finally { if (svg) setTimeout(() => { svg.style.transition = 'none'; svg.style.transform = ''; }, 650); }
   };
   window.ecPickTab = (k) => { ecTab = k; ecRender(); };
+
+  // ── Items tab: the product table (Option A, 2026-11-18) ──
+  // The toolbar (search + sort) is drawn once per tab render and is NOT inside #ec-items-list,
+  // which ecItemsPaint replaces wholesale (DESIGN §4.8 trap 7) — so typing keeps the focus.
+  const ecItemsKeyNow = () => { const R = eoRange || resolvePreset('today'); return [ecUnit, R.from, R.to, ecItemsSort, ecItemsQ].join('|'); };
+  async function ecItemsEnsure() {
+    const key = ecItemsKeyNow();
+    // Already holding (or still fetching) this answer: just draw it. A render while the fetch is in
+    // flight must not start a second one.
+    if (ecItemsKey === key && (ecItems || ecItemsError || ecItemsLoading)) { ecItemsPaint(); return; }
+    ecItemsKey = key; ecItemsLoading = true; ecItemsError = null; ecItems = null;
+    ecItemsPaint();
+    const R = eoRange || resolvePreset('today');
+    try {
+      const qs = `company=${ecUnit}&from=${R.from}&to=${R.to}&sort=${ecItemsSort}` + (ecItemsQ ? `&q=${encodeURIComponent(ecItemsQ)}` : '');
+      const r = await fetch(`${WORKER_BASE}?action=ecom-items&${qs}`, { credentials: 'include', cache: 'no-store' });
+      const d = await r.json().catch(() => null);
+      if (r.status === 403) throw new Error('You do not have access to this company.');
+      if (r.status === 503 && d && d.setup === false) throw new Error('Products are not set up on the server yet.');
+      if (!r.ok || !d || !d.ok) throw new Error((d && d.error) || `HTTP ${r.status}`);
+      if (!(d.totals && Array.isArray(d.items) && d.orders)) throw new Error('The server sent an answer this page cannot read.');
+      if (key === ecItemsKey) ecItems = d;
+    } catch (e) {
+      if (key === ecItemsKey) { ecItems = null; ecItemsError = e.message || String(e); }
+    } finally {
+      if (key === ecItemsKey) { ecItemsLoading = false; ecItemsPaint(); }
+    }
+  }
+  window.ecItemsSearch = (v) => {
+    clearTimeout(ecItemsTimer);
+    ecItemsTimer = setTimeout(() => { ecItemsQ = String(v || '').trim(); ecItemsAll = false; ecItemsEnsure(); }, 250);
+  };
+  window.ecItemsSortBy = (k) => {
+    ecItemsSort = k === 'units' ? 'units' : 'sales'; ecItemsAll = false;
+    for (const b of document.querySelectorAll('#ec-items-sort button')) {
+      const on = b.dataset.sort === ecItemsSort;
+      b.setAttribute('aria-pressed', String(on));
+      b.className = ecItemsSortClass(on);
+    }
+    ecItemsEnsure();
+  };
+  window.ecItemsShowAll = () => { ecItemsAll = true; ecItemsPaint(); };
+  const ecItemsSortClass = (on) => `px-3 py-1.5 text-[13px] transition-colors ${on ? 'bg-[rgba(22,101,52,0.10)] dark:bg-[rgba(74,222,128,0.12)] text-accent-green font-semibold' : 'text-opl-inkDim dark:text-op-inkDim font-medium hover:text-opl-ink dark:hover:text-op-ink'}`;
+  function ecItemsToolbar() {
+    const seg = [['sales', 'By sales'], ['units', 'By units']].map(([k, l]) => `<button type="button" data-sort="${k}" aria-pressed="${ecItemsSort === k}" onclick="ecItemsSortBy('${k}')" class="${ecItemsSortClass(ecItemsSort === k)}">${l}</button>`).join('');
+    return `<div class="flex flex-wrap items-center gap-2 mb-3">
+      <input id="ec-items-q" type="search" class="invi invi-sm invi-grow" placeholder="Search product or SKU" aria-label="Search product or SKU" autocomplete="off" value="${escapeHtml(ecItemsQ).replace(/"/g, '&quot;')}" oninput="ecItemsSearch(this.value)">
+      <div id="ec-items-sort" role="group" aria-label="Sort products" class="inline-flex rounded-[10px] overflow-hidden border border-[rgba(20,16,8,0.16)] dark:border-op-borderHi">${seg}</div>
+    </div><div id="ec-items-list"></div>`;
+  }
+  function ecItemsPaint() {
+    const host = el('ec-items-list');
+    if (!host) return;
+    const d = ecItems;
+    const note = (html) => `<div class="${eoCard} text-sm text-opl-inkDim dark:text-op-inkDim">${html}</div>`;
+    if (ecItemsError) {
+      host.innerHTML = `<div class="rounded-[12px] border border-[rgba(239,68,68,0.35)] px-4 py-3 text-sm"><span class="font-semibold" style="color:var(--v1-bad)">Couldn’t load the products.</span> <span class="text-opl-inkDim dark:text-op-inkDim">${escapeHtml(ecItemsError)}</span> <button type="button" onclick="ecItemsKey=null;ecItemsEnsure()" class="ml-1 text-sm font-semibold text-accent-green hover:underline">Retry</button></div>`;
+      return;
+    }
+    if (!d) {
+      host.innerHTML = ecItemsLoading ? [1, 2, 3, 4, 5].map(() => `<span class="skel" style="display:block;height:38px;border-radius:8px;margin-bottom:6px"></span>`).join('') : '';
+      return;
+    }
+    const T = d.totals, M = d.matched || T;
+    // How much of the range has its products stored (orders kept before the Items tab have none
+    // until the history is loaded again).
+    const gap = d.orders.sold > d.orders.withLines
+      ? `<p class="mb-3 text-[12px] leading-snug" style="color:var(--v1-warn)">Products are stored for ${d.orders.withLines.toLocaleString('en-US')} of the ${d.orders.sold.toLocaleString('en-US')} orders in this range, so these figures are short. The rest fill in when the history is loaded again.</p>` : '';
+    if (!T.products) {
+      host.innerHTML = gap + note(d.orders.sold ? 'This range’s products are not stored yet.' : 'No sales in this range.');
+      return;
+    }
+    if (!d.items.length) { host.innerHTML = gap + note(`No product matches “${escapeHtml(d.q)}”.`); return; }
+    // Margin only when 90% of the range's sales carry a cost (the Bargain Lane rule).
+    const margin = T.coverage != null && T.coverage >= 0.9;
+    const top10 = d.items.slice(0, 10).reduce((n, x) => n + x.sales, 0);
+    const chip = (html) => `<span class="text-[12px] px-2.5 py-1 rounded-full border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim tabular-nums">${html}</span>`;
+    const B = (v) => `<b class="font-semibold text-opl-ink dark:text-op-ink">${v}</b>`;
+    const facts = `<div class="flex flex-wrap gap-2 mb-3">${chip(`${B(T.products.toLocaleString('en-US'))} product${T.products === 1 ? '' : 's'} sold`)}${chip(`${B(fmtDollar(T.sales))} product sales, shipping not included`)}${!d.q && d.sort === 'sales' && T.products > 10 ? chip(`Top 10 = ${B(Math.round(top10 / T.sales * 100) + '%')} of sales`) : ''}${d.q ? chip(`${B(M.products.toLocaleString('en-US'))} match “${escapeHtml(d.q)}”`) : ''}</div>`;
+    const TH = 'py-2.5 px-3 text-[12px] font-medium text-opl-inkDim dark:text-op-inkDim whitespace-nowrap bg-opl-panelHi dark:bg-op-panelHi';
+    const TD = 'py-2 px-3 whitespace-nowrap border-t border-[rgba(20,16,8,0.06)] dark:border-op-border';
+    const DIM = 'text-opl-inkDim dark:text-op-inkDim';
+    const rows = ecItemsAll ? d.items : d.items.slice(0, 25);
+    const body = rows.map((x, i) => {
+      const share = T.sales > 0 ? x.sales / T.sales * 100 : 0;
+      const rate = x.units > 0 ? x.returned / x.units : 0;
+      const gp = x.costedSales > 0 ? x.costedSales - x.cost : null;
+      return `<tr><td class="${TD} text-right ${DIM}">${i + 1}</td>
+        <td class="${TD} text-left !whitespace-normal min-w-[220px]"><div class="font-medium">${escapeHtml(x.name || x.sku || '—')}</div>${x.sku ? `<div class="text-[12px] ${DIM}">${escapeHtml(x.sku)}</div>` : ''}</td>
+        <td class="${TD} text-right">${x.units.toLocaleString('en-US')}</td>
+        <td class="${TD} text-right font-semibold">${fmtDollar(x.sales)}</td>
+        <td class="${TD} text-right"><div class="flex items-center justify-end gap-2"><span>${share.toFixed(1)}%</span><span class="inline-block w-[64px] h-[6px] rounded-full bg-[rgba(20,16,8,0.08)] dark:bg-[rgba(255,255,255,0.08)] overflow-hidden"><span class="block h-full rounded-full" style="width:${Math.min(100, share * 4).toFixed(1)}%;background:${EO_CHANNEL}"></span></span></div></td>
+        <td class="${TD} text-right">${x.units ? fmtDollar(x.sales / x.units) : '—'}</td>
+        <td class="${TD} text-right">${x.orders.toLocaleString('en-US')}</td>
+        <td class="${TD} text-right">${x.returned ? `<span${rate >= 0.2 ? ' class="font-semibold" style="color:var(--v1-bad)"' : ''}>${x.returned}</span> <span class="${DIM}">(${Math.round(rate * 100)}%)</span>` : `<span class="${DIM}">0</span>`}</td>
+        <td class="${TD} text-left ${DIM}">${x.lastSold ? eoDayName(x.lastSold) : '—'}</td>
+        ${margin ? `<td class="${TD} text-right">${gp == null ? `<span class="${DIM}">—</span>` : fmtDollar(gp)}</td><td class="${TD} text-right">${gp == null ? `<span class="${DIM}">—</span>` : Math.round(gp / x.costedSales * 100) + '%'}</td>` : ''}</tr>`;
+    }).join('');
+    const head = `<tr><th class="${TH} text-right">#</th><th class="${TH} text-left">Product</th><th class="${TH} text-right">Units</th><th class="${TH} text-right">Sales</th><th class="${TH} text-right">Share</th><th class="${TH} text-right">Avg price</th><th class="${TH} text-right">Orders</th><th class="${TH} text-right">Returned</th><th class="${TH} text-left">Last sold</th>${margin ? `<th class="${TH} text-right">Margin</th><th class="${TH} text-right">Margin %</th>` : ''}</tr>`;
+    let foot = '';
+    if (!ecItemsAll && d.items.length > rows.length) {
+      foot = `The top ${rows.length} of ${M.products.toLocaleString('en-US')} · <button type="button" onclick="ecItemsShowAll()" class="font-semibold text-accent-green hover:underline">Show ${d.truncated ? 'the first ' + d.items.length.toLocaleString('en-US') : 'all ' + d.items.length.toLocaleString('en-US')}</button>`;
+    } else if (d.truncated) {
+      foot = `The first ${d.items.length.toLocaleString('en-US')} of ${M.products.toLocaleString('en-US')} products. Search to find the rest.`;
+    } else {
+      foot = `${M.products === 1 ? 'The one product' : 'All ' + M.products.toLocaleString('en-US') + ' products'}${d.q ? ' that match' : ''} in this range.`;
+    }
+    const costNote = margin ? '' : ' Margin shows once Sellercloud sends product cost for 90% of sales.';
+    host.innerHTML = gap + facts
+      + `<div class="overflow-x-auto rounded-[12px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-opl-panel dark:bg-op-panel"><table class="w-full text-[13px] tabular-nums text-opl-ink dark:text-op-ink"><thead>${head}</thead><tbody>${body}</tbody></table></div>`
+      + `<p class="mt-2 ${eoLbl}">${foot} Returns of 20% or more are marked.${costNote}</p>`;
+  }
   async function ecLoad() {
     eoRange = !eoRange ? resolvePreset('today') : eoRange.presetId === 'custom' ? eoRange : resolvePreset(eoRange.presetId);
     const unit = ecUnit;
@@ -38354,7 +38475,7 @@
     const TABS = [['daily', 'Daily'], ['chart', 'Chart'], ['orders', `Orders · ${d.ordersInRange.toLocaleString('en-US')}`], ['items', 'Items']];
     tabs.innerHTML = TABS.map(([key, label]) => {
       const on = key === ecTab;
-      return `<button type="button" role="tab" aria-selected="${on}" onclick="ecPickTab('${key}')" class="px-3.5 py-2.5 text-[14px] whitespace-nowrap border-b-2 -mb-px transition-colors ${on ? 'border-accent-green text-accent-green font-semibold' : 'border-transparent text-opl-inkDim dark:text-op-inkDim font-medium hover:text-opl-ink dark:hover:text-op-ink'}">${label}${key === 'items' ? '<span class="ml-1.5 text-[11px] px-1.5 py-px rounded-full border border-[rgba(20,16,8,0.16)] dark:border-op-borderHi">next step</span>' : ''}</button>`;
+      return `<button type="button" role="tab" aria-selected="${on}" onclick="ecPickTab('${key}')" class="px-3.5 py-2.5 text-[14px] whitespace-nowrap border-b-2 -mb-px transition-colors ${on ? 'border-accent-green text-accent-green font-semibold' : 'border-transparent text-opl-inkDim dark:text-op-inkDim font-medium hover:text-opl-ink dark:hover:text-op-ink'}">${label}</button>`;
     }).join('');
 
     // Alignment is added per column below: putting text-left on top of a text-right base left the
@@ -38393,7 +38514,8 @@
         + (d.ordersInRange > d.orders.length ? `<p class="mt-2 ${eoLbl}">The latest ${d.orders.length} of ${d.ordersInRange.toLocaleString('en-US')} orders in this range, newest first. Pick a shorter range to see the rest.</p>`
           : d.orders.length ? `<p class="mt-2 ${eoLbl}">Every order in this range, newest first, cancelled ones included.</p>` : '');
     } else if (ecTab === 'items') {
-      body.innerHTML = `<div class="rounded-[12px] border border-dashed border-[rgba(20,16,8,0.16)] dark:border-[rgba(255,255,255,0.13)] px-6 py-8 text-center text-sm text-opl-inkDim dark:text-op-inkDim leading-relaxed"><span class="font-semibold text-opl-ink dark:text-op-ink">Top products</span><br>The hub keeps each order's total, not the products in it. Keeping them (SKU, name, quantity, line total) is the next step, and this tab fills in then.</div>`;
+      body.innerHTML = ecItemsToolbar();
+      ecItemsEnsure();
     } else {
       const rows = d.daily.slice().reverse();
       body.innerHTML = wrap(`<thead><tr><th class="${TH} text-left">Day</th><th class="${TH} text-right">Orders</th><th class="${TH} text-right">Units</th><th class="${TH} text-right">Sales</th><th class="${TH} text-right">Product</th><th class="${TH} text-right">Shipping</th><th class="${TH} text-right">Refunded</th><th class="${TH} text-right">Returns</th><th class="${TH} text-right">Avg order</th></tr></thead>

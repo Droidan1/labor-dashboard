@@ -1,3 +1,31 @@
+# E-Commerce Items tab: products per company (2026-11-18) — branch `claude/ecom-items`
+
+**Ask (Brian):** "Option A. Build the Items tab as the product table, and check whether Sellercloud fills in
+product cost so we can add margin." Then, after the cost check: "Yes, build it" (without margin).
+
+**Cost check (#391, worker 3f645e09, 3/3 clean passes):** 0 of 106 order lines (Nov 17 all companies,
+Oct 15 and Jun 10 Shoes and Fashions) carry SiteCost, AverageCost or LastCost, 0 carry a photo, and
+`POST /Orders/ProfitAndLoss` answers 401 every time. Empty vs hidden from the read-only login is not known
+(Sellercloud's catalog has `SiteCostVisible` / `LastCostVisible` per user). Ask the Sellercloud admin.
+
+- [x] migration-091: `ecom_order_items`, one row per order line (SKU, name, qty, returns, line total,
+      refund, three cost columns NULL unless > 0). No buyer data.
+- [x] Sync writes an order's lines in the same batch as the order: stored lines replaced, but an order
+      sent with NO lines keeps them. Worker ahead of migration-091 → orders still sync, `linesSkipped`.
+- [x] `?action=ecom-items`: per SKU (by name when none), sale statuses only, sort sales/units, search
+      name/SKU (% and _ literal), top 500 with totals over all, orders sold vs orders with lines, cost
+      coverage. Same door as ecom-company.
+- [x] Items tab (Option A): search + By sales/By units, top 25 + Show all, Share bar, returns ≥ 20%
+      marked, gap note, margin columns only at ≥ 90% cost coverage. Cache v310.
+- [x] Tests: `test-ecom-items.mjs` 49 (6 mutants caught); `browser-ecom-company.mjs` 67, both themes +
+      phone (4 mutants caught: focus, refresh, margin gate, double fetch). `npm test` 12,507 / 141 green.
+      Worker dry run 1316.39 KiB.
+- [ ] Brian: migration-091 on prod → worker deploy → merge (#391 first, this PR is stacked on it).
+- [ ] Brian's yes: re-run the history load so earlier orders get their products (rule 7: rewrites
+      ecom_orders rows with the same values and adds ecom_order_items).
+- [ ] After the reload: measure how often a SKU sells more than once (titles carry an item number, so
+      SKUs may be one-of-a-kind and the table one row per item sold).
+
 # E-Commerce: Sellercloud + E-Commerce front door (2026-11-18) — branch `claude/ecom-sellercloud`, unpushed
 
 **Ask (Brian):** start E-Commerce again. eBay Cases becomes its own page, not the business's home. Five
