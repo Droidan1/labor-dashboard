@@ -29,7 +29,12 @@ revise it. Revised plan: [docs/plans/live-item-sales.md](../docs/plans/live-item
       beforeRecord → order_count 0 = zero day → missing; never pulls older than yesterday), `config:bin-groups`
       (default + validated KV override), tiers from `$N`. test-bin-split.mjs 80 pass, 78 fail on main's worker
       (the 2 are cron-string pins), 24 mutants caught, 5 repeat runs with no hang. `npm test` 12,148 / 138 green
-- [ ] Brian: merge the Phase 2 PR, deploy the worker from main
+- [x] Phase 2 LIVE (2026-11-18 00:0x UTC): #381 merged (c75c7e0); Brian deployed from a fresh GitHub clone of
+      c75c7e0: clover-sales-api 177c4cac, upload 1275.75 KiB = the dry run. `?action=bin-split` was 401 before,
+      200 with rows after (3 clean passes). Back-check 2026-10-17..11-16, all stores, exact: regular 141,173 /
+      $396,660.65; christmas 399 / $968.50 (bins 197 / $433.27 + xmas buttons 202 / $535.23); 451 saved rows,
+      0 missing / incomplete; call 0.93 s, 67 KB (the D1-volume worry is moot). Cycle 11-13..11-17: 4 saved days +
+      today live, one source each, 0.35 s; today Christmas $6,172.55 vs regular $4,990.50
 - [ ] Phase 3 (tools) on a fresh branch off main; merges and deploys (MCP + CLI) only after Phase 2's worker
 
 # Discounts & Returns reporting (2026-11-12) — the page (PR 2 of 2)
