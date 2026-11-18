@@ -85,7 +85,12 @@ Companies: 163 Shoes and Fashions · 164 Harrison Avenue · 165 Bass River · 16
       Oct 9, 2025 came back empty (likely when Sellercloud began). Cross-check vs live Sellercloud
       (probe) for 2025-12-01, 2026-04-15, 2026-08-20: every company's count and total equal. October 2026
       reads $45,540.62 / 635 orders; Nov 1–18 $33,892 ≈ $57k/month pace (the budget fits)
-- [ ] Phase 3: View Details per company
+- [x] Phase 3 (Brian: Option A, previews https://claude.ai/artifact/4iw5bBYCkTkPVPeru3B75k): branch
+      `claude/ecom-company-detail` — 547b4d3 `?action=ecom-company` (range totals, previous + last-year
+      windows, daily rows, status mix, hours, latest 200 orders; unit-scoped), 920c300 the page + View
+      Details buttons. test-ecom-sync 88; browser-ecom-company 36; npm test green
+- [ ] Brian: deploy the worker FIRST (the page calls ecom-company), then merge
+- [ ] Next step after this: Items tab — keep each order's products (migration, sync change, re-run the history load)
 - [ ] Brian: pick A or B; answer budget / which dollars (order total vs product sales) / add to hero total
 - [ ] Then: the cron → D1 sync, built on what the probe shows; then 2 dashboard previews
 - ⚠️ The Sellercloud password was pasted into the chat; Claude did not store or use it. Consider a rotation
