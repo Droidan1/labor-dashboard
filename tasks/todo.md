@@ -56,6 +56,78 @@ revise it. Revised plan: [docs/plans/live-item-sales.md](../docs/plans/live-item
       claude/bin-split 1e0ed285235ab3fd3d81da0aa448d133978f1d4f (#381) ·
       claude/live-item-tools 441b8a2f83772be0f8390f3ccbab3af5d9bf9575 (#382) ·
       claude/mcp-1.7.0 64dd68f26a963cce364f00c7a6d1752b0af20ea0 (#383)
+- [x] Older merged branches archived (2026-11-18, Brian): 56 deleted on origin (`--force-with-lease`), 46 locally,
+      0 failed. Rule: tip is an ancestor of origin/main, no open PR, not checked out in a worktree, so every commit is
+      still in main. Kept: exec-summary-5am, weekly-digest-live-sales (worktrees); every unmerged branch. Restore:
+      `git push origin <sha>:refs/heads/claude/<name>` (local: `git branch claude/<name> <sha>`). claude/ prefix omitted:
+      agent-inventory 07324fc998064c612103ed749a185a19feca703e
+      agent-item-mapping 5f0735acc272fbed79ab767c82b3272e628bfa17
+      agent-item-sales f768634693dfbd19831084e4c0e1bf72d41b6678
+      agent-supply-requests ec519a447922a64f332cae04324b6e07564e4c40
+      associate-supply-request bea2e31c06760c232df763163b37e30332ca577d
+      auction-email-feed 7a896386b53c274d82e79a594d097b65ac90b6dc
+      auth-login-throttle 16a733954c500d1132cdd502ee75099039fa76ee
+      bl1-unitemized-orders 311e1f3aa369ee217ae39ba068cbdd65f0a4ce80
+      buffer-notes-recovery local-only 4a9868e5c9368332eae52801bf0796dfa0fd41fe
+      catch-all-unmatched-action 194cb86a3a06aca3c4ca6347fb9d41263847c156
+      chief-of-staff-api local-only 6726ff78906881660d306553e4ac722ed2068282
+      comp-agent-access-session 341e62e3de41f4855daddd201fb025cc41124ff5
+      comp-inventory-session 0f2508e94f486ef43c04ef6ed5796d44656e2365
+      comp-items-session 523dc529cb5a6f57706336ad2ab6c0568aa0ed48
+      discounts-backend 3e23bae70433b68c8ea473c37490c54014a04922
+      discounts-page 0749596dea55b481a480624cf0785d6a2f1eac8b
+      drop-phase-2b-comments afe9a31538cd4e11b939df1baea845527c83bceb
+      exec-summary-email 65a06191ac3971beb4d9478862a9a3ae3e670f17
+      exec-summary-review-notes 09d102222ceb313802a0821d5b224e70a7de0782
+      exec-summary-test-send 4e95d2055b08f17d04313799ba03a37d200e3ac3
+      future-budget-refresh 46afe90096ba5594f4fa77769f5a2df4a7e0d859
+      google-posts bc3c1cef45e3f5d2fa438f84084ee639b644e131
+      halloween-theme 8aa5f53c2725b9e515f02a497c80f903d8ba1c5c
+      hardlines-bazaar-category af060815c0a6a7a7940d4ab10137d3e73718775d (local 3cae8fc)
+      item-sales-by-store 9680419413f7304bf11490dfaad74c7dd7ac295e
+      item-sales-weekly 1d6aeb054994a836234b62d291724a87a3f3af11
+      labor-live-sales 505f4642e09415ef6b5c6ba8058c0ece7943f70d
+      labor-page-phase0 local-only 03a7ee03b414ae9224426c7555a07e67796a0621
+      labor-page-phase1 local-only 353dd9e381781a19dd3394a1dd3d15666d089751
+      live-range-panel-mobile ca0139daab3c83b4d2c27d1910f46936f1de9448
+      live-recap-pdf-todo local-only 2c1316a8f6bab159af57bdd0fb5b276694531ae0
+      live-sales-business 1bb5884c785cde2179710f8b06e78e3fb0eb3165
+      live-sales-calendar ec11599e835ea144a638b46ebcb06b96c3b860c9
+      live-sales-date-picker 9d459f5ddc2c8e3081cf9ada03c230f4e657cbad
+      live-sales-early d1fe099ac19a5849405ec1680e95f4e2726c3a5c
+      live-sales-label 4436093c30e0b5fa9be2f18ce0c0da19df12ae36
+      ly-sales-round 4830ddb781f21ef355d9c06c9bfd58fb98f6c9e4
+      manifest-upc-leading-zero 529a13491098aa17fcf9ec496b0a8d675abf147d
+      marketing-intake-targets 9325150af6f81460663b781b2df58850c4507ea9
+      marketing-notes local-only 623a05dc43f26509d6a564f1422a93c47e77d1dd
+      mcp-native-2026-07-28 caac3887ff49d1df3f7aa222fb4cc57ca7f1c6f9
+      mcp-oauth bc3572e377946a4a25f00fc452283e854b7960f3
+      mcp-supply-write e4bc34f42378352a70cad160283389a44d474fa7
+      oauth-notes local-only f78fd2245eeead54472715c7f6695df97e3448d0
+      ob-delete-noprice-manifest ec7d31ac4b6a235e345035373e163dd7ac42276e
+      optimistic-merkle-130e61 local-only 7bdb2623b4e0eaf58fa845124dfb6ca11c43a174
+      otp-hardening 257353f8e03c1a27372e84d509a7a0f559a06be0
+      project-thread-vand6m 1c59e350e8bff36de1dd2a5dca112c9bfe476ec7
+      public-photo-links 3d64b955cc8fb60c86f6abc4cf61547028be0677
+      remove-pace-bell local-only 0fdfa2616afe6fcefa607d3bb699bd819a5b5fb4
+      reporting-read-through 68bd040f70a7c5d1d4538c015e97cc932501f8af
+      retail-auto-draft 47f60e82538d39f2567a2cdcafd6174d6002c280
+      retail-notes local-only 4c5dc3f03343b02889ffc1310904364cef715d19
+      retjg-cli 239a49f157f5e479f6b1dc5e9ed2b822bc289ccc
+      retjg-mcp a4cd0b11c887d03a57d412b7aeeeb6cace5549a9
+      scan-retail-ttl 468bdeae6213b41837b7ef505e8c8834faf7973b
+      sign-multibuy 3101755a18727290c83e571b4bd8bf04a34449ce
+      sign-tile-caps 10053f04946392de0b04c76743312ec642f35af0
+      store-video-upload 5d707252d3fa25239503ae1595b3fbadebde82cb
+      t13-l3-detail local-only 452746a7953391277b7bf33d9ee4e24999a0d522
+      video-posts de165897c8f7a8779fc3e813e141abb7a1a04ef3
+      video-posts-notes local-only 67b3659151f2c9fb4210877cfb0f5a6bc06d07d1
+      whatnot-api f2a8c200a99df7bd8823bb427735c2d5d3550951
+      whatnot-api-source 69e8acbf36812751658f4229ba5615f5ef3ca0b8
+      whatnot-feeder-cadence b4b78dcc145cc373a3e9c89e30f9ef3a264548bf
+      whatnot-live-sales 6bb3275228a115145b5d873014cd38ac311f9ef4
+      whatnot-money-back 19b9f15ba005fec4c955f7f76779115455758c6f
+      whatnot-xcheck-cancellations b6f9027db6b17113d595e5a06b526bcb3e0cce41
 
 # Discounts & Returns reporting (2026-11-12) — the page (PR 2 of 2)
 
