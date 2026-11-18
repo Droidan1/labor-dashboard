@@ -20,15 +20,15 @@ nightly run (03:55 UTC = 22:55 EST / 23:55 EDT).
 
 **Done when:**
 
-- [ ] `get_bin_split` returns today's numbers, at most 5 minutes old, for every open store (BL1, BL2, BL4,
+- [x] `get_bin_split` returns today's numbers, at most 5 minutes old, for every open store (BL1, BL2, BL4,
       BL14, BL16), and BL8 as `closed`, not 0
-- [ ] Ranges combine final saved days with a live pull, each store-day from exactly one source, and say
+- [x] Ranges combine final saved days with a live pull, each store-day from exactly one source, and say
       which (`savedThrough`, `liveDays`, `missingDays`)
-- [ ] Today's live total per store is within 2% of `get_today_sales` taken the same minute
-- [ ] Nothing new writes anything except the `live-items:` cache key, proven by a test that drives
+- [x] Today's live total per store is within 2% of `get_today_sales` taken the same minute
+- [x] Nothing new writes anything except the `live-items:` cache key, proven by a test that drives
       `worker.fetch`
-- [ ] The Christmas bin rule lives in a setting with a built-in default, not in scattered code
-- [ ] `npm test` passes, and each new test fails without the change
+- [x] The Christmas bin rule lives in a setting with a built-in default, not in scattered code
+- [x] `npm test` passes, and each new test fails without the change
 
 ## What already exists (verified 2026-11-17)
 

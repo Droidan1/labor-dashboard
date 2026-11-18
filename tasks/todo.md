@@ -1,4 +1,4 @@
-# Live Item Sales & Bin Split (2026-11-17) — plan only, not started
+# Live Item Sales & Bin Split (2026-11-17) — LIVE: all three phases (2026-11-18)
 
 **Ask (Brian):** review the PDF build plan for live item sales and the bin vs Christmas bin split, then
 revise it. Revised plan: [docs/plans/live-item-sales.md](../docs/plans/live-item-sales.md).
@@ -39,7 +39,14 @@ revise it. Revised plan: [docs/plans/live-item-sales.md](../docs/plans/live-item
       bin-split`: period today/wtd/cycle/mtd/custom, groupBy store/price/day, never-zero `notCounted`, no tickets)
       and `get_live_item_sales` (`retjg live-items`) in QUERIES (30 reads); READING_RULES "03:55 ET" fixed.
       143 new assertions, all fail on main's cli/reporting.mjs (135 + 8); `npm test` 12,291 / 138 green. ORIENT.md query count 22 → 30
-- [ ] Brian: merge the Phase 3 PR, deploy the MCP server (`-c mcp/wrangler.toml`), reinstall the CLI. No worker deploy
+- [x] Phase 3 LIVE (2026-11-18 ~00:38 UTC): #382 merged (961928e); Brian deployed retjg-mcp from a fresh GitHub
+      clone of 961928e (node_modules linked from the Desktop checkout for @cloudflare/workers-oauth-provider 1.2.3):
+      version 4fb6fe7c, upload 366.59 KiB = the dry run. Landed: 3 clean `tools/list` passes from 00:38:39Z, 34 tools
+      (was 32) incl. get_bin_split + get_live_item_sales; serverInfo still 1.6.0. CLI reinstalled by Claude from the
+      same clone (old copy kept in the scratchpad); `retjg bin-split --period cycle` (11-13..11-17, complete): regular
+      $79,993.09, christmas $6,763.47 (7.8%); `retjg live-items --search christmas`: 68 items, top $3 Christmas Bin
+- [ ] Brian: refresh the MCP connector in Claude; add the bin vs Christmas line to Muse's morning brief (outside repo)
+- [ ] One Fri–Wed cycle: each night, a live pull just before the nightly run vs the row it saves (> 1% = look)
 
 # Discounts & Returns reporting (2026-11-12) — the page (PR 2 of 2)
 
