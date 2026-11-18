@@ -40,7 +40,8 @@ const ORDERS = [];
 const add = (company, n, extra = {}) => ORDERS.push({ ID: 900000 + ORDERS.length, CompanyID: company,
   TimeOfOrder: `2026-11-17T${String(8 + (n % 12)).padStart(2, '0')}:15:00`, CreatedOn: '2026-11-17T09:00:00',
   StatusCode: 3, OrderSource: 1, GrandTotal: 12.34, TaxTotal: 0.8, ShippingTotal: 5,
-  Items: [{ Qty: 2, QtyReturned: n % 40 === 0 ? 1 : 0, TotalRefunded: n % 40 === 0 ? 6 : 0 }],
+  Items: [{ Qty: 2, QtyReturned: n % 40 === 0 ? 1 : 0, TotalRefunded: n % 40 === 0 ? 6 : 0,
+    ProductID: 'SKU-' + n, DisplayName: 'Item ' + n, LineTotal: 10, SiteCost: n % 2 ? 2.5 : 0, AverageCost: 2.4, LastCost: 0, ImageURL: n % 3 ? 'https://img.example/x.jpg' : '' }],
   ...buyer, ...extra });
 for (let n = 1; n <= 120; n++) add(163, n, { StatusCode: n <= 5 ? -1 : n <= 10 ? 2 : 3, OrderSource: n <= 100 ? 1 : 4 });
 for (let n = 1; n <= 3; n++) add(165, n, { GrandTotal: 40 });
@@ -50,7 +51,7 @@ const COMPANIES = [163, 164, 165, 166, 167, 168, 169].map(id => ({ ID: id, Compa
 
 let calls = [], tokenCalls = 0, issued = 0;
 const fail401 = { n: 0 }, throttle = { n: 0 };
-let ignoreCompanyFilter = false;
+let ignoreCompanyFilter = false, plRefused = false, plBodies = [];
 const json = (b, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'Content-Type': 'application/json' } });
 
 globalThis.fetch = async (u, init = {}) => {
@@ -69,6 +70,13 @@ globalThis.fetch = async (u, init = {}) => {
   if (fail401.n > 0) { fail401.n--; return json({ Message: 'token expired' }, 401); }
   if (throttle.n > 0) { throttle.n--; return json({ Error: 'Too many requests.', RateLimitResetTime: new Date(Date.now() + 200).toISOString() }, 200); }
   if (url.pathname === '/rest/api/Companies') return json({ Items: COMPANIES, TotalResults: COMPANIES.length });
+  if (url.pathname === '/rest/api/Orders/ProfitAndLoss') {
+    plBodies.push({ method: init.method, body: JSON.parse(init.body || '{}') });
+    if (plRefused) return json({ Message: 'Authorization has been denied for this request.' }, 403);
+    return json(JSON.parse(init.body).Orders.map(id => ({ OrderID: id, CustomerID: 424242, ItemCost: '5.00', OrderCost: '5.00', Comission: '1.20', TransactionFee: '0.30',
+      ShippingCost: '4.00', ProfitLoss: '2.84', ProfitLossPercentage: '23%', OrderItems: [{ ProductID: 'SKU-x', QtySold: 2, OrderUnitSiteCost: 2.5, ProductUnitSiteCost: 2.5,
+      SellingPrice: 12.34, ChannelCommission: 1.2, TransactionFee: 0.3, FinalCostTotal: 9.5, Profit: 2.84, ProfitPercent: 23 }] })));
+  }
   if (url.pathname === '/rest/api/Orders') {
     const ids = url.searchParams.getAll('companyID').map(Number);
     const size = Number(url.searchParams.get('pageSize') || 10), page = Number(url.searchParams.get('pageNumber') || 1);
@@ -202,6 +210,26 @@ let main;
   const c = r.body.companies[0];
   ok(c.otherCompanyIds.length > 0 && c.otherCompanyIds.includes(163), `orders from other companies are flagged, got ${JSON.stringify(c.otherCompanyIds)}`);
   ignoreCompanyFilter = false;
+}
+
+// ── 9b. order-line cost, and Sellercloud's own profit and loss (2026-11-18) ──
+{
+  calls = []; plBodies = [];
+  const plain = await probe('&date=2026-11-17&company=163');
+  ok(!plain.body.companies[0].lineCost && !plain.body.profitAndLoss && plBodies.length === 0, 'without items=1 the probe reports no line cost and asks for no profit and loss');
+  const r = await probe('&date=2026-11-17&company=163&items=1');
+  const lc = r.body.companies[0].lineCost;
+  eq([lc.lines, lc.withSiteCost, lc.withAverageCost, lc.withLastCost, lc.withImage], [120, 60, 120, 0, 80], 'counts lines with each cost field and a photo');
+  eq([lc.lineTotal, lc.siteCostTotal, lc.averageCostTotal], [1200, 300, 576], 'sums line totals and qty × each cost');
+  eq([lc.samples.length, lc.samples[0].sku, lc.orderIds.length], [5, 'SKU-1', 5], 'five sample lines and five order ids');
+  eq([plBodies.length, plBodies[0].method, plBodies[0].body.Orders.length], [1, 'POST', 5], "asks Sellercloud's profit and loss for those five orders");
+  const pl = r.body.profitAndLoss;
+  eq([pl.length, pl[0].itemCost, pl[0].profitLoss, pl[0].lines[0].orderUnitSiteCost, pl[0].lines[0].profit], [5, '5.00', '2.84', 2.5, 2.84], 'reports its item cost, profit and per-line unit cost');
+  ok(!r.text.includes('424242') && !r.text.includes('CustomerID'), 'and never the customer');
+  plRefused = true;
+  const refused = await probe('&date=2026-11-17&company=163&items=1');
+  ok(refused.status === 200 && refused.body.profitAndLoss.error && refused.body.profitAndLoss.status === 403, `a refused profit and loss is reported, the probe still answers, got ${refused.status} ${JSON.stringify(refused.body.profitAndLoss).slice(0, 80)}`);
+  plRefused = false;
 }
 
 // ── 10. bad input dies at validation, before any call ──────────────────────
