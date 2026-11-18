@@ -36,6 +36,13 @@ Oct 15 and Jun 10 Shoes and Fashions) carry SiteCost, AverageCost or LastCost, 0
   8 eBay replacements. They inflate Orders and Units on the Overview and View Details and top Items
   By units. Proposed fix: an order counts as a sale only above $0 — Brian to decide.
 
+**$0 orders (Brian 2026-11-18: "Yes, fix it")** — branch `claude/ecom-zero-orders`
+- [x] One rule, `ECOM_SALE`: a sale status AND `grand_total > 0`, used by all five reads (Overview ×2,
+      View Details, Items rows, Items orders-sold). $0 orders stay in the table, status mix and orders list.
+- [x] Tests: test-ecom-sync 94, test-ecom-items 50; 6 mutants caught (the rule, and each read on its
+      own). `npm test` 12,514 / 141 green. Worker dry run 1316.34 KiB. No page change.
+- [ ] Brian: deploy the worker (that is the release), then merge.
+
 # E-Commerce: Sellercloud + E-Commerce front door (2026-11-18) — branch `claude/ecom-sellercloud`, unpushed
 
 **Ask (Brian):** start E-Commerce again. eBay Cases becomes its own page, not the business's home. Five

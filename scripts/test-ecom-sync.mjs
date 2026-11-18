@@ -8,7 +8,7 @@
 //   - Rows are UPSERTed: a re-run duplicates nothing, a later refund or cancellation updates the
 //     row, and a short fetch is reported `incomplete` without removing anything.
 //   - No buyer data reaches the table.
-//   - The read counts sales only (cancelled left out), includes shipping, splits eBay / Poshmark,
+//   - The read counts sales only (cancelled and $0 orders left out), includes shipping, splits eBay / Poshmark,
 //     and uses ONE budget, $57,000 a month spread by day — including a week across two months.
 //   - Who sees what: a Bargain-Lane-only manager and a non-financial role are refused, a manager
 //     scoped to one company sees only that company, and the public snapshot secret gets nothing.
@@ -278,6 +278,30 @@ const count = (where = '1=1') => db.prepare(`SELECT COUNT(*) AS n FROM ecom_orde
   eq((await read(env, '&date=2026-11-18', { user: 'u-staff' })).status, 403, 'a non-financial role is refused');
   eq((await read(env, '&date=2026-11-18', { secret: env.SNAPSHOT_SECRET })).status, 401, 'the snapshot secret alone gets nothing');
   eq((await read(env, '&date=2026-11-18', {})).status, 401, 'signed out is refused');
+}
+
+// ── 7b. a $0 order is not a sale (Brian, 2026-11-18) ───────────────────────
+// Sellercloud carries Wholesale lots (source 21), Local store transfers and eBay replacements as
+// $0 orders in sale statuses; one lot was 37,875 units. They must not add orders or units.
+{
+  const company = async (qs) => {
+    const r = await worker.fetch(req('/?action=ecom-company' + qs, { user: 'u-admin' }), env, { waitUntil() {}, passThroughOnException() {} });
+    return JSON.parse(await r.text());
+  };
+  const before = { o: (await read(env, '&date=2026-11-18')).body, c: await company('&company=163&from=2026-11-17&to=2026-11-18') };
+  const ins = db.prepare(`INSERT INTO ecom_orders (order_id, company_id, unit, order_date, order_time, status_code, source, grand_total, shipping, units, synced_at)
+    VALUES (?, ?, 163, '2026-11-18', '2026-11-18T09:30:00', ?, ?, 0, 0, ?, 'x')`);
+  ins.run(990001, 163, 2, 21, 37875);   // a Wholesale lot, In process
+  ins.run(990002, 163, 3, 0, 1738);     // a Local store transfer, Completed
+  ins.run(990003, 169, 3, 6, 1);        // a $0 Poshmark replacement
+  const after = { o: (await read(env, '&date=2026-11-18')).body, c: await company('&company=163&from=2026-11-17&to=2026-11-18') };
+  eq([after.o.today, after.o.period], [before.o.today, before.o.period], 'Overview: $0 orders add no orders, units or sales');
+  eq(after.o.companies.find(c => c.id === 163).today, before.o.companies.find(c => c.id === 163).today, 'Overview card: the same');
+  eq([after.c.totals, after.c.daily], [before.c.totals, before.c.daily], 'View Details: totals and daily rows unchanged');
+  eq(after.c.hours, before.c.hours, '…and the hourly chart');
+  ok(after.c.orders.some(o => o.id === 990001) && after.c.ordersInRange === before.c.ordersInRange + 3, 'they still show in the orders list');
+  eq(after.c.status.find(x => x.status === 2)?.orders, (before.c.status.find(x => x.status === 2)?.orders || 0) + 1, '…and in the status mix');
+  db.prepare('DELETE FROM ecom_orders WHERE order_id >= 990001').run();
 }
 
 // ── 8. before migration-090 ────────────────────────────────────────────────
