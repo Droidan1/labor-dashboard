@@ -42,13 +42,16 @@ const check = (c, m) => results.push([!!c, m]);
 const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
 const co = (id, name, sales, ship, orders, units, hours, ids) => ({ id, name, companyIds: ids || [id],
   today: { sales, shipping: ship, refunded: id === 163 ? 24.99 : 0, orders, units, returns: id === 163 ? 1 : 0, ebay: sales, poshmark: 0, other: 0 },
-  week: { sales: sales * 3, orders: orders * 3 }, month: { sales: sales * 12, orders: orders * 12 }, hours });
+  week: { sales: sales * 3, orders: orders * 3 }, month: { sales: sales * 12, orders: orders * 12 }, hours,
+  period: { sales, shipping: ship, refunded: id === 163 ? 24.99 : 0, orders, units, returns: id === 163 ? 1 : 0, ebay: sales, poshmark: 0, other: 0 } });
 const H = (pairs) => { const h = new Array(24).fill(0); for (const [i, v] of pairs) h[i] = v; return h; };
 const FIXTURE = (date) => ({ ok: true, connected: true, date, weekStart: date, monthStart: date.slice(0, 8) + '01',
-  budget: { monthly: 57000, today: 1900, week: 13300, month: 57000 },
+  range: { from: date, to: date, days: 1 },
+  budget: { monthly: 57000, today: 1900, week: 13300, month: 57000, period: 1900 },
   today: { sales: 2380.43, shipping: 258.54, refunded: 24.99, orders: 25, units: 27, returns: 1, ebay: 2126.53, poshmark: 253.90, other: 0 },
+  period: { sales: 2380.43, shipping: 258.54, refunded: 24.99, orders: 25, units: 27, returns: 1, ebay: 2126.53, poshmark: 253.90, other: 0 },
   week: { sales: 12303.12, orders: 129 }, month: { sales: 41208.77, orders: 431 },
-  reporting: 4,
+  reporting: 4, reportingPeriod: 4,
   companies: [
     co(163, 'Shoes and Fashions', 1642.30, 198.60, 19, 21, H([[9, 84.5], [10, 212.3], [11, 160.8], [12, 301.2], [13, 248.9], [14, 634.6]]), [163, 169]),
     co(164, 'Harrison Avenue', 76.98, 9.99, 1, 1, H([[13, 76.98]])),
@@ -84,8 +87,16 @@ async function open({ theme = 'dark', biz = '', width = 1280, height = 900, setu
       if (s.includes('action=ecom-overview')) {
         window.__asked(s);
         if (!setup) return J({ ok: false, setup: false, error: 'ecom_orders is missing (migration-090)' }, 503);
-        const m = s.match(/[?&]date=(\d{4}-\d{2}-\d{2})/);
-        return J(FIX(m ? m[1] : today));
+        const to = (s.match(/[?&]to=(\d{4}-\d{2}-\d{2})/) || s.match(/[?&]date=(\d{4}-\d{2}-\d{2})/) || [])[1] || today;
+        const from = (s.match(/[?&]from=(\d{4}-\d{2}-\d{2})/) || [])[1] || to;
+        const fx = FIX(to);
+        fx.range = { from, to, days: Math.round((Date.parse(to) - Date.parse(from)) / 864e5) + 1 };
+        if (from !== to) {
+          fx.period = Object.assign({}, fx.today, { sales: 12303.12, shipping: 1255.26, orders: 129, units: 138 });
+          fx.budget.period = 1900 * fx.range.days; fx.reportingPeriod = 5;
+          fx.companies.forEach(c => { c.period = Object.assign({}, c.today, { sales: c.today.sales * 3 + (c.id === 166 ? 108.9 : 0), orders: c.today.orders * 3 + (c.id === 166 ? 2 : 0) }); });
+        }
+        return J(fx);
       }
       if (s.includes('action=weekly-summary')) return J({ ok: true, from: today, to: today, stores: {}, totals: {} });
       if (s.includes('action=live-sales')) return J({ ok: true, units: [], channels: [], coverage: [], bl: [], shows: [], sync: {} });
@@ -203,16 +214,45 @@ for (const theme of ['dark', 'light']) {
   const ovAA = await aaFailures(lp, '#page-ecom-overview');
   check(ovAA.length === 0, `${theme}: Overview text clears AA` + (ovAA.length ? '\n     ' + ovAA.join('\n     ') : ''));
 
-  // An earlier day of this week, when there is one.
-  const past = await lp.evaluate(() => { const bs = [...document.querySelectorAll('#eo-days button:not([disabled])')]; return bs.length > 1 ? bs.length : 0; });
-  if (past) {
-    L.asked.length = 0;
-    await lp.evaluate(() => document.querySelector('#eo-days button:not([disabled])').click());
-    await lp.waitForTimeout(400);
-    check(L.asked.some(u => /[?&]date=\d{4}-\d{2}-\d{2}/.test(u)), `${theme}: picking an earlier day asks the worker for that day`);
-    const heroPast = await lp.evaluate(() => document.getElementById('eo-hero').innerText);
-    check(!heroPast.includes("Today's sales") && !heroPast.includes('Live'), `${theme}: …and the hero names that day, not "Today", with no Live pill`);
-  }
+  // The dashboard's date picker and refresh button (Brian, 2026-11-18).
+  const chip = await lp.evaluate(() => ({ label: document.querySelector('#eo-range .rp-label')?.textContent,
+    refresh: !!document.querySelector('#eo-refresh svg') && !document.getElementById('eo-refresh').textContent.trim(),
+    strip: !!document.getElementById('eo-days') }));
+  check(chip.label === 'Today' && chip.refresh && !chip.strip, `${theme}: the header has the date chip (Today) and the icon refresh button, and no day strip (${JSON.stringify(chip)})`);
+  await lp.click('#eo-range .rp-trigger');
+  await lp.waitForTimeout(150);
+  const presets = await lp.$$eval('#eo-range .rp-list button', bs => bs.map(b => b.textContent.trim()));
+  check(presets.length === 14 && presets[0] === 'Today' && presets.includes('Last 12 Months') && presets[13] === 'Custom Date Range', `${theme}: the chip opens the dashboard's 14 presets (${presets.length})`);
+  L.asked.length = 0;
+  await lp.evaluate(() => [...document.querySelectorAll('#eo-range .rp-list button')].find(b => b.textContent.trim() === 'This Week').click());
+  await lp.waitForTimeout(400);
+  const sun = (() => { const d = new Date(today + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - d.getUTCDay()); return d.toISOString().slice(0, 10); })();
+  check(L.asked.some(u => u.includes(`from=${sun}`) && u.includes(`to=${today}`)), `${theme}: This Week asks for Sunday ${sun} to today`);
+  const wk = await lp.evaluate(() => ({ hero: document.getElementById('eo-hero').innerText, label: document.querySelector('#eo-range .rp-label').textContent,
+    open: !document.querySelector('#eo-range .rp-panel').classList.contains('hidden'), dp: document.querySelector('[data-eo-company="166"]').innerText }));
+  check(wk.label === 'This Week' && !wk.open, `${theme}: the chip reads This Week and the panel closes`);
+  check(wk.hero.includes('This Week sales · All companies') && wk.hero.includes('$12,303.12') && wk.hero.includes('Includes $1,255.26 shipping') && wk.hero.includes('5 of 5 selling'),
+    `${theme}: the hero shows the range's figures`);
+  check(wk.dp.includes('$108.90') && wk.dp.includes('in this range'), `${theme}: a company card shows its range figures`);
+  // Custom range: two days on the calendar, then Apply.
+  await lp.click('#eo-range .rp-trigger');
+  await lp.evaluate(() => [...document.querySelectorAll('#eo-range .rp-list button')].find(b => b.textContent.trim() === 'Custom Date Range').click());
+  await lp.waitForTimeout(150);
+  L.asked.length = 0;
+  const picked = await lp.evaluate(() => {
+    const days = [...document.querySelectorAll('#eo-range .rp-cal-grids [onclick^="rpCalPick"]')];
+    days[0].click(); days[2].click();
+    const ymd = (e) => e.getAttribute('onclick').match(/'(\d{4}-\d{2}-\d{2})'/)[1];
+    const out = [ymd(days[0]), ymd(days[2])];
+    document.querySelector('#eo-range .rp-apply').click();
+    return out;
+  });
+  await lp.waitForTimeout(400);
+  check(L.asked.some(u => u.includes(`from=${picked[0]}`) && u.includes(`to=${picked[1]}`)), `${theme}: a custom range asks for exactly the two days picked (${picked.join(' – ')})`);
+  L.asked.length = 0;
+  await lp.click('#eo-refresh');
+  await lp.waitForTimeout(400);
+  check(L.asked.length === 1 && L.asked[0].includes(`from=${picked[0]}`), `${theme}: Refresh reloads the same range (${L.asked.length})`);
   check(L.errs.length === 0, `${theme}: no JS errors` + (L.errs.length ? ' — ' + L.errs.join(' | ') : ''));
   if (theme === 'dark') await lp.screenshot({ path: path.join(process.env.SHOT_DIR || '/tmp', 'ecom-overview-dark.png'), fullPage: true }).catch(() => {});
   if (theme === 'light') await lp.screenshot({ path: path.join(process.env.SHOT_DIR || '/tmp', 'ecom-overview-light.png'), fullPage: true }).catch(() => {});
@@ -226,7 +266,14 @@ for (const theme of ['dark', 'light']) {
   check(JSON.stringify(vis) === '["page-ecom-overview"]', `phone: E-Commerce opens on its Overview (${vis})`);
   const wide = await P.page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
   check(!wide, 'phone: the page does not scroll sideways');
-  if (process.env.SHOT_DIR) await P.page.screenshot({ path: path.join(process.env.SHOT_DIR, 'ecom-overview-phone.png'), fullPage: true });
+  const head = await P.page.evaluate(() => { const r = document.querySelector('#page-ecom-overview .rp-trigger').getBoundingClientRect(), f = document.getElementById('eo-refresh').getBoundingClientRect();
+    return { chipRight: r.right, refreshRight: f.right, width: window.innerWidth }; });
+  check(head.chipRight <= head.width && head.refreshRight <= head.width, `phone: the date chip and refresh button fit on screen (${JSON.stringify(head)})`);
+  if (process.env.SHOT_DIR) {
+    await P.page.screenshot({ path: path.join(process.env.SHOT_DIR, 'ecom-overview-phone.png'), fullPage: true });
+    await P.page.click('#eo-range .rp-trigger'); await P.page.waitForTimeout(200);
+    await P.page.screenshot({ path: path.join(process.env.SHOT_DIR, 'ecom-header-phone.png') });
+  }
   await P.ctx.close();
 }
 
