@@ -77,8 +77,14 @@ Companies: 163 Shoes and Fashions · 164 Harrison Avenue · 165 Bass River · 16
       Live check (real data): landing Bargain Lane = dashboard hero for Today / Yesterday / Last Week /
       This Month / Last Month; hero = Bargain Lane + E-Commerce each time; E-Commerce Yesterday =
       $3,192.82 (the Sellercloud-verified Nov 17); E-Commerce page chip + refresh + Yesterday cards match
-- [ ] Brian: approve + run the history load (2025-01-01 → today, 62-day calls). Until then E-Commerce
-      reads $0 before Nov 17 (Last Week, Last Month …)
+- [x] Landing refresh button (Brian): PR #388 merged 16:48:38Z (1af0ee1), cache v307; live: Refresh
+      re-fetched 6 store histories + E-Commerce, kept the range, same figures
+- [x] History load, Brian's go 2026-11-18: 12 POST ecom-backfill calls from his Chrome, 2025-01-01 →
+      2026-11-18, all 200, none incomplete, no errors; 21,180 orders written, ~480 Sellercloud calls,
+      ≤ 132 s a call. Table: 21,180 rows (no duplicates), 2025-10-09 → 2026-11-18 — every window before
+      Oct 9, 2025 came back empty (likely when Sellercloud began). Cross-check vs live Sellercloud
+      (probe) for 2025-12-01, 2026-04-15, 2026-08-20: every company's count and total equal. October 2026
+      reads $45,540.62 / 635 orders; Nov 1–18 $33,892 ≈ $57k/month pace (the budget fits)
 - [ ] Phase 3: View Details per company
 - [ ] Brian: pick A or B; answer budget / which dollars (order total vs product sales) / add to hero total
 - [ ] Then: the cron → D1 sync, built on what the probe shows; then 2 dashboard previews
