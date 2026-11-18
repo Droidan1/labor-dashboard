@@ -45,6 +45,9 @@ revise it. Revised plan: [docs/plans/live-item-sales.md](../docs/plans/live-item
       (was 32) incl. get_bin_split + get_live_item_sales; serverInfo still 1.6.0. CLI reinstalled by Claude from the
       same clone (old copy kept in the scratchpad); `retjg bin-split --period cycle` (11-13..11-17, complete): regular
       $79,993.09, christmas $6,763.47 (7.8%); `retjg live-items --search christmas`: 68 items, top $3 Christmas Bin
+- [x] retjg-mcp 1.7.0 (#383, c477ab3): serverInfo version for the 34-tool set. Brian deployed from a run-time clone of
+      main guarded on `version: '1.7.0'`: version 4ccdc74e, 366.59 KiB (same size as 1.6.0, the strings are equal
+      length, so the version probe was the real check). Landed: 3 clean passes at 1.7.0 / 34 tools from 00:46:50Z
 - [ ] Brian: refresh the MCP connector in Claude; add the bin vs Christmas line to Muse's morning brief (outside repo)
 - [ ] One Fri–Wed cycle: each night, a live pull just before the nightly run vs the row it saves (> 1% = look)
 
