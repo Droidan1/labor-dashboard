@@ -17184,7 +17184,7 @@ async function sellercloudToken(env, { force = false } = {}) {
 function sellercloudClient(env, { budget = SELLERCLOUD_PROBE_BUDGET } = {}) {
   let calls = 0, nextAt = 0, throttled = 0;
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-  async function get(path, params = {}) {
+  async function get(path, params = {}, body) {
     const url = new URL(SELLERCLOUD_API + path);
     for (const [k, v] of Object.entries(params)) {
       if (Array.isArray(v)) v.forEach(x => url.searchParams.append(k, String(x)));
@@ -17198,22 +17198,26 @@ function sellercloudClient(env, { budget = SELLERCLOUD_PROBE_BUDGET } = {}) {
       const tok = await sellercloudToken(env);
       calls++;
       nextAt = Date.now() + SELLERCLOUD_MIN_GAP_MS;
-      const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${tok.token}`, Accept: "application/json" } });
+      const res = await fetch(url.toString(), body === undefined
+        ? { headers: { Authorization: `Bearer ${tok.token}`, Accept: "application/json" } }
+        : { method: "POST", headers: { Authorization: `Bearer ${tok.token}`, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const text = await res.text().catch(() => "");
-      let body = null; try { body = text ? JSON.parse(text) : null; } catch { /* not JSON */ }
-      if (body && typeof body.Error === "string" && /too many requests/i.test(body.Error)) {
+      let parsed = null; try { parsed = text ? JSON.parse(text) : null; } catch { /* not JSON */ }
+      if (parsed && typeof parsed.Error === "string" && /too many requests/i.test(parsed.Error)) {
         throttled++;
-        if (attempt >= 2) throw new SellercloudHttpError(res.status, "Sellercloud rate limit: " + (body.RateLimitResetTime || "no reset time"));
-        const reset = Date.parse(body.RateLimitResetTime || "");
+        if (attempt >= 2) throw new SellercloudHttpError(res.status, "Sellercloud rate limit: " + (parsed.RateLimitResetTime || "no reset time"));
+        const reset = Date.parse(parsed.RateLimitResetTime || "");
         await sleep(Math.min(Math.max(Number.isFinite(reset) ? reset - Date.now() : 2000, 250), 60e3));
         continue;
       }
       if (res.status === 401 && !renewed) { renewed = true; await sellercloudToken(env, { force: true }); continue; }
-      if (!res.ok) throw new SellercloudHttpError(res.status, `Sellercloud GET ${path} → ${res.status} ${text.slice(0, 200)}`);
-      return body;
+      if (!res.ok) throw new SellercloudHttpError(res.status, `Sellercloud ${body === undefined ? "GET" : "POST"} ${path} → ${res.status} ${text.slice(0, 200)}`);
+      return parsed;
     }
   }
-  return { get, get calls() { return calls; }, get throttled() { return throttled; } };
+  // POST is only for Sellercloud's read-style queries (profit and loss); nothing here writes to it.
+  return { get: (path, params) => get(path, params), postQuery: (path, payload) => get(path, {}, payload),
+    get calls() { return calls; }, get throttled() { return throttled; } };
 }
 
 const scNum = (v) => (v == null || v === "" || !Number.isFinite(Number(v)) ? 0 : Number(v));
@@ -17221,7 +17225,7 @@ const scAdd = (m, key, amt) => { const r = m[key] || (m[key] = { orders: 0, gran
 
 // One company's orders for one window, aggregated. Returns NO buyer data — names, emails and
 // addresses arrive on every order and are dropped here, before anything leaves this function.
-async function sellercloudProbeCompany(sc, company, { from, to, by }) {
+async function sellercloudProbeCompany(sc, company, { from, to, by, items = false }) {
   const params = { companyID: [company.id], pageSize: SELLERCLOUD_PAGE };
   if (by === "created") { params.createdOnFrom = from; params.createdOnTo = to; }
   else { params.orderFromDate = from; params.orderToDate = to; }
@@ -17229,6 +17233,9 @@ async function sellercloudProbeCompany(sc, company, { from, to, by }) {
     otherCompanyIds: [], timeOfOrder: { min: null, max: null, samples: [] }, createdOnSample: null,
     byStatus: {}, bySource: {}, grandTotal: 0, taxTotal: 0, shippingTotal: 0,
     units: 0, unitsReturned: 0, refunded: 0 };
+  // Order-line cost coverage (2026-11-18, Brian: "check whether Sellercloud fills in product cost").
+  const lc = items ? { lines: 0, lineTotal: 0, withSiteCost: 0, withAverageCost: 0, withLastCost: 0, withImage: 0,
+    siteCostTotal: 0, averageCostTotal: 0, lastCostTotal: 0, samples: [], orderIds: [] } : null;
   for (let page = 1; ; page++) {
     const body = await sc.get("/Orders", { ...params, pageNumber: page });
     const items = (body && Array.isArray(body.Items)) ? body.Items : [];
@@ -17256,10 +17263,22 @@ async function sellercloudProbeCompany(sc, company, { from, to, by }) {
         out.units += scNum(it.Qty);
         out.unitsReturned += scNum(it.QtyReturned);
         out.refunded = roundCents(out.refunded + scNum(it.TotalRefunded));
+        if (lc) {
+          const q = scNum(it.Qty);
+          lc.lines++; lc.lineTotal = roundCents(lc.lineTotal + scNum(it.LineTotal));
+          if (scNum(it.SiteCost) > 0) { lc.withSiteCost++; lc.siteCostTotal = roundCents(lc.siteCostTotal + q * scNum(it.SiteCost)); }
+          if (scNum(it.AverageCost) > 0) { lc.withAverageCost++; lc.averageCostTotal = roundCents(lc.averageCostTotal + q * scNum(it.AverageCost)); }
+          if (scNum(it.LastCost) > 0) { lc.withLastCost++; lc.lastCostTotal = roundCents(lc.lastCostTotal + q * scNum(it.LastCost)); }
+          if (it.ImageURL) lc.withImage++;
+          if (lc.samples.length < 5) lc.samples.push({ sku: it.ProductID || null, name: it.DisplayName || it.ProductName || null, qty: q,
+            lineTotal: scNum(it.LineTotal), siteCost: scNum(it.SiteCost), averageCost: scNum(it.AverageCost), lastCost: scNum(it.LastCost) });
+        }
       }
+      if (lc && lc.orderIds.length < 5 && o.ID != null) lc.orderIds.push(Number(o.ID));
     }
     if (items.length < SELLERCLOUD_PAGE || (out.totalResults != null && out.fetched >= out.totalResults)) { out.complete = true; break; }
   }
+  if (lc) out.lineCost = lc;
   return out;
 }
 
@@ -19876,6 +19895,7 @@ export default {
       }
       const next = new Date(Date.parse(date + "T00:00:00Z") + 864e5).toISOString().slice(0, 10);
       const by = url.searchParams.get("by") === "created" ? "created" : "order";
+      const withItems = url.searchParams.get("items") === "1";
       const only = url.searchParams.get("company");
       const companies = only ? SELLERCLOUD_COMPANIES.filter(c => String(c.id) === only) : SELLERCLOUD_COMPANIES;
       if (!companies.length) {
@@ -19895,11 +19915,28 @@ export default {
       }
       if (out.token) {
         for (const c of companies) {
-          try { out.companies.push(await sellercloudProbeCompany(sc, c, { from: date, to: next, by })); }
+          try { out.companies.push(await sellercloudProbeCompany(sc, c, { from: date, to: next, by, items: withItems })); }
           catch (e) {
             out.ok = false;
             out.errors.push({ step: "orders", company: c.id, status: e.status || null, message: String(e.message || e) });
             if (e instanceof SellercloudBudgetError) break;
+          }
+        }
+      }
+      // Sellercloud's own profit and loss for up to 5 of the day's orders: how IT costs a line.
+      if (withItems && out.token) {
+        const ids = out.companies.flatMap(c => (c.lineCost && c.lineCost.orderIds) || []).slice(0, 5);
+        if (ids.length) {
+          try {
+            const pl = await sc.postQuery("/Orders/ProfitAndLoss", { Orders: ids });
+            out.profitAndLoss = (Array.isArray(pl) ? pl : []).map(o => ({
+              orderId: o.OrderID, itemCost: o.ItemCost, orderCost: o.OrderCost, commission: o.Comission, transactionFee: o.TransactionFee,
+              shippingCost: o.ShippingCost, profitLoss: o.ProfitLoss, profitLossPercentage: o.ProfitLossPercentage,
+              lines: (Array.isArray(o.OrderItems) ? o.OrderItems : []).map(x => ({ sku: x.ProductID, qty: x.QtySold, orderUnitSiteCost: x.OrderUnitSiteCost,
+                productUnitSiteCost: x.ProductUnitSiteCost, sellingPrice: x.SellingPrice, channelCommission: x.ChannelCommission,
+                transactionFee: x.TransactionFee, finalCostTotal: x.FinalCostTotal, profit: x.Profit, profitPercent: x.ProfitPercent })) }));
+          } catch (e) {
+            out.profitAndLoss = { error: String((e && e.message) || e).slice(0, 200), status: e.status || null };
           }
         }
       }
