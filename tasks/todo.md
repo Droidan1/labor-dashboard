@@ -46,8 +46,13 @@ Companies: 163 Shoes and Fashions · 164 Harrison Avenue · 165 Bass River · 16
       company + hourly, eBay vs Poshmark, $57k budget spread by day; sale statuses 2/3/100/200 only;
       signed-in, ecom gate, financial roles, unit-scoped). test-ecom-sync.mjs 43 pass, 10 mutants caught;
       `npm test` 12,386 / 140 green. Dry run 1295.51 KiB
-- [ ] Brian: push + PR; run migration-090 on prod D1, then deploy the worker. Month to date fills at the
-      first 4 AM Eastern run after the deploy
+- [x] PR #385. Brian ran migration-090 on prod (2 statements; `ecom_orders` 13 columns + index, read back)
+      and deployed from a fresh clone of 42e8d71: version 1f4bc33b, 1295.51 KiB = the dry run. Landed:
+      3 clean `?action=ecom-overview` passes 15:14:34–15:14:54Z
+- [x] First sync 15:15:09Z (10:15 ET): ok, 38 orders, no errors / incomplete. Nov 17 rows = the probe Brian
+      checked against Sellercloud, to the cent: S&F 26 / $2,189.85, Bass River 3 / $244.06, Dymoda 5 /
+      $758.91. Month to date fills at the first 4 AM Eastern run (2026-11-19)
+- [x] #385 merged 15:14:32Z (a64b475); main = the deployed worker
 - [ ] Phase 2 (frontend): Overview page (Option 1), landing card A, E-Commerce into the hero total
 - [ ] Phase 3: View Details per company
 - [ ] Brian: pick A or B; answer budget / which dollars (order total vs product sales) / add to hero total
