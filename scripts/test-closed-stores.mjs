@@ -172,9 +172,14 @@ const fnBody = (name) => {
 const folds = (name) => (fnBody(name).match(/budgetOnly(Total|Rows)\(/g) || []).length;
 
 ok(fnBody('renderDashboard').length > 2000, 'found renderDashboard to inspect');
-ok(folds('renderDashboard') >= 4,
-  `renderDashboard folds the budget-only stores into all four of its chain figures `
-  + `— hero today, Weekly, Monthly and the historical branch (${folds('renderDashboard')})`);
+// The hero's sums (today + the historical branch) live in blRangeTotals since 2026-11-18, shared
+// with the landing page's date picker; Weekly and Monthly stay in renderDashboard.
+ok(folds('blRangeTotals') >= 2,
+  `blRangeTotals folds the budget-only stores into the hero's today and historical sums (${folds('blRangeTotals')})`);
+ok(folds('renderDashboard') + folds('blRangeTotals') >= 4,
+  `the dashboard folds the budget-only stores into all four of its chain figures `
+  + `— hero today, Weekly, Monthly and the historical branch (${folds('renderDashboard')} + ${folds('blRangeTotals')})`);
+ok(/blRangeTotals\(dateRange\)/.test(fnBody('renderDashboard')), 'renderDashboard takes its hero sums from blRangeTotals');
 ok(folds('buildAllStoresWeeklyTable') >= 1, 'the per-day chain table folds them in');
 ok(folds('_asWeekTotals') >= 0 && /BUDGET_ONLY_STORES/.test(fnBody('_asWeekTotals')),
   'the All Stores page totals fold them in');

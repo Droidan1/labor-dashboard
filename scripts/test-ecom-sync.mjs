@@ -172,7 +172,7 @@ const count = (where = '1=1') => db.prepare(`SELECT COUNT(*) AS n FROM ecom_orde
   const b = r.body;
   ok(r.status === 200 && b.ok, `admin reads the overview, got ${r.status} ${r.text.slice(0, 160)}`);
   eq([b.weekStart, b.monthStart], ['2026-11-15', '2026-11-01'], 'week starts Sunday, month on the 1st');
-  eq(b.budget, { monthly: 57000, today: 1900, week: 13300, month: 57000 }, 'one budget: $57,000 a month, $1,900 a day in November');
+  eq(b.budget, { monthly: 57000, today: 1900, week: 13300, month: 57000, period: 1900 }, 'one budget: $57,000 a month, $1,900 a day in November (a one-day range = one day of it)');
   eq([b.today.orders, b.today.sales, b.today.shipping], [63, 1280, 127], 'today: 60×$20 + 2×$15 + $50, cancelled $999 left out, shipping included');
   eq([b.today.ebay, b.today.poshmark, b.today.other], [1250, 30, 0], 'today: eBay vs Poshmark (by company 169)');
   eq([b.week.sales, b.month.sales], [1380, 1480], 'week adds Nov 16-17; month adds Nov 1');
@@ -188,6 +188,45 @@ const count = (where = '1=1') => db.prepare(`SELECT COUNT(*) AS n FROM ecom_orde
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
   eq((await read(env, '')).body.date, today, 'no date → today, Eastern');
   eq((await read(env, '&date=2026-02-30')).status, 400, 'an impossible date → 400');
+}
+
+// ── 6b. a date range (the page's picker) ──────────────────────────────────
+{
+  const r = await read(env, '&from=2026-11-01&to=2026-11-18');
+  const b = r.body;
+  eq([r.status, b.range], [200, { from: '2026-11-01', to: '2026-11-18', days: 18 }], 'from/to is echoed as the range');
+  eq([b.period.orders, b.period.sales], [63 + 2 + 1 + 1, 1480], 'the period sums every sale in it (Nov 1, 16, 17, 18), cancelled left out');
+  eq([b.period.ebay, b.period.poshmark], [1450, 30], 'period channels: eBay vs Poshmark');
+  eq(b.budget.period, 34200, 'period budget = 18 × $1,900');
+  eq([b.today.sales, b.week.sales, b.month.sales], [1280, 1380, 1480], 'today / week / month are unchanged by a range');
+  eq(b.companies.map(c => [c.id, c.period.sales]), [[163, 1290], [164, 50], [165, 0], [166, 40], [167, 100]], 'each company carries its period');
+  eq(b.reportingPeriod, 4, 'four companies sold in the period');
+  const cross = await read(env, '&from=2026-10-30&to=2026-11-02');
+  eq([cross.body.budget.period, cross.body.range.days], [7477.42, 4], 'a range across months uses each month\'s daily share (2 × 57000/31 + 2 × 1900)');
+  eq((await read(env, '&from=2026-11-18&to=2026-11-01')).status, 400, 'from after to → 400');
+  eq((await read(env, '&from=2025-01-01&to=2026-11-18')).status, 400, 'more than 400 days → 400');
+  const legacy = await read(env, '&date=2026-11-18');
+  eq([legacy.body.range, legacy.body.period.sales], [{ from: '2026-11-18', to: '2026-11-18', days: 1 }, 1280], '`date` alone is a one-day range');
+}
+
+// ── 6c. the history load ──────────────────────────────────────────────────
+{
+  const post = (body, opts = { user: 'u-su' }) => worker.fetch(req('/?action=ecom-backfill', { ...opts, method: 'POST', body }), env, { waitUntil() {}, passThroughOnException() {} });
+  order(165, '2026-09-10', 11, { GrandTotal: 77 });             // older than any sync window
+  const before = count(), kvBefore = await env.SALES_SNAPSHOTS.get('ecom:sync');
+  calls = [];
+  eq((await post({ from: '2026-09-01', to: '2026-09-30' }, { user: 'u-admin' })).status, 403, 'an admin cannot run the history load');
+  eq((await post({ from: '2026-09-01', to: '2026-09-30' }, { secret: env.SNAPSHOT_SECRET })).status, 403, 'nor can the snapshot secret');
+  eq((await worker.fetch(req('/?action=ecom-backfill', { user: 'u-su' }), env, { waitUntil() {}, passThroughOnException() {} })).status, 405, 'GET is refused');
+  eq((await post({ from: '2026-07-01', to: '2026-09-30' })).status, 400, 'more than 62 days in one call → 400');
+  eq((await post({ from: '2024-12-01', to: '2024-12-31' })).status, 400, 'before 2025-01-01 → 400');
+  eq((await post({ from: '2026-11-18', to: '2099-01-01' })).status, 400, 'a future end → 400');
+  eq(calls.length, 0, 'none of the refused calls reached Sellercloud');
+  const r = await post({ from: '2026-09-01', to: '2026-09-30' });
+  const j = await r.json();
+  ok(r.status === 200 && j.ok && j.from === '2026-09-01' && j.to === '2026-10-01', `the load reads [Sep 1, Oct 1) by order date, got ${r.status} ${JSON.stringify(j).slice(0, 120)}`);
+  eq(count() - before, 1, 'it adds the September order');
+  eq(await env.SALES_SNAPSHOTS.get('ecom:sync'), kvBefore, 'and leaves the 15-minute sync\'s "last synced" alone');
 }
 
 // ── 7. who sees what ───────────────────────────────────────────────────────

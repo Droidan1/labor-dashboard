@@ -6625,17 +6625,19 @@
             <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">E-Commerce</h1>
             <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Sellercloud &middot; 5 companies &middot; sales include shipping</p>
           </div>
-          <div class="flex items-center gap-3">
-            <span id="eo-updated" class="text-[12px] text-opl-inkDim dark:text-op-inkDim"></span>
-            <button id="eo-refresh" type="button" onclick="eoRefresh()" class="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-[10px] border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-ink dark:text-op-ink hover:border-accent-green/50 transition-colors disabled:opacity-50">
-              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
-              Refresh
+          <div class="flex items-center gap-2">
+            <span id="eo-updated" class="text-[12px] text-opl-inkDim dark:text-op-inkDim mr-1"></span>
+            <!-- The Bargain Lane dashboard's date picker and refresh button (Brian, 2026-11-18).
+                 E-Commerce keeps its own range; picking one here does not move the dashboard's. -->
+            <div id="eo-range" class="relative"></div>
+            <button id="eo-refresh" type="button" onclick="eoRefresh(this)" aria-label="Refresh" title="Refresh"
+              class="w-10 h-10 rounded-[10px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim flex items-center justify-center transition-colors hover:border-accent-green/40 hover:text-opl-ink dark:hover:text-op-ink focus:outline-none focus:ring-1 focus:ring-accent-green disabled:opacity-50">
+              <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
             </button>
           </div>
         </div>
       </div>
       <div class="max-w-6xl mx-auto px-4 sm:px-6 py-5 space-y-4">
-        <div id="eo-days" class="flex items-center gap-1.5 overflow-x-auto"></div>
         <div id="eo-status" class="hidden"></div>
         <section class="grid gap-4 lg:grid-cols-[1.6fr_1fr_1fr]">
           <div id="eo-hero" class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 lg:p-6 transition-colors"></div>
@@ -8453,8 +8455,11 @@
          holds one grant and routes straight past this to their dashboard. -->
     <div id="page-landing" class="hidden">
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
-        <div class="max-w-5xl mx-auto">
+        <div class="max-w-5xl mx-auto flex items-center justify-between gap-4">
           <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">RETJG Hub</h1>
+          <!-- The dashboard's date picker (Brian, 2026-11-18). The landing page keeps its OWN
+               range: picking one here does not move the Bargain Lane dashboard's. -->
+          <div id="lp-range" class="relative"></div>
         </div>
       </div>
 
@@ -11131,6 +11136,138 @@
   // Apply persisted state on load (DOM is ready by the time this script runs).
   _applyHeroExtraState(_heroExtraIsExpanded());
 
+  // Bargain Lane's figures for a range: the dashboard hero's own sums (live today + the stored
+  // daily snapshots, budgets, auction), lifted out of renderDashboard unchanged (2026-11-18) so the
+  // landing page's date picker totals Bargain Lane the SAME way instead of with a second copy
+  // (lessons.md: two programs computing the same tiles were wrong all day, right by morning).
+  // renderDashboard calls it with its own range and keeps the card's show/hide.
+  function blRangeTotals(range) {
+    const dayDays = selectedDashDays;            // permanently empty shim (see renderDashboard)
+    const isDayView = false;
+    const todayStr = etTodayStr();
+    const inSel = (k) => k != null && k >= range.from && k <= range.to;
+    const filterRows = (rows) => rows.filter(r => inSel(rowDayKey(r)));
+    const includesToday = range.from <= todayStr && todayStr <= range.to;
+    const histSkipToday = includesToday;
+    const matchesCloverDate = (dateKey, weekRows) => {
+      if (histSkipToday && dateKey === todayStr) return false;
+      return inSel(dateKey);
+    };
+    // Live "today" sales roll into the range total when the range includes today.
+    const isCurrentWeek = includesToday;
+    let todayTotal = 0, todayRetail = 0, todayBin = 0, todayAuction = 0;
+    let todayTotalBudget = 0;
+    // Which stores actually contributed data for THIS selection. A Set, because
+    // the live and historical loops below can each see the same store and the
+    // old counter double-counted (then hid it behind Math.min), so it always
+    // read "6 of 6" — even with every live fetch failing.
+    const reportingStores = new Set();
+    let allOrderCount = 0, allTxnTimeTotal = 0, allTxnTimeCount = 0, allItemCount = 0, allCartTotal = 0, allASPTotal = 0, allASPCount = 0;
+
+    // Live when the current week is shown whole, or the selection includes today.
+    const showLive = isCurrentWeek && (!isDayView || includesToday);
+    // Historical for: any past week, the whole-week view (past days of the
+    // week), or a day selection that includes past days. (Today is excluded
+    // from the historical sums via histSkipToday when live is also shown.)
+    const hasPastDay = isDayView && [...dayDays].some(d => d !== todayStr);
+    const showHist = !isCurrentWeek || !isDayView || hasPastDay;
+
+    if (showLive) {
+      for (const s of STORES) {
+        const live = liveCloverData[s];
+        // Reporting = the fetch came back. A store that is genuinely at $0 (early
+        // morning, closed) IS reporting; only a failed fetch is not.
+        if (live != null) reportingStores.add(s);
+        if (live != null && live.total > 0) {
+          todayTotal += live.total;
+          todayRetail += live.retail;
+          todayBin += live.bin;
+          allOrderCount += live.orderCount || 0;
+          if (live.avgTxnSec != null && live.orderCount > 0) {
+            allTxnTimeTotal += live.avgTxnSec * live.orderCount;
+            allTxnTimeCount += live.orderCount;
+          }
+          if (live.avgItems != null && live.orderCount > 0) {
+            allItemCount += live.avgItems * live.orderCount;
+          }
+          if (live.avgCart != null && live.orderCount > 0) {
+            allCartTotal += live.avgCart * live.orderCount;
+          }
+          if (live.avgASP != null && live.orderCount > 0) {
+            allASPTotal += live.avgASP * live.orderCount;
+            allASPCount += live.orderCount;
+          }
+        }
+
+        const todayRow = getTodayRow(s);
+        if (todayRow && todayRow.bTotal != null) {
+          todayTotalBudget += todayRow.bTotal;
+        }
+        // rowAuction: today's aAuction is nulled by loadStoreFromD1, so this
+        // branch added nothing. The hist branch below cannot double-count it —
+        // histSkipToday drops today's row whenever live is showing.
+        const todayRowAuction = rowAuction(todayRow);
+        if (todayRowAuction != null) {
+          todayAuction += todayRowAuction;
+        }
+      }
+      // Closed stores still carry today's budget into the chain figure: the Eastern-today
+      // row, the same one getTodayRow above picks for the trading stores.
+      todayTotalBudget += budgetOnlyTotal(r => rowDayKey(r) === todayStr);
+    }
+    let hasAnyHistData = false;
+    if (showHist) {
+      // Aggregate historical Clover snapshots, filtered to day if applicable.
+      // When live is also showing today, exclude today's row here so budget /
+      // auction aren't double-counted (the live branch already added them).
+      const histRows = (rows) => filterRows(rows).filter(r =>
+        !(histSkipToday && r.date && r.date.toISOString().slice(0, 10) === todayStr));
+      // Closed stores the chain still budgets for, filtered exactly as the trading
+      // stores are below. Budget only — no snapshots, so reportingStores cannot move.
+      for (const r of histRows(budgetOnlyRows())) todayTotalBudget += r.bTotal;
+      for (const s of STORES) {
+        // Budget is in the Google Sheets rows — always available regardless of Clover data
+        const filteredBudget = sumRows(histRows(allStoreData[s] || [])).bTotal;
+        if (filteredBudget != null) todayTotalBudget += filteredBudget;
+
+        // Auction is manually entered in the Google Sheet, not in Clover snapshots.
+        // Sum it from the filtered rows so historical totals include auction sales.
+        for (const r of histRows(allStoreData[s] || [])) {
+          if (r.aAuction != null) todayAuction += r.aAuction;
+        }
+
+        const storeHist = historicalCloverData[s] || {};
+        const weekRows = (allStoreData[s] || []).filter(r => inSel(rowDayKey(r)));
+        for (const [dateKey, snap] of Object.entries(storeHist)) {
+          if (!matchesCloverDate(dateKey, weekRows)) continue;
+          hasAnyHistData = true;
+          reportingStores.add(s);   // has data INSIDE the selection, not just any history
+          todayTotal += snap.total || 0;
+          todayRetail += snap.retail || 0;
+          todayBin += snap.bin || 0;
+          allOrderCount += snap.orderCount || 0;
+          if (snap.avgTxnSec != null && snap.orderCount > 0) {
+            allTxnTimeTotal += snap.avgTxnSec * snap.orderCount;
+            allTxnTimeCount += snap.orderCount;
+          }
+          if (snap.avgItems != null && snap.orderCount > 0) {
+            allItemCount += snap.avgItems * snap.orderCount;
+          }
+          if (snap.avgCart != null && snap.orderCount > 0) {
+            allCartTotal += snap.avgCart * snap.orderCount;
+          }
+          if (snap.avgASP != null && snap.orderCount > 0) {
+            allASPTotal += snap.avgASP * snap.orderCount;
+            allASPCount += snap.orderCount;
+          }
+        }
+      }
+    }
+    return { showLive, showHist, hasAnyHistData: showHist ? hasAnyHistData : false,
+      todayTotal, todayRetail, todayBin, todayAuction, todayTotalBudget, reportingStores,
+      allOrderCount, allTxnTimeTotal, allTxnTimeCount, allItemCount, allCartTotal, allASPTotal, allASPCount };
+  }
+
   function renderDashboard() {
     if (!dateRange.from) return;
 
@@ -11198,117 +11335,14 @@
       }
     }
 
-    // Live "today" sales roll into the range total when the range includes today.
-    const isCurrentWeek = selIncludesToday();
-    let todayTotal = 0, todayRetail = 0, todayBin = 0, todayAuction = 0;
-    let todayTotalBudget = 0;
-    // Which stores actually contributed data for THIS selection. A Set, because
-    // the live and historical loops below can each see the same store and the
-    // old counter double-counted (then hid it behind Math.min), so it always
-    // read "6 of 6" — even with every live fetch failing.
-    const reportingStores = new Set();
-    let allOrderCount = 0, allTxnTimeTotal = 0, allTxnTimeCount = 0, allItemCount = 0, allCartTotal = 0, allASPTotal = 0, allASPCount = 0;
-
-    // Live when the current week is shown whole, or the selection includes today.
-    const showLive = isCurrentWeek && (!isDayView || includesToday);
-    // Historical for: any past week, the whole-week view (past days of the
-    // week), or a day selection that includes past days. (Today is excluded
-    // from the historical sums via histSkipToday when live is also shown.)
-    const hasPastDay = isDayView && [...dayDays].some(d => d !== todayStr);
-    const showHist = !isCurrentWeek || !isDayView || hasPastDay;
-
-    if (showLive) {
-      for (const s of STORES) {
-        const live = liveCloverData[s];
-        // Reporting = the fetch came back. A store that is genuinely at $0 (early
-        // morning, closed) IS reporting; only a failed fetch is not.
-        if (live != null) reportingStores.add(s);
-        if (live != null && live.total > 0) {
-          todayTotal += live.total;
-          todayRetail += live.retail;
-          todayBin += live.bin;
-          allOrderCount += live.orderCount || 0;
-          if (live.avgTxnSec != null && live.orderCount > 0) {
-            allTxnTimeTotal += live.avgTxnSec * live.orderCount;
-            allTxnTimeCount += live.orderCount;
-          }
-          if (live.avgItems != null && live.orderCount > 0) {
-            allItemCount += live.avgItems * live.orderCount;
-          }
-          if (live.avgCart != null && live.orderCount > 0) {
-            allCartTotal += live.avgCart * live.orderCount;
-          }
-          if (live.avgASP != null && live.orderCount > 0) {
-            allASPTotal += live.avgASP * live.orderCount;
-            allASPCount += live.orderCount;
-          }
-        }
-
-        const todayRow = getTodayRow(s);
-        if (todayRow && todayRow.bTotal != null) {
-          todayTotalBudget += todayRow.bTotal;
-        }
-        // rowAuction: today's aAuction is nulled by loadStoreFromD1, so this
-        // branch added nothing. The hist branch below cannot double-count it —
-        // histSkipToday drops today's row whenever live is showing.
-        const todayRowAuction = rowAuction(todayRow);
-        if (todayRowAuction != null) {
-          todayAuction += todayRowAuction;
-        }
-      }
-      // Closed stores still carry today's budget into the chain figure: the Eastern-today
-      // row, the same one getTodayRow above picks for the trading stores.
-      todayTotalBudget += budgetOnlyTotal(r => rowDayKey(r) === todayStr);
-      el("today-total-card").classList.remove("hidden");
-    }
+    // The range's sums (blRangeTotals, shared with the landing page's picker), then this card's
+    // show/hide exactly as before.
+    const BT = blRangeTotals(dateRange);
+    let { showLive, showHist, todayTotal, todayRetail, todayBin, todayAuction, todayTotalBudget, reportingStores,
+          allOrderCount, allTxnTimeTotal, allTxnTimeCount, allItemCount, allCartTotal, allASPTotal, allASPCount } = BT;
+    if (showLive) el("today-total-card").classList.remove("hidden");
     if (showHist) {
-      // Aggregate historical Clover snapshots, filtered to day if applicable.
-      // When live is also showing today, exclude today's row here so budget /
-      // auction aren't double-counted (the live branch already added them).
-      const histRows = (rows) => filterRows(rows).filter(r =>
-        !(histSkipToday && r.date && r.date.toISOString().slice(0, 10) === todayStr));
-      // Closed stores the chain still budgets for, filtered exactly as the trading
-      // stores are below. Budget only — no snapshots, so reportingStores cannot move.
-      for (const r of histRows(budgetOnlyRows())) todayTotalBudget += r.bTotal;
-      let hasAnyHistData = false;
-      for (const s of STORES) {
-        // Budget is in the Google Sheets rows — always available regardless of Clover data
-        const filteredBudget = sumRows(histRows(allStoreData[s] || [])).bTotal;
-        if (filteredBudget != null) todayTotalBudget += filteredBudget;
-
-        // Auction is manually entered in the Google Sheet, not in Clover snapshots.
-        // Sum it from the filtered rows so historical totals include auction sales.
-        for (const r of histRows(allStoreData[s] || [])) {
-          if (r.aAuction != null) todayAuction += r.aAuction;
-        }
-
-        const storeHist = historicalCloverData[s] || {};
-        const weekRows = (allStoreData[s] || []).filter(rowInSel);
-        for (const [dateKey, snap] of Object.entries(storeHist)) {
-          if (!matchesCloverDate(dateKey, weekRows)) continue;
-          hasAnyHistData = true;
-          reportingStores.add(s);   // has data INSIDE the selection, not just any history
-          todayTotal += snap.total || 0;
-          todayRetail += snap.retail || 0;
-          todayBin += snap.bin || 0;
-          allOrderCount += snap.orderCount || 0;
-          if (snap.avgTxnSec != null && snap.orderCount > 0) {
-            allTxnTimeTotal += snap.avgTxnSec * snap.orderCount;
-            allTxnTimeCount += snap.orderCount;
-          }
-          if (snap.avgItems != null && snap.orderCount > 0) {
-            allItemCount += snap.avgItems * snap.orderCount;
-          }
-          if (snap.avgCart != null && snap.orderCount > 0) {
-            allCartTotal += snap.avgCart * snap.orderCount;
-          }
-          if (snap.avgASP != null && snap.orderCount > 0) {
-            allASPTotal += snap.avgASP * snap.orderCount;
-            allASPCount += snap.orderCount;
-          }
-        }
-      }
-      if (hasAnyHistData || historicalDataLoading) {
+      if (BT.hasAnyHistData || historicalDataLoading) {
         el("today-total-card").classList.remove("hidden");
       } else if (!showLive) {
         el("today-total-card").classList.add("hidden");
@@ -37981,7 +38015,7 @@
   // number); the company cards carry no budget, so their bar is a share of today's sales instead.
   // Sales include shipping, and shipping is shown as its own amount (Brian, 2026-11-18).
   // View Details is Phase 3, so the cards have no button yet rather than a dead one.
-  let eoData = null, eoLoading = false, eoError = null, eoNotSetUp = false, eoDate = null;
+  let eoData = null, eoLoading = false, eoError = null, eoNotSetUp = false, eoRange = null;
   const EO_CHANNEL = '#3b82f6';   // accent-blue: the eBay series, the share bar, the sparkline
   const eoCard = 'bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors';
   const eoLbl = 'text-[12px] font-medium text-opl-inkDim dark:text-op-inkDim';
@@ -38002,19 +38036,20 @@
   const eoPill = (on, txt) => `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12px] font-medium flex-shrink-0" style="border:1px solid ${on ? 'rgba(34,197,94,0.4)' : 'rgb(var(--op-inkDim) / 0.35)'};color:${on ? 'var(--v1-good)' : 'rgb(var(--op-inkDim))'}"><span style="width:6px;height:6px;border-radius:9999px;background:${on ? '#22c55e' : 'rgb(var(--op-inkDim))'}"></span>${txt}</span>`;
   const eoDayName = (ymd, long) => new Date(ymd + 'T12:00:00Z').toLocaleDateString('en-US', { timeZone: 'UTC', weekday: long ? 'long' : 'short', month: 'short', day: 'numeric' });
 
-  async function eoLoad(date) {
+  async function eoLoad() {
+    // A preset is re-resolved on every load, so "Today" left open past midnight moves on.
+    eoRange = !eoRange ? resolvePreset('today') : eoRange.presetId === 'custom' ? eoRange : resolvePreset(eoRange.presetId);
     eoLoading = true; eoError = null; eoNotSetUp = false;
     const btn = el('eo-refresh'); if (btn) btn.disabled = true;
     eoRender();
     try {
-      const qs = date ? `&date=${encodeURIComponent(date)}` : '';
+      const qs = `&from=${eoRange.from}&to=${eoRange.to}`;
       const r = await fetch(`${WORKER_BASE}?action=ecom-overview${qs}`, { credentials: 'include', cache: 'no-store' });
       const d = await r.json().catch(() => null);
       if (r.status === 503 && d && d.setup === false) { eoNotSetUp = true; throw new Error('not set up'); }
       if (!r.ok || !d || !d.ok) throw new Error((d && d.error) || `HTTP ${r.status}`);
       if (!ecomShapeOk(d)) throw new Error('The server sent an answer this page cannot read.');
-      eoData = d; eoDate = d.date;
-      if (d.date === getETTodayStr()) ecomLanding = { data: d, at: Date.now() };
+      eoData = d;
     } catch (e) {
       eoError = e.message || String(e);
     } finally {
@@ -38023,30 +38058,30 @@
       eoRender();
     }
   }
-  // Today on every visit, unless a past day of this week was picked and is still on screen.
-  function initEcomOverview() { eoLoad(eoDate && eoDate !== getETTodayStr() ? eoDate : null); }
+  // The range picked here is kept for the session, like the dashboard's; it starts on Today.
+  function initEcomOverview() {
+    rangePickerMount('eo-range', () => eoRange || resolvePreset('today'), (r) => { eoRange = r; eoLoad(); });
+    eoLoad();
+  }
   window.initEcomOverview = initEcomOverview;
-  window.eoRefresh = () => eoLoad(eoDate);
-  window.eoPickDay = (ymd) => eoLoad(ymd === getETTodayStr() ? null : ymd);
+  // The dashboard's refresh: spin the icon once and reload the figures.
+  window.eoRefresh = async (btn) => {
+    const svg = btn && btn.querySelector('svg');
+    if (svg) { svg.style.transition = 'transform .6s ease'; svg.style.transform = 'rotate(360deg)'; }
+    try { await eoLoad(); }
+    finally { if (svg) setTimeout(() => { svg.style.transition = 'none'; svg.style.transform = ''; }, 650); }
+  };
 
   function eoRender() {
     const today = getETTodayStr();
     const d = eoData;
-    const shown = (d && d.date) || today;
-    const isToday = shown === today;
-
-    // Day strip: this week, Sunday to Saturday. Future days cannot be picked.
-    const days = el('eo-days');
-    if (days) {
-      const sun = addDaysYmdLocal(today, -new Date(today + 'T12:00:00Z').getUTCDay());
-      days.innerHTML = [0, 1, 2, 3, 4, 5, 6].map(i => {
-        const ymd = addDaysYmdLocal(sun, i), future = ymd > today, on = ymd === shown;
-        const label = ymd === today ? '● Today' : eoDayName(ymd).replace(',', '');
-        const cls = on ? 'bg-accent-green text-[#06210f] border-accent-green font-semibold'
-          : 'border-dashed border-[rgba(20,16,8,0.18)] dark:border-[rgba(255,255,255,0.16)] text-opl-inkDim dark:text-op-inkDim hover:border-accent-green/50';
-        return `<button type="button" ${future ? 'disabled' : `onclick="eoPickDay('${ymd}')"`} class="flex-shrink-0 px-3 py-1.5 rounded-full border text-[12px] font-medium transition-colors ${cls} disabled:opacity-40 disabled:cursor-default">${label}</button>`;
-      }).join('');
-    }
+    const R = eoRange || resolvePreset('today');
+    rangePickerPaint('eo-range');
+    const shown = (d && d.date) || R.to;                 // the range's last day
+    const single = R.from === R.to;
+    const isToday = single && R.to === today;
+    const rangeHasToday = R.from <= today && today <= R.to;
+    const rangeWord = R.presetId === 'today' ? 'Today' : single ? eoDayName(R.to) : R.label;
 
     const status = el('eo-status');
     const upd = el('eo-updated');
@@ -38073,38 +38108,40 @@
       return;
     }
 
-    const T = d.today, B = d.budget;
-    const dayWord = isToday ? "Today's sales" : `${eoDayName(shown, true)} sales`;
-    const pct = B.today > 0 ? Math.round(T.sales / B.today * 100) : null, pc = eoPace(pct);
+    // The selected range's figures; `today` is the fallback for a worker without ranges.
+    const T = d.period || d.today, B = d.budget, PB = B.period != null ? B.period : B.today;
+    const sold = d.reportingPeriod != null ? d.reportingPeriod : d.reporting;
+    const dayWord = R.presetId === 'today' ? "Today's sales" : single ? `${eoDayName(R.to, true)} sales` : `${R.label} sales`;
+    const pct = PB > 0 ? Math.round(T.sales / PB * 100) : null, pc = eoPace(pct);
     hero.innerHTML = `
-      <div class="flex items-center justify-between gap-2.5"><span class="${eoLbl}">${dayWord} · All companies</span>${isToday ? eoPill(true, 'Live') : ''}</div>
+      <div class="flex items-center justify-between gap-2.5"><span class="${eoLbl}">${dayWord} · All companies</span>${rangeHasToday ? eoPill(true, 'Live') : ''}</div>
       <div class="mt-3 flex items-start justify-between gap-4">
         <div class="min-w-0">
           <div class="font-geist font-semibold tabular-nums tracking-tight leading-none text-4xl sm:text-5xl text-opl-ink dark:text-op-ink truncate">${fmtDollar(T.sales)}</div>
-          <div class="mt-3 text-sm tabular-nums">${eoDelta(T.sales, B.today)}</div>
+          <div class="mt-3 text-sm tabular-nums">${eoDelta(T.sales, PB)}</div>
           <div class="mt-1.5 ${eoLbl} tabular-nums">Includes ${fmtDollar(T.shipping)} shipping</div>
         </div>
         <div class="text-right flex-shrink-0">
           <div class="${eoLbl}">Pace</div>
           <div class="mt-1 font-geist font-semibold tabular-nums leading-none text-4xl sm:text-5xl tracking-tight" style="color:${pc.ink}">${pct != null ? pct + '%' : '—'}</div>
-          <div class="mt-1.5 text-[12px] text-opl-inkDim dark:text-op-inkDim">${d.reporting} of ${d.companies.length} selling</div>
+          <div class="mt-1.5 text-[12px] text-opl-inkDim dark:text-op-inkDim">${sold} of ${d.companies.length} selling</div>
         </div>
       </div>
       <div class="mt-4">${eoBar(pct, pc.fill, 'h-2.5')}
-        <div class="mt-2 flex items-baseline justify-between text-[13px] text-opl-inkDim dark:text-op-inkDim"><span>$0</span><span class="text-sm font-semibold text-opl-ink dark:text-op-ink tabular-nums">${fmtDollar(B.today)}</span></div>
+        <div class="mt-2 flex items-baseline justify-between text-[13px] text-opl-inkDim dark:text-op-inkDim"><span>$0</span><span class="text-sm font-semibold text-opl-ink dark:text-op-ink tabular-nums">${fmtDollar(PB)}</span></div>
       </div>`;
 
     const chans = [['eBay', T.ebay, EO_CHANNEL], ['Poshmark', T.poshmark, '#8b5cf6']];
     if (T.other > 0) chans.push(['Other', T.other, 'rgba(136,147,167,0.8)']);
     mix.innerHTML = `
-      <div class="flex items-center justify-between"><span class="${eoLbl}">Sales mix · ${isToday ? 'Today' : eoDayName(shown)}</span><span class="text-[12px] text-opl-inkDim dark:text-op-inkDim">${chans.filter(c => c[1] > 0).length} of ${chans.length} channels</span></div>
+      <div class="flex items-center justify-between"><span class="${eoLbl}">Sales mix · ${escapeHtml(rangeWord)}</span><span class="text-[12px] text-opl-inkDim dark:text-op-inkDim">${chans.filter(c => c[1] > 0).length} of ${chans.length} channels</span></div>
       <div class="mt-3 space-y-3">${chans.map(([l, v, c]) => `
         <div><div class="flex items-baseline justify-between text-[13px]"><span class="text-opl-ink dark:text-op-ink"><span style="color:${c}">■</span> ${l}</span><span class="font-semibold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(v)}</span></div>
           <div class="mt-1.5">${eoBar(T.sales > 0 ? v / T.sales * 100 : 0, c)}</div></div>`).join('')}
         <div class="flex items-baseline justify-between text-[13px] text-opl-inkDim dark:text-op-inkDim"><span>Shipping, included above</span><span class="font-semibold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(T.shipping)}</span></div>
       </div>`;
 
-    mx.innerHTML = `<div class="${eoLbl}">Matrix · ${isToday ? 'Today' : eoDayName(shown)}</div>
+    mx.innerHTML = `<div class="${eoLbl}">Matrix · ${escapeHtml(rangeWord)}</div>
       <div class="mt-3 grid grid-cols-4 lg:grid-cols-2 gap-2">
         ${eoMTile('Orders', T.orders.toLocaleString('en-US'))}${eoMTile('Avg order', T.orders ? fmtDollar(T.sales / T.orders) : '—')}
         ${eoMTile('Units', T.units.toLocaleString('en-US'))}${eoMTile('Returns', T.returns.toLocaleString('en-US'))}
@@ -38123,11 +38160,14 @@
         <div class="mt-2 flex items-baseline justify-between text-[13px] text-opl-inkDim dark:text-op-inkDim"><span>${foot}</span><span class="font-semibold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(b)}</span></div>
       </div>`;
     };
-    bud.innerHTML = budgetCard('This week', d.week.sales, B.week, `${dow} of 7 days`)
+    // The week and month of the range's last day, as on the dashboard.
+    const weekLabel = d.weekStart && today >= d.weekStart && today <= addDaysYmdLocal(d.weekStart, 6) ? 'This week' : `Week of ${eoDayName(d.weekStart)}`;
+    bud.innerHTML = budgetCard(weekLabel, d.week.sales, B.week, `${dow} of 7 days`)
       + budgetCard(monthName, d.month.sales, B.month, `${dom} of ${dim} days`);
 
     cards.innerHTML = d.companies.map(c => {
-      const o = c.today, on = o.orders > 0;
+      const o = c.period || c.today, on = o.orders > 0;
+      const liveNow = rangeHasToday && shown === today && c.today.orders > 0;
       const share = T.sales > 0 ? Math.round(o.sales / T.sales * 100) : 0;
       const note = c.companyIds && c.companyIds.length > 1 ? `${c.companyIds.join(' + ')} · eBay + Poshmark` : String(c.id);
       return `<div class="${eoCard}${on ? '' : ' opacity-60'}" data-eo-company="${c.id}">
@@ -38136,19 +38176,19 @@
             <div class="font-brand text-2xl leading-none tracking-wide text-opl-ink dark:text-op-ink truncate">${escapeHtml(c.name)}</div>
             <div class="mt-1.5 text-xs text-opl-inkDim dark:text-op-inkDim">${note}</div>
           </div>
-          ${eoPill(on && isToday, on ? (isToday ? 'Live' : 'Sold') : (isToday ? 'No orders yet' : 'No orders'))}
+          ${eoPill(liveNow, on ? (liveNow ? 'Live' : 'Sold') : (isToday ? 'No orders yet' : 'No orders'))}
         </div>
         <div class="mt-4 flex items-end justify-between gap-3">
           <div class="min-w-0">
             <div class="${eoLbl}">${dayWord}</div>
             ${on ? `<div class="mt-1 font-geist font-semibold tabular-nums tracking-tight leading-none text-[28px] text-opl-ink dark:text-op-ink truncate">${fmtDollar(o.sales)}</div>
               <div class="mt-1.5 text-xs text-opl-inkDim dark:text-op-inkDim tabular-nums">${o.orders} order${o.orders === 1 ? '' : 's'} · ${o.units} unit${o.units === 1 ? '' : 's'}</div>`
-              : `<div class="mt-2 text-base font-medium text-opl-inkDim dark:text-op-inkDim">${isToday ? 'No orders yet today' : 'No orders this day'}</div>`}
+              : `<div class="mt-2 text-base font-medium text-opl-inkDim dark:text-op-inkDim">${isToday ? 'No orders yet today' : single ? 'No orders this day' : 'No orders in this range'}</div>`}
           </div>
           <div id="eo-spark-${c.id}" style="width:104px;height:44px;flex:0 0 auto"></div>
         </div>
         <div class="mt-4">
-          <div class="flex items-center justify-between mb-1.5"><span class="${eoLbl}">Share of E-Commerce ${isToday ? 'today' : 'that day'}</span><span class="text-xs font-semibold tabular-nums text-opl-ink dark:text-op-ink">${share}%</span></div>
+          <div class="flex items-center justify-between mb-1.5"><span class="${eoLbl}">Share of E-Commerce ${R.presetId === 'today' ? 'today' : single ? 'that day' : 'in this range'}</span><span class="text-xs font-semibold tabular-nums text-opl-ink dark:text-op-ink">${share}%</span></div>
           ${eoBar(share, EO_CHANNEL)}
         </div>
         <div class="mt-4 grid grid-cols-3 gap-2">${eoTile('Product', fmtDollar(o.sales - o.shipping))}${eoTile('Shipping', fmtDollar(o.shipping))}${eoTile('Refunded', fmtDollar(o.refunded))}</div>
@@ -38181,38 +38221,213 @@
     return t.toISOString().slice(0, 10);
   }
 
-  // The landing card's figures: today's E-Commerce, fetched when the picker draws and kept a
-  // minute. The Overview page refreshes it too when it loads today.
+  // ── A date-range chip for a page that keeps its OWN range (E-Commerce Overview, the landing
+  // page): the dashboard's chip, presets and custom calendar (RANGE_PRESETS, resolvePreset,
+  // fmtRangeShort), mounted into an empty container. `get` returns the range, `set` takes a new one.
+  // Live Sales carries its own copy of the same idea (lv*); this one is shared by its two users.
+  const RP = {};
+  const RP_BTN = 'w-7 h-7 flex items-center justify-center rounded-[8px] text-base leading-none border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors';
+  function rangePickerMount(id, get, set) {
+    RP[id] = { get, set, month: null, start: null, end: null };
+    const host = el(id);
+    if (!host) return;
+    host.innerHTML = `
+      <button type="button" class="rp-trigger relative h-10 px-3 gap-2 rounded-[10px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink flex items-center justify-center transition-colors hover:border-accent-green/40 focus:outline-none focus:ring-1 focus:ring-accent-green"
+        onclick="rpToggle('${id}', event)" aria-haspopup="true" aria-expanded="false" aria-label="Change date range">
+        <svg class="w-[18px] h-[18px] text-accent-green flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/></svg>
+        <span class="rp-label text-[13px] font-medium whitespace-nowrap max-w-[180px] truncate">—</span>
+        <svg class="rp-chev w-4 h-4 text-opl-inkDim dark:text-op-inkDim flex-shrink-0 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div class="rp-panel hidden absolute top-[calc(100%+10px)] right-0 w-[300px] max-w-[92vw] max-sm:!fixed max-sm:!top-[calc(env(safe-area-inset-top)+64px)] max-sm:!left-3 max-sm:!right-3 max-sm:!w-auto max-sm:!max-w-none bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi rounded-[16px] shadow-2xl z-50 origin-top-right overflow-hidden" onclick="event.stopPropagation()">
+        <div class="rp-list max-h-[70vh] overflow-y-auto py-1"></div>
+        <div class="rp-custom hidden border-t border-[rgba(20,16,8,0.1)] dark:border-op-border">
+          <div class="flex items-center justify-between gap-2 px-3.5 py-2.5">
+            <button type="button" onclick="rpCalNav('${id}', -1)" aria-label="Previous month" class="${RP_BTN}">‹</button>
+            <span class="rp-cal-title text-[12px] font-semibold text-opl-ink dark:text-op-ink text-center flex-1"></span>
+            <button type="button" onclick="rpCalNav('${id}', 1)" aria-label="Next month" class="${RP_BTN}">›</button>
+          </div>
+          <div class="rp-cal-grids px-3 pb-2 grid grid-cols-1 gap-3"></div>
+          <div class="flex items-center justify-between gap-2 px-3.5 py-3 border-t border-[rgba(20,16,8,0.1)] dark:border-op-border">
+            <span class="rp-summary text-[12px] font-medium text-opl-inkDim dark:text-op-inkDim truncate">Pick a start date</span>
+            <div class="flex items-center gap-1.5 flex-shrink-0">
+              <button type="button" onclick="rpCustomCancel('${id}')" class="px-2.5 py-1.5 rounded-[8px] text-[12px] font-semibold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Cancel</button>
+              <button type="button" onclick="rpCustomApply('${id}')" disabled class="rp-apply px-3 py-1.5 rounded-[8px] text-[12px] font-semibold bg-accent-green text-[#0b1220] disabled:opacity-40 disabled:cursor-not-allowed transition-opacity">Apply</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+    rangePickerPaint(id);
+  }
+  const rpIn = (id, sel) => { const h = el(id); return h ? h.querySelector(sel) : null; };
+  function rangePickerPaint(id) {
+    const st = RP[id]; if (!st) return;
+    const r = st.get(), lab = rpIn(id, '.rp-label');
+    if (lab) lab.textContent = r.label;
+    const list = rpIn(id, '.rp-list');
+    if (list) list.innerHTML = RANGE_PRESETS.map(p => {
+      const active = p.id === r.presetId;
+      const border = p.groupEnd ? 'border-b border-[rgba(20,16,8,0.08)] dark:border-op-border' : '';
+      const activeCls = active ? 'bg-accent-green/12 font-semibold' : 'hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.04)] font-medium';
+      return `<button type="button" onclick="rpPick('${id}', '${p.id}')" class="w-full flex items-center justify-between gap-2 px-4 py-2.5 text-left text-[14px] text-opl-ink dark:text-op-ink transition-colors ${activeCls} ${border}"><span>${p.label}</span>`
+        + (active ? '<svg class="w-4 h-4 text-accent-green flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : '')
+        + '</button>';
+    }).join('');
+  }
+  function rpCloseAll() {
+    for (const id of Object.keys(RP)) {
+      const panel = rpIn(id, '.rp-panel'), trig = rpIn(id, '.rp-trigger'), chev = rpIn(id, '.rp-chev');
+      if (panel) panel.classList.add('hidden');
+      if (trig) { trig.setAttribute('aria-expanded', 'false'); trig.classList.remove('border-accent-green/45', 'bg-accent-green/10'); }
+      if (chev) chev.style.transform = '';
+    }
+  }
+  document.addEventListener('click', rpCloseAll);
+  window.rpToggle = (id, e) => {
+    if (e) e.stopPropagation();
+    const panel = rpIn(id, '.rp-panel'); if (!panel) return;
+    const opening = panel.classList.contains('hidden');
+    rpCloseAll();
+    if (!opening) return;
+    window.rpCustomCancel(id);
+    rangePickerPaint(id);
+    panel.classList.remove('hidden');
+    // Pinned right; flip to the left edge when that would run off-screen (a wrapped header).
+    panel.style.left = panel.style.right = '';
+    if (panel.getBoundingClientRect().left < 0) { panel.style.left = '0'; panel.style.right = 'auto'; }
+    const trig = rpIn(id, '.rp-trigger'), chev = rpIn(id, '.rp-chev');
+    if (trig) { trig.setAttribute('aria-expanded', 'true'); trig.classList.add('border-accent-green/45', 'bg-accent-green/10'); }
+    if (chev) chev.style.transform = 'rotate(180deg)';
+  };
+  window.rpPick = (id, presetId) => {
+    const st = RP[id]; if (!st) return;
+    if (presetId === 'custom') {
+      const list = rpIn(id, '.rp-list'), cust = rpIn(id, '.rp-custom');
+      if (list) list.classList.add('hidden');
+      if (cust) cust.classList.remove('hidden');
+      const cur = st.get(), isCustom = cur.presetId === 'custom';
+      st.start = isCustom ? cur.from : null; st.end = isCustom ? cur.to : null;
+      st.month = (st.end || etTodayStr()).slice(0, 7);
+      rpRenderCal(id);
+      return;
+    }
+    const r = resolvePreset(presetId);
+    rpCloseAll();
+    if (r.from && r.to) { st.set(r); rangePickerPaint(id); }
+  };
+  window.rpCustomCancel = (id) => {
+    const list = rpIn(id, '.rp-list'), cust = rpIn(id, '.rp-custom');
+    if (cust) cust.classList.add('hidden');
+    if (list) list.classList.remove('hidden');
+  };
+  window.rpCalNav = (id, dir) => {
+    const st = RP[id]; if (!st) return;
+    const dd = ymdToUTC(st.month + '-01'); dd.setUTCMonth(dd.getUTCMonth() + dir);
+    st.month = dd.toISOString().slice(0, 7); rpRenderCal(id);
+  };
+  window.rpCalPick = (id, ymd) => {
+    const st = RP[id]; if (!st || ymd > etTodayStr()) return;
+    if (!st.start || st.end) { st.start = ymd; st.end = null; }
+    else if (ymd < st.start) { st.end = st.start; st.start = ymd; }
+    else st.end = ymd;
+    rpRenderCal(id);
+  };
+  window.rpCustomApply = (id) => {
+    const st = RP[id]; if (!st || !st.start) return;
+    const r = resolvePreset('custom', st.start, st.end || st.start);
+    window.rpCustomCancel(id); rpCloseAll();
+    if (r.from && r.to) { st.set(r); rangePickerPaint(id); }
+  };
+  function rpMonthGrid(id, ym) {
+    const st = RP[id];
+    const first = ym + '-01', firstDow = ymdToUTC(first).getUTCDay(), days = Number(ymdLastOfMonth(first).slice(8));
+    const today = etTodayStr(), lo = st.start, hi = st.end || st.start;
+    const monthName = new Date(first + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    let cells = '';
+    for (let i = 0; i < firstDow; i++) cells += '<div></div>';
+    for (let dn = 1; dn <= days; dn++) {
+      const ymd = `${ym}-${String(dn).padStart(2, '0')}`, future = ymd > today;
+      const isEnd = lo && (ymd === lo || ymd === hi), inRange = lo && hi && ymd >= lo && ymd <= hi && !isEnd;
+      let cls = 'h-8 flex items-center justify-center text-[12px] rounded-[7px] tabular-nums transition-colors ';
+      if (future) cls += 'opacity-30 cursor-not-allowed text-opl-inkDim dark:text-op-inkDim';
+      else if (isEnd) cls += 'bg-accent-green text-[#0b1220] font-semibold cursor-pointer';
+      else if (inRange) cls += 'bg-accent-green/20 text-opl-ink dark:text-op-ink cursor-pointer';
+      else cls += 'text-opl-ink dark:text-op-ink hover:bg-[rgba(20,16,8,0.06)] dark:hover:bg-[rgba(255,255,255,0.06)] cursor-pointer';
+      cells += `<div ${future ? '' : `onclick="rpCalPick('${id}', '${ymd}')"`} class="${cls}">${dn}</div>`;
+    }
+    const dow = ['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(x => `<div class="h-5 flex items-center justify-center text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim">${x}</div>`).join('');
+    return `<div><div class="text-[11px] font-semibold text-opl-ink dark:text-op-ink mb-1.5 text-center">${monthName}</div>`
+      + `<div class="grid grid-cols-7 gap-0.5 mb-1">${dow}</div><div class="grid grid-cols-7 gap-0.5">${cells}</div></div>`;
+  }
+  function rpRenderCal(id) {
+    const st = RP[id], grids = rpIn(id, '.rp-cal-grids');
+    if (!st || !grids) return;
+    const prevD = ymdToUTC(st.month + '-01'); prevD.setUTCMonth(prevD.getUTCMonth() - 1);
+    const prev = prevD.toISOString().slice(0, 7);
+    grids.innerHTML = rpMonthGrid(id, prev) + rpMonthGrid(id, st.month);
+    const title = rpIn(id, '.rp-cal-title');
+    if (title) {
+      const a = new Date(prev + '-01T12:00:00'), b = new Date(st.month + '-01T12:00:00');
+      title.textContent = `${a.toLocaleDateString('en-US', { month: 'short' })} – ${b.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`;
+    }
+    const summ = rpIn(id, '.rp-summary'), apply = rpIn(id, '.rp-apply');
+    if (summ) summ.textContent = !st.start ? 'Pick a start date' : !st.end ? `${fmtRangeShort(st.start, st.start)} – pick an end` : fmtRangeShort(st.start, st.end);
+    if (apply) apply.disabled = !st.start;
+  }
+
+  // The landing card's figures: E-Commerce for the landing's range, fetched when the picker
+  // draws and kept a minute per range.
   let ecomLanding = null, ecomLandingLoading = false, ecomLandingError = null;
-  function ecomLandingEnsure() {
-    if (ecomLandingLoading || !currentUser || !userBusinesses(currentUser).some(b => b.id === 'ecom')) return;
-    if (ecomLanding && Date.now() - ecomLanding.at < 60e3 && ecomLanding.data.date === getETTodayStr()) return;
-    ecomLandingLoading = true;
-    fetch(`${WORKER_BASE}?action=ecom-overview`, { credentials: 'include', cache: 'no-store' })
+  const ecomKey = (r) => `${r.from}|${r.to}`;
+  function ecomLandingEnsure(range) {
+    if (!currentUser || !userBusinesses(currentUser).some(b => b.id === 'ecom')) return;
+    const key = ecomKey(range);
+    if (ecomLandingLoading === key) return;
+    if (ecomLanding && ecomLanding.key === key && Date.now() - ecomLanding.at < 60e3) return;
+    ecomLandingLoading = key;
+    fetch(`${WORKER_BASE}?action=ecom-overview&from=${range.from}&to=${range.to}`, { credentials: 'include', cache: 'no-store' })
       .then(r => r.json().then(d => ({ r, d })))
       .then(({ r, d }) => {
         if (!r.ok || !d || !d.ok) throw new Error((d && d.error) || `HTTP ${r.status}`);
         if (!ecomShapeOk(d)) throw new Error('The server sent an answer this page cannot read.');
-        ecomLanding = { data: d, at: Date.now() }; ecomLandingError = null;
+        ecomLanding = { data: d, at: Date.now(), key }; ecomLandingError = null;
       })
       .catch(e => { ecomLandingError = e.message || String(e); })
-      .finally(() => { ecomLandingLoading = false; if (currentPage === 'landing') { try { renderLanding(); } catch (_) {} } });
+      .finally(() => { if (ecomLandingLoading === key) ecomLandingLoading = false; if (currentPage === 'landing') { try { renderLanding(); } catch (_) {} } });
   }
-  // null until loaded. Shaped like bargainLaneFigures() where the hero sums them.
-  function ecomFigures() {
+  // null until the landing's range has loaded. Shaped like bargainLaneFigures() where the hero
+  // sums them: the range's sales against the range's budget.
+  function ecomFigures(range) {
     const d = ecomLanding && ecomLanding.data;
-    if (!d || d.date !== getETTodayStr()) return null;
+    if (!d || ecomLanding.key !== ecomKey(range)) return null;
+    const P = d.period || d.today, PB = d.budget.period != null ? d.budget.period : d.budget.today;
     const dom = Number(d.date.slice(8, 10));
     return {
-      total: d.today.sales, budget: d.budget.today,
-      pace: d.budget.today > 0 ? d.today.sales / d.budget.today * 100 : null,
-      // Month to date against the budget through today: the daily share × days so far.
+      total: P.sales, budget: PB,
+      pace: PB > 0 ? P.sales / PB * 100 : null,
+      // Month to date against the budget through the range's last day: the daily share × days.
       mtdActual: d.month.sales, mtdBudget: d.budget.today * dom,
-      reporting: d.reporting, unitCount: d.companies.length,
-      shipping: d.today.shipping, refunded: d.today.refunded,
-      orders: d.today.orders, units: d.today.units, returns: d.today.returns,
+      reporting: d.reportingPeriod != null ? d.reportingPeriod : d.reporting, unitCount: d.companies.length,
+      shipping: P.shipping, refunded: P.refunded,
+      orders: P.orders, units: P.units, returns: P.returns,
     };
   }
+  // Bargain Lane for a range other than Today: the dashboard hero's own sums (blRangeTotals), so
+  // the landing reads exactly what the dashboard reads for the same range. Today keeps
+  // bargainLaneFigures(), which also carries the month to date.
+  function bargainLaneRangeFigures(range) {
+    const T = blRangeTotals(range);
+    const total = T.todayTotal + T.todayAuction, budget = T.todayTotalBudget, orders = T.allOrderCount;
+    return {
+      total, retail: T.todayRetail, bin: T.todayBin, auction: T.todayAuction, orders, budget,
+      reporting: T.reportingStores.size, storeCount: STORES.length,
+      avgCart: orders > 0 ? T.allCartTotal / orders : null,
+      avgItems: orders > 0 ? T.allItemCount / orders : null,
+      pace: budget > 0 ? (total / budget) * 100 : null,
+      mtdActual: null, mtdBudget: null, liveMtd: null,
+    };
+  }
+  // The landing page's own range (Brian, 2026-11-18: landing-only, not shared with the dashboard).
+  let lpRange = null;
 
   // ═══ Live Sales — its own business, phase 1 (migration-085 + ?action=live-sales) ═══
   // Five pages, one module. One fetch covers the chosen range AND its comparison window;
@@ -40070,7 +40285,9 @@
   function lpPaceColour(pct) {
     if (pct == null) return 'text-opl-inkDim dark:text-op-inkDim';
     if (pct >= 100) return 'text-op-good';
-    return pct < 30 ? 'text-op-bad' : 'text-accent-amber';
+    // The dashboard's warn ink: #92400e in light, #f59e0b in dark. text-accent-amber was
+    // #f59e0b in light too, 2.15:1 on the white card (found 2026-11-18 by the landing range check).
+    return pct < 30 ? 'text-op-bad' : 'text-[color:var(--v1-warn)]';
   }
   function lpPaceBar(pct) {
     if (pct == null) return 'bg-[rgba(20,16,8,0.15)] dark:bg-[rgba(255,255,255,0.15)]';
@@ -40094,7 +40311,22 @@
 
   function renderLanding() {
     const biz = userBusinesses(currentUser);
-    const fig = bargainLaneFigures();
+    // The landing's range (its date chip). A preset is re-resolved each time, so Today stays today.
+    lpRange = !lpRange ? resolvePreset('today') : lpRange.presetId === 'custom' ? lpRange : resolvePreset(lpRange.presetId);
+    const LR = lpRange, lpToday = LR.presetId === 'today';
+    if (!RP['lp-range']) rangePickerMount('lp-range', () => lpRange || resolvePreset('today'), (r) => { lpRange = r; renderLanding(); });
+    else rangePickerPaint('lp-range');
+    // Every range, Today included, is Bargain Lane's dashboard figure (blRangeTotals): Today used to
+    // come from bargainLaneFigures(), which adds retail + BIN, while the dashboard adds the till's
+    // total — the two differ whenever the channel split does not sum to the total. Today keeps
+    // bargainLaneFigures() only for its month to date, re-based on the same today figure.
+    const fig = bargainLaneRangeFigures(LR);
+    if (lpToday) {
+      const m = bargainLaneFigures();
+      fig.mtdActual = m.mtdActual - m.total + fig.total;
+      fig.mtdBudget = m.mtdBudget;
+      fig.liveMtd = m.liveMtd;
+    }
     // 🔑 Figures BY BUSINESS. Only Bargain Lane's are computable in this client —
     // bargainLaneFigures() reads Clover feeds — so an id absent from this map has
     // no numbers of its own and must never borrow another business's. The card
@@ -40105,8 +40337,8 @@
     // business" makes that impossible rather than merely unlikely.
     // E-Commerce's come from ?action=ecom-overview (2026-11-18), fetched here and kept a minute;
     // ecomFigures() is null until they land, and this repaints when they do.
-    const FIGURES = { bl: bargainLaneFigures, ecom: ecomFigures };
-    ecomLandingEnsure();
+    const FIGURES = { bl: () => fig, ecom: () => ecomFigures(LR) };
+    ecomLandingEnsure(LR);
     const figOf = {};
     biz.forEach(b => { figOf[b.id] = FIGURES[b.id] ? FIGURES[b.id]() : null; });
     // Businesses that actually contribute money to the group roll-up. NOT the
@@ -40138,8 +40370,11 @@
       hb.className = 'h-full rounded-full transition-[width] duration-500 ' + lpPaceBar(gPace);
     }
     const live = el('landing-hero-live');
-    if (live) live.classList.toggle('hidden', reporting.length === 0);
-    setTxt('landing-hero-mtd', gMtdB > 0
+    const lpNow = getETTodayStr();
+    if (live) live.classList.toggle('hidden', reporting.length === 0 || !(LR.from <= lpNow && lpNow <= LR.to));
+    setTxt('landing-hero-label', `${lpToday ? 'Today' : LR.label} · All businesses`);
+    // Month to date belongs to the Today view; any other range IS the period being read.
+    setTxt('landing-hero-mtd', lpToday && gMtdB > 0
       ? `Month to date · ${fmtDollar(gMtdA)} vs ${fmtDollar(gMtdB)}` : '');
     setTxt('landing-hero-updated', 'Updated ' + new Date().toLocaleTimeString('en-US',
       { hour: 'numeric', minute: '2-digit' }));
@@ -40218,10 +40453,10 @@
         if (!f) {
           card.insertAdjacentHTML('beforeend', ecomLandingError
             ? `<div class="mt-5 text-sm"><span class="font-semibold" style="color:var(--v1-bad)">Couldn’t load E-Commerce sales.</span> <span class="text-opl-inkDim dark:text-op-inkDim">${escapeHtml(ecomLandingError)}</span></div>${enter}`
-            : `<div class="lp-eyebrow mt-5">Today's sales</div><div class="mt-2"><span class="skel" style="display:block;width:8ch;height:28px;border-radius:6px"></span></div>${enter}`);
+            : `<div class="lp-eyebrow mt-5">${lpToday ? "Today's sales" : escapeHtml(LR.label) + ' sales'}</div><div class="mt-2"><span class="skel" style="display:block;width:8ch;height:28px;border-radius:6px"></span></div>${enter}`);
         } else {
           card.insertAdjacentHTML('beforeend',
-            `<div class="lp-eyebrow mt-5">Today's sales</div>
+            `<div class="lp-eyebrow mt-5">${lpToday ? "Today's sales" : escapeHtml(LR.label) + ' sales'}</div>
              <div class="mt-1 text-3xl font-semibold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(f.total)}</div>
              <div class="mt-1 text-sm">${lpDelta(f.total, f.budget)}</div>
              <div class="mt-4 flex items-center justify-between">
@@ -40254,9 +40489,9 @@
       // parent's own figures, said to be included there, and a way in. Never summed.
       if (INSIDE[b.id]) {
         const parent = biz.find(x => x.id === INSIDE[b.id]);
-        const mtd = INSIDE[b.id] === 'bl' && FIGURES.bl ? fig.liveMtd : null;
+        const mtd = INSIDE[b.id] === 'bl' && FIGURES.bl ? (lpToday ? fig.liveMtd : fig.auction) : null;
         card.insertAdjacentHTML('beforeend',
-          `<div class="lp-eyebrow mt-5">Month to date</div>
+          `<div class="lp-eyebrow mt-5">${lpToday ? 'Month to date' : escapeHtml(LR.label)}</div>
            <div class="mt-1 text-3xl font-semibold tabular-nums text-opl-ink dark:text-op-ink">${mtd != null ? fmtDollar(mtd) : '—'}</div>
            <div class="mt-1 text-sm text-opl-inkDim dark:text-op-inkDim">Already in ${parent ? parent.name : 'Bargain Lane'}'s total, not added again</div>
            <div class="mt-auto pt-5 text-right">
@@ -40293,7 +40528,7 @@
       }
 
       card.insertAdjacentHTML('beforeend',
-        `<div class="lp-eyebrow mt-5">Today's net</div>
+        `<div class="lp-eyebrow mt-5">${lpToday ? "Today's net" : escapeHtml(LR.label) + ' net'}</div>
          <div class="mt-1 text-3xl font-semibold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(f.total)}</div>
          <div class="mt-1 text-sm">${lpDelta(f.total, f.budget)}</div>
 
