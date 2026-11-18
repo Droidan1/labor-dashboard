@@ -5536,6 +5536,8 @@ const ACTION_BUSINESS = new Map([
   ["sellercloud-probe", "ecom"],
   // The E-Commerce Overview's figures (2026-11-18), unit-scoped inside the handler.
   ["ecom-overview", "ecom"],
+  // E-Commerce history load (2026-11-18). Superuser-only, POST, inside the handler as well.
+  ["ecom-backfill", "ecom"],
   // Live Sales (migration-085). Phase 1 reads the same live-sales rows Bargain Lane still counts; the
   // whatnot-* actions below stay on bl until the phase-2 cutover moves the money.
   ["live-sales", "live"],
@@ -17313,7 +17315,7 @@ function sellercloudOrderValues(o, companyId, syncedAt) {
 // Copy [from, to) of every E-Commerce company's orders into ecom_orders. UPSERT only: a short
 // fetch adds or updates rows and never removes one. A company whose fetch stops short of
 // Sellercloud's TotalResults is reported `incomplete`.
-async function syncSellercloud(env, { from, to, deep = false, budget = SELLERCLOUD_SYNC_BUDGET, now = new Date() } = {}) {
+async function syncSellercloud(env, { from, to, deep = false, budget = SELLERCLOUD_SYNC_BUDGET, now = new Date(), record = true } = {}) {
   if (!env.DB || !sellercloudReady(env)) return { skipped: "not configured" };
   const sc = sellercloudClient(env, { budget });
   const syncedAt = now.toISOString();
@@ -17343,7 +17345,8 @@ async function syncSellercloud(env, { from, to, deep = false, budget = SELLERCLO
   }
   out.calls = sc.calls;
   out.ok = !out.errors.length && !out.incomplete.length;
-  if (env.SALES_SNAPSHOTS) {
+  // The page's "Synced …" is the 15-minute sync's; a history load does not move it.
+  if (record && env.SALES_SNAPSHOTS) {
     await env.SALES_SNAPSHOTS.put("ecom:sync", JSON.stringify({ at: syncedAt, ok: out.ok, from, to, deep,
       orders: out.orders, incomplete: out.incomplete, errors: out.errors })).catch(() => {});
   }
@@ -17355,7 +17358,7 @@ const ecomDailyBudget = (ymd) => ECOM_MONTHLY_BUDGET / ecomDaysInMonth(ymd);
 
 // The figures behind the Overview page for one Eastern day: today, the week (Sun–Sat) and the
 // month to that day, per company and in all, with the budget. `units` = card ids the caller may see.
-async function ecomOverview(env, date, units) {
+async function ecomOverview(env, date, units, rangeFrom = date) {
   const weekStart = addDaysYmd(date, -new Date(date + "T12:00:00Z").getUTCDay());
   const monthStart = date.slice(0, 8) + "01";
   const from = weekStart < monthStart ? weekStart : monthStart;
@@ -17385,17 +17388,44 @@ async function ecomOverview(env, date, units) {
       if (h != null && h >= 0 && h < 24) p.hours[h] = roundCents(p.hours[h] + r.grand_total);
     }
   }
+  // The selected range [rangeFrom, date] (the page's date picker, 2026-11-18), summed in SQL so
+  // a year costs the same as a day. `today`/`week`/`month` above stay as they were.
+  const period = blank(), perPeriod = new Map(units.map(u => [u, blank()]));
+  if (units.length) {
+    const agg = (await env.DB.prepare(
+      `SELECT unit, company_id, source, COUNT(*) AS n, SUM(grand_total) AS sales, SUM(shipping) AS shipping,
+              SUM(refunded) AS refunded, SUM(units) AS units, SUM(units_returned) AS returns
+         FROM ecom_orders
+        WHERE order_date BETWEEN ? AND ? AND status_code IN (${SELLERCLOUD_SALE_STATUSES.join(",")})
+          AND unit IN (${units.map(() => "?").join(",")})
+        GROUP BY unit, company_id, source`
+    ).bind(rangeFrom, date, ...units).all()).results || [];
+    for (const r of agg) {
+      const p = perPeriod.get(r.unit);
+      if (!p) continue;
+      const ch = r.company_id === SELLERCLOUD_POSHMARK ? "poshmark" : (r.source === 1 || r.source === 2) ? "ebay" : "other";
+      for (const a of [period, p]) {
+        a.sales += r.sales || 0; a.shipping += r.shipping || 0; a.refunded += r.refunded || 0; a.orders += r.n || 0;
+        a.units += r.units || 0; a.returns += r.returns || 0; a[ch] += r.sales || 0;
+      }
+    }
+  }
+  let periodBudget = 0;
+  for (let d = rangeFrom; d <= date; d = addDaysYmd(d, 1)) periodBudget += ecomDailyBudget(d);
   let weekBudget = 0;
   for (let i = 0; i < 7; i++) weekBudget += ecomDailyBudget(addDaysYmd(weekStart, i));
   const companies = SELLERCLOUD_COMPANIES.filter(c => per.has(c.id)).map(c => {
     const p = per.get(c.id);
     return { id: c.id, name: c.name, companyIds: Object.keys(SELLERCLOUD_UNIT_OF).map(Number).filter(k => SELLERCLOUD_UNIT_OF[k] === c.id),
-      today: cents(p.today), week: cents(p.week), month: cents(p.month), hours: p.hours };
+      today: cents(p.today), week: cents(p.week), month: cents(p.month), hours: p.hours, period: cents(perPeriod.get(c.id)) };
   });
-  return { date, weekStart, monthStart,
-    budget: { monthly: ECOM_MONTHLY_BUDGET, today: roundCents(ecomDailyBudget(date)), week: roundCents(weekBudget), month: ECOM_MONTHLY_BUDGET },
-    today: cents(all.today), week: cents(all.week), month: cents(all.month),
-    reporting: companies.filter(c => c.today.orders > 0).length, companies };
+  const days = Math.round((Date.parse(date + "T00:00:00Z") - Date.parse(rangeFrom + "T00:00:00Z")) / 864e5) + 1;
+  return { date, weekStart, monthStart, range: { from: rangeFrom, to: date, days },
+    budget: { monthly: ECOM_MONTHLY_BUDGET, today: roundCents(ecomDailyBudget(date)), week: roundCents(weekBudget), month: ECOM_MONTHLY_BUDGET,
+      period: roundCents(periodBudget) },
+    today: cents(all.today), week: cents(all.week), month: cents(all.month), period: cents(period),
+    reporting: companies.filter(c => c.today.orders > 0).length,
+    reportingPeriod: companies.filter(c => c.period.orders > 0).length, companies };
 }
 
 
@@ -19822,14 +19852,21 @@ export default {
       if (!currentUser) {
         return new Response(JSON.stringify({ error: "Sign in required", code: "NO_SESSION" }), { status: 401, headers: corsJson });
       }
-      const date = url.searchParams.get("date") || getETToday().dateStr;
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || addDaysYmd(date, 0) !== date) {
-        return new Response(JSON.stringify({ error: "date must be YYYY-MM-DD" }), { status: 400, headers: corsJson });
+      // `date` (one day) or `from`+`to` (the page's date picker). `to` is the day today / week /
+      // month are measured to; the range adds `period` figures beside them.
+      const okDay = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || "") && addDaysYmd(d, 0) === d;
+      const date = url.searchParams.get("to") || url.searchParams.get("date") || getETToday().dateStr;
+      const rangeFrom = url.searchParams.get("from") || date;
+      if (!okDay(date) || !okDay(rangeFrom)) {
+        return new Response(JSON.stringify({ error: "date, from and to must be YYYY-MM-DD" }), { status: 400, headers: corsJson });
+      }
+      if (rangeFrom > date || Date.parse(date) - Date.parse(rangeFrom) > 400 * 864e5) {
+        return new Response(JSON.stringify({ error: "from must be on or before to, at most 400 days apart" }), { status: 400, headers: corsJson });
       }
       const allowed = allowedUnits(currentUser, "ecom");
       const units = SELLERCLOUD_COMPANIES.map(c => c.id).filter(id => allowed == null || allowed.map(String).includes(String(id)));
       try {
-        const body = await ecomOverview(env, date, units);
+        const body = await ecomOverview(env, date, units, rangeFrom);
         const raw = env.SALES_SNAPSHOTS ? await env.SALES_SNAPSHOTS.get("ecom:sync") : null;
         let sync = null; try { sync = raw ? JSON.parse(raw) : null; } catch { /* left null */ }
         return new Response(JSON.stringify({ ok: true, connected: sellercloudReady(env), ...body, sync }), { headers: corsJson });
@@ -19839,6 +19876,34 @@ export default {
         }
         throw e;
       }
+    }
+
+    // ── E-Commerce history load (2026-11-18) ───────────────────────
+    //    POST ?action=ecom-backfill   {"from":"YYYY-MM-DD","to":"YYYY-MM-DD"}
+    // Copies Sellercloud's orders for [from, to] into ecom_orders, the same UPSERT the 15-minute
+    // sync does, so the date picker's longer ranges have data (Brian: back to 2025-01-01). Reads
+    // Sellercloud only; writes only ecom_orders; never removes a row. At most 62 days a call, so
+    // one request stays well inside the worker's limits. 🔒 Signed-in superuser, POST only.
+    if (url.searchParams.get("action") === "ecom-backfill") {
+      if (!currentUser || currentUser.role !== "superuser") {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "SUPERUSER_ONLY" }), { status: 403, headers: corsJson });
+      }
+      if (request.method !== "POST") {
+        return new Response(JSON.stringify({ error: "POST only" }), { status: 405, headers: corsJson });
+      }
+      const body = await request.json().catch(() => ({}));
+      const okDay = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || "") && addDaysYmd(d, 0) === d;
+      const { from, to } = body || {};
+      const today = getETToday().dateStr;
+      if (!okDay(from) || !okDay(to) || from > to || to > today || from < "2025-01-01"
+          || Date.parse(to) - Date.parse(from) > 61 * 864e5) {
+        return new Response(JSON.stringify({ error: "from/to must be YYYY-MM-DD, from on or after 2025-01-01, to no later than today, at most 62 days" }), { status: 400, headers: corsJson });
+      }
+      if (!sellercloudReady(env)) {
+        return new Response(JSON.stringify({ error: "Sellercloud is not configured" }), { status: 503, headers: corsJson });
+      }
+      const r = await syncSellercloud(env, { from, to: addDaysYmd(to, 1), record: false });
+      return new Response(JSON.stringify(r), { status: r.ok ? 200 : 502, headers: corsJson });
     }
 
     // ── eBay Cases: read for the page ─────────────────────────────
