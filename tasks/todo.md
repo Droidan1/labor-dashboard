@@ -72,8 +72,13 @@ Companies: 163 Shoes and Fashions · 164 Harrison Avenue · 165 Bass River · 16
       Bargain Lane from blRangeTotals (lifted out of renderDashboard; dashboard byte-identical to main for
       all 13 presets). Found + fixed: landing Today ≠ dashboard Today (retail+BIN vs till total); landing
       amber pace 2.15:1 in light
-- [ ] Brian: deploy the worker FIRST (the page reads `period`; an old worker would show today under a
-      range label), then merge; then approve + run the history load (2025-01-01 → today, 62-day calls)
+- [x] Worker deployed first from a fresh clone of 3d45930: version 69e08c08, 1299.05 KiB = the dry run;
+      3 clean range passes 16:24:52–16:25:12Z. PR #387 merged 16:29:20Z (3043d7a); site served v306 3×.
+      Live check (real data): landing Bargain Lane = dashboard hero for Today / Yesterday / Last Week /
+      This Month / Last Month; hero = Bargain Lane + E-Commerce each time; E-Commerce Yesterday =
+      $3,192.82 (the Sellercloud-verified Nov 17); E-Commerce page chip + refresh + Yesterday cards match
+- [ ] Brian: approve + run the history load (2025-01-01 → today, 62-day calls). Until then E-Commerce
+      reads $0 before Nov 17 (Last Week, Last Month …)
 - [ ] Phase 3: View Details per company
 - [ ] Brian: pick A or B; answer budget / which dollars (order total vs product sales) / add to hero total
 - [ ] Then: the cron → D1 sync, built on what the probe shows; then 2 dashboard previews
