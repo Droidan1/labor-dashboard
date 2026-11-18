@@ -44,7 +44,7 @@ An installable **PWA sales + labor dashboard** for the Bargain Lane / RETJG reta
 🛑 **Do not reach for a date range.** Re-pulling an *already healthy* old date **loses refunds** that have aged out of Clover's ~90-day window — every unnecessary date is a small permanent loss. That's why `repair-run` refuses `start`/`end` outright.
 
 **Give an agent sales, labor, inventory and supply data** — every question an agent can ask is defined once, in
-`cli/reporting.mjs` (`QUERIES`: twenty-two read-only queries, the reading rules, and how each answer is
+`cli/reporting.mjs` (`QUERIES`: thirty read-only queries, including `get_bin_split` and `get_live_item_sales`, the reading rules, and how each answer is
 trimmed; a query with `next` reads every page, run once in `runQuery`). Two surfaces are generated from it, so they cannot drift:
 
 - **CLI** `retjg` (`cli/retjg.mjs`) for agents with a shell (Claude Code, Codex, Muse): `retjg --help`

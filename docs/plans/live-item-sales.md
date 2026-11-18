@@ -195,11 +195,11 @@ Branch `claude/live-item-sales`. Commit at the end of each phase with what chang
       bad config falls back
 
 **Phase 3: tools (CLI + MCP)**
-- [ ] Two `QUERIES` entries; extend `scripts/test-agent-queries.mjs` and
+- [x] Two `QUERIES` entries; extend `scripts/test-agent-queries.mjs` and
       `scripts/test-reporting-read-through.mjs`
-- [ ] Period dates tested for every weekday: `wtd` on Sun = Sun..Sun, on Sat = Sun..Sat; `cycle` on
+- [x] Period dates tested for every weekday: `wtd` on Sun = Sun..Sun, on Sat = Sun..Sat; `cycle` on
       Fri = Fri..Fri, on Sun = Fri..Sun, on Wed = Fri..Wed, on Thu = previous Fri..Wed; `mtd` on the 1st
-- [ ] Correct the reading rule at `cli/reporting.mjs:29` ("after the 03:55 ET nightly run" → about
+- [x] Correct the reading rule at `cli/reporting.mjs:29` ("after the 03:55 ET nightly run" → about
       23:00 ET, 03:55 UTC); every agent reads it in the MCP instructions
 - [ ] `npm test` green; PR with the Testing results; do not merge or deploy
 

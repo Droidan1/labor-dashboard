@@ -26,7 +26,7 @@ export const READING_RULES = [
   'Check wtdDaysReported / mtdDaysReported before using a WTD or MTD figure.',
   'laborActualPct is worked hours x a flat rate / sales, not payroll.',
   'today: salesSoFarToday is till only but todayBudget includes live sales, so stores with live sales read ~2-4% light on pace.',
-  'Retail Summary, category and trailing-week figures cover complete days only: a day appears after the 03:55 ET nightly run. A day with no item snapshot is left out of category sales, not counted as 0.',
+  'Retail Summary, category and trailing-week figures cover complete days only: a day appears after the nightly run, about 23:00 ET (03:55 UTC = 22:55 EST / 23:55 EDT). A day with no item snapshot is left out of category sales, not counted as 0.',
   'Category gpmPct, grossProfit and extCost are only as good as coverage (item = known item cost, category = estimated from a category cost, none = no cost). A high gpmPct with much "none" is not a real margin.',
   'Two labor percents exist and they differ: the Retail Summary laborPct is the source sheet\'s figure; the Labor tools compute hours x $15 / sales. Do not mix them.',
   'Labor: actualLaborPct is null until every selling day in the period has hours (see complete and hoursMissingDays). In the plan, basis "budget-only" means no trend could be computed (reason says why) and recommendedHours is the budget plus 40 ASM hours.',
@@ -117,6 +117,9 @@ const ARG = {
   returnKind: { type: 'enum', flag: 'kind', values: ['refund', 'manual'], description: 'Only payment refunds (refund) or only manual refunds (manual).' },
   returnFilter: { type: 'enum', flag: 'filter', values: ['all', 'flagged'], description: 'all (default) or flagged: only refunds with no item recorded, over $100, or by an employee with 3+ manual refunds that week.' },
   returnLimit: { type: 'integer', flag: 'limit', min: 1, max: 300, description: 'Most refunds to list, newest first. Default 150. Totals always cover everything.' },
+  // Bin split (2026-11-17)
+  period: { type: 'enum', flag: 'period', values: ['today', 'wtd', 'cycle', 'mtd', 'custom'], description: 'today (default); wtd = this Sunday to today; cycle = this bin cycle, Friday to today or Wednesday (on a Thursday, the cycle that just ended); mtd = the 1st to today; custom = from..to.' },
+  groupBy: { type: 'enum', flag: 'group-by', values: ['store', 'price', 'day'], description: 'Break the totals down by store (default), price (each group\'s price tiers, highest first, "no price" last) or day.' },
 };
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -614,6 +617,121 @@ const discountRangeCheck = (a) => {
   if (daysBetween(a.from, a.to) + 1 > 92) throw new UsageError('at most 92 days');
 };
 
+// ── Bin split and live items (2026-11-17, docs/plans/live-item-sales.md) ──────
+// The periods (Brian, 2026-11-17): wtd = the Hub week, Sunday to Saturday; cycle = the bin
+// cycle, Friday to Wednesday, so a Thursday sits outside every cycle and gets the one that
+// just ended. Each: today (ET) → [from, to].
+const BIN_PERIOD = {
+  today: (t) => [t, t],
+  wtd: (t) => [addDays(saturdayEnding(t), -6), t],
+  cycle: (t) => {
+    const fri = addDays(t, -((dayOfWeek(t) + 2) % 7)), wed = addDays(fri, 5);
+    return [fri, wed < t ? wed : t];
+  },
+  mtd: (t) => [t.slice(0, 8) + '01', t],
+};
+const given = (v) => v != null && v !== '';
+const binSplitCheck = (a) => {
+  const custom = a.period === 'custom';
+  if (custom && !(given(a.from) && given(a.to))) throw new UsageError('period custom needs from and to');
+  if (!custom && (given(a.from) || given(a.to))) throw new UsageError('from and to go with period custom');
+  if (custom) {
+    itemRangeCheck(a);
+    if (a.to > todayET()) throw new UsageError('to is after today (Eastern time)');
+  }
+};
+
+// bin-split answers one row per store × date × group × subgroup × tier. Grouped here, units and
+// net only: a row's `tickets` is the sum of its items' order counts, and a ticket holding two
+// kinds of bin counts once in each, so tickets never add up and are left out everywhere.
+const BIN_SUBGROUPS = { regular: ['bins', 'extras'], christmas: ['bins', 'xmas buttons'] };
+const round3 = (n) => Math.round(n * 1000) / 1000;
+// "$12" → 1200, "$0.50" → 50; "no price" (or anything else) → -1, so it sorts last.
+const tierCents = (t) => {
+  const m = /^\$(\d+)(?:\.(\d{1,2}))?$/.exec(t);
+  return m ? Number(m[1]) * 100 + Number((m[2] || '0').padEnd(2, '0')) : -1;
+};
+function binGroup(rows, group) {
+  const out = { units: 0, net: 0, ...Object.fromEntries((BIN_SUBGROUPS[group] || []).map(s => [s, { units: 0, net: 0 }])) };
+  for (const r of rows) {
+    if (r.group !== group) continue;
+    const s = out[r.subgroup] || (out[r.subgroup] = { units: 0, net: 0 });
+    for (const t of [out, s]) { t.units += Number(r.units) || 0; t.net += Number(r.net) || 0; }
+  }
+  for (const t of [out, ...Object.values(out).filter(v => typeof v === 'object')]) { t.units = round3(t.units); t.net = round2(t.net); }
+  return out;
+}
+// Every group (regular, christmas, and any other the worker sends), and Christmas's share of
+// their net, in percent.
+function binBlock(rows, groups) {
+  const out = Object.fromEntries(groups.map(g => [g, binGroup(rows, g)]));
+  const all = groups.reduce((s, g) => s + out[g].net, 0);
+  out.christmasSharePct = all ? round2(out.christmas.net / all * 100) : null;
+  return out;
+}
+function shapeBinSplit(b, a) {
+  const rows = b.rows || [], stores = b.stores || [], f = b.freshness || {};
+  const groups = [...new Set([...Object.keys(BIN_SUBGROUPS), ...rows.map(r => r.group)])];
+  const days = [];
+  for (let d = b.from; d && d <= b.to; d = addDays(d, 1)) days.push(d);
+  const closedFrom = Object.fromEntries((f.closedStores || []).map(c => [c.store, c.closedFrom]));
+  const open = (store, date) => !closedFrom[store] || date < closedFrom[store];
+  // Store-days the answer could not count: unknown, never zero. A closed store-day is a real 0.
+  const notCounted = [
+    ...(f.missingDays || []).map(d => ({ store: d.store, date: d.date, reason: 'missing' })),
+    ...(f.incompleteDays || []).map(d => ({ store: d.store, date: d.date, reason: d.status })),
+    ...(f.beforeRecord || []).map(d => ({ store: d.store, date: d.date, reason: 'before record' })),
+  ];
+  // One slice (a store, or a day): closed, or its counted rows with what it could not count.
+  const slice = (openCount, uncounted, sliceRows, extra = {}) => {
+    if (!openCount) return { status: 'closed', ...extra };
+    const status = !uncounted.length ? 'ok' : uncounted.length < openCount ? 'partial' : 'no_data';
+    return { status, ...extra, ...(status !== 'no_data' && binBlock(sliceRows, groups)), ...(uncounted.length > 0 && { notCounted: uncounted }) };
+  };
+  const by = a.groupBy || 'store';
+  const counted = stores.reduce((n, s) => n + days.filter(d => open(s, d)).length, 0) - notCounted.length;
+  const out = {
+    period: { name: a.period || 'today', from: b.from, to: b.to },
+    stores, groupBy: by, complete: !notCounted.length,
+    totals: counted > 0 ? binBlock(rows, groups) : null,
+  };
+  if (by === 'store') {
+    out.byStore = stores.map(store => ({ store, ...slice(days.filter(d => open(store, d)).length,
+      notCounted.filter(x => x.store === store).map(({ date, reason }) => ({ date, reason })),
+      rows.filter(r => r.store === store), closedFrom[store] ? { closedFrom: closedFrom[store] } : {}) }));
+  } else if (by === 'day') {
+    out.byDay = days.map(date => ({ date, ...slice(stores.filter(s => open(s, date)).length,
+      notCounted.filter(x => x.date === date).map(({ store, reason }) => ({ store, reason })),
+      rows.filter(r => r.date === date)) }));
+  } else {
+    out.byPrice = Object.fromEntries(groups.map(g => {
+      const mine = rows.filter(r => r.group === g);
+      const tiers = [...new Set(mine.map(r => r.tier))].sort((x, y) => tierCents(y) - tierCents(x) || String(x).localeCompare(String(y)));
+      return [g, tiers.map(tier => ({ tier, ...binGroup(mine.filter(r => r.tier === tier), g) }))];
+    }));
+  }
+  out.freshness = b.freshness;
+  out.config = { source: b.config?.source ?? null };
+  return out;
+}
+
+// live-items answers every store with its status; only "ok" carries items. Each item is listed
+// with its store, and a store that is closed or could not be read keeps its status, never 0.
+function shapeLiveItems(b, a) {
+  const q = (a.search || '').trim().toLowerCase();
+  const all = (b.stores || []).flatMap(s => (s.status === 'ok' ? (s.items || []).map(i => ({ store: s.store, ...i })) : []));
+  const matched = all.filter(i => !q || [i.name, i.code, i.cloverCategory, i.l2, i.l3].some(v => String(v || '').toLowerCase().includes(q)));
+  const limit = a.limit || 100;
+  return {
+    date: b.date,
+    complete: (b.stores || []).every(s => s.status === 'ok' || s.status === 'closed'),
+    stores: (b.stores || []).map(({ items, ...s }) => s),
+    matched: matched.length, listed: Math.min(limit, matched.length),
+    matchedTotals: { qty: round3(matched.reduce((s, i) => s + (Number(i.qty) || 0), 0)), net: round2(matched.reduce((s, i) => s + (Number(i.net) || 0), 0)) },
+    items: [...matched].sort((x, y) => y.net - x.net || String(x.name).localeCompare(String(y.name)) || String(x.store).localeCompare(String(y.store))).slice(0, limit),
+  };
+}
+
 // ── Running a query ────────────────────────────────────────────────────────
 // One request, or for a query with `next`, every page (its shape then gets the
 // list of page bodies). The CLI and the MCP server both run queries through here.
@@ -906,5 +1024,31 @@ export const QUERIES = [
     request: (a) => ({ action: 'returns', from: a.from, to: a.to, store: upper(a.storeId), employee: a.employee, kind: a.returnKind,
       filter: a.returnFilter === 'flagged' ? 'flagged' : undefined, limit: a.returnLimit ?? 150 }),
     shape: (b) => { const { ok, ...rest } = b; return rest; },
+  },
+  // ── Bin split and live items (2026-11-17) ──
+  {
+    name: 'get_bin_split', cli: 'bin-split', title: 'Bins vs Christmas bins',
+    description: 'Bins vs Christmas bins (Christmas includes the $1/$3/$8 XMAS register buttons): units and net by store, price '
+      + "tier or day, with totals and Christmas's share of bin net. period: today, wtd (Sunday→Saturday), cycle (Friday→Wednesday; on a "
+      + 'Thursday, the one that just ended), mtd or custom. Saved days plus a live pull: live is till sales before the overnight '
+      + 'refund and discount settling (slightly high), and a late-synced order can sit a day apart. Tickets are per item and never '
+      + 'add up, so none are shown.',
+    args: [opt('period'), opt('from'), opt('to'), opt('storeId'), opt('groupBy')],
+    check: binSplitCheck,
+    request: (a) => {
+      const [from, to] = a.period === 'custom' ? [a.from, a.to] : BIN_PERIOD[a.period || 'today'](todayET());
+      return { action: 'bin-split', from, to, store: upper(a.storeId) };
+    },
+    shape: shapeBinSplit,
+  },
+  {
+    name: 'get_live_item_sales', cli: 'live-items', title: "Today's sales per item (live)",
+    description: "Today's sales per item so far, live from the POS (kept 5 minutes): code, category, L2/L3, qty, net, cost and "
+      + "orders, highest net first, plus each store's totals. Live is till sales before the overnight refund and discount settling "
+      + '(slightly high), and a late-synced order can sit on another day in the saved record. orders is per item: tickets never '
+      + 'add up. A closed or unread store keeps its status, never 0.',
+    args: [opt('storeId'), opt('search'), opt('limit')],
+    request: (a) => ({ action: 'live-items', store: upper(a.storeId) }),
+    shape: shapeLiveItems,
   },
 ];
