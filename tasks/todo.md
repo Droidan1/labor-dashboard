@@ -53,7 +53,12 @@ Companies: 163 Shoes and Fashions · 164 Harrison Avenue · 165 Bass River · 16
       checked against Sellercloud, to the cent: S&F 26 / $2,189.85, Bass River 3 / $244.06, Dymoda 5 /
       $758.91. Month to date fills at the first 4 AM Eastern run (2026-11-19)
 - [x] #385 merged 15:14:32Z (a64b475); main = the deployed worker
-- [ ] Phase 2 (frontend): Overview page (Option 1), landing card A, E-Commerce into the hero total
+- [x] Phase 2 built (6d9d7da, branch `claude/ecom-overview-page`): Overview page (Option 1) from
+      `?action=ecom-overview`; landing card A; E-Commerce into the hero's sales, budget, month to date and mix.
+      browser-ecom-overview.mjs 59 pass (AA both themes, phone, no clipped text), exits 1 on main;
+      npm test 12,396 / 140. Pre-existing on main, unchanged: browser-mobile-menu 6 associate "Submit"
+      failures, browser-live-sales 5 failures
+- [ ] Brian: push + PR #? and merge — merging deploys it (Pages); no worker change
 - [ ] Phase 3: View Details per company
 - [ ] Brian: pick A or B; answer budget / which dollars (order total vs product sales) / add to hero total
 - [ ] Then: the cron → D1 sync, built on what the probe shows; then 2 dashboard previews
