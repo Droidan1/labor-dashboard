@@ -5534,6 +5534,8 @@ const ACTION_BUSINESS = new Map([
   ["ebay-cases", "ecom"],
   // Sellercloud probe (2026-11-18). Superuser-only inside the handler as well.
   ["sellercloud-probe", "ecom"],
+  // The E-Commerce Overview's figures (2026-11-18), unit-scoped inside the handler.
+  ["ecom-overview", "ecom"],
   // Live Sales (migration-085). Phase 1 reads the same live-sales rows Bargain Lane still counts; the
   // whatnot-* actions below stay on bl until the phase-2 cutover moves the money.
   ["live-sales", "live"],
@@ -17257,6 +17259,146 @@ async function sellercloudProbeCompany(sc, company, { from, to, by }) {
   return out;
 }
 
+// ─── Sellercloud sync → ecom_orders (migration-090), and the Overview read ──────────────────────
+// The probe (above) showed the shape for 2026-11-17, and Brian matched it to Sellercloud's own
+// order list: ~34 orders a day, all eBay, tax 0, one page per company. `orderToDate` is EXCLUSIVE
+// of that day (`createdOnTo` is not), so a window is [from, to) by order date.
+//
+// Which company counts on which card. 169 Shoes and Fashions-Poshmark is part of Shoes and
+// Fashions (Brian, 2026-11-18). 168 The Jay Group (Wholesale) is not E-Commerce's and is not read.
+const SELLERCLOUD_UNIT_OF = { 163: 163, 164: 164, 165: 165, 166: 166, 167: 167, 169: 163 };
+const SELLERCLOUD_POSHMARK = 169;
+// Statuses that count as a sale. Left out: 1 ShoppingCart, 300 Quote, 999 Void, -1 Canceled. Rows
+// keep every status, so a cancelled order drops out of the totals when its status changes.
+const SELLERCLOUD_SALE_STATUSES = [2, 3, 100, 200];
+// One budget for E-Commerce as a whole, $57,000 a month (Brian, 2026-11-18: no budget per company),
+// spread evenly over the days of each month. Sales include shipping (Brian, same day).
+const ECOM_MONTHLY_BUDGET = 57000;
+const SELLERCLOUD_SYNC_EVERY_MIN = 15;  // yesterday + today, on the every-minute cron
+const SELLERCLOUD_DEEP_ET_HOUR = 4;     // and once a night, at 4 AM Eastern…
+const SELLERCLOUD_DEEP_DAYS = 35;       // …35 days, so refunds, returns and cancellations land
+const SELLERCLOUD_SYNC_BUDGET = 400;    // calls per run; a 35-day re-read needs ~40
+
+// The window a cron tick syncs, or null when this tick does not sync. `ms` is the tick's time.
+function sellercloudSyncWindow(ms) {
+  const d = new Date(ms);
+  if (d.getUTCMinutes() % SELLERCLOUD_SYNC_EVERY_MIN !== 0) return null;
+  const slot = etHourSlot(ms), today = slot.slice(0, 10);
+  const deep = d.getUTCMinutes() === 0 && Number(slot.slice(11)) === SELLERCLOUD_DEEP_ET_HOUR;
+  return { from: addDaysYmd(today, deep ? -SELLERCLOUD_DEEP_DAYS : -1), to: addDaysYmd(today, 1), deep };
+}
+
+const SELLERCLOUD_UPSERT = `INSERT INTO ecom_orders
+  (order_id, company_id, unit, order_date, order_time, status_code, source, grand_total, shipping,
+   units, units_returned, refunded, synced_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(order_id) DO UPDATE SET company_id = excluded.company_id, unit = excluded.unit,
+    order_date = excluded.order_date, order_time = excluded.order_time, status_code = excluded.status_code,
+    source = excluded.source, grand_total = excluded.grand_total, shipping = excluded.shipping,
+    units = excluded.units, units_returned = excluded.units_returned, refunded = excluded.refunded,
+    synced_at = excluded.synced_at`;
+
+// One Sellercloud order → the row's values. Only these fields are read; the buyer never is.
+function sellercloudOrderValues(o, companyId, syncedAt) {
+  let units = 0, returned = 0, refunded = 0;
+  for (const it of (Array.isArray(o.Items) ? o.Items : [])) {
+    units += scNum(it.Qty); returned += scNum(it.QtyReturned); refunded += scNum(it.TotalRefunded);
+  }
+  const n = (v) => (v == null || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
+  const t = String(o.TimeOfOrder);
+  return [Number(o.ID), companyId, SELLERCLOUD_UNIT_OF[companyId], t.slice(0, 10), t, n(o.StatusCode), n(o.OrderSource),
+    roundCents(scNum(o.GrandTotal)), roundCents(scNum(o.ShippingTotal)), units, returned, roundCents(refunded), syncedAt];
+}
+
+// Copy [from, to) of every E-Commerce company's orders into ecom_orders. UPSERT only: a short
+// fetch adds or updates rows and never removes one. A company whose fetch stops short of
+// Sellercloud's TotalResults is reported `incomplete`.
+async function syncSellercloud(env, { from, to, deep = false, budget = SELLERCLOUD_SYNC_BUDGET, now = new Date() } = {}) {
+  if (!env.DB || !sellercloudReady(env)) return { skipped: "not configured" };
+  const sc = sellercloudClient(env, { budget });
+  const syncedAt = now.toISOString();
+  const out = { from, to, deep, orders: 0, written: 0, incomplete: [], errors: [] };
+  for (const companyId of Object.keys(SELLERCLOUD_UNIT_OF).map(Number)) {
+    try {
+      let total = null, fetched = 0;
+      for (let page = 1; ; page++) {
+        const body = await sc.get("/Orders", { companyID: [companyId], orderFromDate: from, orderToDate: to, pageSize: SELLERCLOUD_PAGE, pageNumber: page });
+        const items = (body && Array.isArray(body.Items)) ? body.Items : [];
+        if (total == null && body && body.TotalResults != null) total = Number(body.TotalResults);
+        fetched += items.length;
+        // An order from another company (a filter Sellercloud ignored) is not this company's to write.
+        const mine = items.filter(o => Number(o.CompanyID) === companyId && o.ID != null && o.TimeOfOrder);
+        if (mine.length) {
+          await env.DB.batch(mine.map(o => env.DB.prepare(SELLERCLOUD_UPSERT).bind(...sellercloudOrderValues(o, companyId, syncedAt))));
+          out.written += mine.length;
+        }
+        if (items.length < SELLERCLOUD_PAGE || (total != null && fetched >= total)) break;
+      }
+      out.orders += fetched;
+      if (total != null && fetched < total) out.incomplete.push({ company: companyId, fetched, total });
+    } catch (e) {
+      out.errors.push({ company: companyId, status: e.status || null, message: String((e && e.message) || e).slice(0, 200) });
+      if (e instanceof SellercloudBudgetError || /no such table/i.test(String(e && e.message))) break;
+    }
+  }
+  out.calls = sc.calls;
+  out.ok = !out.errors.length && !out.incomplete.length;
+  if (env.SALES_SNAPSHOTS) {
+    await env.SALES_SNAPSHOTS.put("ecom:sync", JSON.stringify({ at: syncedAt, ok: out.ok, from, to, deep,
+      orders: out.orders, incomplete: out.incomplete, errors: out.errors })).catch(() => {});
+  }
+  return out;
+}
+
+const ecomDaysInMonth = (ymd) => new Date(Date.UTC(Number(ymd.slice(0, 4)), Number(ymd.slice(5, 7)), 0)).getUTCDate();
+const ecomDailyBudget = (ymd) => ECOM_MONTHLY_BUDGET / ecomDaysInMonth(ymd);
+
+// The figures behind the Overview page for one Eastern day: today, the week (Sun–Sat) and the
+// month to that day, per company and in all, with the budget. `units` = card ids the caller may see.
+async function ecomOverview(env, date, units) {
+  const weekStart = addDaysYmd(date, -new Date(date + "T12:00:00Z").getUTCDay());
+  const monthStart = date.slice(0, 8) + "01";
+  const from = weekStart < monthStart ? weekStart : monthStart;
+  const blank = () => ({ sales: 0, shipping: 0, refunded: 0, orders: 0, units: 0, returns: 0, ebay: 0, poshmark: 0, other: 0 });
+  const add = (a, r) => {
+    a.sales += r.grand_total; a.shipping += r.shipping; a.refunded += r.refunded; a.orders++;
+    a.units += r.units; a.returns += r.units_returned;
+    const ch = r.company_id === SELLERCLOUD_POSHMARK ? "poshmark" : (r.source === 1 || r.source === 2) ? "ebay" : "other";
+    a[ch] += r.grand_total;
+  };
+  const cents = (a) => { for (const k of ["sales", "shipping", "refunded", "ebay", "poshmark", "other"]) a[k] = roundCents(a[k]); return a; };
+  const all = { today: blank(), week: blank(), month: blank() };
+  const per = new Map(units.map(u => [u, { today: blank(), week: blank(), month: blank(), hours: new Array(24).fill(0) }]));
+  if (units.length) {
+    const rows = (await env.DB.prepare(
+      `SELECT unit, company_id, order_date, order_time, source, grand_total, shipping, units, units_returned, refunded
+         FROM ecom_orders
+        WHERE order_date BETWEEN ? AND ? AND status_code IN (${SELLERCLOUD_SALE_STATUSES.join(",")})
+          AND unit IN (${units.map(() => "?").join(",")})`
+    ).bind(from, date, ...units).all()).results || [];
+    for (const r of rows) {
+      const p = per.get(r.unit);
+      if (!p) continue;
+      const spans = [["month", r.order_date >= monthStart], ["week", r.order_date >= weekStart], ["today", r.order_date === date]];
+      for (const [k, inside] of spans) if (inside) { add(all[k], r); add(p[k], r); }
+      const h = r.order_date === date && /T\d{2}/.test(r.order_time || "") ? Number(r.order_time.slice(11, 13)) : null;
+      if (h != null && h >= 0 && h < 24) p.hours[h] = roundCents(p.hours[h] + r.grand_total);
+    }
+  }
+  let weekBudget = 0;
+  for (let i = 0; i < 7; i++) weekBudget += ecomDailyBudget(addDaysYmd(weekStart, i));
+  const companies = SELLERCLOUD_COMPANIES.filter(c => per.has(c.id)).map(c => {
+    const p = per.get(c.id);
+    return { id: c.id, name: c.name, companyIds: Object.keys(SELLERCLOUD_UNIT_OF).map(Number).filter(k => SELLERCLOUD_UNIT_OF[k] === c.id),
+      today: cents(p.today), week: cents(p.week), month: cents(p.month), hours: p.hours };
+  });
+  return { date, weekStart, monthStart,
+    budget: { monthly: ECOM_MONTHLY_BUDGET, today: roundCents(ecomDailyBudget(date)), week: roundCents(weekBudget), month: ECOM_MONTHLY_BUDGET },
+    today: cents(all.today), week: cents(all.week), month: cents(all.month),
+    reporting: companies.filter(c => c.today.orders > 0).length, companies };
+}
+
+
 // ─── Whatnot Seller API (2026-10-30) ─────────────────────────────────────────
 // Brian (2026-10-30): pull Whatnot into the Hub through the Seller API, read-only: every
 // item sold per show, show analytics, and products. Since 2026-11-04 it is also the ONLY source
@@ -19668,6 +19810,35 @@ export default {
       }
       out.calls = sc.calls; out.throttled = sc.throttled; out.ms = Date.now() - started;
       return new Response(JSON.stringify(out), { status: out.ok ? 200 : 502, headers: corsJson });
+    }
+
+    // ── E-Commerce Overview (2026-11-18) ───────────────────────────
+    //    GET ?action=ecom-overview[&date=YYYY-MM-DD]   (default: today, Eastern)
+    // Today, week (Sun–Sat) and month to date from ecom_orders, per company and in all, with the
+    // $57,000-a-month budget. The business gate decides WHETHER you reach E-Commerce; allowedUnits
+    // decides WHICH companies. 🔒 A signed-in user only: the public X-Snapshot-Secret has no user,
+    // and allowedUnits would read "no user" as every company.
+    if (url.searchParams.get("action") === "ecom-overview" && request.method === "GET") {
+      if (!currentUser) {
+        return new Response(JSON.stringify({ error: "Sign in required", code: "NO_SESSION" }), { status: 401, headers: corsJson });
+      }
+      const date = url.searchParams.get("date") || getETToday().dateStr;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || addDaysYmd(date, 0) !== date) {
+        return new Response(JSON.stringify({ error: "date must be YYYY-MM-DD" }), { status: 400, headers: corsJson });
+      }
+      const allowed = allowedUnits(currentUser, "ecom");
+      const units = SELLERCLOUD_COMPANIES.map(c => c.id).filter(id => allowed == null || allowed.map(String).includes(String(id)));
+      try {
+        const body = await ecomOverview(env, date, units);
+        const raw = env.SALES_SNAPSHOTS ? await env.SALES_SNAPSHOTS.get("ecom:sync") : null;
+        let sync = null; try { sync = raw ? JSON.parse(raw) : null; } catch { /* left null */ }
+        return new Response(JSON.stringify({ ok: true, connected: sellercloudReady(env), ...body, sync }), { headers: corsJson });
+      } catch (e) {
+        if (/no such table/i.test(String(e && e.message))) {
+          return new Response(JSON.stringify({ ok: false, setup: false, error: "ecom_orders is missing (migration-090)" }), { status: 503, headers: corsJson });
+        }
+        throw e;
+      }
     }
 
     // ── eBay Cases: read for the page ─────────────────────────────
@@ -33240,6 +33411,14 @@ export default {
       ctx.waitUntil(retailDrainQueue(env)
         .then(r => { if (!r.idle && !r.skipped) console.log("retail-drain:", JSON.stringify(r)); })
         .catch(e => console.error("retail-drain threw:", (e && e.stack) || e)));
+      // E-Commerce: Sellercloud → ecom_orders every 15 minutes (35 days once a night). Its own
+      // waitUntil, so Sellercloud being down cannot touch the jobs above.
+      const scWindow = sellercloudSyncWindow(Number.isFinite(event.scheduledTime) ? event.scheduledTime : Date.now());
+      if (scWindow && sellercloudReady(env)) {
+        ctx.waitUntil(syncSellercloud(env, scWindow)
+          .then(r => console.log("sellercloud-sync:", JSON.stringify({ ...r, errors: r.errors && r.errors.length })))
+          .catch(e => console.error("sellercloud-sync threw:", (e && e.stack) || e)));
+      }
       return;
     }
 
