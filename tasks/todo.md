@@ -50,6 +50,12 @@ revise it. Revised plan: [docs/plans/live-item-sales.md](../docs/plans/live-item
       length, so the version probe was the real check). Landed: 3 clean passes at 1.7.0 / 34 tools from 00:46:50Z
 - [ ] Brian: refresh the MCP connector in Claude; add the bin vs Christmas line to Muse's morning brief (outside repo)
 - [ ] One Fri–Wed cycle: each night, a live pull just before the nightly run vs the row it saves (> 1% = look)
+- [x] Branches archived (2026-11-18, Brian): the 4 merged branches deleted on origin (`--force-with-lease`) and
+      locally. Every tip is in main, so nothing is lost. Restore one with `git push origin <sha>:refs/heads/<branch>`:
+      claude/live-item-sales 9eb1fd145c3962362d46355b1a0f50a66be339de (#380) ·
+      claude/bin-split 1e0ed285235ab3fd3d81da0aa448d133978f1d4f (#381) ·
+      claude/live-item-tools 441b8a2f83772be0f8390f3ccbab3af5d9bf9575 (#382) ·
+      claude/mcp-1.7.0 64dd68f26a963cce364f00c7a6d1752b0af20ea0 (#383)
 
 # Discounts & Returns reporting (2026-11-12) — the page (PR 2 of 2)
 
