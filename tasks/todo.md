@@ -20,11 +20,28 @@ Oct 15 and Jun 10 Shoes and Fashions) carry SiteCost, AverageCost or LastCost, 0
 - [x] Tests: `test-ecom-items.mjs` 49 (6 mutants caught); `browser-ecom-company.mjs` 67, both themes +
       phone (4 mutants caught: focus, refresh, margin gate, double fetch). `npm test` 12,507 / 141 green.
       Worker dry run 1316.39 KiB.
-- [ ] Brian: migration-091 on prod → worker deploy → merge (#391 first, this PR is stacked on it).
-- [ ] Brian's yes: re-run the history load so earlier orders get their products (rule 7: rewrites
-      ecom_orders rows with the same values and adds ecom_order_items).
-- [ ] After the reload: measure how often a SKU sells more than once (titles carry an item number, so
-      SKUs may be one-of-a-kind and the table one row per item sold).
+- [x] migration-091 on prod (schema checked read-only), worker e489f8ff (3/3 clean passes; the 20:45
+      sync stored every Nov 17–18 order's lines, line totals = order − shipping), #391 + #392 merged,
+      Pages cache v310 (3/3). Live tab: S&F Yesterday $1,920.12 product sales = Sellercloud's line total.
+- [x] History reload (Brian's yes): 7 × 62 days, 21,187 orders, 23,671 lines, 0 incomplete, 0 errors;
+      every order has its lines.
+- [x] SKU repeats measured: NOT one-of-a-kind — S&F 3,352 of 11,802 SKUs sold more than once (61% of
+      its sales).
+
+**Review (2026-11-18).** Two things the line cross-check turned up, neither from the Items code:
+- 526 S&F orders' totals exceed their lines by exactly Sellercloud's tax (checked to the cent on two
+  days), ~$2.3k over the year: E-Commerce Sales include sales tax. Never decided; Brian asked for
+  shipping in, not tax.
+- $0 orders count as sales: 3 Wholesale lots (source 21, 69,074 units), 3 Local store (1,738 units),
+  8 eBay replacements. They inflate Orders and Units on the Overview and View Details and top Items
+  By units. Proposed fix: an order counts as a sale only above $0 — Brian to decide.
+
+**$0 orders (Brian 2026-11-18: "Yes, fix it")** — branch `claude/ecom-zero-orders`
+- [x] One rule, `ECOM_SALE`: a sale status AND `grand_total > 0`, used by all five reads (Overview ×2,
+      View Details, Items rows, Items orders-sold). $0 orders stay in the table, status mix and orders list.
+- [x] Tests: test-ecom-sync 94, test-ecom-items 50; 6 mutants caught (the rule, and each read on its
+      own). `npm test` 12,514 / 141 green. Worker dry run 1316.34 KiB. No page change.
+- [ ] Brian: deploy the worker (that is the release), then merge.
 
 # E-Commerce: Sellercloud + E-Commerce front door (2026-11-18) — branch `claude/ecom-sellercloud`, unpushed
 

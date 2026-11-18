@@ -8,7 +8,7 @@
 //   - A cost of 0 is stored as NULL (0 would read as a 100% margin); a real cost is kept.
 //   - Worker ahead of migration-091: orders still sync, lines are reported skipped.
 //   - No buyer data reaches the table or the read.
-//   - The read groups by SKU (by name when there is none), counts sale statuses only, keeps
+//   - The read groups by SKU (by name when there is none), counts sales only (no $0 orders), keeps
 //     Poshmark on Shoes and Fashions, sorts by sales or units, searches name and SKU with % and _
 //     taken literally, caps the rows but not the totals, and says how many orders have lines.
 //   - Who sees what is ecom-company's door: scoped managers, non-financial roles, the snapshot
@@ -168,6 +168,14 @@ const lines = (where = '1=1') => db.prepare(`SELECT * FROM ecom_order_items WHER
 
   const cost = await items(env, '&company=164&from=2026-11-18&to=2026-11-18');
   eq([cost.body.items[0].cost, cost.body.items[0].costedSales, cost.body.totals.coverage, cost.body.totals.cost], [20, 50, 1, 20], 'a costed line carries cost, and coverage is 1');
+
+  // A $0 order is not a sale (Brian, 2026-11-18): a Wholesale lot's 37,875 units must not top By units.
+  db.prepare(`INSERT INTO ecom_orders (order_id, company_id, unit, order_date, status_code, source, grand_total, units, synced_at) VALUES (990001, 163, 163, '2026-11-18', 2, 21, 0, 37875, 'x')`).run();
+  db.prepare(`INSERT INTO ecom_order_items (order_id, line_no, company_id, unit, order_date, sku, name, qty, line_total, synced_at) VALUES (990001, 1, 163, 163, '2026-11-18', '50196', 'FG TJX - APPAREL', 37875, 0, 'x')`).run();
+  const zero = await items(env, '&company=163&from=2026-11-17&to=2026-11-18&sort=units');
+  eq([zero.body.items.map(x => x.sku), zero.body.totals.units, zero.body.orders.sold], [['JO-2', 'RW-1', null, 'PM-1'], 8, 5], 'a $0 order\'s lines are not products sold, and it is not an order sold');
+  db.prepare('DELETE FROM ecom_order_items WHERE order_id = 990001').run();
+  db.prepare('DELETE FROM ecom_orders WHERE order_id = 990001').run();
 
   const bass = await items(env, '&company=165&from=2026-11-18&to=2026-11-18');
   eq([bass.body.items.length, bass.body.totals.products, bass.body.items[0].sku], [60, 60, 'BR-59'], '60 products, best seller first');

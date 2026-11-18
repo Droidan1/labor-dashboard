@@ -17295,6 +17295,11 @@ const SELLERCLOUD_POSHMARK = 169;
 // Statuses that count as a sale. Left out: 1 ShoppingCart, 300 Quote, 999 Void, -1 Canceled. Rows
 // keep every status, so a cancelled order drops out of the totals when its status changes.
 const SELLERCLOUD_SALE_STATUSES = [2, 3, 100, 200];
+// What counts as a sale, for every E-Commerce read: a sale status AND a total above $0 (Brian,
+// 2026-11-18). A $0 order is stock moving, not a sale — Wholesale lots (source 21, one of them
+// 37,875 units), Local store transfers and eBay replacements were adding orders and units with no
+// sales. They stay in the table, the status mix and the orders list. `a` is the table alias.
+const ECOM_SALE = (a = "") => `${a}status_code IN (${SELLERCLOUD_SALE_STATUSES.join(",")}) AND ${a}grand_total > 0`;
 // One budget for E-Commerce as a whole, $57,000 a month (Brian, 2026-11-18: no budget per company),
 // spread evenly over the days of each month. Sales include shipping (Brian, same day).
 const ECOM_MONTHLY_BUDGET = 57000;
@@ -17429,7 +17434,7 @@ const ecomYearBack = (ymd) => {           // same date a year earlier; Feb 29 �
   return addDaysYmd(y, 0) === y ? y : y.slice(0, 8) + "28";
 };
 async function ecomCompany(env, unit, from, to) {
-  const SALE = `status_code IN (${SELLERCLOUD_SALE_STATUSES.join(",")})`;
+  const SALE = ECOM_SALE();
   const AGG = `COUNT(*) AS orders, COALESCE(SUM(units), 0) AS units, COALESCE(SUM(grand_total), 0) AS sales,
     COALESCE(SUM(shipping), 0) AS shipping, COALESCE(SUM(refunded), 0) AS refunded, COALESCE(SUM(units_returned), 0) AS returns,
     COALESCE(SUM(CASE WHEN company_id = ${SELLERCLOUD_POSHMARK} THEN grand_total ELSE 0 END), 0) AS poshmark,
@@ -17485,7 +17490,8 @@ async function ecomCompany(env, unit, from, to) {
 // ── One company's Items tab (Option A, Brian 2026-11-18) ──────────────────────────────────────
 // Products sold in [from, to], one row per SKU (a line with no SKU groups by its name): units,
 // sales (line totals — shipping is per order, so it is not in here), orders, returns, refunds,
-// last day sold. Sale statuses only, judged by the order's status now. The top
+// last day sold. Sales only (ECOM_SALE: a sale status and a total above $0), judged by the order
+// as it is now. The top
 // ECOM_ITEMS_LIMIT rows by sales or units; `totals` covers every product in the range and is
 // what Share divides by, `matched` the ones a search finds. Cost: the unit cost is site cost,
 // else average, else last (Sellercloud's own P&L uses site cost); `coverage` is the share of
@@ -17495,7 +17501,7 @@ async function ecomItems(env, unit, from, to, { sort = "sales", q = "" } = {}) {
   const UC = "COALESCE(i.site_cost, i.average_cost, i.last_cost)";
   const KEY = "COALESCE(i.sku, i.name, '')";
   const base = `FROM ecom_order_items i JOIN ecom_orders o ON o.order_id = i.order_id
-    WHERE i.unit = ? AND i.order_date BETWEEN ? AND ? AND o.status_code IN (${SELLERCLOUD_SALE_STATUSES.join(",")})`;
+    WHERE i.unit = ? AND i.order_date BETWEEN ? AND ? AND ${ECOM_SALE("o.")}`;
   const args = [unit, from, to];
   const needle = String(q || "").trim().slice(0, 80);
   const like = "%" + needle.replace(/[\\%_]/g, (m) => "\\" + m) + "%";
@@ -17527,7 +17533,7 @@ async function ecomItems(env, unit, from, to, { sort = "sales", q = "" } = {}) {
   // How much of the range has its products stored: orders sold vs orders with lines kept.
   const kept = await env.DB.prepare(
     `SELECT COUNT(*) AS orders, COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM ecom_order_items x WHERE x.order_id = o.order_id) THEN 1 ELSE 0 END), 0) AS withLines
-       FROM ecom_orders o WHERE o.unit = ? AND o.order_date BETWEEN ? AND ? AND o.status_code IN (${SELLERCLOUD_SALE_STATUSES.join(",")})`
+       FROM ecom_orders o WHERE o.unit = ? AND o.order_date BETWEEN ? AND ? AND ${ECOM_SALE("o.")}`
   ).bind(unit, from, to).first();
   const c = SELLERCLOUD_COMPANIES.find(x => x.id === unit);
   const days = Math.round((Date.parse(to + "T00:00:00Z") - Date.parse(from + "T00:00:00Z")) / 864e5) + 1;
@@ -17560,7 +17566,7 @@ async function ecomOverview(env, date, units, rangeFrom = date) {
     const rows = (await env.DB.prepare(
       `SELECT unit, company_id, order_date, order_time, source, grand_total, shipping, units, units_returned, refunded
          FROM ecom_orders
-        WHERE order_date BETWEEN ? AND ? AND status_code IN (${SELLERCLOUD_SALE_STATUSES.join(",")})
+        WHERE order_date BETWEEN ? AND ? AND ${ECOM_SALE()}
           AND unit IN (${units.map(() => "?").join(",")})`
     ).bind(from, date, ...units).all()).results || [];
     for (const r of rows) {
@@ -17580,7 +17586,7 @@ async function ecomOverview(env, date, units, rangeFrom = date) {
       `SELECT unit, company_id, source, COUNT(*) AS n, SUM(grand_total) AS sales, SUM(shipping) AS shipping,
               SUM(refunded) AS refunded, SUM(units) AS units, SUM(units_returned) AS returns
          FROM ecom_orders
-        WHERE order_date BETWEEN ? AND ? AND status_code IN (${SELLERCLOUD_SALE_STATUSES.join(",")})
+        WHERE order_date BETWEEN ? AND ? AND ${ECOM_SALE()}
           AND unit IN (${units.map(() => "?").join(",")})
         GROUP BY unit, company_id, source`
     ).bind(rangeFrom, date, ...units).all()).results || [];
