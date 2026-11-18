@@ -1,3 +1,33 @@
+# E-Commerce: Sellercloud + E-Commerce front door (2026-11-18) — branch `claude/ecom-sellercloud`, unpushed
+
+**Ask (Brian):** start E-Commerce again. eBay Cases becomes its own page, not the business's home. Five
+Sellercloud companies get a card each, like Bargain Lane's stores. Set up the Sellercloud pull (read-only
+account, email from Sellercloud's admin 2026-11-18), then 2 previews of the landing card; after approval,
+2 previews of the Sellercloud dashboard. "View Details" per card comes later.
+
+Companies: 163 Shoes and Fashions · 164 Harrison Avenue · 165 Bass River · 166 Detail Pro · 167 Dymoda
+(the account sees seven). API: `https://jay.api.sellercloud.us/rest/api`, Swagger at `/rest/swagger/ui/`.
+
+- [x] Read this server's Swagger: Orders filters (`companyID`, `orderFromDate`/`orderToDate`,
+      `createdOnFrom`/`To`, pageSize ≤ 50), StatusCode 1 cart · 2 in process · 3 completed · 100 problem ·
+      200 on hold · 300 quote · 999 void · -1 canceled; OrderSource = channel
+- [x] Worker probe `?action=sellercloud-probe` (ffdfa43): superuser session only (never X-Snapshot-Secret),
+      business gate `ecom`, 503 until `SELLERCLOUD_USERNAME`/`SELLERCLOUD_PASSWORD` secrets exist. One day
+      per company: totals, status + channel mix, raw TimeOfOrder samples, and whether the company filter held.
+      No buyer data returned. test-sellercloud.mjs 53 pass; 3 mutants caught (superuser check, company
+      filter flag, throttle body)
+- [x] E-Commerce opens on a new Overview page (0c8d244); eBay Cases keeps its page, sidebar item and tab.
+      Overview says sales are not connected yet. browser-mobile-menu pins it (fails on main); its 6 associate
+      "Submit" failures are pre-existing on main. sw cache v304 (6ea82bc)
+- [x] `npm test`: 12,291 / 138 green on the base; branch adds test-sellercloud.mjs
+- [x] Landing card previews A (Bargain Lane layout) / B (by company): https://claude.ai/artifact/HQpK1fR7NYvswbzDxrJNX5
+- [ ] Brian: push + PR; set the two secrets and deploy the worker; run the probe for one day and check it
+      against Sellercloud's own report for that day
+- [ ] Brian: pick A or B; answer budget / which dollars (order total vs product sales) / add to hero total
+- [ ] Then: the cron → D1 sync, built on what the probe shows; then 2 dashboard previews
+- ⚠️ The Sellercloud password was pasted into the chat; Claude did not store or use it. Consider a rotation
+      once the secret is set.
+
 # Live Item Sales & Bin Split (2026-11-17) — LIVE: all three phases (2026-11-18)
 
 **Ask (Brian):** review the PDF build plan for live item sales and the bin vs Christmas bin split, then

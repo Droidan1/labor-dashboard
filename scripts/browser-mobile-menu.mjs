@@ -92,9 +92,10 @@ const EXPECT = {
     // Buy (2026-10-01): Price Scan's Buy sheet, for an associate who can print.
     bar: ['Bin Dump', 'MOS', 'Price Scan', 'Buy', 'Sign Studio', 'Menu'],
     menu: [['Merchandising', ['merch-scan', 'merch-signs']], ['Inventory', ['bin-dump', 'mos']], ['Account', ['@signout']]] },
+  // E-Commerce (2026-11-18): Overview is the front door and eBay Cases its own page.
   ecom: { role: 'superuser', businesses: [BL, ECOM], biz: 'ecom',
-    bar: ['eBay Cases', 'Menu'],
-    menu: [['E-Commerce', ['ebay-cases']], ['Account', ['@switch', 'settings', '@signout']]] },
+    bar: ['Overview', 'eBay Cases', 'Menu'],
+    menu: [['E-Commerce', ['ecom-overview', 'ebay-cases']], ['Account', ['@switch', 'settings', '@signout']]] },
   // Live Sales (migration-085): four tabs + Menu. The Show Calendar took Auction's tab (2026-11-03), so
   // Online Auction and Promotion are reached from the Menu.
   live: { role: 'superuser', businesses: [BL, ECOM, LIVE], biz: 'live',
@@ -188,6 +189,17 @@ for (const key of Object.keys(EXPECT)) {
   const sub = bar.tabs.find(t => t.id === 'bn-submit-photos');
   if (key === 'manager') check(sub && Math.abs(sub.cx - bar.cx) <= 1, `${key}: Submit sits dead centre (off by ${sub ? (sub.cx - bar.cx).toFixed(2) : '?'}px)`);
   check(bar.tabs.filter(t => t.on).length === 1, `${key}: exactly one tab is lit on the landing page`);
+
+  // E-Commerce opens on its Overview, not on eBay Cases (Brian, 2026-11-18).
+  if (key === 'ecom') {
+    eq(await visiblePages(page), ['page-ecom-overview'], `${key}: the business opens on its Overview page`);
+    check(bar.tabs.find(t => t.id === 'bn-ecom-overview')?.on, `${key}: and the Overview tab is the lit one`);
+    await page.click('#bn-ebay-cases');
+    await page.waitForTimeout(150);
+    eq(await visiblePages(page), ['page-ebay-cases'], `${key}: eBay Cases is its own page, one tap away`);
+    await page.click('#bn-ecom-overview');
+    await page.waitForTimeout(150);
+  }
 
   // Open the Menu from the bar, like a thumb would.
   const from = (await visiblePages(page))[0];
