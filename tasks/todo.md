@@ -64,6 +64,16 @@ Companies: 163 Shoes and Fashions · 164 Harrison Avenue · 165 Bass River · 16
       Bargain Lane $3,063.09 + E-Commerce; Overview cards S&F 1 / $47.38, Dymoda 4 / $639.93 = D1 to the cent
 - ⚠️ Until the first 4 AM Eastern deep sync (2026-11-19), This week / November / the hero's month to date
       cover only Nov 17–18 ($3,880.13), so they read low against the budget for the rest of today
+- [x] Before phase 3 (Brian, 2026-11-18): the dashboard's date picker + refresh on the E-Commerce
+      Overview, and the date picker on the landing page. Brian: landing range is landing-only; load
+      history back to 2025-01-01 (he approves the run); Refresh just reloads. Branch `claude/ecom-range-picker`:
+      ff0df3d worker (ecom-overview from/to + period figures; POST ecom-backfill, superuser, ≤ 62 days),
+      530cf61 E-Commerce picker + refresh (shared rangePickerMount), edb1760 landing picker with
+      Bargain Lane from blRangeTotals (lifted out of renderDashboard; dashboard byte-identical to main for
+      all 13 presets). Found + fixed: landing Today ≠ dashboard Today (retail+BIN vs till total); landing
+      amber pace 2.15:1 in light
+- [ ] Brian: deploy the worker FIRST (the page reads `period`; an old worker would show today under a
+      range label), then merge; then approve + run the history load (2025-01-01 → today, 62-day calls)
 - [ ] Phase 3: View Details per company
 - [ ] Brian: pick A or B; answer budget / which dollars (order total vs product sales) / add to hero total
 - [ ] Then: the cron → D1 sync, built on what the probe shows; then 2 dashboard previews
