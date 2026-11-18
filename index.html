@@ -6614,22 +6614,36 @@
       </div>
     </div><!-- end #page-flow-calendar -->
 
-    <!-- E-Commerce's front door (2026-11-18). The Sellercloud dashboard — a card per company —
-         lands here once its design is approved and the connection is verified; until then the
-         page says so plainly rather than drawing figures it does not have. -->
+    <!-- E-Commerce's front door (2026-11-18): the Bargain Lane dashboard's layout (Brian chose
+         "Option 1"), one card per Sellercloud company. Figures from ?action=ecom-overview, which
+         reads ecom_orders (migration-090), synced from Sellercloud every 15 minutes. One budget
+         for the business as a whole, none per company. Drawn by eoRender(). -->
     <div id="page-ecom-overview" class="hidden">
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-3 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
-        <div class="max-w-6xl mx-auto">
-          <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">E-Commerce</h1>
-          <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Sellercloud &middot; Shoes and Fashions, Harrison Avenue, Bass River, Detail Pro, Dymoda</p>
+        <div class="max-w-6xl mx-auto flex items-end justify-between gap-4 flex-wrap">
+          <div>
+            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">E-Commerce</h1>
+            <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Sellercloud &middot; 5 companies &middot; sales include shipping</p>
+          </div>
+          <div class="flex items-center gap-3">
+            <span id="eo-updated" class="text-[12px] text-opl-inkDim dark:text-op-inkDim"></span>
+            <button id="eo-refresh" type="button" onclick="eoRefresh()" class="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-[10px] border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-ink dark:text-op-ink hover:border-accent-green/50 transition-colors disabled:opacity-50">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+              Refresh
+            </button>
+          </div>
         </div>
       </div>
-      <div class="max-w-6xl mx-auto px-6 py-8">
-        <div class="rounded-card border border-dashed border-[rgba(20,16,8,0.16)] dark:border-[rgba(255,255,255,0.13)] bg-opl-panel dark:bg-op-panel p-card transition-colors">
-          <div class="text-[15px] font-semibold text-opl-ink dark:text-op-ink">Sales are not connected yet</div>
-          <p class="mt-1.5 text-sm text-opl-inkDim dark:text-op-inkDim leading-relaxed max-w-2xl">Each Sellercloud company gets its own card here, the way each Bargain Lane store does, once the Sellercloud connection is checked against its own reports.</p>
-          <button type="button" onclick="navigateToPage('ebay-cases')" class="mt-5 text-sm font-semibold text-accent-green hover:opacity-80 transition-opacity">Open eBay Cases &rarr;</button>
-        </div>
+      <div class="max-w-6xl mx-auto px-4 sm:px-6 py-5 space-y-4">
+        <div id="eo-days" class="flex items-center gap-1.5 overflow-x-auto"></div>
+        <div id="eo-status" class="hidden"></div>
+        <section class="grid gap-4 lg:grid-cols-[1.6fr_1fr_1fr]">
+          <div id="eo-hero" class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 lg:p-6 transition-colors"></div>
+          <div id="eo-mix" class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors"></div>
+          <div id="eo-matrix" class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors"></div>
+        </section>
+        <section id="eo-budgets" class="grid gap-4 md:grid-cols-2"></section>
+        <section id="eo-cards" class="grid gap-4 md:grid-cols-2 2xl:grid-cols-3"></section>
       </div>
     </div>
 
@@ -14122,6 +14136,9 @@
     }
     if (page === 'ebay-cases') {
       if (typeof initEbayCases === 'function') initEbayCases();
+    }
+    if (page === 'ecom-overview') {
+      if (typeof initEcomOverview === 'function') initEcomOverview();
     }
     // A Show Calendar panel left open must not cover the next page.
     if (page !== 'live-calendar' && typeof window.lcClose === 'function') window.lcClose();
@@ -37957,6 +37974,246 @@
   }
   window.initEbayCases = initEbayCases;
 
+  // ═══ E-Commerce Overview (2026-11-18): one card per Sellercloud company ═══
+  // The Bargain Lane dashboard's layout (Brian chose "Option 1"): today's sales against today's
+  // budget, sales mix, Matrix, week and month budget cards, then a card per company. ONE budget,
+  // for E-Commerce as a whole ($57,000 a month incl. shipping, spread by day — the worker owns the
+  // number); the company cards carry no budget, so their bar is a share of today's sales instead.
+  // Sales include shipping, and shipping is shown as its own amount (Brian, 2026-11-18).
+  // View Details is Phase 3, so the cards have no button yet rather than a dead one.
+  let eoData = null, eoLoading = false, eoError = null, eoNotSetUp = false, eoDate = null;
+  const EO_CHANNEL = '#3b82f6';   // accent-blue: the eBay series, the share bar, the sparkline
+  const eoCard = 'bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors';
+  const eoLbl = 'text-[12px] font-medium text-opl-inkDim dark:text-op-inkDim';
+  // The store card's pacing (DESIGN.md §2.1): green at budget, amber from 80 %, red below.
+  const eoPace = (p) => p == null ? { fill: 'rgba(136,147,167,0.5)', ink: 'rgb(var(--op-inkDim))' }
+    : p >= 100 ? { fill: '#22c55e', ink: 'var(--v1-good)' } : p >= 80 ? { fill: '#f59e0b', ink: 'var(--v1-warn)' } : { fill: '#ef4444', ink: 'var(--v1-bad)' };
+  // Budget cards: amber behind, green on or above (DESIGN.md §4.4).
+  const eoBudgetPace = (p) => p != null && p >= 100 ? { fill: '#22c55e', ink: 'var(--v1-good)' } : { fill: '#f59e0b', ink: 'var(--v1-warn)' };
+  const eoDelta = (a, b, tail) => {
+    if (!b) return '';
+    const d = a - b;
+    return `<span class="font-semibold" style="color:${d >= 0 ? 'var(--v1-good)' : 'var(--v1-bad)'}">${d >= 0 ? '+' : '−'}${fmtDollar(Math.abs(d))}</span>`
+      + ` <span class="font-semibold text-opl-ink dark:text-op-ink">vs ${fmtDollar(b)}</span>${tail || ''}`;
+  };
+  const eoTile = (l, v) => `<div class="rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.025)] px-3 py-2.5 min-w-0"><div class="text-[11px] font-medium text-opl-inkDim dark:text-op-inkDim">${l}</div><div class="mt-1 text-sm font-semibold tabular-nums text-opl-ink dark:text-op-ink truncate">${v}</div></div>`;
+  const eoMTile = (l, v) => `<div class="rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.025)] px-2 py-2.5 text-center min-w-0"><div class="text-[11px] font-medium text-opl-inkDim dark:text-op-inkDim">${l}</div><div class="mt-1 text-sm font-semibold tabular-nums text-opl-ink dark:text-op-ink truncate">${v}</div></div>`;
+  const eoBar = (pct, fill, h) => `<div class="${h || 'h-1.5'} rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]"><div class="h-full rounded-full transition-[width] duration-500" style="width:${Math.max(0, Math.min(100, pct || 0))}%;background:${fill}"></div></div>`;
+  const eoPill = (on, txt) => `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12px] font-medium flex-shrink-0" style="border:1px solid ${on ? 'rgba(34,197,94,0.4)' : 'rgb(var(--op-inkDim) / 0.35)'};color:${on ? 'var(--v1-good)' : 'rgb(var(--op-inkDim))'}"><span style="width:6px;height:6px;border-radius:9999px;background:${on ? '#22c55e' : 'rgb(var(--op-inkDim))'}"></span>${txt}</span>`;
+  const eoDayName = (ymd, long) => new Date(ymd + 'T12:00:00Z').toLocaleDateString('en-US', { timeZone: 'UTC', weekday: long ? 'long' : 'short', month: 'short', day: 'numeric' });
+
+  async function eoLoad(date) {
+    eoLoading = true; eoError = null; eoNotSetUp = false;
+    const btn = el('eo-refresh'); if (btn) btn.disabled = true;
+    eoRender();
+    try {
+      const qs = date ? `&date=${encodeURIComponent(date)}` : '';
+      const r = await fetch(`${WORKER_BASE}?action=ecom-overview${qs}`, { credentials: 'include', cache: 'no-store' });
+      const d = await r.json().catch(() => null);
+      if (r.status === 503 && d && d.setup === false) { eoNotSetUp = true; throw new Error('not set up'); }
+      if (!r.ok || !d || !d.ok) throw new Error((d && d.error) || `HTTP ${r.status}`);
+      if (!ecomShapeOk(d)) throw new Error('The server sent an answer this page cannot read.');
+      eoData = d; eoDate = d.date;
+      if (d.date === getETTodayStr()) ecomLanding = { data: d, at: Date.now() };
+    } catch (e) {
+      eoError = e.message || String(e);
+    } finally {
+      eoLoading = false;
+      if (btn) btn.disabled = false;
+      eoRender();
+    }
+  }
+  // Today on every visit, unless a past day of this week was picked and is still on screen.
+  function initEcomOverview() { eoLoad(eoDate && eoDate !== getETTodayStr() ? eoDate : null); }
+  window.initEcomOverview = initEcomOverview;
+  window.eoRefresh = () => eoLoad(eoDate);
+  window.eoPickDay = (ymd) => eoLoad(ymd === getETTodayStr() ? null : ymd);
+
+  function eoRender() {
+    const today = getETTodayStr();
+    const d = eoData;
+    const shown = (d && d.date) || today;
+    const isToday = shown === today;
+
+    // Day strip: this week, Sunday to Saturday. Future days cannot be picked.
+    const days = el('eo-days');
+    if (days) {
+      const sun = addDaysYmdLocal(today, -new Date(today + 'T12:00:00Z').getUTCDay());
+      days.innerHTML = [0, 1, 2, 3, 4, 5, 6].map(i => {
+        const ymd = addDaysYmdLocal(sun, i), future = ymd > today, on = ymd === shown;
+        const label = ymd === today ? '● Today' : eoDayName(ymd).replace(',', '');
+        const cls = on ? 'bg-accent-green text-[#06210f] border-accent-green font-semibold'
+          : 'border-dashed border-[rgba(20,16,8,0.18)] dark:border-[rgba(255,255,255,0.16)] text-opl-inkDim dark:text-op-inkDim hover:border-accent-green/50';
+        return `<button type="button" ${future ? 'disabled' : `onclick="eoPickDay('${ymd}')"`} class="flex-shrink-0 px-3 py-1.5 rounded-full border text-[12px] font-medium transition-colors ${cls} disabled:opacity-40 disabled:cursor-default">${label}</button>`;
+      }).join('');
+    }
+
+    const status = el('eo-status');
+    const upd = el('eo-updated');
+    if (upd) upd.textContent = d && d.sync && d.sync.at
+      ? 'Synced ' + new Date(d.sync.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
+    if (status) {
+      let msg = '';
+      if (eoNotSetUp) msg = `<div class="rounded-[12px] border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi px-4 py-3 text-sm text-opl-inkDim dark:text-op-inkDim">E-Commerce sales are not set up on the server yet.</div>`;
+      else if (eoError) msg = `<div class="rounded-[12px] border border-[rgba(239,68,68,0.35)] px-4 py-3 text-sm"><span class="font-semibold" style="color:var(--v1-bad)">Couldn’t load E-Commerce sales.</span> <span class="text-opl-inkDim dark:text-op-inkDim">${escapeHtml(eoError)}</span> <button type="button" onclick="eoRefresh()" class="ml-1 text-sm font-semibold text-accent-green hover:underline">Retry</button></div>`;
+      else if (d && d.sync && d.sync.ok === false) msg = `<div class="rounded-[12px] border border-[rgba(245,158,11,0.4)] px-4 py-3 text-sm"><span class="font-semibold" style="color:var(--v1-warn)">The last Sellercloud sync did not finish cleanly.</span> <span class="text-opl-inkDim dark:text-op-inkDim">Figures may be missing recent orders until the next sync.</span></div>`;
+      else if (d && !d.sync) msg = `<div class="rounded-[12px] border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi px-4 py-3 text-sm text-opl-inkDim dark:text-op-inkDim">Waiting for the first Sellercloud sync. It runs every 15 minutes.</div>`;
+      status.innerHTML = msg;
+      status.classList.toggle('hidden', !msg);
+    }
+
+    const hero = el('eo-hero'), mix = el('eo-mix'), mx = el('eo-matrix'), bud = el('eo-budgets'), cards = el('eo-cards');
+    if (!hero) return;
+    if (!d) {
+      const skel = (w) => `<span class="skel" style="display:block;width:${w};height:1em;border-radius:6px"></span>`;
+      hero.innerHTML = `<div class="${eoLbl}">Today's sales · All companies</div><div class="mt-4 text-4xl">${eoLoading ? skel('9ch') : '—'}</div>`;
+      mix.innerHTML = `<div class="${eoLbl}">Sales mix</div>`;
+      mx.innerHTML = `<div class="${eoLbl}">Matrix</div>`;
+      bud.innerHTML = ''; cards.innerHTML = '';
+      return;
+    }
+
+    const T = d.today, B = d.budget;
+    const dayWord = isToday ? "Today's sales" : `${eoDayName(shown, true)} sales`;
+    const pct = B.today > 0 ? Math.round(T.sales / B.today * 100) : null, pc = eoPace(pct);
+    hero.innerHTML = `
+      <div class="flex items-center justify-between gap-2.5"><span class="${eoLbl}">${dayWord} · All companies</span>${isToday ? eoPill(true, 'Live') : ''}</div>
+      <div class="mt-3 flex items-start justify-between gap-4">
+        <div class="min-w-0">
+          <div class="font-geist font-semibold tabular-nums tracking-tight leading-none text-4xl sm:text-5xl text-opl-ink dark:text-op-ink truncate">${fmtDollar(T.sales)}</div>
+          <div class="mt-3 text-sm tabular-nums">${eoDelta(T.sales, B.today)}</div>
+          <div class="mt-1.5 ${eoLbl} tabular-nums">Includes ${fmtDollar(T.shipping)} shipping</div>
+        </div>
+        <div class="text-right flex-shrink-0">
+          <div class="${eoLbl}">Pace</div>
+          <div class="mt-1 font-geist font-semibold tabular-nums leading-none text-4xl sm:text-5xl tracking-tight" style="color:${pc.ink}">${pct != null ? pct + '%' : '—'}</div>
+          <div class="mt-1.5 text-[12px] text-opl-inkDim dark:text-op-inkDim">${d.reporting} of ${d.companies.length} selling</div>
+        </div>
+      </div>
+      <div class="mt-4">${eoBar(pct, pc.fill, 'h-2.5')}
+        <div class="mt-2 flex items-baseline justify-between text-[13px] text-opl-inkDim dark:text-op-inkDim"><span>$0</span><span class="text-sm font-semibold text-opl-ink dark:text-op-ink tabular-nums">${fmtDollar(B.today)}</span></div>
+      </div>`;
+
+    const chans = [['eBay', T.ebay, EO_CHANNEL], ['Poshmark', T.poshmark, '#8b5cf6']];
+    if (T.other > 0) chans.push(['Other', T.other, 'rgba(136,147,167,0.8)']);
+    mix.innerHTML = `
+      <div class="flex items-center justify-between"><span class="${eoLbl}">Sales mix · ${isToday ? 'Today' : eoDayName(shown)}</span><span class="text-[12px] text-opl-inkDim dark:text-op-inkDim">${chans.filter(c => c[1] > 0).length} of ${chans.length} channels</span></div>
+      <div class="mt-3 space-y-3">${chans.map(([l, v, c]) => `
+        <div><div class="flex items-baseline justify-between text-[13px]"><span class="text-opl-ink dark:text-op-ink"><span style="color:${c}">■</span> ${l}</span><span class="font-semibold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(v)}</span></div>
+          <div class="mt-1.5">${eoBar(T.sales > 0 ? v / T.sales * 100 : 0, c)}</div></div>`).join('')}
+        <div class="flex items-baseline justify-between text-[13px] text-opl-inkDim dark:text-op-inkDim"><span>Shipping, included above</span><span class="font-semibold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(T.shipping)}</span></div>
+      </div>`;
+
+    mx.innerHTML = `<div class="${eoLbl}">Matrix · ${isToday ? 'Today' : eoDayName(shown)}</div>
+      <div class="mt-3 grid grid-cols-4 lg:grid-cols-2 gap-2">
+        ${eoMTile('Orders', T.orders.toLocaleString('en-US'))}${eoMTile('Avg order', T.orders ? fmtDollar(T.sales / T.orders) : '—')}
+        ${eoMTile('Units', T.units.toLocaleString('en-US'))}${eoMTile('Returns', T.returns.toLocaleString('en-US'))}
+      </div>`;
+
+    const dow = new Date(shown + 'T12:00:00Z').getUTCDay() + 1;
+    const dom = Number(shown.slice(8, 10)), dim = new Date(Date.UTC(Number(shown.slice(0, 4)), Number(shown.slice(5, 7)), 0)).getUTCDate();
+    const monthName = new Date(shown + 'T12:00:00Z').toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long' });
+    const budgetCard = (label, a, b, foot) => {
+      const p = b > 0 ? Math.round(a / b * 100) : null, c = eoBudgetPace(p);
+      return `<div class="${eoCard}">
+        <div class="flex items-center justify-between"><span class="${eoLbl}">${label}</span><span class="text-sm font-semibold tabular-nums" style="color:${c.ink}">${p != null ? p + '%' : '—'}</span></div>
+        <div class="mt-1.5 font-geist font-semibold tabular-nums tracking-tight text-[26px] text-opl-ink dark:text-op-ink">${fmtDollar(a)}</div>
+        <div class="mt-1 text-sm tabular-nums">${eoDelta(a, b)}</div>
+        <div class="mt-3">${eoBar(p, c.fill, 'h-2.5')}</div>
+        <div class="mt-2 flex items-baseline justify-between text-[13px] text-opl-inkDim dark:text-op-inkDim"><span>${foot}</span><span class="font-semibold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(b)}</span></div>
+      </div>`;
+    };
+    bud.innerHTML = budgetCard('This week', d.week.sales, B.week, `${dow} of 7 days`)
+      + budgetCard(monthName, d.month.sales, B.month, `${dom} of ${dim} days`);
+
+    cards.innerHTML = d.companies.map(c => {
+      const o = c.today, on = o.orders > 0;
+      const share = T.sales > 0 ? Math.round(o.sales / T.sales * 100) : 0;
+      const note = c.companyIds && c.companyIds.length > 1 ? `${c.companyIds.join(' + ')} · eBay + Poshmark` : String(c.id);
+      return `<div class="${eoCard}${on ? '' : ' opacity-60'}" data-eo-company="${c.id}">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="font-brand text-2xl leading-none tracking-wide text-opl-ink dark:text-op-ink truncate">${escapeHtml(c.name)}</div>
+            <div class="mt-1.5 text-xs text-opl-inkDim dark:text-op-inkDim">${note}</div>
+          </div>
+          ${eoPill(on && isToday, on ? (isToday ? 'Live' : 'Sold') : (isToday ? 'No orders yet' : 'No orders'))}
+        </div>
+        <div class="mt-4 flex items-end justify-between gap-3">
+          <div class="min-w-0">
+            <div class="${eoLbl}">${dayWord}</div>
+            ${on ? `<div class="mt-1 font-geist font-semibold tabular-nums tracking-tight leading-none text-[28px] text-opl-ink dark:text-op-ink truncate">${fmtDollar(o.sales)}</div>
+              <div class="mt-1.5 text-xs text-opl-inkDim dark:text-op-inkDim tabular-nums">${o.orders} order${o.orders === 1 ? '' : 's'} · ${o.units} unit${o.units === 1 ? '' : 's'}</div>`
+              : `<div class="mt-2 text-base font-medium text-opl-inkDim dark:text-op-inkDim">${isToday ? 'No orders yet today' : 'No orders this day'}</div>`}
+          </div>
+          <div id="eo-spark-${c.id}" style="width:104px;height:44px;flex:0 0 auto"></div>
+        </div>
+        <div class="mt-4">
+          <div class="flex items-center justify-between mb-1.5"><span class="${eoLbl}">Share of E-Commerce ${isToday ? 'today' : 'that day'}</span><span class="text-xs font-semibold tabular-nums text-opl-ink dark:text-op-ink">${share}%</span></div>
+          ${eoBar(share, EO_CHANNEL)}
+        </div>
+        <div class="mt-4 grid grid-cols-3 gap-2">${eoTile('Product', fmtDollar(o.sales - o.shipping))}${eoTile('Shipping', fmtDollar(o.shipping))}${eoTile('Refunded', fmtDollar(o.refunded))}</div>
+        <div class="mt-2 grid grid-cols-4 gap-2">
+          ${eoMTile('Orders', o.orders)}${eoMTile('Avg order', o.orders ? fmtDollar(o.sales / o.orders) : '—')}${eoMTile('Units', o.units)}${eoMTile('Returns', o.returns)}
+        </div>
+      </div>`;
+    }).join('');
+
+    // Hourly sparklines, trimmed to the hours that sold — the store card's renderer and tooltip.
+    for (const c of d.companies) {
+      const slot = el('eo-spark-' + c.id);
+      const hrs = Array.isArray(c.hours) ? c.hours : [];
+      if (!slot || !hrs.some(v => v)) continue;
+      let s = 0, e = hrs.length - 1;
+      while (s < e && !hrs[s]) s++;
+      while (e > s && !hrs[e]) e--;
+      const series = hrs.slice(s, e + 1);
+      slot.innerHTML = v1Sparkline(series, EO_CHANNEL, 104, 44);
+      attachSparkTooltip(slot, series, series.map((_, i) => fmtHour(s + i)), 104, 44, EO_CHANNEL);
+    }
+  }
+  // Everything the page and the landing card read, so a partial answer is an error, not a throw.
+  function ecomShapeOk(d) {
+    return !!(d && typeof d.date === 'string' && d.today && d.week && d.month && d.budget && Array.isArray(d.companies));
+  }
+  // YYYY-MM-DD + n days, on the calendar (no time zone involved).
+  function addDaysYmdLocal(ymd, n) {
+    const t = new Date(ymd + 'T12:00:00Z'); t.setUTCDate(t.getUTCDate() + n);
+    return t.toISOString().slice(0, 10);
+  }
+
+  // The landing card's figures: today's E-Commerce, fetched when the picker draws and kept a
+  // minute. The Overview page refreshes it too when it loads today.
+  let ecomLanding = null, ecomLandingLoading = false, ecomLandingError = null;
+  function ecomLandingEnsure() {
+    if (ecomLandingLoading || !currentUser || !userBusinesses(currentUser).some(b => b.id === 'ecom')) return;
+    if (ecomLanding && Date.now() - ecomLanding.at < 60e3 && ecomLanding.data.date === getETTodayStr()) return;
+    ecomLandingLoading = true;
+    fetch(`${WORKER_BASE}?action=ecom-overview`, { credentials: 'include', cache: 'no-store' })
+      .then(r => r.json().then(d => ({ r, d })))
+      .then(({ r, d }) => {
+        if (!r.ok || !d || !d.ok) throw new Error((d && d.error) || `HTTP ${r.status}`);
+        if (!ecomShapeOk(d)) throw new Error('The server sent an answer this page cannot read.');
+        ecomLanding = { data: d, at: Date.now() }; ecomLandingError = null;
+      })
+      .catch(e => { ecomLandingError = e.message || String(e); })
+      .finally(() => { ecomLandingLoading = false; if (currentPage === 'landing') { try { renderLanding(); } catch (_) {} } });
+  }
+  // null until loaded. Shaped like bargainLaneFigures() where the hero sums them.
+  function ecomFigures() {
+    const d = ecomLanding && ecomLanding.data;
+    if (!d || d.date !== getETTodayStr()) return null;
+    const dom = Number(d.date.slice(8, 10));
+    return {
+      total: d.today.sales, budget: d.budget.today,
+      pace: d.budget.today > 0 ? d.today.sales / d.budget.today * 100 : null,
+      // Month to date against the budget through today: the daily share × days so far.
+      mtdActual: d.month.sales, mtdBudget: d.budget.today * dom,
+      reporting: d.reporting, unitCount: d.companies.length,
+      shipping: d.today.shipping, refunded: d.today.refunded,
+      orders: d.today.orders, units: d.today.units, returns: d.today.returns,
+    };
+  }
+
   // ═══ Live Sales — its own business, phase 1 (migration-085 + ?action=live-sales) ═══
   // Five pages, one module. One fetch covers the chosen range AND its comparison window;
   // a store change re-renders from memory. Phase 1 moves no money: everything here is also
@@ -39846,18 +40103,22 @@
     // Bargain Lane's net, pace, channel mix and order count under its own name
     // (down to "storefronts / 6"). Branching on "have we got figures for THIS
     // business" makes that impossible rather than merely unlikely.
-    const FIGURES = { bl: bargainLaneFigures };
+    // E-Commerce's come from ?action=ecom-overview (2026-11-18), fetched here and kept a minute;
+    // ecomFigures() is null until they land, and this repaints when they do.
+    const FIGURES = { bl: bargainLaneFigures, ecom: ecomFigures };
+    ecomLandingEnsure();
+    const figOf = {};
+    biz.forEach(b => { figOf[b.id] = FIGURES[b.id] ? FIGURES[b.id]() : null; });
     // Businesses that actually contribute money to the group roll-up. NOT the
-    // same as `connected`, and not the same as "enterable" either.
-    const reporting = biz.filter(b => FIGURES[b.id]);
+    // same as `connected`, and not the same as "enterable" either. E-Commerce joins
+    // once its figures have loaded (Brian, 2026-11-18: it adds into the total).
+    const reporting = biz.filter(b => figOf[b.id]);
     const setTxt = (id, t) => { const n = el(id); if (n) n.textContent = t; };
     const setHtml = (id, h) => { const n = el(id); if (n) n.innerHTML = h; };
 
     // ── Hero ────────────────────────────────────────────────────────
-    const gTotal  = reporting.reduce((n, b) => n + (b.id === 'bl' ? fig.total  : 0), 0);
-    const gBudget = reporting.reduce((n, b) => n + (b.id === 'bl' ? fig.budget : 0), 0);
-    const gMtdA   = reporting.reduce((n, b) => n + (b.id === 'bl' ? fig.mtdActual : 0), 0);
-    const gMtdB   = reporting.reduce((n, b) => n + (b.id === 'bl' ? fig.mtdBudget : 0), 0);
+    const gSum = (k) => reporting.reduce((n, b) => n + (figOf[b.id][k] || 0), 0);
+    const gTotal = gSum('total'), gBudget = gSum('budget'), gMtdA = gSum('mtdActual'), gMtdB = gSum('mtdBudget');
     const gPace   = gBudget > 0 ? (gTotal / gBudget) * 100 : null;
 
     setTxt('landing-hero-total', fmtDollar(gTotal));
@@ -39892,8 +40153,12 @@
       { label: 'Live Sales', val: x.auction, bar: 'bg-accent-violet', dot: 'text-accent-violet' },
     ];
     const CH = chOf(fig);
+    // E-Commerce is a business of its own, so it is one more slice of the group's mix.
+    if (figOf.ecom) CH.push({ label: 'E-Commerce', val: figOf.ecom.total, bar: 'bg-accent-pink', dot: 'text-accent-pink' });
     const chTotal = CH.reduce((n, c) => n + c.val, 0);
-    setTxt('landing-mix-count', `${CH.filter(c => c.val > 0).length} of 3 channels`);
+    setTxt('landing-mix-count', `${CH.filter(c => c.val > 0).length} of ${CH.length} channels`);
+    const legendEl = el('landing-mix-legend');
+    if (legendEl) legendEl.className = `mt-3 grid ${CH.length > 3 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'} gap-4 text-xs`;
     setHtml('landing-mix-bar', chTotal > 0
       ? CH.filter(c => c.val > 0).map(c =>
           `<div class="${c.bar}" style="width:${(c.val / chTotal) * 100}%"></div>`).join('')
@@ -39923,23 +40188,67 @@
 
     biz.forEach(b => {
       const source = SOURCE[b.id] || '';
-      const f = FIGURES[b.id] ? FIGURES[b.id]() : null;   // no figures → no numbers to print
+      const f = figOf[b.id];   // no figures → no numbers to print
+      // E-Commerce has a live Sellercloud feed (2026-11-18) though it has no business_units, so
+      // `connected` (a unit count) still reads false for it; it is drawn as live regardless.
+      const isLive = b.connected || b.id === 'ecom';
       const card = document.createElement('div');
       card.className = 'rounded-card p-card flex flex-col transition-colors bg-opl-panel dark:bg-op-panel border '
-        + (b.connected
+        + (isLive
             ? 'border-[rgba(20,16,8,0.08)] dark:border-op-border'
             : 'border-dashed border-[rgba(20,16,8,0.16)] dark:border-[rgba(255,255,255,0.13)]');
 
-      const dimName = b.connected ? '' : ' text-opl-inkDim dark:text-op-inkDim';
+      const dimName = isLive ? '' : ' text-opl-inkDim dark:text-op-inkDim';
+      const sub = b.id === 'ecom' ? (f ? ` · ${f.unitCount} companies` : '')
+        : b.connected ? ` · ${b.unitCount} ${b.unitNoun}${b.unitCount === 1 ? '' : 's'}` : ' · sites pending';
       card.innerHTML =
         `<div class="flex items-start justify-between gap-3">
            <div class="min-w-0">
              <div class="text-xl font-semibold tracking-tight truncate text-opl-ink dark:text-op-ink${dimName}">${b.name}</div>
-             <div class="mt-0.5 text-xs ${b.connected ? 'text-opl-inkDim dark:text-op-inkDim' : 'text-opl-inkDim dark:text-op-inkDim'} truncate">${source}${
-               b.connected ? ` · ${b.unitCount} ${b.unitNoun}${b.unitCount === 1 ? '' : 's'}` : ' · sites pending'}</div>
+             <div class="mt-0.5 text-xs text-opl-inkDim dark:text-op-inkDim truncate">${source}${sub}</div>
            </div>
-           <span class="lp-pill ${b.connected ? 'lp-pill-live' : 'lp-pill-setup'} flex-shrink-0">● ${b.connected ? 'Live' : 'Setup'}</span>
+           <span class="lp-pill ${isLive ? 'lp-pill-live' : 'lp-pill-setup'} flex-shrink-0">● ${isLive ? 'Live' : 'Setup'}</span>
          </div>`;
+
+      // E-Commerce (2026-11-18, Brian chose card "A"): the Bargain Lane card's layout. Its three
+      // tiles are Product · Shipping · Refunded — every order so far is eBay, so channel tiles
+      // would sit at $0 — and the pace is against E-Commerce's one budget.
+      if (b.id === 'ecom') {
+        const enter = `<div class="mt-auto pt-5 text-right"><button type="button" class="lp-enter text-sm font-semibold text-accent-green hover:opacity-80 transition-opacity">Enter ${b.name} →</button></div>`;
+        if (!f) {
+          card.insertAdjacentHTML('beforeend', ecomLandingError
+            ? `<div class="mt-5 text-sm"><span class="font-semibold" style="color:var(--v1-bad)">Couldn’t load E-Commerce sales.</span> <span class="text-opl-inkDim dark:text-op-inkDim">${escapeHtml(ecomLandingError)}</span></div>${enter}`
+            : `<div class="lp-eyebrow mt-5">Today's sales</div><div class="mt-2"><span class="skel" style="display:block;width:8ch;height:28px;border-radius:6px"></span></div>${enter}`);
+        } else {
+          card.insertAdjacentHTML('beforeend',
+            `<div class="lp-eyebrow mt-5">Today's sales</div>
+             <div class="mt-1 text-3xl font-semibold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(f.total)}</div>
+             <div class="mt-1 text-sm">${lpDelta(f.total, f.budget)}</div>
+             <div class="mt-4 flex items-center justify-between">
+               <span class="lp-eyebrow">Pace · ${f.reporting} of ${f.unitCount} selling</span>
+               <span class="text-sm font-semibold tabular-nums ${lpPaceColour(f.pace)}">${f.pace != null ? fmtPct(f.pace, 0) : '—'}</span>
+             </div>
+             <div class="mt-2 h-1.5 rounded-full bg-[rgba(20,16,8,0.07)] dark:bg-[rgba(255,255,255,0.07)] overflow-hidden">
+               <div class="h-full rounded-full ${lpPaceBar(f.pace)}" style="width:${f.pace != null ? Math.max(0, Math.min(100, f.pace)) : 0}%"></div>
+             </div>
+             <div class="mt-4 grid grid-cols-3 gap-2">
+               ${[['Product', f.total - f.shipping], ['Shipping', f.shipping], ['Refunded', f.refunded]].map(([l, v]) => `<div class="rounded-xl border border-[rgba(20,16,8,0.07)] dark:border-[rgba(255,255,255,0.07)] bg-opl-panelHi dark:bg-[rgba(255,255,255,0.02)] px-3 py-2.5">
+                   <div class="lp-eyebrow" style="font-size:11px">${l}</div>
+                   <div class="mt-1 text-[15px] font-semibold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(v)}</div>
+                 </div>`).join('')}
+             </div>
+             <div class="mt-3 grid grid-cols-4 gap-2">
+               ${lpTile('Orders', f.orders.toLocaleString('en-US'))}
+               ${lpTile('Avg order', f.orders ? fmtDollar(f.total / f.orders) : '—')}
+               ${lpTile('Units', f.units.toLocaleString('en-US'))}
+               ${lpTile('Returns', f.returns.toLocaleString('en-US'))}
+             </div>${enter}`);
+        }
+        const e = card.querySelector('.lp-enter');
+        if (e) e.addEventListener('click', () => enterBusiness(b.id));
+        wrap.appendChild(card);
+        return;
+      }
 
       // A business still inside another (Live Sales, phase 1): its month to date from the
       // parent's own figures, said to be included there, and a way in. Never summed.
