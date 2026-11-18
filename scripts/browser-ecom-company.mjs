@@ -143,6 +143,9 @@ for (const theme of ['dark', 'light']) {
   const daily = await page.evaluate(() => ({ rows: document.querySelectorAll('#ec-body tbody tr').length, foot: document.querySelector('#ec-body tfoot')?.innerText || '' }));
   const days = Math.round((Date.parse(today) - Date.parse(sun)) / 864e5) + 1;
   check(daily.rows === days && daily.foot.includes(`${days} day`), `${theme}: Daily has one row per day of the range and a total (${daily.rows})`);
+  const align = await page.evaluate(() => { const td = document.querySelector('#ec-body tbody tr td'), th = document.querySelector('#ec-body thead th'), num = document.querySelector('#ec-body tbody tr td:nth-child(4)');
+    return [getComputedStyle(th).textAlign, getComputedStyle(td).textAlign, getComputedStyle(num).textAlign]; });
+  check(align.join() === 'left,left,right', `${theme}: the Day column reads left, the figures right (${align.join()})`);
   let bad = await aa(page);
   await page.evaluate(() => window.ecPickTab('chart')); await page.waitForTimeout(150);
   const bars = await page.$$eval('#ec-body svg rect', r => r.length);
@@ -152,6 +155,8 @@ for (const theme of ['dark', 'light']) {
   const orders = await page.evaluate(() => document.getElementById('ec-body').innerText);
   check(orders.includes('#5029027') && orders.includes('In process') && orders.includes('Cancelled') && !orders.includes('InProcess') && orders.includes('Poshmark') && orders.includes('cancelled ones included'),
     `${theme}: Orders lists each order with its status, channel and a note`);
+  const oAlign = await page.evaluate(() => [1, 3, 4, 6].map(n => getComputedStyle(document.querySelector(`#ec-body tbody tr td:nth-child(${n})`)).textAlign));
+  check(oAlign.join() === 'left,left,left,right', `${theme}: Orders' time, status and channel read left, the total right (${oAlign.join()})`);
   bad = bad.concat(await aa(page));
   await page.evaluate(() => window.ecPickTab('items')); await page.waitForTimeout(150);
   check((await page.evaluate(() => document.getElementById('ec-body').innerText)).includes('Top products'), `${theme}: Items says it is the next step`);

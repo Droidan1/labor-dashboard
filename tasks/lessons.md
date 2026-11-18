@@ -1,3 +1,17 @@
+## Two alignment classes on one cell: the stylesheet decided, and the check never looked (2026-11-18)
+
+The E-Commerce View Details tables built every cell from a base class string that included
+`text-right`, then appended `text-left` for the first column. Tailwind does not let the later class
+in the attribute win; the later RULE in the stylesheet wins, and `text-right` comes after
+`text-left`. So the Day, Time, Status and Channel columns rendered right-aligned. 36 browser checks
+passed: none read `textAlign`. It was seen in the first live screenshot.
+
+### The rule
+- A shared class string carries no property a caller will override. Put alignment (or colour,
+  padding, any one-of-several utility) on each use, never "base + override".
+- When a table is checked, check one left column and one figure column with `getComputedStyle`.
+  `scripts/browser-ecom-company.mjs` now does, and fails on the old markup.
+
 ## A stacked PR merged into its base branch, and main never got the page (2026-11-12)
 
 I opened #379 (the Discounts & Returns page) with `claude/discounts-backend` as its base, so its diff
