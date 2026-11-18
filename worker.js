@@ -17221,6 +17221,46 @@ function sellercloudClient(env, { budget = SELLERCLOUD_PROBE_BUDGET } = {}) {
     get calls() { return calls; }, get throttled() { return throttled; } };
 }
 
+// Can this login see product photos? (2026-11-18, Brian: add product photos to the Items tab,
+// "check first that the read-only login can see them".) For up to 10 SKUs: the catalog's ImageUrl
+// — and, while there, whether this login is shown cost (SiteCostVisible / LastCostVisible) —
+// Sellercloud's image list, and whether the first few photo URLs open WITHOUT a Sellercloud login,
+// since a page can only show a public one. Read-only: the image list is a read-style POST.
+async function sellercloudProbeImages(sc, skus) {
+  const host = (u) => { try { return new URL(u).host; } catch { return null; } };
+  const err = (e) => ({ error: String((e && e.message) || e).slice(0, 200), status: (e && e.status) || null });
+  const cat = (r) => ({ totalResults: r && r.TotalResults != null ? Number(r.TotalResults) : null,
+    items: ((r && Array.isArray(r.Items)) ? r.Items : []).map(p => ({ sku: p.ID ?? null, name: p.ProductName ?? null, company: p.CompanyID ?? null,
+      imageUrl: p.ImageUrl || null, siteCost: p.SiteCost ?? null, siteCostVisible: p.SiteCostVisible ?? null,
+      lastCost: p.LastCost ?? null, lastCostVisible: p.LastCostVisible ?? null, averageCost: p.AverageCost ?? null })) });
+  const out = { skus };
+  // `sKU` is documented as "list of product IDs" in one string; ask for all of them, and for the
+  // first alone, so a list Sellercloud does not split still shows whether one SKU comes back.
+  try { out.catalog = cat(await sc.get("/Catalog", { sKU: skus.join(","), activeStatus: -1, pageSize: SELLERCLOUD_PAGE, pageNumber: 1 })); }
+  catch (e) { out.catalog = err(e); }
+  try { out.catalogOne = cat(await sc.get("/Catalog", { sKU: skus[0], activeStatus: -1, pageSize: SELLERCLOUD_PAGE, pageNumber: 1 })); }
+  catch (e) { out.catalogOne = err(e); }
+  try {
+    const r = await sc.postQuery("/ProductImage/GetProductsImages", { ProductsIDs: skus });
+    out.productImages = (Array.isArray(r) ? r : []).map(p => {
+      const imgs = Array.isArray(p.Images) ? p.Images : [], d = imgs.find(i => i && i.IsDefault) || imgs[0];
+      return { sku: p.ProductID ?? null, count: imgs.length, defaultUrl: (d && d.Url) || null };
+    });
+  } catch (e) { out.productImages = err(e); }
+  // Does a photo open with no Sellercloud login? Plain fetch, no token, first KB, at most 3 URLs.
+  const urls = [...new Set([...((out.catalog && out.catalog.items) || []).map(x => x.imageUrl),
+    ...(Array.isArray(out.productImages) ? out.productImages.map(x => x.defaultUrl) : [])].filter(u => /^https?:\/\//i.test(u || "")))].slice(0, 3);
+  out.publicFetch = [];
+  for (const u of urls) {
+    try {
+      const res = await fetch(u, { headers: { Range: "bytes=0-1023" }, redirect: "follow" });
+      const buf = await res.arrayBuffer().catch(() => new ArrayBuffer(0));
+      out.publicFetch.push({ host: host(u), url: u.slice(0, 300), status: res.status, type: res.headers.get("content-type"), bytes: buf.byteLength });
+    } catch (e) { out.publicFetch.push({ host: host(u), url: u.slice(0, 300), error: String((e && e.message) || e).slice(0, 120) }); }
+  }
+  return out;
+}
+
 const scNum = (v) => (v == null || v === "" || !Number.isFinite(Number(v)) ? 0 : Number(v));
 const scAdd = (m, key, amt) => { const r = m[key] || (m[key] = { orders: 0, grandTotal: 0 }); r.orders++; r.grandTotal = roundCents(r.grandTotal + amt); };
 
@@ -19981,7 +20021,8 @@ export default {
     }
 
     // ── Sellercloud probe (E-Commerce, 2026-11-18) ─────────────────
-    //    GET ?action=sellercloud-probe[&date=YYYY-MM-DD][&company=163][&by=created]
+    //    GET ?action=sellercloud-probe[&date=YYYY-MM-DD][&company=163][&by=created][&items=1]
+    //    GET ?action=sellercloud-probe&images=1[&skus=A,B,…]   (can this login see product photos?)
     // One day's orders per company (default: yesterday, Eastern), aggregated, plus the
     // companies the account can see. Read-only on Sellercloud and writes nothing here.
     // 🔒 A signed-in SUPERUSER only — never the X-Snapshot-Secret bypass, which is public.
@@ -20002,6 +20043,12 @@ export default {
       const next = new Date(Date.parse(date + "T00:00:00Z") + 864e5).toISOString().slice(0, 10);
       const by = url.searchParams.get("by") === "created" ? "created" : "order";
       const withItems = url.searchParams.get("items") === "1";
+      // images=1[&skus=A,B]: the photo check instead of the day's orders (sellercloudProbeImages).
+      const withImages = url.searchParams.get("images") === "1";
+      const skuParam = (url.searchParams.get("skus") || "").split(",").map(x => x.trim()).filter(Boolean);
+      if (skuParam.length > 10 || skuParam.some(x => !/^[A-Za-z0-9._-]{1,60}$/.test(x))) {
+        return new Response(JSON.stringify({ error: "skus must be up to 10 SKUs, comma-separated (letters, digits, . _ -)" }), { status: 400, headers: corsJson });
+      }
       const only = url.searchParams.get("company");
       const companies = only ? SELLERCLOUD_COMPANIES.filter(c => String(c.id) === only) : SELLERCLOUD_COMPANIES;
       if (!companies.length) {
@@ -20018,6 +20065,18 @@ export default {
         out.companiesVisible = ((list && list.Items) || []).map(c => ({ id: c.ID, name: c.CompanyName, disabled: !!c.IsDisabled }));
       } catch (e) {
         out.ok = false; out.errors.push({ step: e instanceof SellercloudHttpError && /token/.test(e.message) ? "token" : "companies", status: e.status || null, message: String(e.message || e) });
+      }
+      if (withImages) {
+        if (out.token) {
+          let skus = skuParam;
+          if (!skus.length && env.DB) {
+            skus = (((await env.DB.prepare(`SELECT sku, MAX(order_date) AS d FROM ecom_order_items WHERE sku IS NOT NULL GROUP BY sku ORDER BY d DESC, sku LIMIT 10`)
+              .all().catch(() => ({ results: [] }))).results) || []).map(r => r.sku);
+          }
+          out.images = skus.length ? await sellercloudProbeImages(sc, skus) : { error: "no SKUs: pass skus= or let the sync store some order lines first" };
+        }
+        out.calls = sc.calls; out.throttled = sc.throttled; out.ms = Date.now() - started;
+        return new Response(JSON.stringify(out), { status: out.ok ? 200 : 502, headers: corsJson });
       }
       if (out.token) {
         for (const c of companies) {

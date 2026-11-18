@@ -10,7 +10,11 @@
 //     held.
 //   - A throttle BODY (Sellercloud's only throttle signal) and an expired token are retried.
 //   - Nothing about a buyer, the password, or the bearer token is ever in the response.
+//   - images=1 (2026-11-18) checks whether this login sees product photos: the catalog's ImageUrl
+//     and cost visibility, Sellercloud's image list, and whether a photo opens with NO login — and
+//     it never sends the bearer token to a photo host, nor reads the day's orders.
 // A stubbed Sellercloud stands in for jay.api.sellercloud.us; everything else is the real worker.
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadWorker, makeEnv, ctx, blockNetwork, req } from './lib/worker-harness.mjs';
@@ -51,11 +55,18 @@ const COMPANIES = [163, 164, 165, 166, 167, 168, 169].map(id => ({ ID: id, Compa
 
 let calls = [], tokenCalls = 0, issued = 0;
 const fail401 = { n: 0 }, throttle = { n: 0 };
-let ignoreCompanyFilter = false, plRefused = false, plBodies = [];
+let ignoreCompanyFilter = false, plRefused = false, plBodies = [], catalogRefused = false, imgFetches = [];
+// The catalog and image list for SKU-1..SKU-12. SKU-3 has no photo; SKU-2's default is the second image.
+const CATALOG = Object.fromEntries(Array.from({ length: 12 }, (_, i) => ['SKU-' + (i + 1), { ID: 'SKU-' + (i + 1), ProductName: 'Item ' + (i + 1), CompanyID: 163,
+  ImageUrl: i === 2 ? '' : `https://img.sc-cdn.example/p/${i + 1}.jpg`, SiteCost: 0, SiteCostVisible: false, LastCost: 0, LastCostVisible: false, AverageCost: 0 }]));
 const json = (b, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'Content-Type': 'application/json' } });
 
 globalThis.fetch = async (u, init = {}) => {
   const url = new URL(String(u));
+  if (url.host === 'img.sc-cdn.example' || url.host === 'private.sc.example') {
+    imgFetches.push({ url: String(u), auth: (init.headers && (init.headers.Authorization || init.headers.authorization)) || null });
+    return url.host === 'private.sc.example' ? new Response('no', { status: 403 }) : new Response(new Uint8Array(1024), { status: 206, headers: { 'content-type': 'image/jpeg' } });
+  }
   if (url.host !== 'jay.api.sellercloud.us') return blocked(u);
   calls.push(url);
   if (url.pathname === '/rest/api/token') {
@@ -76,6 +87,17 @@ globalThis.fetch = async (u, init = {}) => {
     return json(JSON.parse(init.body).Orders.map(id => ({ OrderID: id, CustomerID: 424242, ItemCost: '5.00', OrderCost: '5.00', Comission: '1.20', TransactionFee: '0.30',
       ShippingCost: '4.00', ProfitLoss: '2.84', ProfitLossPercentage: '23%', OrderItems: [{ ProductID: 'SKU-x', QtySold: 2, OrderUnitSiteCost: 2.5, ProductUnitSiteCost: 2.5,
       SellingPrice: 12.34, ChannelCommission: 1.2, TransactionFee: 0.3, FinalCostTotal: 9.5, Profit: 2.84, ProfitPercent: 23 }] })));
+  }
+  if (url.pathname === '/rest/api/Catalog') {
+    if (catalogRefused) return json({ Message: 'Authorization has been denied for this request.' }, 403);
+    const want = (url.searchParams.get('sKU') || '').split(',');
+    const rows = want.map(k => CATALOG[k]).filter(Boolean);
+    return json({ Items: rows, TotalResults: rows.length });
+  }
+  if (url.pathname === '/rest/api/ProductImage/GetProductsImages') {
+    return json(JSON.parse(init.body).ProductsIDs.map(id => ({ ProductID: id, Images: id === 'SKU-3' ? [] : id === 'SKU-2'
+      ? [{ ImageID: 1, Url: 'https://private.sc.example/2a.jpg', IsDefault: false }, { ImageID: 2, Url: 'https://private.sc.example/2b.jpg', IsDefault: true }]
+      : [{ ImageID: 3, Url: CATALOG[id] ? CATALOG[id].ImageUrl : null, IsDefault: true }] })));
   }
   if (url.pathname === '/rest/api/Orders') {
     const ids = url.searchParams.getAll('companyID').map(Number);
@@ -230,6 +252,48 @@ let main;
   const refused = await probe('&date=2026-11-17&company=163&items=1');
   ok(refused.status === 200 && refused.body.profitAndLoss.error && refused.body.profitAndLoss.status === 403, `a refused profit and loss is reported, the probe still answers, got ${refused.status} ${JSON.stringify(refused.body.profitAndLoss).slice(0, 80)}`);
   plRefused = false;
+}
+
+// ── 9c. can this login see product photos? (images=1, 2026-11-18) ───────────
+{
+  calls = []; imgFetches = [];
+  const r = await probe('&images=1&skus=SKU-1,SKU-2,SKU-3');
+  const im = r.body.images;
+  ok(r.status === 200 && im, `images=1 answers, got ${r.status} ${r.text.slice(0, 120)}`);
+  eq(calls.filter(u => u.pathname === '/rest/api/Orders').length, 0, 'and reads no orders');
+  eq(calls.filter(u => u.pathname === '/rest/api/Catalog').map(u => u.searchParams.get('sKU')), ['SKU-1,SKU-2,SKU-3', 'SKU-1'], 'asks the catalog for the list, and for the first SKU alone');
+  eq(im.catalog.items.map(x => [x.sku, !!x.imageUrl, x.siteCostVisible, x.lastCostVisible]), [['SKU-1', true, false, false], ['SKU-2', true, false, false], ['SKU-3', false, false, false]],
+    'reports each SKU\'s ImageUrl and whether cost is visible to this login');
+  eq([im.catalogOne.totalResults, im.catalogOne.items[0].sku], [1, 'SKU-1'], 'the single-SKU lookup');
+  eq(im.productImages.map(x => [x.sku, x.count, x.defaultUrl]), [['SKU-1', 1, 'https://img.sc-cdn.example/p/1.jpg'], ['SKU-2', 2, 'https://private.sc.example/2b.jpg'], ['SKU-3', 0, null]],
+    'the image list, with the default image picked');
+  eq(im.publicFetch.map(x => [x.host, x.status, x.type, x.bytes]), [['img.sc-cdn.example', 206, 'image/jpeg', 1024], ['img.sc-cdn.example', 206, 'image/jpeg', 1024], ['private.sc.example', 403, 'text/plain;charset=UTF-8', 2]],
+    'opens at most three photo URLs with no login and says which ones answer');
+  ok(imgFetches.length === 3 && imgFetches.every(f => f.auth === null), 'the bearer token is never sent to a photo host');
+  ok(!r.text.includes('tok-secret') && !r.text.includes(PASSWORD), 'and never appears in the answer');
+  imgFetches = [];
+  const five = await probe('&images=1&skus=SKU-4,SKU-5,SKU-6,SKU-7,SKU-8');
+  eq([five.body.images.publicFetch.length, imgFetches.length], [3, 3], 'five SKUs with photos: still only three photo URLs opened');
+
+  catalogRefused = true;
+  const refused = await probe('&images=1&skus=SKU-1');
+  ok(refused.status === 200 && refused.body.images.catalog.status === 403 && refused.body.images.catalogOne.status === 403 && Array.isArray(refused.body.images.productImages),
+    'a refused catalog is reported per step, and the image list is still asked');
+  catalogRefused = false;
+
+  const none = await probe('&images=1');
+  ok(/no SKUs/.test(none.body.images.error), 'with no skus and no stored lines it says so');
+  db.exec(fs.readFileSync(path.join(repo, 'migration-091.sql'), 'utf8'));
+  const ins = db.prepare(`INSERT INTO ecom_order_items (order_id, line_no, company_id, unit, order_date, sku, name, qty, line_total, synced_at) VALUES (?, 1, 163, 163, ?, ?, 'x', 1, 1, 'x')`);
+  for (let n = 1; n <= 12; n++) ins.run(n, '2026-11-' + String(n).padStart(2, '0'), 'SKU-' + n);
+  const recent = await probe('&images=1');
+  eq(recent.body.images.skus, ['SKU-12', 'SKU-11', 'SKU-10', 'SKU-9', 'SKU-8', 'SKU-7', 'SKU-6', 'SKU-5', 'SKU-4', 'SKU-3'], 'with no skus it checks the 10 most recently sold');
+
+  calls = [];
+  eq((await probe('&images=1&skus=' + Array.from({ length: 11 }, (_, i) => 'S' + i).join(','))).status, 400, 'more than 10 skus → 400');
+  eq((await probe('&images=1&skus=SKU-1,bad%20sku')).status, 400, 'a SKU with other characters → 400');
+  eq((await probe('&images=1&skus=SKU-1', { user: 'u-admin' })).status, 403, 'an E-Commerce admin who is not a superuser is refused');
+  eq(calls.length, 0, '…and none of those called Sellercloud');
 }
 
 // ── 10. bad input dies at validation, before any call ──────────────────────

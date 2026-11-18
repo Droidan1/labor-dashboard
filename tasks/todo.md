@@ -1,3 +1,21 @@
+# E-Commerce Items tab: product photos (2026-11-18) — branch `claude/ecom-photo-probe`
+
+**Ask (Brian):** "Add product photos to the Items tab using Sellercloud's catalog ImageUrl or ProductImage
+endpoint, and check first that the read-only login can see them."
+
+Order lines carry no photo (0 of 106 in the cost check), so a photo has to come from the catalog.
+
+- [x] Step 1, the check: `?action=sellercloud-probe&images=1[&skus=…]` (superuser only). For up to 10 SKUs
+      (default: the 10 most recently sold) it reads `GET /Catalog` (ImageUrl, and SiteCostVisible /
+      LastCostVisible: cost hidden vs empty) and `POST /ProductImage/GetProductsImages`, then opens at most
+      3 photo URLs with NO login to see whether a page could show them. No orders read; the bearer token
+      never goes to a photo host. test-sellercloud 78 (4 mutants caught); `npm test` 12,531 / 141.
+      Dry run 1320.02 KiB.
+- [ ] Brian: deploy the worker (superuser-only and additive: deploy and merge in either order).
+- [ ] Run the check on real SKUs, then plan from what it shows:
+      public photos → store one URL per SKU and draw thumbnails; login-only photos → they would need the
+      worker to fetch and cache them (R2), a bigger step to agree first; none visible → ask Sellercloud's admin.
+
 # E-Commerce Items tab: products per company (2026-11-18) — branch `claude/ecom-items`
 
 **Ask (Brian):** "Option A. Build the Items tab as the product table, and check whether Sellercloud fills in
