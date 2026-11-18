@@ -5532,6 +5532,8 @@ const BUSINESS_AGNOSTIC_ACTIONS = new Set([
 const ACTION_BUSINESS = new Map([
   // First non-bl entry — the business gate's first real use.
   ["ebay-cases", "ecom"],
+  // Sellercloud probe (2026-11-18). Superuser-only inside the handler as well.
+  ["sellercloud-probe", "ecom"],
   // Live Sales (migration-085). Phase 1 reads the same live-sales rows Bargain Lane still counts; the
   // whatnot-* actions below stay on bl until the phase-2 cutover moves the money.
   ["live-sales", "live"],
@@ -17100,6 +17102,161 @@ async function syncBufferPosts(env, now, window) {
   return out;
 }
 
+// ─── Sellercloud (E-Commerce, 2026-11-18) ────────────────────────────────────
+// Brian (2026-11-18): E-Commerce's sales come from Sellercloud, one card per company the way
+// Bargain Lane has one per store. The account is READ-ONLY (create/edit/delete disabled by
+// Sellercloud's admin), and its login lives only in worker secrets SELLERCLOUD_USERNAME /
+// SELLERCLOUD_PASSWORD, never in source or the browser.
+//
+// Auth: POST /token {Username, Password} → access_token + expires_in. No refresh token; on
+// expiry post the login again. Trust expires_in (the docs say 60 min in prose, 1800 s in the
+// sample). Paging: pageSize ≤ 50, Items[] + TotalResults. Rate limit 10,800 calls/hour per
+// user per IP (3/s); throttling answers {"Error":"Too many requests.","RateLimitResetTime":…}
+// with no documented status or Retry-After, so the BODY is what is read.
+//
+// Order StatusCode, from this server's own Swagger (jay.api.sellercloud.us/rest/swagger):
+// 1 ShoppingCart · 2 InProcess · 3 Completed · 100 ProblemOrder · 200 OnHold · 300 Quote ·
+// 999 Void · -1 Canceled.
+//
+// This first slice is a PROBE, not the sync: one superuser-only read that proves the chain
+// (token → companies → a day's orders per company) and reports what the sync has to be built
+// on — whether the company and date filters hold, the time zone of TimeOfOrder, the status and
+// channel mix. The cron → D1 sync follows once a real answer has been seen (lessons.md: read
+// the third-party reference before probing; assume a degraded API returns LESS, not an error).
+const SELLERCLOUD_API = "https://jay.api.sellercloud.us/rest/api";
+const SELLERCLOUD_PAGE = 50;                 // the API's maximum page size
+const SELLERCLOUD_MIN_GAP_MS = 350;          // ≤ ~3 calls a second: the hourly cap spread evenly
+const SELLERCLOUD_PROBE_BUDGET = 60;         // calls per probe request
+// The five companies E-Commerce reports on (Sellercloud's admin, 2026-11-18). The account sees
+// seven; /Companies in the probe lists them all, so the other two are visible, not assumed away.
+const SELLERCLOUD_COMPANIES = [
+  { id: 163, name: "Shoes and Fashions" },
+  { id: 164, name: "Harrison Avenue" },
+  { id: 165, name: "Bass River" },
+  { id: 166, name: "Detail Pro" },
+  { id: 167, name: "Dymoda" },
+];
+const SELLERCLOUD_STATUS = { 1: "ShoppingCart", 2: "InProcess", 3: "Completed", 100: "ProblemOrder",
+  200: "OnHold", 300: "Quote", 999: "Void", [-1]: "Canceled" };
+// OrderSource, the channel. Only the ones a liquidation seller plausibly uses are named; any other
+// is reported by number so nothing is folded into a wrong name.
+const SELLERCLOUD_SOURCE = { 0: "Local store", 1: "eBay", 2: "eBay", 4: "Amazon", 6: "Website",
+  20: "Amazon FBA", 21: "Wholesale", 24: "Etsy", 42: "Walmart", 50: "Walmart", 62: "Target",
+  64: "Reverb", 79: "Walmart WFS", 80: "Back Market" };
+
+class SellercloudHttpError extends Error {
+  constructor(status, message) { super(message); this.status = status; }
+}
+class SellercloudBudgetError extends Error {}
+
+const sellercloudReady = (env) => !!(env.SELLERCLOUD_USERNAME && env.SELLERCLOUD_PASSWORD);
+
+// Token cached for the life of the isolate, renewed a minute early.
+let _scToken = null;
+async function sellercloudToken(env, { force = false } = {}) {
+  if (!force && _scToken && _scToken.until > Date.now()) return _scToken;
+  const res = await fetch(SELLERCLOUD_API + "/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ Username: env.SELLERCLOUD_USERNAME, Password: env.SELLERCLOUD_PASSWORD }),
+  });
+  const text = await res.text().catch(() => "");
+  let j = null; try { j = JSON.parse(text); } catch { /* reported below */ }
+  if (!res.ok || !j || !j.access_token) {
+    // Never echo the request; the response body is Sellercloud's message, cut short.
+    throw new SellercloudHttpError(res.status, `Sellercloud token → ${res.status} ${text.slice(0, 160)}`);
+  }
+  const secs = Number(j.expires_in);
+  const life = Number.isFinite(secs) && secs > 0 ? secs * 1000 : 30 * 60e3;
+  _scToken = { token: j.access_token, until: Date.now() + Math.max(life - 60e3, 30e3),
+               expiresIn: Number.isFinite(secs) ? secs : null, expires: j[".expires"] || null };
+  return _scToken;
+}
+
+// Sequential, paced, budgeted GETs. A list param (companyID) repeats its key, as ASP.NET binds
+// lists. 401 → one fresh token. A throttle body → wait for RateLimitResetTime (≤ 60 s), twice.
+function sellercloudClient(env, { budget = SELLERCLOUD_PROBE_BUDGET } = {}) {
+  let calls = 0, nextAt = 0, throttled = 0;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  async function get(path, params = {}) {
+    const url = new URL(SELLERCLOUD_API + path);
+    for (const [k, v] of Object.entries(params)) {
+      if (Array.isArray(v)) v.forEach(x => url.searchParams.append(k, String(x)));
+      else if (v != null && v !== "") url.searchParams.set(k, String(v));
+    }
+    let renewed = false;
+    for (let attempt = 0; ; attempt++) {
+      if (calls >= budget) throw new SellercloudBudgetError(`Sellercloud call budget (${budget}) reached`);
+      const wait = nextAt - Date.now();
+      if (wait > 0) await sleep(wait);
+      const tok = await sellercloudToken(env);
+      calls++;
+      nextAt = Date.now() + SELLERCLOUD_MIN_GAP_MS;
+      const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${tok.token}`, Accept: "application/json" } });
+      const text = await res.text().catch(() => "");
+      let body = null; try { body = text ? JSON.parse(text) : null; } catch { /* not JSON */ }
+      if (body && typeof body.Error === "string" && /too many requests/i.test(body.Error)) {
+        throttled++;
+        if (attempt >= 2) throw new SellercloudHttpError(res.status, "Sellercloud rate limit: " + (body.RateLimitResetTime || "no reset time"));
+        const reset = Date.parse(body.RateLimitResetTime || "");
+        await sleep(Math.min(Math.max(Number.isFinite(reset) ? reset - Date.now() : 2000, 250), 60e3));
+        continue;
+      }
+      if (res.status === 401 && !renewed) { renewed = true; await sellercloudToken(env, { force: true }); continue; }
+      if (!res.ok) throw new SellercloudHttpError(res.status, `Sellercloud GET ${path} → ${res.status} ${text.slice(0, 200)}`);
+      return body;
+    }
+  }
+  return { get, get calls() { return calls; }, get throttled() { return throttled; } };
+}
+
+const scNum = (v) => (v == null || v === "" || !Number.isFinite(Number(v)) ? 0 : Number(v));
+const scAdd = (m, key, amt) => { const r = m[key] || (m[key] = { orders: 0, grandTotal: 0 }); r.orders++; r.grandTotal = roundCents(r.grandTotal + amt); };
+
+// One company's orders for one window, aggregated. Returns NO buyer data — names, emails and
+// addresses arrive on every order and are dropped here, before anything leaves this function.
+async function sellercloudProbeCompany(sc, company, { from, to, by }) {
+  const params = { companyID: [company.id], pageSize: SELLERCLOUD_PAGE };
+  if (by === "created") { params.createdOnFrom = from; params.createdOnTo = to; }
+  else { params.orderFromDate = from; params.orderToDate = to; }
+  const out = { id: company.id, name: company.name, totalResults: null, fetched: 0, pages: 0, complete: false,
+    otherCompanyIds: [], timeOfOrder: { min: null, max: null, samples: [] }, createdOnSample: null,
+    byStatus: {}, bySource: {}, grandTotal: 0, taxTotal: 0, shippingTotal: 0,
+    units: 0, unitsReturned: 0, refunded: 0 };
+  for (let page = 1; ; page++) {
+    const body = await sc.get("/Orders", { ...params, pageNumber: page });
+    const items = (body && Array.isArray(body.Items)) ? body.Items : [];
+    if (out.totalResults == null && body && body.TotalResults != null) out.totalResults = Number(body.TotalResults);
+    out.pages++;
+    for (const o of items) {
+      out.fetched++;
+      // 🔑 A filter Sellercloud ignored would return OTHER companies' orders, and summing them
+      // would look like a busy day. Record it instead of trusting the parameter.
+      if (Number(o.CompanyID) !== company.id && !out.otherCompanyIds.includes(o.CompanyID)) out.otherCompanyIds.push(o.CompanyID);
+      const t = o.TimeOfOrder || null;
+      if (t) {
+        if (!out.timeOfOrder.min || t < out.timeOfOrder.min) out.timeOfOrder.min = t;
+        if (!out.timeOfOrder.max || t > out.timeOfOrder.max) out.timeOfOrder.max = t;
+        if (out.timeOfOrder.samples.length < 3) out.timeOfOrder.samples.push(t);
+      }
+      if (!out.createdOnSample && o.CreatedOn) out.createdOnSample = o.CreatedOn;
+      const gt = scNum(o.GrandTotal);
+      scAdd(out.byStatus, SELLERCLOUD_STATUS[o.StatusCode] || `status ${o.StatusCode}`, gt);
+      scAdd(out.bySource, SELLERCLOUD_SOURCE[o.OrderSource] || `source ${o.OrderSource}`, gt);
+      out.grandTotal = roundCents(out.grandTotal + gt);
+      out.taxTotal = roundCents(out.taxTotal + scNum(o.TaxTotal));
+      out.shippingTotal = roundCents(out.shippingTotal + scNum(o.ShippingTotal));
+      for (const it of (Array.isArray(o.Items) ? o.Items : [])) {
+        out.units += scNum(it.Qty);
+        out.unitsReturned += scNum(it.QtyReturned);
+        out.refunded = roundCents(out.refunded + scNum(it.TotalRefunded));
+      }
+    }
+    if (items.length < SELLERCLOUD_PAGE || (out.totalResults != null && out.fetched >= out.totalResults)) { out.complete = true; break; }
+  }
+  return out;
+}
+
 // ─── Whatnot Seller API (2026-10-30) ─────────────────────────────────────────
 // Brian (2026-10-30): pull Whatnot into the Hub through the Seller API, read-only: every
 // item sold per show, show analytics, and products. Since 2026-11-04 it is also the ONLY source
@@ -19459,6 +19616,58 @@ export default {
           }), { status: 403, headers: corsJson });
         }
       }
+    }
+
+    // ── Sellercloud probe (E-Commerce, 2026-11-18) ─────────────────
+    //    GET ?action=sellercloud-probe[&date=YYYY-MM-DD][&company=163][&by=created]
+    // One day's orders per company (default: yesterday, Eastern), aggregated, plus the
+    // companies the account can see. Read-only on Sellercloud and writes nothing here.
+    // 🔒 A signed-in SUPERUSER only — never the X-Snapshot-Secret bypass, which is public.
+    if (url.searchParams.get("action") === "sellercloud-probe") {
+      if (!currentUser || currentUser.role !== "superuser") {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "SUPERUSER_ONLY" }), { status: 403, headers: corsJson });
+      }
+      if (!sellercloudReady(env)) {
+        return new Response(JSON.stringify({ ok: false, connected: false,
+          error: "SELLERCLOUD_USERNAME / SELLERCLOUD_PASSWORD are not set on this worker" }), { status: 503, headers: corsJson });
+      }
+      const etDay = (ms) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York",
+        year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ms));
+      const date = url.searchParams.get("date") || etDay(Date.now() - 864e5);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date + "T00:00:00Z"))) {
+        return new Response(JSON.stringify({ error: "date must be YYYY-MM-DD" }), { status: 400, headers: corsJson });
+      }
+      const next = new Date(Date.parse(date + "T00:00:00Z") + 864e5).toISOString().slice(0, 10);
+      const by = url.searchParams.get("by") === "created" ? "created" : "order";
+      const only = url.searchParams.get("company");
+      const companies = only ? SELLERCLOUD_COMPANIES.filter(c => String(c.id) === only) : SELLERCLOUD_COMPANIES;
+      if (!companies.length) {
+        return new Response(JSON.stringify({ error: "company must be one of " + SELLERCLOUD_COMPANIES.map(c => c.id).join(", ") }), { status: 400, headers: corsJson });
+      }
+      const started = Date.now();
+      const sc = sellercloudClient(env);
+      const out = { ok: true, connected: true, date, window: { from: date, to: next, by }, token: null,
+        companiesVisible: null, companies: [], errors: [] };
+      try {
+        const tok = await sellercloudToken(env);
+        out.token = { expiresIn: tok.expiresIn, expires: tok.expires };
+        const list = await sc.get("/Companies", { pageSize: SELLERCLOUD_PAGE, pageNumber: 1 });
+        out.companiesVisible = ((list && list.Items) || []).map(c => ({ id: c.ID, name: c.CompanyName, disabled: !!c.IsDisabled }));
+      } catch (e) {
+        out.ok = false; out.errors.push({ step: e instanceof SellercloudHttpError && /token/.test(e.message) ? "token" : "companies", status: e.status || null, message: String(e.message || e) });
+      }
+      if (out.token) {
+        for (const c of companies) {
+          try { out.companies.push(await sellercloudProbeCompany(sc, c, { from: date, to: next, by })); }
+          catch (e) {
+            out.ok = false;
+            out.errors.push({ step: "orders", company: c.id, status: e.status || null, message: String(e.message || e) });
+            if (e instanceof SellercloudBudgetError) break;
+          }
+        }
+      }
+      out.calls = sc.calls; out.throttled = sc.throttled; out.ms = Date.now() - started;
+      return new Response(JSON.stringify(out), { status: out.ok ? 200 : 502, headers: corsJson });
     }
 
     // ── eBay Cases: read for the page ─────────────────────────────
