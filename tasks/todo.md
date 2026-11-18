@@ -36,9 +36,20 @@ Companies: 163 Shoes and Fashions · 164 Harrison Avenue · 165 Bass River · 16
 - [x] Brian's decisions (2026-11-18): landing card **A**; E-Commerce **has a budget** (source still to
       get); sales **include shipping, and the shipping amount is shown**; E-Commerce **adds into the
       "All businesses" total**; **169 Shoes and Fashions-Poshmark counts inside Shoes and Fashions**
-- [ ] Brian: where the E-Commerce budget comes from (per company? per day / week / month?)
-- [ ] Brian: pick one of the 2 Sellercloud dashboard previews (1 today-first / 2 week-first):
-      https://claude.ai/artifact/SY8JEBkCjiYYotmeQ8TWE8
+- [x] Brian: dashboard **Option 1** (same as Bargain Lane), https://claude.ai/artifact/SY8JEBkCjiYYotmeQ8TWE8.
+      **No budget per company**; one E-Commerce budget, **$57,000 a month** (spread evenly by day). Company
+      cards show orders/units and their share of E-Commerce today where the pace bar was
+- [x] Brian: the $57,000 INCLUDES shipping (so it is measured against the same sales figure the page shows)
+- [x] Phase 1 built (96a9a18, branch `claude/ecom-sync`): migration-090 `ecom_orders` (one row per order,
+      no buyer data; 169 → unit 163; UPSERT only); sync on the every-minute cron at :00/:15/:30/:45 for
+      yesterday + today, 35 days at 4 AM Eastern; `?action=ecom-overview` (today / week / month, per
+      company + hourly, eBay vs Poshmark, $57k budget spread by day; sale statuses 2/3/100/200 only;
+      signed-in, ecom gate, financial roles, unit-scoped). test-ecom-sync.mjs 43 pass, 10 mutants caught;
+      `npm test` 12,386 / 140 green. Dry run 1295.51 KiB
+- [ ] Brian: push + PR; run migration-090 on prod D1, then deploy the worker. Month to date fills at the
+      first 4 AM Eastern run after the deploy
+- [ ] Phase 2 (frontend): Overview page (Option 1), landing card A, E-Commerce into the hero total
+- [ ] Phase 3: View Details per company
 - [ ] Brian: pick A or B; answer budget / which dollars (order total vs product sales) / add to hero total
 - [ ] Then: the cron → D1 sync, built on what the probe shows; then 2 dashboard previews
 - ⚠️ The Sellercloud password was pasted into the chat; Claude did not store or use it. Consider a rotation
