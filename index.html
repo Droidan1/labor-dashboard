@@ -1220,10 +1220,15 @@
             </div>
           </div>
         </div>
-        <!-- E-Commerce's only nav item today. Hidden by default and shown by
-             applyRoleUI only for an account that actually holds E-Commerce;
-             applyBusinessNav then hides it again while you are inside Bargain
-             Lane. Both must agree, same as every other item here. -->
+        <!-- E-Commerce's nav items: Overview (its front door, Brian 2026-11-18) and eBay Cases,
+             which is its own page and no longer the business's home. Hidden by default and
+             shown by applyRoleUI only for an account that actually holds E-Commerce;
+             applyBusinessNav then hides them again while you are inside another business.
+             Both must agree, same as every other item here. -->
+        <div id="nav-ecom-overview" class="hidden nav-item" data-page="ecom-overview" data-menu-section="E-Commerce" onclick="navigateToPage('ecom-overview')">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span>
+          <span class="nav-label">Overview</span>
+        </div>
         <div id="nav-ebay-cases" class="hidden nav-item" data-page="ebay-cases" data-menu-section="E-Commerce" onclick="navigateToPage('ebay-cases')">
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
           <span class="nav-label">eBay Cases</span>
@@ -1403,8 +1408,10 @@
       <button id="bn-merch-signs" data-tab="merch-signs" aria-label="Sign Studio" onclick="navigateToPage('merch-signs')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
         <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M7 9h6M7 13h10"/></svg><span class="bn-lb">Sign Studio</span>
       </button>
-      <!-- E-Commerce's front door. Its one page used to sit under More — which was
-           the only tab that business had. -->
+      <!-- E-Commerce's bar: Overview (the front door) · eBay Cases · Menu. -->
+      <button id="bn-ecom-overview" data-tab="ecom-overview" aria-label="E-Commerce overview" onclick="navigateToPage('ecom-overview')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><span class="bn-lb">Overview</span>
+      </button>
       <button id="bn-ebay-cases" data-tab="ebay-cases" aria-label="eBay Cases" onclick="navigateToPage('ebay-cases')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
         <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span class="bn-lb">eBay Cases</span>
       </button>
@@ -6606,6 +6613,25 @@
         </div>
       </div>
     </div><!-- end #page-flow-calendar -->
+
+    <!-- E-Commerce's front door (2026-11-18). The Sellercloud dashboard — a card per company —
+         lands here once its design is approved and the connection is verified; until then the
+         page says so plainly rather than drawing figures it does not have. -->
+    <div id="page-ecom-overview" class="hidden">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-3 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-6xl mx-auto">
+          <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">E-Commerce</h1>
+          <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Sellercloud &middot; Shoes and Fashions, Harrison Avenue, Bass River, Detail Pro, Dymoda</p>
+        </div>
+      </div>
+      <div class="max-w-6xl mx-auto px-6 py-8">
+        <div class="rounded-card border border-dashed border-[rgba(20,16,8,0.16)] dark:border-[rgba(255,255,255,0.13)] bg-opl-panel dark:bg-op-panel p-card transition-colors">
+          <div class="text-[15px] font-semibold text-opl-ink dark:text-op-ink">Sales are not connected yet</div>
+          <p class="mt-1.5 text-sm text-opl-inkDim dark:text-op-inkDim leading-relaxed max-w-2xl">Each Sellercloud company gets its own card here, the way each Bargain Lane store does, once the Sellercloud connection is checked against its own reports.</p>
+          <button type="button" onclick="navigateToPage('ebay-cases')" class="mt-5 text-sm font-semibold text-accent-green hover:opacity-80 transition-opacity">Open eBay Cases &rarr;</button>
+        </div>
+      </div>
+    </div>
 
     <div id="page-ebay-cases" class="hidden">
       <style>
@@ -13922,7 +13948,8 @@
     const FINANCIAL_PAGES = ['dashboard', 'weekly-summary', 'discounts', 'store-detail',
                              'all-stores-detail', 'inventory-add', 'inventory-viewer',
                              'inventory-sale', 'supply-request', 'labor',
-                             'live-overview', 'live-shows', 'live-calendar', 'live-auction', 'live-promotion', 'live-money'];
+                             'live-overview', 'live-shows', 'live-calendar', 'live-auction', 'live-promotion', 'live-money',
+                             'ecom-overview'];
     // Supply Request is the one on the list an associate may be granted (2026-11-02): the
     // worker strips its money for them, so the page is safe to open on the grant.
     if (FINANCIAL_PAGES.includes(page) && !canSeeFinancials(currentUser)
@@ -13999,7 +14026,7 @@
     // not your role — mirroring the worker's fail-closed business gate, which is
     // the real boundary. Without this a stale deep link or history entry would
     // render the shell for someone the API then 403s.
-    if (page === 'ebay-cases') {
+    if (page === 'ebay-cases' || page === 'ecom-overview') {
       if (!userBusinesses(currentUser).some(b => b.id === 'ecom')) return;
     }
     // Live Sales' pages belong to that business, on the same terms as eBay Cases.
@@ -39554,6 +39581,7 @@
     // 🔑 The first non-'bl' entry. Until this, every item was Bargain Lane's and
     // applyBusinessNav had nothing to keep out of anyone's way in the other
     // direction — inside E-Commerce the whole sidebar simply emptied.
+    'nav-ecom-overview': 'ecom',
     'nav-ebay-cases': 'ecom',
     'nav-live-overview': 'live',
     'nav-live-shows': 'live',
@@ -39655,12 +39683,12 @@
   // to open into. Until then this still returns to the picker rather than
   // inventing a half-built page — entering a business with nowhere to go is a
   // worse experience than the card staying inert.
-  // Each business's front door. E-Commerce has no sales feed, so its front door
-  // is the Cases page rather than a dashboard — returning 'landing' here used to
+  // Each business's front door. E-Commerce's is its Overview (Brian, 2026-11-18): eBay
+  // Cases is one page inside the business, not its home. Returning 'landing' here would
   // bounce you straight back to the picker you just came from.
   function dashboardPageFor(businessId) {
     if (businessId === 'bl') return 'dashboard';
-    if (businessId === 'ecom') return 'ebay-cases';
+    if (businessId === 'ecom') return 'ecom-overview';
     if (businessId === 'live') return 'live-overview';
     return 'landing';
   }
@@ -39939,8 +39967,8 @@
         const canEnter = businessHasSurface(b.id);
         card.insertAdjacentHTML('beforeend',
           `<div class="mt-5 flex-1 rounded-xl border border-dashed border-[rgba(20,16,8,0.14)] dark:border-[rgba(255,255,255,0.11)] flex flex-col items-center justify-center text-center px-4 py-10">
-             <div class="text-sm text-opl-inkDim dark:text-op-inkDim leading-relaxed">No sales data yet.<br>API credentials not issued</div>
-             <button type="button" disabled title="Needs ${source} API credentials first"
+             <div class="text-sm text-opl-inkDim dark:text-op-inkDim leading-relaxed">No sales data yet.<br>${source} connection being checked</div>
+             <button type="button" disabled title="${source} is not connected yet"
                class="mt-4 text-xs font-semibold px-3.5 py-2 rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi text-opl-inkDim dark:text-op-inkDim cursor-not-allowed">
                Connect ${source} →</button>
            </div>
@@ -40081,8 +40109,9 @@
     // regardless of role, so mirroring that is both correct and the only honest
     // option while "what role does Meredith get" is still unanswered — a role
     // rule invented here would have to be unpicked once that lands.
-    const ebNav = el('nav-ebay-cases');
-    if (ebNav) ebNav.classList.toggle('hidden', !userBusinesses(user).some(b => b.id === 'ecom'));
+    const holdsEcom = userBusinesses(user).some(b => b.id === 'ecom');
+    ['nav-ecom-overview', 'nav-ebay-cases']
+      .forEach(id => { const n = el(id); if (n) n.classList.toggle('hidden', !holdsEcom); });
     // Live Sales' six pages, on the same rule: holding the business.
     const holdsLive = userBusinesses(user).some(b => b.id === 'live');
     ['nav-live-overview', 'nav-live-shows', 'nav-live-calendar', 'nav-live-auction', 'nav-live-promotion', 'nav-live-money']
@@ -42084,7 +42113,8 @@
       // Admin bar: Content + Flow Calendar (admin-only sidebar items).
       gate('bn-content', vis('nav-content'), 'flex');
       gate('bn-flow', vis('nav-flow-calendar'), 'flex');
-      // E-Commerce's one page. Its sidebar item exists only inside that business.
+      // E-Commerce's bar, each tab on its sidebar item (which exists only inside that business).
+      gate('bn-ecom-overview', vis('nav-ecom-overview'), 'flex');
       gate('bn-ebay-cases', vis('nav-ebay-cases'), 'flex');
       // Live Sales' bar, each tab on its sidebar item (which exists only inside that business).
       gate('bn-live-overview', vis('nav-live-overview'), 'flex');
