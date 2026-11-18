@@ -149,7 +149,7 @@ const data = (r) => {
     'get_labor', 'get_labor_plan', 'get_inventory_items', 'get_sale_schedules', 'get_bin_dumps', 'get_trucks', 'get_truck',
     'get_out_of_stock', 'get_supply_requests', 'get_supply_request', 'get_supply_budgets', 'get_item_sales', 'get_item_mapping',
     'get_whatnot_shows', 'get_whatnot_items', 'get_whatnot_products',
-    'get_discounts', 'get_discount_classes', 'get_returns'].join(), 'twenty-eight tools, in a fixed order');
+    'get_discounts', 'get_discount_classes', 'get_returns', 'get_bin_split', 'get_live_item_sales'].join(), 'thirty tools, in a fixed order');
   eq(tools?.map(t => t.name).join(), QUERIES.map(q => q.name).join(), 'the tools ARE the shared query table');
   ok(tools?.every(t => t.inputSchema?.type === 'object' && t.description), 'every tool has a description and an object schema');
   ok(tools?.every(t => t.annotations?.readOnlyHint === true && t.annotations?.destructiveHint === false), 'every tool is marked read-only');

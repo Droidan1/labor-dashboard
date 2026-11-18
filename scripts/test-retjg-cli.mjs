@@ -229,6 +229,28 @@ const json = (s) => { try { return JSON.parse(s); } catch { return null; } };
   eq(one?.truck?.bol_no, 'BOL-CLI', 'retjg truck --truck N reads that truck');
 }
 
+// ── Bin split and live items (2026-11-17): the flags reach the worker ─────
+{
+  db.exec(fs.readFileSync(path.join(repo, 'migration-078.sql'), 'utf8'));   // item_day_lines, empty
+  const h = await run(['--help']);
+  ok(h.stdout.includes('retjg bin-split [--period today|wtd|cycle|mtd|custom]') && h.stdout.includes('[--group-by store|price|day]'),
+    '--help shows bin-split with --period and --group-by');
+  const n = seen.length;
+  const r = await run(['bin-split', '--period', 'custom', '--from', '2026-10-20', '--to', '2026-10-21', '--store', 'bl2', '--group-by', 'price']);
+  eq(r.code, 0, 'retjg bin-split exits 0');
+  const q = new URL(seen[n]?.url ?? '/', BASE).searchParams;
+  eq([q.get('action'), q.get('from'), q.get('to'), q.get('store')].join(), 'bin-split,2026-10-20,2026-10-21,BL2', 'and maps --period custom, --from, --to and --store');
+  ok(json(r.stdout)?.groupBy === 'price' && 'byPrice' in (json(r.stdout) || {}), '--group-by price groups by price');
+  const lv = await run(['live-items', '--store', 'bl2', '--search', 'lamp', '--limit', '5']);
+  eq(lv.code, 0, 'retjg live-items exits 0');
+  eq([new URL(seen.at(-1).url, BASE).searchParams.get('action'), new URL(seen.at(-1).url, BASE).searchParams.get('store')].join(), 'live-items,BL2',
+    'and asks live-items for the store');
+  const m = seen.length;
+  const bad = await run(['bin-split', '--from', '2026-10-20', '--to', '2026-10-21']);
+  ok(bad.code === 2 && /period custom/.test(bad.stderr), 'bin-split --from/--to without --period custom exits 2 and says so');
+  ok(/period custom/.test(bad.stderr) && seen.length === m, 'without reaching the API');
+}
+
 // ── The key never appears in a URL ───────────────────────────────────────
 ok(seen.length > 0 && seen.every(s => !new URL(s.url, BASE).searchParams.has('key') && !s.url.includes(KEY)),
   `the key was never put in a URL (${seen.length} requests checked)`);
