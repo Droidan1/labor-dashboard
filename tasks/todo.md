@@ -49,7 +49,14 @@ revise it. Revised plan: [docs/plans/live-item-sales.md](../docs/plans/live-item
       main guarded on `version: '1.7.0'`: version 4ccdc74e, 366.59 KiB (same size as 1.6.0, the strings are equal
       length, so the version probe was the real check). Landed: 3 clean passes at 1.7.0 / 34 tools from 00:46:50Z
 - [ ] Brian: refresh the MCP connector in Claude; add the bin vs Christmas line to Muse's morning brief (outside repo)
-- [ ] One Fri–Wed cycle: each night, a live pull just before the nightly run vs the row it saves (> 1% = look)
+- [ ] One Fri–Wed cycle of live vs saved, SET UP 2026-11-17 (Brian): `~/.claude/retjg-checks/bin-split/check.mjs` (outside
+      the repo; read-only, runs `retjg bin-split`, writes only its `data/`). Two scheduled tasks in the app (Auto mode, run
+      while the app is open): `bin-split-live-pull` 22:25 ET Fri–Wed saves today's live split (refuses outside
+      20:00–22:54 ET, so a late run never pretends to be "before the nightly"); `bin-split-live-vs-saved` 00:45 ET Sat–Thu
+      compares every un-compared live day with the saved split, per store and chain, net and units, regular/christmas and
+      subgroups, flags > 1% and any day NOT SAVED. Window 11-17..11-25 (Tue/Wed shakedown, then Fri 11-20..Wed 11-25);
+      log in `data/log.md`. Tested on prod 2026-11-17: live pull ok; a seeded +5% BL2 change flagged, an untouched day
+      0.00%. After 11-26: read the log, then delete both tasks
 - [x] Branches archived (2026-11-18, Brian): the 4 merged branches deleted on origin (`--force-with-lease`) and
       locally. Every tip is in main, so nothing is lost. Restore one with `git push origin <sha>:refs/heads/<branch>`:
       claude/live-item-sales 9eb1fd145c3962362d46355b1a0f50a66be339de (#380) ·
