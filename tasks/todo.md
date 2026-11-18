@@ -21,8 +21,24 @@ Companies: 163 Shoes and Fashions · 164 Harrison Avenue · 165 Bass River · 16
       "Submit" failures are pre-existing on main. sw cache v304 (6ea82bc)
 - [x] `npm test`: 12,291 / 138 green on the base; branch adds test-sellercloud.mjs
 - [x] Landing card previews A (Bargain Lane layout) / B (by company): https://claude.ai/artifact/HQpK1fR7NYvswbzDxrJNX5
-- [ ] Brian: push + PR; set the two secrets and deploy the worker; run the probe for one day and check it
-      against Sellercloud's own report for that day
+- [x] PR #384 opened. Brian set SELLERCLOUD_USERNAME / SELLERCLOUD_PASSWORD on clover-sales-api and
+      deployed from a fresh clone of 4e9b33c: version c75182b1, upload 1286.05 KiB = the dry run.
+      Landed: 3 clean probe passes 14:18:20–14:18:52Z from Brian's superuser session
+- [x] First real pull, 2026-11-17 by order date (GrandTotal, shipping included, tax 0 — eBay collects it):
+      163 S&F 26 / $2,189.85 · 164 Harrison 0 · 165 Bass River 3 / $244.06 · 166 Detail Pro 0 ·
+      167 Dymoda 5 / $758.91 → 34 orders, $3,192.82, $349.65 of it shipping. Every order eBay; statuses
+      only InProcess + Completed. Company filter held everywhere. 1 page per company, ~3.5 s for all five
+- 🔑 Observed: `orderToDate=D+1` excluded D+1's orders (Dymoda's 11-18 06:42–07:49 left out), but
+      `createdOnTo=D+1` INCLUDED them — the two filters treat the end date differently. TimeOfOrder /
+      CreatedOn carry no zone; S&F's day ran 06:02–21:00, which reads as Eastern, unconfirmed
+- 🔑 The account sees two more companies: 168 The Jay Group (Wholesale), 169 Shoes and Fashions-Poshmark
+- [x] Brian: the 11-17 numbers MATCH Sellercloud's own order list (2026-11-18)
+- [x] Brian's decisions (2026-11-18): landing card **A**; E-Commerce **has a budget** (source still to
+      get); sales **include shipping, and the shipping amount is shown**; E-Commerce **adds into the
+      "All businesses" total**; **169 Shoes and Fashions-Poshmark counts inside Shoes and Fashions**
+- [ ] Brian: where the E-Commerce budget comes from (per company? per day / week / month?)
+- [ ] Brian: pick one of the 2 Sellercloud dashboard previews (1 today-first / 2 week-first):
+      https://claude.ai/artifact/SY8JEBkCjiYYotmeQ8TWE8
 - [ ] Brian: pick A or B; answer budget / which dollars (order total vs product sales) / add to hero total
 - [ ] Then: the cron → D1 sync, built on what the probe shows; then 2 dashboard previews
 - ⚠️ The Sellercloud password was pasted into the chat; Claude did not store or use it. Consider a rotation
