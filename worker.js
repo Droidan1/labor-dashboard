@@ -5538,6 +5538,8 @@ const ACTION_BUSINESS = new Map([
   ["ecom-overview", "ecom"],
   // E-Commerce history load (2026-11-18). Superuser-only, POST, inside the handler as well.
   ["ecom-backfill", "ecom"],
+  // One company's View Details (2026-11-18), unit-scoped inside the handler.
+  ["ecom-company", "ecom"],
   // Live Sales (migration-085). Phase 1 reads the same live-sales rows Bargain Lane still counts; the
   // whatnot-* actions below stay on bl until the phase-2 cutover moves the money.
   ["live-sales", "live"],
@@ -17353,6 +17355,69 @@ async function syncSellercloud(env, { from, to, deep = false, budget = SELLERCLO
   return out;
 }
 
+// ── One company's View Details (Option A, Brian 2026-11-18) ──────────────────────────────────
+// The range's daily rows, totals against the period just before and the same dates a year
+// earlier, order status mix, hourly sales for a one-day range, and the latest orders (every
+// status, so cancellations show). Read-only. Sums count sale statuses only, like the Overview.
+const ECOM_COMPANY_ORDERS = 200;
+const ecomYearBack = (ymd) => {           // same date a year earlier; Feb 29 → Feb 28
+  const y = String(Number(ymd.slice(0, 4)) - 1) + ymd.slice(4);
+  return addDaysYmd(y, 0) === y ? y : y.slice(0, 8) + "28";
+};
+async function ecomCompany(env, unit, from, to) {
+  const SALE = `status_code IN (${SELLERCLOUD_SALE_STATUSES.join(",")})`;
+  const AGG = `COUNT(*) AS orders, COALESCE(SUM(units), 0) AS units, COALESCE(SUM(grand_total), 0) AS sales,
+    COALESCE(SUM(shipping), 0) AS shipping, COALESCE(SUM(refunded), 0) AS refunded, COALESCE(SUM(units_returned), 0) AS returns,
+    COALESCE(SUM(CASE WHEN company_id = ${SELLERCLOUD_POSHMARK} THEN grand_total ELSE 0 END), 0) AS poshmark,
+    COALESCE(SUM(CASE WHEN company_id <> ${SELLERCLOUD_POSHMARK} AND source IN (1, 2) THEN grand_total ELSE 0 END), 0) AS ebay`;
+  const tidy = (r) => {
+    const o = { orders: r.orders || 0, units: r.units || 0, returns: r.returns || 0 };
+    for (const k of ["sales", "shipping", "refunded", "poshmark", "ebay"]) o[k] = roundCents(r[k] || 0);
+    o.other = roundCents(o.sales - o.poshmark - o.ebay);
+    return o;
+  };
+  const one = async (a, b) => tidy(await env.DB.prepare(`SELECT ${AGG} FROM ecom_orders WHERE unit = ? AND ${SALE} AND order_date BETWEEN ? AND ?`).bind(unit, a, b).first() || {});
+  const days = Math.round((Date.parse(to + "T00:00:00Z") - Date.parse(from + "T00:00:00Z")) / 864e5) + 1;
+  const prevTo = addDaysYmd(from, -1), prevFrom = addDaysYmd(from, -days);
+  const lyFrom = ecomYearBack(from), lyTo = ecomYearBack(to);
+  const byDay = new Map(((await env.DB.prepare(
+    `SELECT order_date AS d, ${AGG} FROM ecom_orders WHERE unit = ? AND ${SALE} AND order_date BETWEEN ? AND ? GROUP BY order_date`
+  ).bind(unit, from, to).all()).results || []).map(r => [r.d, tidy(r)]));
+  const daily = [];
+  for (let d = from; d <= to; d = addDaysYmd(d, 1)) daily.push({ date: d, ...(byDay.get(d) || tidy({})) });
+  const status = ((await env.DB.prepare(
+    `SELECT status_code AS status, COUNT(*) AS orders, COALESCE(SUM(grand_total), 0) AS amount FROM ecom_orders
+      WHERE unit = ? AND order_date BETWEEN ? AND ? GROUP BY status_code ORDER BY orders DESC`
+  ).bind(unit, from, to).all()).results || []).map(r => ({ status: r.status, name: SELLERCLOUD_STATUS[r.status] || null, orders: r.orders, amount: roundCents(r.amount) }));
+  let hours = null;
+  if (from === to) {
+    hours = new Array(24).fill(0);
+    for (const r of ((await env.DB.prepare(
+      `SELECT order_time AS t, grand_total AS g FROM ecom_orders WHERE unit = ? AND ${SALE} AND order_date = ?`
+    ).bind(unit, from).all()).results || [])) {
+      const h = /T\d{2}/.test(r.t || "") ? Number(r.t.slice(11, 13)) : null;
+      if (h != null && h >= 0 && h < 24) hours[h] = roundCents(hours[h] + (r.g || 0));
+    }
+  }
+  const total = await env.DB.prepare(`SELECT COUNT(*) AS n FROM ecom_orders WHERE unit = ? AND order_date BETWEEN ? AND ?`).bind(unit, from, to).first();
+  const orders = ((await env.DB.prepare(
+    `SELECT order_id, order_time, status_code, company_id, source, units, grand_total, shipping, refunded, units_returned
+       FROM ecom_orders WHERE unit = ? AND order_date BETWEEN ? AND ? ORDER BY order_time DESC, order_id DESC LIMIT ${ECOM_COMPANY_ORDERS}`
+  ).bind(unit, from, to).all()).results || []).map(o => ({
+    id: o.order_id, time: o.order_time, status: o.status_code, statusName: SELLERCLOUD_STATUS[o.status_code] || null,
+    channel: o.company_id === SELLERCLOUD_POSHMARK ? "Poshmark" : (o.source === 1 || o.source === 2) ? "eBay" : "Other",
+    units: o.units, total: roundCents(o.grand_total || 0), shipping: roundCents(o.shipping || 0), refunded: roundCents(o.refunded || 0), returned: o.units_returned }));
+  const c = SELLERCLOUD_COMPANIES.find(x => x.id === unit);
+  return {
+    company: { id: unit, name: c ? c.name : String(unit), companyIds: Object.keys(SELLERCLOUD_UNIT_OF).map(Number).filter(k => SELLERCLOUD_UNIT_OF[k] === unit) },
+    range: { from, to, days },
+    totals: await one(from, to),
+    previous: { from: prevFrom, to: prevTo, ...(await one(prevFrom, prevTo)) },
+    lastYear: { from: lyFrom, to: lyTo, ...(await one(lyFrom, lyTo)) },
+    daily, status, hours, orders, ordersInRange: (total && total.n) || 0,
+  };
+}
+
 const ecomDaysInMonth = (ymd) => new Date(Date.UTC(Number(ymd.slice(0, 4)), Number(ymd.slice(5, 7)), 0)).getUTCDate();
 const ecomDailyBudget = (ymd) => ECOM_MONTHLY_BUDGET / ecomDaysInMonth(ymd);
 
@@ -19870,6 +19935,39 @@ export default {
         const raw = env.SALES_SNAPSHOTS ? await env.SALES_SNAPSHOTS.get("ecom:sync") : null;
         let sync = null; try { sync = raw ? JSON.parse(raw) : null; } catch { /* left null */ }
         return new Response(JSON.stringify({ ok: true, connected: sellercloudReady(env), ...body, sync }), { headers: corsJson });
+      } catch (e) {
+        if (/no such table/i.test(String(e && e.message))) {
+          return new Response(JSON.stringify({ ok: false, setup: false, error: "ecom_orders is missing (migration-090)" }), { status: 503, headers: corsJson });
+        }
+        throw e;
+      }
+    }
+
+    // ── E-Commerce: one company's View Details (2026-11-18) ─────────
+    //    GET ?action=ecom-company&company=163[&from=YYYY-MM-DD&to=YYYY-MM-DD]   (default: today)
+    // Same door as ecom-overview: signed in, the ecom business gate, a financial role, and the
+    // company must be one this user may see (allowedUnits) — a manager scoped to 164 gets 403
+    // for 163, not an empty page.
+    if (url.searchParams.get("action") === "ecom-company" && request.method === "GET") {
+      if (!currentUser) {
+        return new Response(JSON.stringify({ error: "Sign in required", code: "NO_SESSION" }), { status: 401, headers: corsJson });
+      }
+      const unit = Number(url.searchParams.get("company"));
+      if (!SELLERCLOUD_COMPANIES.some(c => c.id === unit)) {
+        return new Response(JSON.stringify({ error: "company must be one of " + SELLERCLOUD_COMPANIES.map(c => c.id).join(", ") }), { status: 400, headers: corsJson });
+      }
+      const allowed = allowedUnits(currentUser, "ecom");
+      if (allowed != null && !allowed.map(String).includes(String(unit))) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NO_UNIT_ACCESS" }), { status: 403, headers: corsJson });
+      }
+      const okDay = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || "") && addDaysYmd(d, 0) === d;
+      const to = url.searchParams.get("to") || getETToday().dateStr;
+      const from = url.searchParams.get("from") || to;
+      if (!okDay(from) || !okDay(to) || from > to || Date.parse(to) - Date.parse(from) > 400 * 864e5) {
+        return new Response(JSON.stringify({ error: "from/to must be YYYY-MM-DD, from on or before to, at most 400 days apart" }), { status: 400, headers: corsJson });
+      }
+      try {
+        return new Response(JSON.stringify({ ok: true, ...(await ecomCompany(env, unit, from, to)) }), { headers: corsJson });
       } catch (e) {
         if (/no such table/i.test(String(e && e.message))) {
           return new Response(JSON.stringify({ ok: false, setup: false, error: "ecom_orders is missing (migration-090)" }), { status: 503, headers: corsJson });

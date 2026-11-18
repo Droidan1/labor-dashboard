@@ -229,6 +229,47 @@ const count = (where = '1=1') => db.prepare(`SELECT COUNT(*) AS n FROM ecom_orde
   eq(await env.SALES_SNAPSHOTS.get('ecom:sync'), kvBefore, 'and leaves the 15-minute sync\'s "last synced" alone');
 }
 
+// ── 6d. one company's View Details (2026-11-18) ───────────────────────────
+{
+  const company = async (qs, opts = { user: 'u-admin' }) => {
+    const r = await worker.fetch(req('/?action=ecom-company' + qs, opts), env, { waitUntil() {}, passThroughOnException() {} });
+    const text = await r.text(); let body = null; try { body = JSON.parse(text); } catch {}
+    return { status: r.status, body, text };
+  };
+  // A year-ago order, loaded the way the history load does.
+  order(163, '2025-11-18', 14, { GrandTotal: 88, ShippingTotal: 8 });
+  await worker.fetch(req('/?action=ecom-backfill', { user: 'u-su', method: 'POST', body: { from: '2025-11-01', to: '2025-11-30' } }), env, { waitUntil() {}, passThroughOnException() {} });
+
+  const r = await company('&company=163&from=2026-11-17&to=2026-11-18');
+  const b = r.body;
+  ok(r.status === 200 && b.ok, `admin reads Shoes and Fashions, got ${r.status} ${r.text.slice(0, 160)}`);
+  eq([b.company.name, b.company.companyIds], ['Shoes and Fashions', [163, 169]], 'the company, with Poshmark folded in');
+  eq([b.totals.orders, b.totals.sales, b.totals.shipping], [64, 1290, 126], 'totals: 60×$20 + 2×$30 + 2×$15 (Poshmark), cancelled $999 left out, shipping included');
+  eq([b.totals.ebay, b.totals.poshmark, b.totals.other], [1260, 30, 0], 'eBay vs Poshmark');
+  eq(b.daily.map(x => [x.date, x.orders, x.sales]), [['2026-11-17', 2, 60], ['2026-11-18', 62, 1230]], 'one row per day');
+  eq([b.previous.from, b.previous.to, b.previous.sales], ['2026-11-15', '2026-11-16', 0], 'previous = the same number of days just before');
+  eq([b.lastYear.from, b.lastYear.to, b.lastYear.orders, b.lastYear.sales], ['2025-11-17', '2025-11-18', 1, 88], 'last year = the same dates a year earlier');
+  eq(b.status.map(x => [x.name, x.orders]), [['Completed', 64], ['Canceled', 1]], 'status mix counts every status');
+  eq([b.ordersInRange, b.orders.length, b.orders.some(o => o.statusName === 'Canceled' && o.total === 999)], [65, 65, true], 'orders list every status, cancellations included');
+  ok(b.orders.every((o, i) => i === 0 || o.time <= b.orders[i - 1].time), 'orders are newest first');
+  eq(b.hours, null, 'no hours for a range of days');
+  for (const s of ['Secretfirst', 'buyer-secret@example.com', 'Secretstreet']) ok(!r.text.includes(s), `no buyer data ("${s}")`);
+  const day = await company('&company=163&from=2026-11-18&to=2026-11-18');
+  eq(day.body.hours.reduce((n, v) => n + v, 0), 1230, 'a one-day range has hourly sales that add up to the day');
+  eq(day.body.previous.from, '2026-11-17', '…compared with the day before');
+  const def = await company('&company=164');
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+  eq([def.status, def.body.range.from, def.body.range.to], [200, today, today], 'no range → today');
+  eq((await company('&company=164', { user: 'u-mgr2' })).status, 200, 'a manager scoped to 164 reads 164');
+  const other = await company('&company=163', { user: 'u-mgr2' });
+  eq([other.status, other.body && other.body.code], [403, 'NO_UNIT_ACCESS'], '…and is refused 163, not given an empty page');
+  eq((await company('&company=163', { user: 'u-mgr1' })).status, 403, 'a Bargain-Lane-only manager is refused');
+  eq((await company('&company=163', { user: 'u-staff' })).status, 403, 'a non-financial role is refused');
+  eq((await company('&company=163', { secret: env.SNAPSHOT_SECRET })).status, 401, 'the snapshot secret alone gets nothing');
+  eq((await company('&company=168')).status, 400, 'wholesale (168) is not a company here');
+  eq((await company('&company=163&from=2026-11-18&to=2026-11-01')).status, 400, 'from after to → 400');
+}
+
 // ── 7. who sees what ───────────────────────────────────────────────────────
 {
   const one = await read(env, '&date=2026-11-18', { user: 'u-mgr2' });
