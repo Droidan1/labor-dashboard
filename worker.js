@@ -5540,6 +5540,7 @@ const ACTION_BUSINESS = new Map([
   ["ecom-backfill", "ecom"],
   // One company's View Details (2026-11-18), unit-scoped inside the handler.
   ["ecom-company", "ecom"],
+  ["ecom-items", "ecom"],
   // Live Sales (migration-085). Phase 1 reads the same live-sales rows Bargain Lane still counts; the
   // whatnot-* actions below stay on bl until the phase-2 cutover moves the money.
   ["live-sales", "live"],
@@ -17333,6 +17334,41 @@ function sellercloudOrderValues(o, companyId, syncedAt) {
     roundCents(scNum(o.GrandTotal)), roundCents(scNum(o.ShippingTotal)), units, returned, roundCents(refunded), syncedAt];
 }
 
+// ── The products in each order → ecom_order_items (migration-091, 2026-11-18) ────────────────
+// Brian chose the Items tab as a product table (Option A). The sync writes an order's lines in
+// the same batch as the order: its stored lines are deleted and the ones just sent inserted, so a
+// line edited or removed in Sellercloud follows. 🛑 An order sent with NO lines keeps the lines
+// already stored — Sellercloud degrading by sending less must not wipe them.
+const SELLERCLOUD_LINE_INSERT = `INSERT INTO ecom_order_items
+  (order_id, line_no, line_id, company_id, unit, order_date, sku, name, qty, qty_returned, line_total,
+   refunded, site_cost, average_cost, last_cost, synced_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+// One order line → the row's values. A cost of 0 is stored as NULL: Sellercloud sends 0 when it
+// has no cost (or hides it), and 0 would read as a 100% margin.
+function sellercloudLineValues(o, it, lineNo, companyId, syncedAt) {
+  const cost = (v) => (scNum(v) > 0 ? scNum(v) : null);
+  const text = (v) => (v == null || String(v).trim() === "" ? null : String(v).trim().slice(0, 300));
+  return [Number(o.ID), lineNo, it.ID != null && Number.isFinite(Number(it.ID)) ? Number(it.ID) : null, companyId,
+    SELLERCLOUD_UNIT_OF[companyId], String(o.TimeOfOrder).slice(0, 10), text(it.ProductID), text(it.DisplayName) || text(it.ProductName),
+    scNum(it.Qty), scNum(it.QtyReturned), roundCents(scNum(it.LineTotal)), roundCents(scNum(it.TotalRefunded)),
+    cost(it.SiteCost), cost(it.AverageCost), cost(it.LastCost), syncedAt];
+}
+// The statements that write one page of a company's orders: the orders, then their lines.
+// 🔑 The DELETE binds one id per order of the page — at most SELLERCLOUD_PAGE (50), inside D1's
+// 100 bound parameters a query.
+function sellercloudPageStatements(env, mine, companyId, syncedAt, { lines = true } = {}) {
+  const stmts = mine.map(o => env.DB.prepare(SELLERCLOUD_UPSERT).bind(...sellercloudOrderValues(o, companyId, syncedAt)));
+  const withLines = lines ? mine.filter(o => Array.isArray(o.Items) && o.Items.length) : [];
+  if (withLines.length) {
+    stmts.push(env.DB.prepare(`DELETE FROM ecom_order_items WHERE order_id IN (${withLines.map(() => "?").join(", ")})`)
+      .bind(...withLines.map(o => Number(o.ID))));
+    for (const o of withLines) {
+      o.Items.forEach((it, i) => stmts.push(env.DB.prepare(SELLERCLOUD_LINE_INSERT).bind(...sellercloudLineValues(o, it, i + 1, companyId, syncedAt))));
+    }
+  }
+  return { stmts, lines: withLines.reduce((n, o) => n + o.Items.length, 0) };
+}
+
 // Copy [from, to) of every E-Commerce company's orders into ecom_orders. UPSERT only: a short
 // fetch adds or updates rows and never removes one. A company whose fetch stops short of
 // Sellercloud's TotalResults is reported `incomplete`.
@@ -17340,7 +17376,7 @@ async function syncSellercloud(env, { from, to, deep = false, budget = SELLERCLO
   if (!env.DB || !sellercloudReady(env)) return { skipped: "not configured" };
   const sc = sellercloudClient(env, { budget });
   const syncedAt = now.toISOString();
-  const out = { from, to, deep, orders: 0, written: 0, incomplete: [], errors: [] };
+  const out = { from, to, deep, orders: 0, written: 0, lines: 0, linesSkipped: false, incomplete: [], errors: [] };
   for (const companyId of Object.keys(SELLERCLOUD_UNIT_OF).map(Number)) {
     try {
       let total = null, fetched = 0;
@@ -17352,8 +17388,17 @@ async function syncSellercloud(env, { from, to, deep = false, budget = SELLERCLO
         // An order from another company (a filter Sellercloud ignored) is not this company's to write.
         const mine = items.filter(o => Number(o.CompanyID) === companyId && o.ID != null && o.TimeOfOrder);
         if (mine.length) {
-          await env.DB.batch(mine.map(o => env.DB.prepare(SELLERCLOUD_UPSERT).bind(...sellercloudOrderValues(o, companyId, syncedAt))));
+          let page = sellercloudPageStatements(env, mine, companyId, syncedAt, { lines: !out.linesSkipped });
+          try { await env.DB.batch(page.stmts); }
+          catch (e) {
+            // Worker ahead of migration-091: keep syncing the orders, and say the lines were skipped.
+            if (!/no such table: ecom_order_items/i.test(String(e && e.message))) throw e;
+            out.linesSkipped = true;
+            page = sellercloudPageStatements(env, mine, companyId, syncedAt, { lines: false });
+            await env.DB.batch(page.stmts);
+          }
           out.written += mine.length;
+          out.lines += page.lines;
         }
         if (items.length < SELLERCLOUD_PAGE || (total != null && fetched >= total)) break;
       }
@@ -17369,7 +17414,7 @@ async function syncSellercloud(env, { from, to, deep = false, budget = SELLERCLO
   // The page's "Synced …" is the 15-minute sync's; a history load does not move it.
   if (record && env.SALES_SNAPSHOTS) {
     await env.SALES_SNAPSHOTS.put("ecom:sync", JSON.stringify({ at: syncedAt, ok: out.ok, from, to, deep,
-      orders: out.orders, incomplete: out.incomplete, errors: out.errors })).catch(() => {});
+      orders: out.orders, lines: out.lines, linesSkipped: out.linesSkipped, incomplete: out.incomplete, errors: out.errors })).catch(() => {});
   }
   return out;
 }
@@ -17435,6 +17480,61 @@ async function ecomCompany(env, unit, from, to) {
     lastYear: { from: lyFrom, to: lyTo, ...(await one(lyFrom, lyTo)) },
     daily, status, hours, orders, ordersInRange: (total && total.n) || 0,
   };
+}
+
+// ── One company's Items tab (Option A, Brian 2026-11-18) ──────────────────────────────────────
+// Products sold in [from, to], one row per SKU (a line with no SKU groups by its name): units,
+// sales (line totals — shipping is per order, so it is not in here), orders, returns, refunds,
+// last day sold. Sale statuses only, judged by the order's status now. The top
+// ECOM_ITEMS_LIMIT rows by sales or units; `totals` covers every product in the range and is
+// what Share divides by, `matched` the ones a search finds. Cost: the unit cost is site cost,
+// else average, else last (Sellercloud's own P&L uses site cost); `coverage` is the share of
+// sales that has one, and the page shows margin only at 90% or more.
+const ECOM_ITEMS_LIMIT = 500;
+async function ecomItems(env, unit, from, to, { sort = "sales", q = "" } = {}) {
+  const UC = "COALESCE(i.site_cost, i.average_cost, i.last_cost)";
+  const KEY = "COALESCE(i.sku, i.name, '')";
+  const base = `FROM ecom_order_items i JOIN ecom_orders o ON o.order_id = i.order_id
+    WHERE i.unit = ? AND i.order_date BETWEEN ? AND ? AND o.status_code IN (${SELLERCLOUD_SALE_STATUSES.join(",")})`;
+  const args = [unit, from, to];
+  const needle = String(q || "").trim().slice(0, 80);
+  const like = "%" + needle.replace(/[\\%_]/g, (m) => "\\" + m) + "%";
+  const search = needle ? ` AND (i.name LIKE ? ESCAPE '\\' OR i.sku LIKE ? ESCAPE '\\')` : "";
+  const sargs = needle ? [...args, like, like] : args;
+  const SUMS = `COUNT(DISTINCT ${KEY}) AS products, COUNT(*) AS lines, COALESCE(SUM(i.qty), 0) AS units,
+    COALESCE(SUM(i.line_total), 0) AS sales, COALESCE(SUM(i.qty_returned), 0) AS returned, COALESCE(SUM(i.refunded), 0) AS refunded,
+    COALESCE(SUM(CASE WHEN ${UC} IS NOT NULL THEN i.line_total ELSE 0 END), 0) AS costedSales,
+    COALESCE(SUM(CASE WHEN ${UC} IS NOT NULL THEN i.qty * ${UC} ELSE 0 END), 0) AS cost`;
+  const tidy = (r) => {
+    r = r || {};
+    const o = { products: r.products || 0, lines: r.lines || 0, units: r.units || 0, returned: r.returned || 0 };
+    for (const k of ["sales", "refunded", "costedSales", "cost"]) o[k] = roundCents(r[k] || 0);
+    o.coverage = o.sales > 0 ? Math.round(o.costedSales / o.sales * 1000) / 1000 : null;
+    return o;
+  };
+  const totals = tidy(await env.DB.prepare(`SELECT ${SUMS} ${base}`).bind(...args).first());
+  const matched = needle ? tidy(await env.DB.prepare(`SELECT ${SUMS} ${base}${search}`).bind(...sargs).first()) : null;
+  const order = sort === "units" ? "units DESC, sales DESC" : "sales DESC, units DESC";
+  const rows = ((await env.DB.prepare(
+    `SELECT ${KEY} AS k, MAX(i.sku) AS sku, MAX(i.name) AS name, SUM(i.qty) AS units, SUM(i.line_total) AS sales,
+       COUNT(DISTINCT i.order_id) AS orders, SUM(i.qty_returned) AS returned, SUM(i.refunded) AS refunded, MAX(i.order_date) AS lastSold,
+       SUM(CASE WHEN ${UC} IS NOT NULL THEN i.line_total ELSE 0 END) AS costedSales,
+       SUM(CASE WHEN ${UC} IS NOT NULL THEN i.qty * ${UC} ELSE 0 END) AS cost
+     ${base}${search} GROUP BY k ORDER BY ${order}, k LIMIT ${ECOM_ITEMS_LIMIT}`
+  ).bind(...sargs).all()).results || []).map(r => ({ sku: r.sku, name: r.name, units: r.units || 0, sales: roundCents(r.sales || 0),
+    orders: r.orders || 0, returned: r.returned || 0, refunded: roundCents(r.refunded || 0), lastSold: r.lastSold,
+    costedSales: roundCents(r.costedSales || 0), cost: roundCents(r.cost || 0) }));
+  // How much of the range has its products stored: orders sold vs orders with lines kept.
+  const kept = await env.DB.prepare(
+    `SELECT COUNT(*) AS orders, COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM ecom_order_items x WHERE x.order_id = o.order_id) THEN 1 ELSE 0 END), 0) AS withLines
+       FROM ecom_orders o WHERE o.unit = ? AND o.order_date BETWEEN ? AND ? AND o.status_code IN (${SELLERCLOUD_SALE_STATUSES.join(",")})`
+  ).bind(unit, from, to).first();
+  const c = SELLERCLOUD_COMPANIES.find(x => x.id === unit);
+  const days = Math.round((Date.parse(to + "T00:00:00Z") - Date.parse(from + "T00:00:00Z")) / 864e5) + 1;
+  const shown = (matched || totals).products;
+  return { company: { id: unit, name: c ? c.name : String(unit) }, range: { from, to, days }, sort: sort === "units" ? "units" : "sales",
+    q: needle, totals, matched, items: rows, limit: ECOM_ITEMS_LIMIT, truncated: shown > rows.length,
+    orders: { sold: (kept && kept.orders) || 0, withLines: (kept && kept.withLines) || 0 } };
 }
 
 const ecomDaysInMonth = (ymd) => new Date(Date.UTC(Number(ymd.slice(0, 4)), Number(ymd.slice(5, 7)), 0)).getUTCDate();
@@ -20008,6 +20108,39 @@ export default {
       } catch (e) {
         if (/no such table/i.test(String(e && e.message))) {
           return new Response(JSON.stringify({ ok: false, setup: false, error: "ecom_orders is missing (migration-090)" }), { status: 503, headers: corsJson });
+        }
+        throw e;
+      }
+    }
+
+    // ── E-Commerce: one company's products (Items tab, 2026-11-18) ──
+    //    GET ?action=ecom-items&company=163&from=YYYY-MM-DD&to=YYYY-MM-DD[&sort=units][&q=red wing]
+    // Same door as ecom-company: signed in, the ecom business gate, a financial role, and a
+    // company this user may see.
+    if (url.searchParams.get("action") === "ecom-items" && request.method === "GET") {
+      if (!currentUser) {
+        return new Response(JSON.stringify({ error: "Sign in required", code: "NO_SESSION" }), { status: 401, headers: corsJson });
+      }
+      const unit = Number(url.searchParams.get("company"));
+      if (!SELLERCLOUD_COMPANIES.some(c => c.id === unit)) {
+        return new Response(JSON.stringify({ error: "company must be one of " + SELLERCLOUD_COMPANIES.map(c => c.id).join(", ") }), { status: 400, headers: corsJson });
+      }
+      const allowed = allowedUnits(currentUser, "ecom");
+      if (allowed != null && !allowed.map(String).includes(String(unit))) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NO_UNIT_ACCESS" }), { status: 403, headers: corsJson });
+      }
+      const okDay = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || "") && addDaysYmd(d, 0) === d;
+      const to = url.searchParams.get("to") || getETToday().dateStr;
+      const from = url.searchParams.get("from") || to;
+      if (!okDay(from) || !okDay(to) || from > to || Date.parse(to) - Date.parse(from) > 400 * 864e5) {
+        return new Response(JSON.stringify({ error: "from/to must be YYYY-MM-DD, from on or before to, at most 400 days apart" }), { status: 400, headers: corsJson });
+      }
+      try {
+        const r = await ecomItems(env, unit, from, to, { sort: url.searchParams.get("sort"), q: url.searchParams.get("q") || "" });
+        return new Response(JSON.stringify({ ok: true, ...r }), { headers: corsJson });
+      } catch (e) {
+        if (/no such table/i.test(String(e && e.message))) {
+          return new Response(JSON.stringify({ ok: false, setup: false, error: "ecom_order_items is missing (migration-091)" }), { status: 503, headers: corsJson });
         }
         throw e;
       }

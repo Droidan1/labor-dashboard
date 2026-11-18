@@ -1,5 +1,5 @@
 // An E-Commerce company's View Details page (Option A, 2026-11-18), in a real browser against
-// the built dist/, with ?action=ecom-overview and ?action=ecom-company stubbed.
+// the built dist/, with ?action=ecom-overview, ?action=ecom-company and ?action=ecom-items stubbed.
 //
 // WHAT THIS PROTECTS.
 //   - Every company card on the Overview has View Details, and it opens that company's page with
@@ -9,6 +9,10 @@
 //     Daily · Chart · Orders · Items tabs, each drawing its own content; a one-day range charts hours.
 //   - A company the user may not see says so instead of drawing an empty page.
 //   - The Overview item stays lit (sidebar and phone bar) while on a company.
+//   - Items (2026-11-18) is the product table: top 25 then Show all, sort by sales or units,
+//     search that keeps the cursor in the box, returns of 20%+ marked, a refresh reads it again
+//     (DESIGN §4.8 trap 8), a note when some orders have no products stored, and margin columns
+//     only when 90% of sales carry a cost.
 //   - Text clears AA in light and dark on every tab; the page fits a phone.
 //
 // Run: bash scripts/build.sh && PLAYWRIGHT_CHROMIUM=<chrome> node scripts/browser-ecom-company.mjs
@@ -82,6 +86,21 @@ async function open(theme, width = 1280, isMobile = false) {
           orders: [{ id: 5029027, time: to + 'T10:08:05', status: 2, statusName: 'InProcess', channel: 'eBay', units: 1, total: 47.38, shipping: 9.99, refunded: 0, returned: 0 },
                    { id: 5029020, time: to + 'T09:00:31', status: 3, statusName: 'Completed', channel: 'eBay', units: 2, total: 77.98, shipping: 9.99, refunded: 0, returned: 0 },
                    { id: 5029011, time: to + 'T08:01:00', status: -1, statusName: 'Canceled', channel: 'Poshmark', units: 1, total: 12, shipping: 0, refunded: 12, returned: 0 }] });
+      }
+      if (s.includes('action=ecom-items')) {
+        window.__asked(s);
+        await new Promise(r => setTimeout(r, 150));   // a real read takes a moment: a render meanwhile must not ask twice
+        const sort = (s.match(/[?&]sort=(\w+)/) || [])[1] || 'sales';
+        const q = decodeURIComponent((s.match(/[?&]q=([^&]*)/) || [])[1] || '').toLowerCase();
+        const cost = !!window.__itemsCost;
+        const all = Array.from({ length: 30 }, (_, i) => ({ sku: 'JG-' + (7800000 + i), name: (i % 3 === 0 ? 'Red Wing Boots ' : 'johnnie-O Shirt ') + i,
+          units: (i % 4) + 1, sales: 300 - i * 7, orders: (i % 4) + 1, returned: i === 2 ? 1 : 0, refunded: i === 2 ? 50 : 0, lastSold: to,
+          costedSales: cost ? 300 - i * 7 : 0, cost: cost ? Math.round((300 - i * 7) * 40) / 100 : 0 }));
+        const tot = (a) => { const t = { products: a.length, lines: a.length }; for (const k of ['units', 'sales', 'returned', 'refunded', 'costedSales', 'cost']) t[k] = a.reduce((n, x) => n + x[k], 0); t.coverage = cost ? 1 : 0; return t; };
+        const rows = all.filter(x => !q || x.name.toLowerCase().includes(q) || x.sku.toLowerCase().includes(q))
+          .sort(sort === 'units' ? (a, b) => b.units - a.units || b.sales - a.sales : (a, b) => b.sales - a.sales);
+        return J({ ok: true, company: { id: 163, name: 'Shoes and Fashions' }, range: { from, to, days }, sort, q, totals: tot(all), matched: q ? tot(rows) : null,
+          items: rows, limit: 500, truncated: false, orders: { sold: 40, withLines: window.__itemsGap ? 30 : 40 } });
       }
       return J({ ok: true });
     };
@@ -158,9 +177,48 @@ for (const theme of ['dark', 'light']) {
   const oAlign = await page.evaluate(() => [1, 3, 4, 6].map(n => getComputedStyle(document.querySelector(`#ec-body tbody tr td:nth-child(${n})`)).textAlign));
   check(oAlign.join() === 'left,left,left,right', `${theme}: Orders' time, status and channel read left, the total right (${oAlign.join()})`);
   bad = bad.concat(await aa(page));
-  await page.evaluate(() => window.ecPickTab('items')); await page.waitForTimeout(150);
-  check((await page.evaluate(() => document.getElementById('ec-body').innerText)).includes('Top products'), `${theme}: Items says it is the next step`);
+  // ── Items: the product table ──
+  asked.length = 0;
+  await page.evaluate(() => window.ecPickTab('items')); await page.waitForTimeout(400);
+  const itemsAsk = () => asked.filter(u => u.includes('action=ecom-items'));
+  check(itemsAsk().length === 1 && itemsAsk()[0].includes('company=163') && itemsAsk()[0].includes(`from=${sun}`) && itemsAsk()[0].includes('sort=sales'),
+    `${theme}: Items reads ecom-items once, for the company, the range and By sales (${itemsAsk().length})`);
+  const it = () => page.evaluate(() => ({ rows: [...document.querySelectorAll('#ec-items-list tbody tr')].map(r => r.children[1].innerText.split('\n')[0]),
+    head: [...document.querySelectorAll('#ec-items-list thead th')].map(t => t.textContent.trim()), text: document.getElementById('ec-items-list').innerText }));
+  let I = await it();
+  check(I.rows.length === 25 && I.rows[0] === 'Red Wing Boots 0' && /The top 25 of 30/.test(I.text) && /Show all 30/.test(I.text), `${theme}: the top 25 of 30, best seller first (${I.rows.length}, ${I.rows[0]})`);
+  check(I.head.join('|') === '#|Product|Units|Sales|Share|Avg price|Orders|Returned|Last sold', `${theme}: Option A's columns, no margin without cost (${I.head.join('|')})`);
+  check(/Margin shows once Sellercloud sends product cost/.test(I.text) && /shipping not included/.test(I.text), `${theme}: it says why there is no margin, and that shipping is not in the sales`);
+  const iAlign = await page.evaluate(() => [2, 3, 4, 9].map(n => getComputedStyle(document.querySelector(`#ec-items-list tbody tr td:nth-child(${n})`)).textAlign));
+  check(iAlign.join() === 'left,right,right,left', `${theme}: product and last sold read left, figures right (${iAlign.join()})`);
+  const marked = await page.evaluate(() => { const r = [...document.querySelectorAll('#ec-items-list tbody tr')].find(x => x.innerText.includes('johnnie-O Shirt 2')); const sp = r && r.children[7].querySelector('span[style]'); return sp ? sp.style.color : null; });
+  check(marked === 'var(--v1-bad)', `${theme}: a 33% return rate is marked (${marked})`);
   bad = bad.concat(await aa(page));
+  await page.evaluate(() => [...document.querySelectorAll('#ec-items-list button')].find(x => x.textContent.startsWith('Show all')).click()); await page.waitForTimeout(150);
+  check((await it()).rows.length === 30, `${theme}: Show all draws every product`);
+  await page.click('#ec-items-sort button[data-sort="units"]'); await page.waitForTimeout(400);
+  I = await it();
+  const pressed = await page.$$eval('#ec-items-sort button', bs => bs.map(x => x.getAttribute('aria-pressed')).join());
+  check(itemsAsk().some(u => u.includes('sort=units')) && I.rows[0] === 'Red Wing Boots 3' && pressed === 'false,true' && I.rows.length === 25,
+    `${theme}: By units re-reads, puts the most units first and goes back to the top 25 (${I.rows[0]}, ${pressed})`);
+  await page.click('#ec-items-q'); await page.keyboard.type('red'); await page.waitForTimeout(700);
+  I = await it();
+  const focus = await page.evaluate(() => ({ id: document.activeElement && document.activeElement.id, v: document.getElementById('ec-items-q').value }));
+  check(itemsAsk().some(u => u.includes('q=red')) && I.rows.length === 10 && I.rows.every(r => r.startsWith('Red Wing')) && /10 match “red”/.test(I.text),
+    `${theme}: search re-reads and shows only the matches (${I.rows.length})`);
+  check(focus.id === 'ec-items-q' && focus.v === 'red', `${theme}: the cursor stays in the search box while results change (${JSON.stringify(focus)})`);
+  // The SECOND render (trap 8): Refresh reads the products again and the controls still work.
+  const n0 = itemsAsk().length;
+  await page.evaluate(() => { window.__itemsGap = true; window.__itemsCost = true; });
+  await page.click('#ec-refresh'); await page.waitForTimeout(900);
+  I = await it();
+  check(itemsAsk().length === n0 + 1 && itemsAsk().at(-1).includes('q=red') && itemsAsk().at(-1).includes('sort=units'), `${theme}: Refresh reads the products once more, keeping search and sort`);
+  check(/stored for 30 of the 40 orders/.test(I.text), `${theme}: it says when some orders have no products stored`);
+  check(I.head.includes('Margin') && I.head.includes('Margin %') && /\b60%/.test(I.text), `${theme}: with cost on 90%+ of sales, margin columns appear (${I.head.slice(-2).join('|')})`);
+  bad = bad.concat(await aa(page));
+  await page.fill('#ec-items-q', ''); await page.waitForTimeout(700);
+  check((await it()).rows.length === 25, `${theme}: clearing the search brings the full list back`);
+  await page.evaluate(() => { window.__itemsGap = false; window.__itemsCost = false; });
   check(bad.length === 0, `${theme}: every tab clears AA` + (bad.length ? '\n     ' + [...new Set(bad)].join('\n     ') : ''));
   // A one-day range charts hours; the range carries back to the Overview.
   await page.click('#ec-range .rp-trigger');
@@ -190,6 +248,10 @@ for (const theme of ['dark', 'light']) {
     return { refreshRight: Math.round(r.right), width: innerWidth, sideways: document.documentElement.scrollWidth > innerWidth, lit }; });
   check(fit.refreshRight <= fit.width && !fit.sideways, `phone: the header fits and nothing scrolls sideways (${JSON.stringify(fit)})`);
   check(fit.lit.length === 1 && fit.lit[0] === 'bn-ecom-overview', `phone: the Overview tab is the lit one (${fit.lit})`);
+  await page.evaluate(() => window.ecPickTab('items')); await page.waitForTimeout(500);
+  const ifit = await page.evaluate(() => { const q = document.getElementById('ec-items-q').getBoundingClientRect(), s = document.getElementById('ec-items-sort').getBoundingClientRect();
+    return { sideways: document.documentElement.scrollWidth > innerWidth, q: Math.round(q.right), s: Math.round(s.right), w: innerWidth, rows: document.querySelectorAll('#ec-items-list tbody tr').length }; });
+  check(!ifit.sideways && ifit.q <= ifit.w && ifit.s <= ifit.w && ifit.rows === 25, `phone: Items fits, the table scrolls inside its box (${JSON.stringify(ifit)})`);
   await ctx.close();
 }
 
