@@ -35,7 +35,11 @@ revise it. Revised plan: [docs/plans/live-item-sales.md](../docs/plans/live-item
       $396,660.65; christmas 399 / $968.50 (bins 197 / $433.27 + xmas buttons 202 / $535.23); 451 saved rows,
       0 missing / incomplete; call 0.93 s, 67 KB (the D1-volume worry is moot). Cycle 11-13..11-17: 4 saved days +
       today live, one source each, 0.35 s; today Christmas $6,172.55 vs regular $4,990.50
-- [ ] Phase 3 (tools) on a fresh branch off main; merges and deploys (MCP + CLI) only after Phase 2's worker
+- [x] Phase 3 (c1f5e42 on `claude/live-item-tools`, implementer subagent; reviewed): `get_bin_split` (`retjg
+      bin-split`: period today/wtd/cycle/mtd/custom, groupBy store/price/day, never-zero `notCounted`, no tickets)
+      and `get_live_item_sales` (`retjg live-items`) in QUERIES (30 reads); READING_RULES "03:55 ET" fixed.
+      143 new assertions, all fail on main's cli/reporting.mjs (135 + 8); `npm test` 12,291 / 138 green. ORIENT.md query count 22 → 30
+- [ ] Brian: merge the Phase 3 PR, deploy the MCP server (`-c mcp/wrangler.toml`), reinstall the CLI. No worker deploy
 
 # Discounts & Returns reporting (2026-11-12) — the page (PR 2 of 2)
 
