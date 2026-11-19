@@ -1,4 +1,4 @@
-const CACHE_NAME = 'dashboard-cache-v310';
+const CACHE_NAME = 'dashboard-cache-v311';
 
 // Pre-fetched and cached on install
 const PRECACHE_ASSETS = [
@@ -70,6 +70,13 @@ function isLocalAgentRequest(url) {
   return url.origin !== self.location.origin &&
          (url.hostname === 'localhost' || url.hostname === '[::1]' ||
           /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(url.hostname));
+}
+
+// E-Commerce product photos (2026-11-18) are Sellercloud's, served from its own image host.
+// Never intercept: caching thousands of product photos in the app-shell cache would bloat it,
+// and the browser's own HTTP cache already handles them. Exact host family, not a substring.
+function isProductPhotoRequest(hostname) {
+  return /(^|\.)sellercloud\.(us|com)$/i.test(hostname);
 }
 
 // ── Install: precache app shell ───────────────────────────────────────────────
@@ -150,6 +157,9 @@ self.addEventListener('fetch', event => {
 
   // 1b. Local agents (the label printer) — never intercept
   if (isLocalAgentRequest(url)) return;
+
+  // 1c. Sellercloud's product photos (E-Commerce Items tab) — never intercept
+  if (isProductPhotoRequest(url.hostname)) return;
 
   // 2. CDN + font requests — cache-first, fall back to network
   //    These URLs are versioned/immutable so stale-while-revalidate is unnecessary.

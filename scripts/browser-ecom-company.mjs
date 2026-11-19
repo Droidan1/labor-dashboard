@@ -13,6 +13,8 @@
 //     search that keeps the cursor in the box, returns of 20%+ marked, a refresh reads it again
 //     (DESIGN §4.8 trap 8), a note when some orders have no products stored, and margin columns
 //     only when 90% of sales carry a cost.
+//   - Each product row shows its photo (2026-11-18): lazy, no referrer, 40px; a product with none,
+//     or a photo that fails to load, keeps the same box so the names line up.
 //   - Text clears AA in light and dark on every tab; the page fits a phone.
 //
 // Run: bash scripts/build.sh && PLAYWRIGHT_CHROMIUM=<chrome> node scripts/browser-ecom-company.mjs
@@ -43,6 +45,10 @@ const b = await chromium.launch({ executablePath: CHROME });
 async function open(theme, width = 1280, isMobile = false) {
   const ctx = await b.newContext({ viewport: { width, height: 900 }, serviceWorkers: 'block', isMobile, hasTouch: isMobile });
   const page = await ctx.newPage();
+  // Sellercloud's image host, stubbed: one photo 404s, the rest are a 1×1 PNG.
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+  await page.route('https://jay.cwa.sellercloud.us/**', r => r.request().url().includes('broken')
+    ? r.fulfill({ status: 404, body: 'no' }) : r.fulfill({ status: 200, contentType: 'image/png', body: PNG }));
   const errs = [], asked = [];
   page.on('pageerror', e => errs.push(String(e)));
   page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource|net::ERR_/.test(m.text())) errs.push('console: ' + m.text()); });
@@ -95,7 +101,8 @@ async function open(theme, width = 1280, isMobile = false) {
         const cost = !!window.__itemsCost;
         const all = Array.from({ length: 30 }, (_, i) => ({ sku: 'JG-' + (7800000 + i), name: (i % 3 === 0 ? 'Red Wing Boots ' : 'johnnie-O Shirt ') + i,
           units: (i % 4) + 1, sales: 300 - i * 7, orders: (i % 4) + 1, returned: i === 2 ? 1 : 0, refunded: i === 2 ? 50 : 0, lastSold: to,
-          costedSales: cost ? 300 - i * 7 : 0, cost: cost ? Math.round((300 - i * 7) * 40) / 100 : 0 }));
+          costedSales: cost ? 300 - i * 7 : 0, cost: cost ? Math.round((300 - i * 7) * 40) / 100 : 0,
+          image: i % 5 === 4 ? null : `https://jay.cwa.sellercloud.us/images/products/${i === 1 ? 'broken' : 7800000 + i}.jpg` }));
         const tot = (a) => { const t = { products: a.length, lines: a.length }; for (const k of ['units', 'sales', 'returned', 'refunded', 'costedSales', 'cost']) t[k] = a.reduce((n, x) => n + x[k], 0); t.coverage = cost ? 1 : 0; return t; };
         const rows = all.filter(x => !q || x.name.toLowerCase().includes(q) || x.sku.toLowerCase().includes(q))
           .sort(sort === 'units' ? (a, b) => b.units - a.units || b.sales - a.sales : (a, b) => b.sales - a.sales);
@@ -196,6 +203,19 @@ for (const theme of ['dark', 'light']) {
   bad = bad.concat(await aa(page));
   await page.evaluate(() => [...document.querySelectorAll('#ec-items-list button')].find(x => x.textContent.startsWith('Show all')).click()); await page.waitForTimeout(150);
   check((await it()).rows.length === 30, `${theme}: Show all draws every product`);
+  // Photos: rows 0–3 have one (row 1's fails to load), row 4 has none.
+  await page.waitForTimeout(300);
+  const ph = await page.evaluate(() => [...document.querySelectorAll('#ec-items-list tbody tr')].slice(0, 5).map(r => {
+    const img = r.querySelector('img.ec-thumb'), none = r.querySelector('.ec-thumb-none'), box = (img || none) ? (img || none).getBoundingClientRect() : { width: 0, height: 0 };
+    const name = r.children[1].querySelector('.font-medium').getBoundingClientRect();
+    return { img: !!img, none: !!none, src: img ? img.getAttribute('src') : null, loaded: img ? img.complete && img.naturalWidth > 0 : null,
+      lazy: img ? img.loading : null, ref: img ? img.referrerPolicy : null, w: Math.round(box.width), h: Math.round(box.height), nameX: Math.round(name.left) };
+  }));
+  check(ph[0].img && ph[0].loaded && /products\/7800000\.jpg$/.test(ph[0].src) && ph[0].lazy === 'lazy' && ph[0].ref === 'no-referrer',
+    `${theme}: a product with a photo shows it, lazily, sending no referrer (${JSON.stringify(ph[0])})`);
+  check(ph[1].img && ph[1].src === null && ph[1].w === 40 && ph[1].h === 40, `${theme}: a photo that fails to load leaves an empty 40px box (${JSON.stringify(ph[1])})`);
+  check(!ph[4].img && ph[4].none && ph[4].w === 40 && ph[4].h === 40, `${theme}: a product with no photo gets the same 40px box (${JSON.stringify(ph[4])})`);
+  check(new Set(ph.map(x => x.nameX)).size === 1, `${theme}: the product names line up whether or not there is a photo (${ph.map(x => x.nameX).join(',')})`);
   await page.click('#ec-items-sort button[data-sort="units"]'); await page.waitForTimeout(400);
   I = await it();
   const pressed = await page.$$eval('#ec-items-sort button', bs => bs.map(x => x.getAttribute('aria-pressed')).join());

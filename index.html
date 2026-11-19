@@ -38379,12 +38379,18 @@
     const TD = 'py-2 px-3 whitespace-nowrap border-t border-[rgba(20,16,8,0.06)] dark:border-op-border';
     const DIM = 'text-opl-inkDim dark:text-op-inkDim';
     const rows = ecItemsAll ? d.items : d.items.slice(0, 25);
+    // The product photo (Sellercloud's catalog ImageUrl, public on its image host). A product with
+    // none, or a photo that fails to load, keeps the same 40px box so the names stay aligned.
+    const BOX = 'w-10 h-10 flex-shrink-0 rounded-[8px] border bg-opl-panelHi dark:bg-op-panelHi';
+    const thumb = (x) => x.image
+      ? `<img src="${escapeHtml(x.image).replace(/"/g, '&quot;')}" alt="" width="40" height="40" loading="lazy" decoding="async" referrerpolicy="no-referrer" class="ec-thumb ${BOX} object-cover border-[rgba(20,16,8,0.08)] dark:border-op-border" onerror="this.onerror=null;this.removeAttribute('src')">`
+      : `<span class="ec-thumb-none ${BOX} border-dashed border-[rgba(20,16,8,0.14)] dark:border-op-borderHi" aria-hidden="true"></span>`;
     const body = rows.map((x, i) => {
       const share = T.sales > 0 ? x.sales / T.sales * 100 : 0;
       const rate = x.units > 0 ? x.returned / x.units : 0;
       const gp = x.costedSales > 0 ? x.costedSales - x.cost : null;
       return `<tr><td class="${TD} text-right ${DIM}">${i + 1}</td>
-        <td class="${TD} text-left !whitespace-normal min-w-[220px]"><div class="font-medium">${escapeHtml(x.name || x.sku || '—')}</div>${x.sku ? `<div class="text-[12px] ${DIM}">${escapeHtml(x.sku)}</div>` : ''}</td>
+        <td class="${TD} text-left !whitespace-normal min-w-[260px]"><div class="flex items-center gap-3">${thumb(x)}<div class="min-w-0"><div class="font-medium">${escapeHtml(x.name || x.sku || '—')}</div>${x.sku ? `<div class="text-[12px] ${DIM}">${escapeHtml(x.sku)}</div>` : ''}</div></div></td>
         <td class="${TD} text-right">${x.units.toLocaleString('en-US')}</td>
         <td class="${TD} text-right font-semibold">${fmtDollar(x.sales)}</td>
         <td class="${TD} text-right"><div class="flex items-center justify-end gap-2"><span>${share.toFixed(1)}%</span><span class="inline-block w-[64px] h-[6px] rounded-full bg-[rgba(20,16,8,0.08)] dark:bg-[rgba(255,255,255,0.08)] overflow-hidden"><span class="block h-full rounded-full" style="width:${Math.min(100, share * 4).toFixed(1)}%;background:${EO_CHANNEL}"></span></span></div></td>
