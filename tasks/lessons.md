@@ -1,3 +1,15 @@
+## A shell's command line mentions the program it is about to run (2026-11-19)
+
+The deploy guard decided "is this a dry run?" by finding an ancestor process whose args contained
+`wrangler` and then `--dry-run`. My own check, `WRANGLER_COMMAND=deploy bash predeploy-check.sh; …;
+npx wrangler deploy --dry-run`, ran it from a `zsh -c "<that whole line>"`, so the SHELL matched and a
+dirty tree was waved through. Tightening the match to `wrangler-dist/cli.js` failed the same way one
+command later, because my heredoc's text contained that string too.
+
+**Rule:** identify a process by its executable and script ARGUMENT (token positions), never by a
+substring of its command line. Make every unrecognised shape fall to the safe side (here: check the
+deploy), and test with a parent shell whose text contains the exact signature.
+
 ## Two alignment classes on one cell: the stylesheet decided, and the check never looked (2026-11-18)
 
 The E-Commerce View Details tables built every cell from a base class string that included
