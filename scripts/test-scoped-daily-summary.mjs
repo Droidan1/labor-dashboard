@@ -214,7 +214,11 @@ ok('...and that drop is logged, not silent',
 console.log('\nbodies are built once per store set, not once per recipient:');
 ok('the two BL1+BL4 managers got byte-identical bodies', bodyOf(r, 'u-m14b') === bodyOf(r, 'u-m14c'));
 const distinct = new Set(r.sends.map(s => s.html)).size;
-ok('4 distinct bodies for 5 recipients (chain, BL1, BL14, BL1+BL4)', distinct === 4, `got ${distinct}`);
+// The chain-wide list holds two bodies since the DTC copy (2026-11-19): the superuser may see
+// E-Commerce (here without ecom_orders, so its copy says Ecommerce could not be read), the
+// bl-only admin may not and gets today's copy.
+ok('5 distinct bodies for 6 recipients (superuser, bl-only admin, BL1, BL14, BL1+BL4)', distinct === 5, `got ${distinct}`);
+ok('...the bl-only admin\'s copy says nothing about Ecommerce', !/Ecommerce/.test(bodyOf(r, 'u-adm')));
 
 console.log('\nthe send is recorded honestly:');
 const rows = r.db.prepare("SELECT event_type, status, COUNT(*) n FROM notification_log GROUP BY event_type, status").all();

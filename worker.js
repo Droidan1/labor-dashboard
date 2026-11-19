@@ -5691,6 +5691,9 @@ const ACTION_BUSINESS = new Map([
   ["photo-upload", "bl"],
   ["preview-daily-summary", "bl"],
   ["live-daily-pdf", "live"],
+  // The DTC Executive Summary's companion PDFs (2026-11-19), read on their own to check them.
+  ["retail-bins-pdf", "bl"],
+  ["ecom-daily-pdf", "ecom"],
   ["publish-draft", "bl"],
   ["rebuild-week-summaries", "bl"],
   ["refresh-item-cats", "bl"],
@@ -7097,8 +7100,9 @@ function _fmtInt(v) { return (Math.round(Number(v) || 0)).toLocaleString('en-US'
 const EXEC_SUMMARY_STORES = ["BL1", "BL4", "BL2", "BL14", "BL16"];
 
 // `through` is the last completed day (ET yesterday at send time). Returns null
-// when the scope holds none of the summary's stores.
-async function buildExecSummaryData(env, through, scopeStores = null) {
+// when the scope holds none of the summary's stores. `ecom: true` adds E-Commerce's
+// figures for the DTC copy (chain-wide only; see ecomExecFigures).
+async function buildExecSummaryData(env, through, scopeStores = null, { ecom = false } = {}) {
   const stores = EXEC_SUMMARY_STORES.filter(s => !scopeStores || scopeStores.includes(s));
   if (!stores.length) return null;
 
@@ -7163,10 +7167,65 @@ async function buildExecSummaryData(env, through, scopeStores = null) {
     }
   } catch (_) { /* nothing to say */ }
 
+  // E-Commerce for the DTC copy. null when not asked for, or when ecom_orders could not be read
+  // (ecomError then says so in the email instead of leaving Ecommerce out silently).
+  const wantEcom = ecom && !scopeStores;
+  const ecomFig = wantEcom ? await ecomExecFigures(env, through, weekStart, weekEnd) : null;
+
   return {
+    ecom: ecomFig, ecomError: wantEcom && !ecomFig,
     reportDate: addDaysYmd(through, 1), through, weekStart, weekEnd, wtd, yday, mtd, missing, whatnotStale,
     // No plan (no budget rows yet, e.g. a new year) is not "on track".
     pace: { projected, fullWeekPlan, onTrack: fullWeekPlan > 0 ? projected >= fullWeekPlan : null },
+  };
+}
+
+// ── Ecommerce on the DTC Executive Summary (James, 2026-11-19) ───────────────────────────────────
+// One Ecommerce row under the stores in each table, added into "Total DTC". Sales follow the Hub's
+// E-Commerce pages exactly (ECOM_SALE; what the buyer paid, shipping and sales tax in, later refunds
+// NOT taken out — Brian kept that basis 2026-11-19), by Sellercloud order date. Plan is
+// ECOM_MONTHLY_BUDGET spread evenly over each month's days, as the Overview spreads it. Sellercloud's
+// five companies carry no Whatnot or auction sales, so nothing here is also inside a store row.
+// 🔑 Only for a copy whose reader may see E-Commerce (dispatchDailySummary checks
+// canAccessBusiness 'ecom'): on the cron the recipient list IS the access control.
+// Whole dollars per figure, like the store rows. null = ecom_orders could not be read.
+async function ecomExecFigures(env, through, weekStart, weekEnd) {
+  const monthStart = through.slice(0, 8) + "01";
+  const monthEnd = addDaysYmd(addDaysYmd(monthStart, 32).slice(0, 8) + "01", -1);
+  const days = (a, b) => { const out = []; for (let x = a; x <= b; x = addDaysYmd(x, 1)) out.push(x); return out; };
+  const from = [monthStart, addDaysYmd(weekStart, -7)].sort()[0];
+  const units = SELLERCLOUD_COMPANIES.map(c => c.id);
+  let rows;
+  try {
+    rows = (await env.DB.prepare(
+      `SELECT order_date, SUM(grand_total) AS sales FROM ecom_orders
+        WHERE order_date BETWEEN ? AND ? AND ${ECOM_SALE()} AND unit IN (${units.map(() => "?").join(",")})
+        GROUP BY order_date`
+    ).bind(from, through, ...units).all()).results || [];
+  } catch (e) {
+    console.error(`DTC summary: ecom_orders could not be read: ${e.message}`);
+    return null;
+  }
+  const byDay = new Map(rows.map(r => [r.order_date, Number(r.sales) || 0]));
+  const sales = (ds) => Math.round(ds.reduce((n, x) => n + (byDay.get(x) || 0), 0));
+  const plan = (ds) => Math.round(ds.reduce((n, x) => n + ecomDailyBudget(x), 0));
+  const remaining = through < weekEnd ? days(addDaysYmd(through, 1), weekEnd) : [];
+  // The 15-minute Sellercloud sync's last record. Failed, or not run in 2 hours: say so, so a missed
+  // sync cannot read as a slow day. Best-effort: no KV means nothing to say.
+  let stale = null;
+  try {
+    const s = env.SALES_SNAPSHOTS ? JSON.parse((await env.SALES_SNAPSHOTS.get("ecom:sync")) || "null") : undefined;
+    if (s === null) stale = { never: true };
+    else if (s && (!s.at || s.ok === false || Date.now() - Date.parse(s.at) > 2 * 3600e3)) stale = { at: s.at || null, failed: s.ok === false };
+  } catch (_) { /* nothing to say */ }
+  return {
+    yday: { sales: sales([through]), plan: plan([through]) },
+    wtd: { sales: sales(days(weekStart, through)), plan: plan(days(weekStart, through)) },
+    mtd: { sales: sales(days(monthStart, through)), plan: plan(days(monthStart, monthEnd)) },
+    // For the pace: last week's sales for the days still to come, and the full week's plan.
+    rest: sales(remaining.map(x => addDaysYmd(x, -7))),
+    fullWeekPlan: plan(days(weekStart, weekEnd)),
+    stale,
   };
 }
 
@@ -7182,7 +7241,8 @@ function buildExecSummaryEmailHtml(d, totalsLabel = "All Stores", scopeLabel = t
   const long = ymd => new Date(ymd + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
   const short = ymd => new Date(ymd + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
 
-  const section = (title, sub, cols, t, mode, period) => {
+  // `e` = Ecommerce's figure for this table on the DTC copy ({ sales, plan }), else null.
+  const section = (title, sub, cols, t, mode, period, e = null) => {
     const th = (txt, align) => `<th style="padding:8px 6px;text-align:${align};font-size:12px;font-weight:700;line-height:1.25;color:#fff;background:${NAVY}">${txt}</th>`;
     const last = r => {
       if (mode === "attain") return { txt: r.plan > 0 ? pct1(r.sales / r.plan) : "N/A", color: INK };
@@ -7198,7 +7258,18 @@ function buildExecSummaryEmailHtml(d, totalsLabel = "All Stores", scopeLabel = t
           <td style="${cell};white-space:nowrap;text-align:right;font-weight:700;color:${l.color}">${l.txt}</td>
         </tr>`;
     }).join("");
-    const tl = last(t.tot);
+    // The Ecommerce row sits under the stores, set off by a rule, and adds into "Total DTC".
+    const ecRow = !e ? "" : (() => {
+      const l = last(e), c = `padding:9px 6px;font-size:14px;border-top:1px solid #c9d2dc;border-bottom:1px solid ${RULE}`;
+      return `<tr style="background:${t.rows.length % 2 ? ZEBRA : "#fff"}">
+          <td style="${c};color:${INK}">Ecommerce<sup style="color:${MUTED}">†</sup></td>
+          <td style="${c};white-space:nowrap;text-align:right;color:${INK}">${usd(e.sales)}</td>
+          <td style="${c};white-space:nowrap;text-align:right;color:${MUTED}">${usd(e.plan)}</td>
+          <td style="${c};white-space:nowrap;text-align:right;font-weight:700;color:${l.color}">${l.txt}</td>
+        </tr>`;
+    })();
+    const tot = e ? { sales: t.tot.sales + e.sales, plan: t.tot.plan + e.plan } : t.tot;
+    const tl = last(tot);
     const foot = `padding:10px 6px;font-size:14px;font-weight:800;border-top:2px solid ${NAVY}`;
     const live = t.rows.filter(r => r.live > 0);
     const periodWord = period === "Yesterday" ? "yesterday" : period;
@@ -7211,11 +7282,11 @@ function buildExecSummaryEmailHtml(d, totalsLabel = "All Stores", scopeLabel = t
       <div style="margin:0 0 8px;font-size:12px;color:${MUTED}">${sub}</div>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border:1px solid ${RULE}">
         <thead><tr>${th("Store", "left")}${th(cols[0], "right")}${th(cols[1], "right")}${th(cols[2], "right")}</tr></thead>
-        <tbody>${body}
+        <tbody>${body}${ecRow}
           <tr style="background:#e9eef4">
-            <td style="${foot};color:${INK}">${_esc(totalsLabel)}</td>
-            <td style="${foot};white-space:nowrap;text-align:right;color:${INK}">${usd(t.tot.sales)}</td>
-            <td style="${foot};white-space:nowrap;text-align:right;color:${INK}">${usd(t.tot.plan)}</td>
+            <td style="${foot};color:${INK}">${_esc(e ? "Total DTC" : totalsLabel)}</td>
+            <td style="${foot};white-space:nowrap;text-align:right;color:${INK}">${usd(tot.sales)}</td>
+            <td style="${foot};white-space:nowrap;text-align:right;color:${INK}">${usd(tot.plan)}</td>
             <td style="${foot};white-space:nowrap;text-align:right;color:${tl.color}">${tl.txt}</td>
           </tr>
         </tbody>
@@ -7223,28 +7294,43 @@ function buildExecSummaryEmailHtml(d, totalsLabel = "All Stores", scopeLabel = t
       <p style="margin:6px 0 0;font-size:12px;line-height:1.5;font-style:italic;color:${MUTED}">${note}</p>`;
   };
 
-  const { wtd, pace } = d;
-  const attain = wtd.tot.plan > 0 ? wtd.tot.sales / wtd.tot.plan : null;
+  // The DTC copy (d.ecom set): Ecommerce joins the headline, the pace and every table.
+  const ec = d.ecom || null;
+  const head = ec ? { sales: d.wtd.tot.sales + ec.wtd.sales, plan: d.wtd.tot.plan + ec.wtd.plan } : d.wtd.tot;
+  const pace = !ec ? d.pace : (() => {
+    const projected = d.pace.projected + ec.wtd.sales + ec.rest, fullWeekPlan = d.pace.fullWeekPlan + ec.fullWeekPlan;
+    return { projected, fullWeekPlan, onTrack: fullWeekPlan > 0 ? projected >= fullWeekPlan : null };
+  })();
+  const attain = head.plan > 0 ? head.sales / head.plan : null;
   const pillOf = (bg, fg, txt) => `<span style="display:inline-block;padding:3px 9px;border-radius:999px;background:${bg};color:${fg};font-size:12px;font-weight:800;letter-spacing:.04em">${txt}</span>`;
   const pill = pace.onTrack == null ? pillOf("#eef0f2", MUTED, "NO PLAN")
     : pace.onTrack ? pillOf("#e3f4e8", POS, "ON TRACK") : pillOf("#fde8e6", NEG, "OFF TRACK");
   const warn = txt => `<p style="margin:10px 0 0;padding:8px 10px;border-radius:6px;background:#fff5e6;font-size:12px;line-height:1.5;color:#7a4a00">${txt}</p>`;
+  // The DTC copy's definitions. Company names come from SELLERCLOUD_COMPANIES, so a new card is named here too.
+  const ecomDefs = () => {
+    const names = SELLERCLOUD_COMPANIES.map(c => c.id === SELLERCLOUD_UNIT_OF[SELLERCLOUD_POSHMARK] ? `${c.name} (with Poshmark)` : c.name);
+    return `Store sales = net sales (retail + BIN) plus live sales, counted once. Live sales = online auction plus Whatnot's
+        gross sales from the Whatnot API (before fees, cancelled orders left out). † Ecommerce = static listings on Sellercloud for
+        ${_esc(names.slice(0, -1).join(", "))} and ${_esc(names[names.length - 1])}: what the buyer paid, including shipping and sales tax,
+        by order date; later refunds are not taken out. It holds no Whatnot or auction sales. Total DTC = stores + Ecommerce.
+        Plan = the daily budget from the budget sheet for stores, and ${usd(ECOM_MONTHLY_BUDGET)} a month spread evenly over its days for Ecommerce.`;
+  };
   const month = new Date(d.through + "T12:00:00Z").toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
 
   return `
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;padding:24px 16px;background:#fff;color:${INK}">
       <img src="https://www.retjghub.com/retjg-logo-email.png" alt="RETJG HUB" width="40" height="40" style="display:block;margin-bottom:16px">
-      <h2 style="margin:0 0 4px;font-size:21px;color:${NAVY}">Executive Summary</h2>
-      <p style="margin:0 0 18px;font-size:13px;color:${MUTED}">${_esc(scopeLabel)} &nbsp;·&nbsp; ${long(d.reportDate)} &nbsp;·&nbsp; Data through ${short(d.through)}</p>
+      <h2 style="margin:0 0 4px;font-size:21px;color:${NAVY}">${ec ? "DTC Executive Summary" : "Executive Summary"}</h2>
+      <p style="margin:0 0 18px;font-size:13px;color:${MUTED}">${_esc(ec ? "All Stores, Live Sales, and Static Listings" : scopeLabel)} &nbsp;·&nbsp; ${long(d.reportDate)} &nbsp;·&nbsp; Data through ${short(d.through)}</p>
 
       <div style="border:1px solid ${RULE};border-radius:10px;padding:16px">
-        <div style="font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${MUTED}">Total WTD Sales</div>
-        <div style="font-size:32px;font-weight:800;line-height:1.15;color:${INK};margin:2px 0 10px">${usd(wtd.tot.sales)}</div>
+        <div style="font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${MUTED}">${ec ? "Total DTC WTD Sales" : "Total WTD Sales"}</div>
+        <div style="font-size:32px;font-weight:800;line-height:1.15;color:${INK};margin:2px 0 10px">${usd(head.sales)}</div>
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
           <tr>
             <td width="50%" style="padding:8px 0;border-top:1px solid ${RULE}">
               <div style="font-size:11px;color:${MUTED}">WTD plan to date</div>
-              <div style="font-size:17px;font-weight:700;color:${INK}">${usd(wtd.tot.plan)}</div>
+              <div style="font-size:17px;font-weight:700;color:${INK}">${usd(head.plan)}</div>
             </td>
             <td width="50%" style="padding:8px 0;border-top:1px solid ${RULE}">
               <div style="font-size:11px;color:${MUTED}">% to plan</div>
@@ -7258,16 +7344,19 @@ function buildExecSummaryEmailHtml(d, totalsLabel = "All Stores", scopeLabel = t
         </div>
         ${d.missing.length ? warn(`No sales data yet for ${d.missing.map(_esc).join(", ")} on ${short(d.through)}; counted as $0 above.`) : ""}
         ${d.whatnotStale ? warn(d.whatnotStale === "never" ? "Whatnot's figures have not been read yet, so Whatnot sales may be missing."
-          : `Whatnot's figures were last read at ${new Date(d.whatnotStale).toLocaleString("en-US", { timeZone: "America/New_York", month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })} Eastern; later Whatnot sales may be missing.`) : ""}
+          : `Whatnot's figures were last read at ${new Date(d.whatnotStale).toLocaleString("en-US", { timeZone: "America/New_York", month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })} Eastern; later Whatnot sales may be missing.`) : ""}${
+        ec && ec.stale ? warn(ec.stale.never ? "Ecommerce figures have not been read from Sellercloud yet, so Ecommerce sales may be missing."
+          : `Ecommerce figures were last ${ec.stale.failed ? "read with an error" : "read"}${ec.stale.at ? ` at ${new Date(ec.stale.at).toLocaleString("en-US", { timeZone: "America/New_York", month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })} Eastern` : ""}; Ecommerce sales may be missing.`) : ""}${
+        d.ecomError ? warn("Ecommerce figures could not be read this morning, so this copy leaves Ecommerce out.") : ""}
       </div>
 
-      ${section("Week to date", `${short(d.weekStart)} – ${short(d.through)}`, ["WTD Sales", "WTD Plan", "Variance %"], d.wtd, "var", "WTD")}
-      ${section("Yesterday", short(d.through), ["Sales", "Plan", "Variance %"], d.yday, "var", "Yesterday")}
-      ${section("Month to date", `${month} 1 – ${new Date(d.through + "T12:00:00Z").getUTCDate()}`, ["MTD Sales", "Monthly Plan", "% of Plan"], d.mtd, "attain", "MTD")}
+      ${section("Week to date", `${short(d.weekStart)} – ${short(d.through)}`, ["WTD Sales", "WTD Plan", "Variance %"], d.wtd, "var", "WTD", ec && ec.wtd)}
+      ${section("Yesterday", short(d.through), ["Sales", "Plan", "Variance %"], d.yday, "var", "Yesterday", ec && ec.yday)}
+      ${section("Month to date", `${month} 1 – ${new Date(d.through + "T12:00:00Z").getUTCDate()}`, ["MTD Sales", "Monthly Plan", "% of Plan"], d.mtd, "attain", "MTD", ec && ec.mtd)}
 
       <p style="margin:24px 0 0;padding-top:12px;border-top:1px solid ${RULE};font-size:11px;line-height:1.6;color:${MUTED}">
-        Sales = net sales (retail + BIN) plus live sales, counted once. Live sales = online auction plus Whatnot's
-        gross sales from the Whatnot API (before fees, cancelled orders left out). Plan = the daily budget from the budget sheet.
+        ${ec ? ecomDefs() : `Sales = net sales (retail + BIN) plus live sales, counted once. Live sales = online auction plus Whatnot's
+        gross sales from the Whatnot API (before fees, cancelled orders left out). Plan = the daily budget from the budget sheet.`}
         Variance % = sales ÷ plan − 1. Week = Sunday–Saturday. Pace = week-to-date sales plus last week's sales
         for the days still to come.
         <br><a href="https://www.retjghub.com" style="color:${NAVY}">Open Dashboard</a>
@@ -7633,12 +7722,464 @@ async function whatnotDailyAttachment(env, through) {
   }
 }
 
+// ── The DTC Executive Summary's two companion PDFs (James, 2026-11-19) ───────────────────────────
+// BL-Ecommerce-<date>.pdf and BL-Retail-Bins-<date>.pdf, laid out as James's examples of 2026-11-19
+// and drawn like the Live PDF with the worker's own pdfPage/pdfBuild (no library). Brian kept both
+// as James designed them (2026-11-19), Retail & Bins against the store plan included: the store
+// budgets include Live, so for a Live store that comparison reads low, and the footer says so.
+// Every figure is the Hub's own: E-Commerce's sales rule (ECOM_SALE), the Retail Summary's retail /
+// bins / transactions (daily_sales) and categories (item snapshots, buildStoreWeekly), and the bin
+// split's Christmas keys. Whole-dollar tables add up their own rows, as the email's do.
+
+// Drawing shared by both pages: header, tiles, round-step bar charts, tables.
+function dtcPdfKit(page) {
+  const INK = [0.11, 0.13, 0.16], DIM = [0.42, 0.45, 0.5], RULE = [0.86, 0.87, 0.89];
+  const BLUE = [0.184, 0.365, 0.624], ORANGE = [0.788, 0.439, 0.165];
+  const M = PDF_MARGIN, R = PDF_PAGE_W - M;
+  const ink = (c) => page.fill(c[0], c[1], c[2]);
+  const hline = (y, x1 = M, x2 = R, w = 0.5) => { page.stroke(...RULE); page.line(x1, y, x2, y, w); };
+  const center = (x, y, s, size, bold) => page.text(x - pdfTextWidth(s, size, bold) / 2, y, s, size, bold);
+  const usd0 = (n) => (n < 0 ? "-$" : "$") + Math.round(Math.abs(n)).toLocaleString("en-US");
+  const usd2 = (n) => (Number(n) < 0 ? "-$" : "$") + Math.abs(Number(n)).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // Axis and bar labels: $400, $1.6k, $17.7k.
+  const k = (n) => n >= 10000 ? `$${(n / 1000).toFixed(1).replace(/\.0$/, "")}k`
+    : n >= 1000 ? `$${(n / 1000).toFixed(2).replace(/\.?0+$/, "")}k` : `$${Math.round(n)}`;
+  const change = (now, then) => (then ? now / then - 1 : null);
+  const pct = (v) => (v == null || !Number.isFinite(v) ? "-" : `${v >= 0 ? "+" : "-"}${Math.abs(v * 100).toFixed(1)}%`);
+  const long = (ymd) => new Date(ymd + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
+  const md = (ymd) => new Date(ymd + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+  // "Nov 15-18", or "Oct 30-Nov 2" across a month end.
+  const span = (a, b) => (a === b ? md(a) : a.slice(0, 7) === b.slice(0, 7) ? `${md(a)}-${Number(b.slice(8))}` : `${md(a)}-${md(b)}`);
+
+  const header = (eyebrow, ymd, sub) => {
+    let y = 750;
+    ink(DIM); page.text(M, y, eyebrow, 8, true);
+    y -= 26; ink(INK); page.text(M, y, long(ymd), 22, true);
+    y -= 15; ink(DIM); page.text(M, y, sub, 9);
+    return y;
+  };
+  // [[label, value, sub]] in one boxed row; returns the box's bottom.
+  const tiles = (top, list) => {
+    const tH = 58, tw = (R - M) / list.length;
+    page.stroke(...RULE);
+    page.line(M, top, R, top); page.line(M, top - tH, R, top - tH); page.line(M, top, M, top - tH); page.line(R, top, R, top - tH);
+    list.forEach(([l, v, sub], i) => {
+      const x = M + i * tw + 10;
+      if (i) { page.stroke(...RULE); page.line(M + i * tw, top - 8, M + i * tw, top - tH + 8); }
+      ink(DIM); page.text(x, top - 15, l, 7, true);
+      let sz = 17;                                   // a long figure shrinks to fit rather than being cut
+      while (sz > 11 && pdfTextWidth(v, sz, true) > tw - 14) sz -= 1;
+      ink(INK); page.text(x, top - 35, pdfEllipsize(v, sz, true, tw - 14), sz, true);
+      ink(DIM); page.text(x, top - 49, pdfEllipsize(sub, 7, false, tw - 14), 7);
+    });
+    return top - tH;
+  };
+  const legend = (x, y, items) => {
+    let cx = x;
+    for (const [name, c] of items) { ink(c); page.rect(cx, y, 7, 7); ink(DIM); page.text(cx + 10, y + 0.5, name, 7); cx += 24 + pdfTextWidth(name, 7); }
+  };
+  // Round steps, at most 5 above $0: $1,539 is drawn on $0-$1.6k by $400.
+  const scale = (v) => {
+    for (const step of [10, 20, 25, 40, 50, 100, 200, 250, 400, 500, 1000, 2000, 2500, 5000, 10000, 15000, 20000, 25000, 50000, 100000])
+      if (v <= step * 5) return { max: Math.max(step, Math.ceil(v / step) * step), step };
+    const step = Math.ceil(v / 5 / 100000) * 100000;
+    return { max: step * 5, step };
+  };
+  // groups: [{ label, bars: [{ v, c }] }]. stacked draws each group's bars as one column with its
+  // total above; otherwise bars stand side by side, each labelled ("each" in $k, "money" in $).
+  // show(i) says which group labels to print under the axis.
+  const bars = (x1, x2, top, bot, groups, { stacked = false, labels = "money", show = () => true } = {}) => {
+    const tall = (g) => (stacked ? g.bars.reduce((n, b) => n + Math.max(0, b.v), 0) : Math.max(0, ...g.bars.map(b => b.v)));
+    const sc = scale(Math.max(1, ...groups.map(tall)));
+    for (let v = 0; v <= sc.max + 0.01; v += sc.step) {
+      const yy = bot + (top - bot) * v / sc.max;
+      page.stroke(...RULE); page.line(x1, yy, x2, yy, 0.4);
+      ink(DIM); page.textRight(x1 - 4, yy - 2.5, k(v), 6.5);
+    }
+    const slot = (x2 - x1) / Math.max(groups.length, 1);
+    const h = (v) => (top - bot) * Math.max(0, v) / sc.max;
+    groups.forEach((g, i) => {
+      const cx = x1 + slot * (i + 0.5);
+      if (stacked) {
+        const bw = Math.min(34, slot * (groups.length > 8 ? 0.7 : 0.55));
+        let base = bot;
+        for (const b of g.bars) { const hh = h(b.v); if (hh > 0) { ink(b.c); page.rect(cx - bw / 2, base, bw, hh); base += hh; } }
+        if (labels !== "none") { ink(INK); center(cx, base + 4, usd0(g.bars.reduce((n, b) => n + b.v, 0)), 6.5, true); }
+      } else {
+        const bw = Math.min(g.bars.length > 1 ? 24 : 34, slot * (g.bars.length > 1 ? 0.3 : 0.45));
+        g.bars.forEach((b, j) => {
+          const x = cx + (j - g.bars.length / 2) * (bw + 3) + 1.5, hh = h(b.v);
+          ink(b.c); page.rect(x, bot, bw, hh);
+          if (labels !== "none") { ink(INK); center(x + bw / 2, bot + hh + 4, labels === "each" ? k(b.v) : usd0(b.v), 6.5, true); }
+        });
+      }
+      if (show(i)) { ink(DIM); center(cx, bot - 10, pdfEllipsize(g.label, 6.5, false, slot - 2), 6.5); }
+    });
+  };
+  // cols: [[x, heading, "l" | "r"]] ("r" = right edge at x). Returns the y of the last row.
+  const table = (y, cols, rows, total, { size = 8, rowH = 14 } = {}) => {
+    const line = (yy, vals, bold) => cols.forEach(([x, , al], i) => {
+      const v = vals[i] == null ? "" : String(vals[i]);
+      if (al === "r") page.textRight(x, yy, v, size, bold);
+      else page.text(x, yy, pdfEllipsize(v, size, bold, (cols[i + 1] ? cols[i + 1][0] - 60 : R) - x), size, bold);
+    });
+    y -= rowH + 2; ink(DIM); line(y, cols.map(c => c[1]), true); hline(y - 5);
+    for (const r of rows) { y -= rowH; ink(INK); line(y, r); hline(y - 5); }
+    if (total) { y -= rowH; ink(INK); line(y, total, true); hline(y - 5, M, R, 0.8); }
+    return y;
+  };
+  return { INK, DIM, BLUE, ORANGE, M, R, ink, usd0, usd2, k, change, pct, md, span, header, tiles, legend, bars, table };
+}
+
+// ── BL-Ecommerce-<date>.pdf ──────────────────────────────────────────────────────────────────────
+// The day, the same weekday a week earlier, the week and the month to `through`, per company and in
+// all, by the E-Commerce pages' own rule. null when ecom_orders does not exist yet.
+async function ecomDailyReport(env, through) {
+  const units = SELLERCLOUD_COMPANIES.map(c => c.id);
+  const weekStart = addDaysYmd(through, -new Date(through + "T12:00:00Z").getUTCDay());
+  const monthStart = through.slice(0, 8) + "01", lastWeek = addDaysYmd(through, -7);
+  const from = [monthStart, weekStart, lastWeek].sort()[0];
+  let rows;
+  try {
+    rows = (await env.DB.prepare(
+      `SELECT unit, company_id, source, order_date, COUNT(*) AS orders, SUM(grand_total) AS sales, SUM(shipping) AS shipping,
+              SUM(units) AS units, SUM(units_returned) AS returns, SUM(refunded) AS refunded
+         FROM ecom_orders
+        WHERE order_date BETWEEN ? AND ? AND ${ECOM_SALE()} AND unit IN (${units.map(() => "?").join(",")})
+        GROUP BY unit, company_id, source, order_date`
+    ).bind(from, through, ...units).all()).results || [];
+  } catch (e) {
+    if (/no such table/i.test(String(e && e.message))) return null;
+    throw e;
+  }
+  const blank = () => ({ sales: 0, shipping: 0, orders: 0, units: 0, returns: 0, refunded: 0, ebay: 0, poshmark: 0, other: 0 });
+  // The channel split is the Overview's: Poshmark by company, eBay by source 1/2, the rest "other".
+  const add = (a, r) => {
+    for (const f of ["sales", "shipping", "orders", "units", "returns", "refunded"]) a[f] += Number(r[f]) || 0;
+    a[r.company_id === SELLERCLOUD_POSHMARK ? "poshmark" : (r.source === 1 || r.source === 2) ? "ebay" : "other"] += Number(r.sales) || 0;
+  };
+  const companies = SELLERCLOUD_COMPANIES.map(c => ({ id: c.id, name: c.name, day: blank(), lastWeek: blank(), month: blank() }));
+  const byId = new Map(companies.map(c => [c.id, c]));
+  const all = { day: blank(), lastWeek: blank(), week: blank(), month: blank(), monthToLastWeek: blank() };
+  for (const r of rows) {
+    const c = byId.get(r.unit);
+    if (!c) continue;
+    const d = r.order_date;
+    if (d === through) { add(c.day, r); add(all.day, r); }
+    if (d === lastWeek) { add(c.lastWeek, r); add(all.lastWeek, r); }
+    if (d >= weekStart && d <= through) add(all.week, r);
+    if (d >= monthStart && d <= through) { add(c.month, r); add(all.month, r); }
+    if (d >= monthStart && d <= lastWeek) add(all.monthToLastWeek, r);
+  }
+  const cents = (a) => { for (const f of ["sales", "shipping", "refunded", "ebay", "poshmark", "other"]) a[f] = roundCents(a[f]); return a; };
+  for (const c of companies) { cents(c.day); cents(c.lastWeek); cents(c.month); }
+  Object.values(all).forEach(cents);
+  const planOver = (a, b) => { let n = 0; for (let x = a; x <= b; x = addDaysYmd(x, 1)) n += ecomDailyBudget(x); return roundCents(n); };
+  return {
+    through, weekStart, monthStart, lastWeek, companies, all,
+    plan: { perDay: roundCents(ecomDailyBudget(through)), weekToDate: planOver(weekStart, through), fullWeek: planOver(weekStart, addDaysYmd(weekStart, 6)),
+            monthToDate: planOver(monthStart, through), monthToLastWeek: lastWeek >= monthStart ? planOver(monthStart, lastWeek) : null,
+            month: ECOM_MONTHLY_BUDGET },
+  };
+}
+
+function ecomDailyPdfBytes(rep) {
+  const page = pdfPage(), K = dtcPdfKit(page);
+  const { M, R, ink, INK, DIM, BLUE, ORANGE, usd2, md, span } = K;
+  const dt = new Date(rep.through + "T12:00:00Z");
+  const wk = dt.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" });
+  const wkLong = dt.toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
+  const monthName = dt.toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
+  const int = (n) => Math.round(n).toLocaleString("en-US");
+  const money = (n) => (Number.isInteger(n) ? K.usd0(n) : usd2(n));   // a plan: $1,900 a day in November, $1,838.71 in December
+  const perOrder = (a) => (a.orders ? usd2(a.sales / a.orders) : "-");
+  const { day, lastWeek: lw, month: mo, week } = rep.all;
+
+  const y0 = K.header("BARGAIN LANE ECOMMERCE  ·  STATIC LISTINGS DAILY RECAP", rep.through,
+    `${int(day.orders)} order${day.orders === 1 ? "" : "s"}  ·  from RETJG HUB (Sellercloud)  ·  sales include shipping and tax`);
+  const diff = day.sales - lw.sales, ipo = day.orders ? day.units / day.orders : 0;
+  const tBot = K.tiles(y0 - 12, [
+    ["SALES", usd2(day.sales), `${diff >= 0 ? "+" : "-"}${usd2(Math.abs(diff))} vs last ${wk}`],
+    ["ITEMS SOLD", int(day.units), day.units ? `${usd2(day.sales / day.units)} per item` : ""],
+    ["ORDERS", int(day.orders), day.orders ? `${ipo.toFixed(1)} item${ipo.toFixed(1) === "1.0" ? "" : "s"} per order` : ""],
+    ["AVG. ORDER VALUE", perOrder(day), lw.orders ? `${perOrder(lw)} last ${wk}` : ""],
+    ["RETURNS", int(day.returns), `${usd2(day.refunded)} refunded`],
+  ]);
+
+  // Charts: the day's sales by company (left), the month to date against plan (right)
+  const cTop = tBot - 26, cBot = cTop - 150, plotTop = cTop - 30;
+  ink(INK); page.text(M, cTop, "Sales by company", 10, true);
+  const sold = rep.companies.filter(c => c.day.sales > 0).sort((a, b) => b.day.sales - a.day.sales);
+  if (sold.length) K.bars(M + 34, M + 250, plotTop, cBot, sold.map(c => ({ label: c.name, bars: [{ v: c.day.sales, c: BLUE }] })));
+  else { ink(DIM); page.text(M + 34, (plotTop + cBot) / 2, `No sales on ${md(rep.through)}.`, 8); }
+  const rx = M + 300;
+  ink(INK); page.text(rx, cTop, `${monthName} to date, sales vs plan`, 10, true);
+  K.legend(rx, cTop - 14, [["Sales", BLUE], ["Plan to date", ORANGE]]);
+  const groups = [];
+  if (rep.plan.monthToLastWeek != null) groups.push({ label: span(rep.monthStart, rep.lastWeek), bars: [{ v: rep.all.monthToLastWeek.sales, c: BLUE }, { v: rep.plan.monthToLastWeek, c: ORANGE }] });
+  groups.push({ label: span(rep.monthStart, rep.through), bars: [{ v: mo.sales, c: BLUE }, { v: rep.plan.monthToDate, c: ORANGE }] });
+  K.bars(rx + 34, R, plotTop, cBot, groups, { labels: "each" });
+
+  // What the day was: where it sold, and what moved it against the same weekday last week.
+  const notes = [];
+  if (day.sales > 0) notes.push(day.ebay === day.sales ? `All ${md(rep.through)} sales were on eBay.`
+    : `${md(rep.through)} sales: eBay ${usd2(day.ebay)} · Other ${usd2(day.other)} · Poshmark ${usd2(day.poshmark)}.`);
+  if (day.sales !== lw.sales) {
+    const up = day.sales > lw.sales;
+    const drv = rep.companies.map(c => ({ c, d: c.day.sales - c.lastWeek.sales })).sort((a, b) => (up ? b.d - a.d : a.d - b.d))[0];
+    const who = drv && (up ? drv.d > 0 : drv.d < 0) ? `${drv.c.name} drove the ${up ? "gain" : "drop"} vs last ${wkLong}` : "";
+    const ord = day.orders === lw.orders ? `orders held at ${int(day.orders)}` : `orders ${day.orders > lw.orders ? "rose" : "fell"} from ${int(lw.orders)} to ${int(day.orders)}`;
+    notes.push(who ? `${who}; ${ord}.` : `${ord[0].toUpperCase()}${ord.slice(1)}.`);
+  }
+  let y = cBot - 28;
+  ink(DIM); page.text(M, y, pdfEllipsize(notes.join(" "), 8, false, R - M), 8);
+
+  // The day, then the month, by company. Zero rows stay: every company is accounted for.
+  y -= 22; ink(INK); page.text(M, y, "Companies", 11, true);
+  y = K.table(y, [[M, "Company", "l"], [M + 260, "Orders", "r"], [M + 320, "Items", "r"], [M + 400, "Shipping", "r"], [M + 470, "Sales", "r"], [R, "$/order", "r"]],
+    [...rep.companies].sort((a, b) => b.day.sales - a.day.sales)
+      .map(c => [c.name, int(c.day.orders), int(c.day.units), usd2(c.day.shipping), usd2(c.day.sales), perOrder(c.day)]),
+    ["Day total", int(day.orders), int(day.units), usd2(day.shipping), usd2(day.sales), perOrder(day)]);
+  y -= 26; ink(INK); page.text(M, y, `${monthName} to date`, 11, true);
+  y = K.table(y, [[M, "Company", "l"], [M + 260, "Orders", "r"], [M + 320, "Items", "r"], [M + 400, "Returns", "r"], [M + 470, "Sales", "r"], [R, "$/order", "r"]],
+    [...rep.companies].sort((a, b) => b.month.sales - a.month.sales)
+      .map(c => [c.name, int(c.month.orders), int(c.month.units), int(c.month.returns), usd2(c.month.sales), perOrder(c.month)]),
+    ["Total", int(mo.orders), int(mo.units), int(mo.returns), usd2(mo.sales), perOrder(mo)]);
+
+  y -= 22; ink(DIM);
+  page.text(M, y, `Week to date (${span(rep.weekStart, rep.through)}): ${usd2(week.sales)} vs ${money(rep.plan.weekToDate)} plan to date; ${money(rep.plan.fullWeek)} full-week plan.`, 8);
+  y -= 13; page.text(M, y, `${monthName} to date: ${usd2(mo.sales)} vs ${money(rep.plan.monthToDate)} plan to date; ${(mo.sales / rep.plan.month * 100).toFixed(1)}% of the ${money(rep.plan.month)} full-month plan.`, 8);
+  y -= 13; page.text(M, y, `${monthName} marketplace sales: eBay ${usd2(mo.ebay)} · Other ${usd2(mo.other)} · Poshmark ${usd2(mo.poshmark)}.`, 8);
+
+  const wtd = rep.weekStart === rep.through ? "Sunday" : `Sunday through ${wkLong}`;
+  ink(DIM);
+  page.text(M, 46, "Sales are as reported in RETJG HUB Ecommerce, including shipping and sales tax. Static listings only; no Whatnot, auctions or wholesale.", 6.5);
+  page.text(M, 37, `Plan to date uses ${money(rep.plan.perDay)} per calendar day. WTD is ${wtd}; MTD is ${monthName} 1-${Number(rep.through.slice(8))}. Dates are Sellercloud's order dates.`, 6.5);
+  return pdfBuild([page], []);
+}
+
+// The PDF for `through` as a Resend attachment, or null. Never throws: a PDF that cannot be built must
+// not hold the email back. Only for a reader who may see E-Commerce (dispatchDailySummary decides).
+async function ecomDailyAttachment(env, through) {
+  if (!env.DB || !through) return null;
+  try {
+    const rep = await ecomDailyReport(env, through);
+    if (!rep) return null;
+    return { filename: `BL-Ecommerce-${through}.pdf`, content: b64FromBytes(ecomDailyPdfBytes(rep)), content_type: "application/pdf" };
+  } catch (e) {
+    console.error(`Ecommerce daily PDF failed for ${through}: ${e.message}`);
+    return null;
+  }
+}
+
+// ── BL-Retail-Bins-<date>.pdf ────────────────────────────────────────────────────────────────────
+// The five open stores' till sales split into retail and bins (the Retail Summary's daily_sales
+// columns, whose sum is the email's store sales less Live), against the same weekday last week, the
+// week and month, plus the day's categories and the bin split's Christmas keys. null when no store
+// has reported `through`.
+const RB_L2_SHORT = { "Bin Products": "Bins", "Consumable Other": "Other consumables", "Other / Non-Item": "Other / non-item" };
+const rbShortL2 = (l2) => RB_L2_SHORT[l2] || String(l2).replace(/^(Softline|Consumable)\s*-?\s*/i, "");
+// "FG BL SEASONAL - CHRISTMAS - GM" under Seasonal → "Christmas GM"; an L3 named for its L2 is the core line.
+function rbL3Label(l2Short, l3) {
+  if (!l3 || /unmapped/i.test(l3)) return "items without a subcategory";
+  const parts = String(l3).replace(/^FG\s+(BL\s+)?/i, "").split(/\s+-\s+/);
+  if (parts.length > 1 && parts[0].toLowerCase() === l2Short.toLowerCase()) parts.shift();
+  const s = parts.join(" ").split(/\s+/).map(w => (/^[A-Z]{1,3}$/.test(w) && !/^(AND|THE|FOR|OF|IN|TO|ON)$/.test(w))
+    ? w : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+  return s.toLowerCase() === l2Short.toLowerCase() ? `the core ${l2Short} line` : s;
+}
+
+async function retailBinsDailyReport(env, through) {
+  const stores = EXEC_SUMMARY_STORES;
+  const weekStart = addDaysYmd(through, -new Date(through + "T12:00:00Z").getUTCDay());
+  const monthStart = through.slice(0, 8) + "01", lastWeek = addDaysYmd(through, -7), lwStart = addDaysYmd(weekStart, -7);
+  const inList = stores.map(() => "?").join(",");
+  const rows = (await env.DB.prepare(
+    `SELECT store, date, retail, bin, budget, order_count, snapshot_time FROM daily_sales
+      WHERE date BETWEEN ? AND ? AND store IN (${inList})`
+  ).bind([monthStart, lwStart].sort()[0], through, ...stores).all()).results || [];
+  const at = {};
+  for (const r of rows) at[r.store + "|" + r.date] = r;
+  if (!stores.some(s => at[s + "|" + through] && at[s + "|" + through].snapshot_time)) return null;
+  const num = (v) => Number(v) || 0;
+  const sumOver = (s, a, b, f) => { let n = 0; for (let d = a; d <= b; d = addDaysYmd(d, 1)) { const r = at[s + "|" + d]; if (r) n += f(r); } return n; };
+  const net = (r) => num(r.retail) + num(r.bin);
+  const per = stores.map(s => {
+    const d = at[s + "|" + through] || {}, l = at[s + "|" + lastWeek] || {};
+    return {
+      store: s, label: STORE_LABELS[s] || s,
+      retail: num(d.retail), bin: num(d.bin), tx: num(d.order_count), plan: num(d.budget),
+      lw: { retail: num(l.retail), bin: num(l.bin), tx: num(l.order_count) },
+      wtd: { net: sumOver(s, weekStart, through, net), retail: sumOver(s, weekStart, through, r => num(r.retail)), bin: sumOver(s, weekStart, through, r => num(r.bin)),
+             plan: sumOver(s, weekStart, through, r => num(r.budget)) },
+      lwtd: { net: sumOver(s, lwStart, lastWeek, net), retail: sumOver(s, lwStart, lastWeek, r => num(r.retail)), bin: sumOver(s, lwStart, lastWeek, r => num(r.bin)) },
+      mtd: { net: sumOver(s, monthStart, through, net), bin: sumOver(s, monthStart, through, r => num(r.bin)), plan: sumOver(s, monthStart, through, r => num(r.budget)) },
+    };
+  });
+  const daily = [];
+  for (let d = monthStart; d <= through; d = addDaysYmd(d, 1)) {
+    daily.push({ date: d, retail: stores.reduce((n, s) => n + num((at[s + "|" + d] || {}).retail), 0), bin: stores.reduce((n, s) => n + num((at[s + "|" + d] || {}).bin), 0) });
+  }
+  // Categories, as the Retail Summary files them (item snapshots), for the day and the same weekday a
+  // week earlier. Live is not a category here: buildStoreWeekly's synthetic "Auction" row is dropped.
+  const catsFor = async (d) => {
+    const l2 = {}, l3 = {};
+    const bundles = await Promise.all(stores.map(s => buildStoreWeekly(env, s, wrsGateDates(s, [d]))));
+    for (const b of bundles) {
+      for (const [c, v] of Object.entries(b.l2Net || {})) if (c !== "Auction") l2[c] = (l2[c] || 0) + v;
+      for (const [c, m] of Object.entries(b.l3Net || {})) for (const [x, v] of Object.entries(m)) { (l3[c] = l3[c] || {})[x] = (l3[c][x] || 0) + v; }
+    }
+    return { l2, l3 };
+  };
+  let cats = null;
+  try { const [now, then] = await Promise.all([catsFor(through), catsFor(lastWeek)]); cats = { now, then }; }
+  catch (e) { console.error(`Retail & Bins PDF: categories for ${through} could not be read: ${e.message}`); }
+  // Christmas bin keys on `through`, by the bin split's own rule. Left out when the day's item lines are not saved yet.
+  let xmas = null;
+  try {
+    const f = (key) => `json_extract(j.value, '$.${key}')`;
+    const items = (await env.DB.prepare(
+      `SELECT ${f("name")} AS name, ${f("code")} AS code, ${f("l2")} AS l2, ${f("qty")} AS qty, ${f("net")} AS net
+         FROM item_day_lines d, json_each(d.items_json) j WHERE d.store IN (${inList}) AND d.date = ?`
+    ).bind(...stores, through).all()).results || [];
+    if (items.length) {
+      const classify = binSplitClassifier((await loadBinGroups(env)).rules);
+      let units = 0, sales = 0;
+      for (const it of items) {
+        const c = classify(it);
+        if (c && c.group === "christmas" && c.subgroup === "bins") { units += num(it.qty); sales += num(it.net); }
+      }
+      xmas = { units: Math.round(units), net: roundCents(sales) };
+    }
+  } catch (e) { console.error(`Retail & Bins PDF: Christmas bins for ${through} could not be read: ${e.message}`); }
+  return { through, weekStart, monthStart, lastWeek, lwStart, stores: per, daily, cats, xmas };
+}
+
+function retailBinsDailyPdfBytes(rep) {
+  const page = pdfPage(), K = dtcPdfKit(page);
+  const { M, R, ink, INK, DIM, BLUE, ORANGE, usd0, usd2, pct, change, md, span } = K;
+  const dt = new Date(rep.through + "T12:00:00Z");
+  const wk = dt.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" });
+  const wkLong = dt.toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
+  const monthName = dt.toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
+  const int = (n) => Math.round(n).toLocaleString("en-US");
+  const signed = (n) => `${n >= 0 ? "+" : "-"}${usd0(Math.abs(n))}`;
+  const S = rep.stores, n = S.length;
+  // Whole dollars per store; every total is the sum of the rows it sits under.
+  const rows = S.map(s => ({ ...s, r: { retail: Math.round(s.retail), bin: Math.round(s.bin), net: Math.round(s.retail + s.bin),
+    wtd: Math.round(s.wtd.net), mtd: Math.round(s.mtd.net) } }));
+  const tot = (f) => rows.reduce((a, s) => a + f(s), 0);
+  const day = { retail: tot(s => s.retail), bin: tot(s => s.bin), tx: tot(s => s.tx), plan: tot(s => s.plan) };
+  const lw = { retail: tot(s => s.lw.retail), bin: tot(s => s.lw.bin), tx: tot(s => s.lw.tx) };
+  day.net = day.retail + day.bin; lw.net = lw.retail + lw.bin;
+  const shown = { retail: tot(s => s.r.retail), bin: tot(s => s.r.bin), net: tot(s => s.r.net), wtd: tot(s => s.r.wtd), mtd: tot(s => s.r.mtd) };
+
+  const y0 = K.header("BARGAIN LANE  ·  RETAIL & BINS DAILY RECAP", rep.through,
+    `${n} stores  ·  from RETJG HUB  ·  net sales, excluding Live, auctions and e-commerce`);
+  const spt = (a) => (a.tx ? a.net / a.tx : null);
+  const tBot = K.tiles(y0 - 12, [
+    ["NET SALES", usd0(shown.net), `${signed(day.net - lw.net)} vs last ${wk}`],
+    ["RETAIL", usd0(shown.retail), `${pct(change(day.retail, lw.retail))} vs last ${wk}`],
+    ["BINS", usd0(shown.bin), `${pct(change(day.bin, lw.bin))} vs last ${wk}`],
+    ["TRANSACTIONS", int(day.tx), `${pct(change(day.tx, lw.tx))} vs last ${wk}`],
+    ["SALES / TRANS.", spt(day) == null ? "-" : usd2(spt(day)), `${pct(spt(day) != null && spt(lw) ? spt(day) / spt(lw) - 1 : null)} vs last ${wk}`],
+  ]);
+
+  // Charts: the day by store (left), the month by day (right), retail under bins
+  const cTop = tBot - 26, cBot = cTop - 140, plotTop = cTop - 30;
+  const series = [["Retail", BLUE], ["Bins", ORANGE]];
+  ink(INK); page.text(M, cTop, "Sales by store", 10, true);
+  K.legend(M, cTop - 14, series);
+  K.bars(M + 34, M + 250, plotTop, cBot, S.map(s => ({ label: s.label, bars: [{ v: s.retail, c: BLUE }, { v: s.bin, c: ORANGE }] })), { stacked: true });
+  const rx = M + 300, last = rep.daily.length;
+  ink(INK); page.text(rx, cTop, `${monthName} to date, daily sales`, 10, true);
+  K.legend(rx, cTop - 14, series);
+  K.bars(rx + 34, R, plotTop, cBot, rep.daily.map(d => ({ label: String(Number(d.date.slice(8))), bars: [{ v: d.retail, c: BLUE }, { v: d.bin, c: ORANGE }] })),
+    { stacked: true, labels: "none", show: (i) => last <= 16 || i === 0 || (i + 1) % 5 === 0 || i === last - 1 });
+
+  const dBin = day.bin - lw.bin, dRet = day.retail - lw.retail;
+  const words = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+  const down = S.filter(s => s.retail + s.bin < s.lw.retail + s.lw.bin).length, up = S.filter(s => s.retail + s.bin > s.lw.retail + s.lw.bin).length;
+  const storesLine = down === n ? `All ${words[n] || n} stores were down in combined sales.` : up === n ? `All ${words[n] || n} stores were up in combined sales.`
+    : `${up} of ${n} stores were up in combined sales.`;
+  let y = cBot - 28;
+  ink(DIM); page.text(M, y, `Bins ${dBin >= 0 ? "added" : "lost"} ${usd0(Math.abs(dBin))} vs last ${wkLong}, ${(dBin >= 0) === (dRet >= 0) ? "and" : "but"} retail ${dRet >= 0 ? "rose" : "fell"} ${usd0(Math.abs(dRet))}. ${storesLine}`, 8);
+
+  // Stores. "vs store plan" is James's benchmark: the daily budget, which includes Live sales.
+  y -= 20; ink(INK); page.text(M, y, "Stores", 11, true);
+  y = K.table(y, [[M, "Store", "l"], [M + 140, "Retail", "r"], [M + 195, "Bins", "r"], [M + 260, "Net sales", "r"], [M + 325, `vs last ${wk}`, "r"],
+                  [M + 395, "vs store plan", "r"], [M + 460, "WTD sales", "r"], [R, "MTD sales", "r"]],
+    rows.map(s => [s.label, usd0(s.r.retail), usd0(s.r.bin), usd0(s.r.net), pct(change(s.retail + s.bin, s.lw.retail + s.lw.bin)),
+                   pct(change(s.retail + s.bin, s.plan)), usd0(s.r.wtd), usd0(s.r.mtd)]),
+    ["Total", usd0(shown.retail), usd0(shown.bin), usd0(shown.net), pct(change(day.net, lw.net)), pct(change(day.net, day.plan)), usd0(shown.wtd), usd0(shown.mtd)],
+    { rowH: 13 });
+
+  // Categories and what moved them, when the day's item snapshots could be read.
+  if (rep.cats) {
+    const { now, then } = rep.cats;
+    const top = Object.keys(now.l2).filter(c => now.l2[c] > 0).sort((a, b) => now.l2[b] - now.l2[a]).slice(0, 6);
+    y -= 22; ink(INK); page.text(M, y, "Top categories", 11, true);
+    y = K.table(y, [[M, "Category", "l"], [M + 240, md(rep.through), "r"], [M + 320, md(rep.lastWeek), "r"], [M + 420, "Change", "r"], [R, "Change %", "r"]],
+      top.map(c => { const a = now.l2[c] || 0, b = then.l2[c] || 0; return [rbShortL2(c), usd0(a), usd0(b), signed(a - b), pct(change(a, b))]; }), null, { rowH: 13 });
+    // The two categories (not bins) that moved most the way retail moved, each with its biggest subcategory.
+    const moved = Object.keys({ ...now.l2, ...then.l2 }).filter(c => c !== "Bin Products")
+      .map(c => ({ c, d: (now.l2[c] || 0) - (then.l2[c] || 0) })).filter(m => (dRet >= 0 ? m.d > 0 : m.d < 0))
+      .sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, 2);
+    const lines = [moved.map(m => {
+      const short = rbShortL2(m.c), a3 = now.l3[m.c] || {}, b3 = then.l3[m.c] || {};
+      const sub = Object.keys({ ...a3, ...b3 }).map(x => ({ x, d: (a3[x] || 0) - (b3[x] || 0) })).sort((p, q) => (m.d < 0 ? p.d - q.d : q.d - p.d))[0];
+      const lead = sub && (m.d < 0 ? sub.d < 0 : sub.d > 0)
+        ? `, ${Math.abs(sub.d) >= 0.75 * Math.abs(m.d) ? "mostly" : "led by"} ${rbL3Label(short, sub.x)} (${signed(sub.d)})` : "";
+      return `${short} ${m.d < 0 ? "fell" : "rose"} ${usd0(Math.abs(m.d))}${lead}.`;
+    }).join(" ")].filter(Boolean);
+    if (rep.xmas && rep.xmas.net > 0) lines.push(`Christmas bin keys sold ${usd0(rep.xmas.net)} on ${int(rep.xmas.units)} items, about ${day.bin > 0 ? Math.round(rep.xmas.net / day.bin * 100) : 0}% of all bins. This excludes retail Christmas and generic keys.`);
+    if (lines.length) {
+      y -= 20; ink(INK); page.text(M, y, "What moved sales", 10, true);
+      ink(DIM); for (const l of lines) { y -= 12; page.text(M, y, pdfEllipsize(l, 8, false, R - M), 8); }
+    }
+  }
+
+  // Week and month to date
+  const wNet = tot(s => s.wtd.net), wPlan = tot(s => s.wtd.plan), lwNet = tot(s => s.lwtd.net);
+  // The store that did most of the lead (or the shortfall) against the WTD plan.
+  const lead = wNet - wPlan, gap = (s) => s.wtd.net - s.wtd.plan;
+  const big = [...rows].sort((a, b) => (lead >= 0 ? gap(b) - gap(a) : gap(a) - gap(b)))[0];
+  y -= 20; ink(INK); page.text(M, y, "Week to date", 10, true);
+  ink(DIM);
+  y -= 12; page.text(M, y, `${span(rep.weekStart, rep.through)}: ${usd0(shown.wtd)}  |  ${pct(change(wNet, wPlan))} vs store plan  |  ${pct(change(wNet, lwNet))} vs same days last week.`, 8);
+  const wb = tot(s => s.wtd.bin) - tot(s => s.lwtd.bin), wr = tot(s => s.wtd.retail) - tot(s => s.lwtd.retail);
+  y -= 12; page.text(M, y, pdfEllipsize(`Bins ${wb >= 0 ? "gained" : "lost"} ${usd0(Math.abs(wb))} week over week; retail ${wr >= 0 ? "rose" : "fell"} ${usd0(Math.abs(wr))}.` +
+    (big && Math.round(lead) && (lead >= 0 ? gap(big) > 0 : gap(big) < 0)
+      ? ` ${big.label} ${lead >= 0 ? "supplied" : "accounts for"} ${usd0(Math.abs(gap(big)))} of the ${usd0(Math.abs(lead))} WTD plan ${lead >= 0 ? "lead" : "shortfall"}.` : ""), 8, false, R - M), 8);
+  const mNet = tot(s => s.mtd.net), mPlan = tot(s => s.mtd.plan);
+  y -= 20; ink(INK); page.text(M, y, "Month to date", 10, true);
+  ink(DIM); y -= 12;
+  page.text(M, y, `${span(rep.monthStart, rep.through)}: ${usd0(shown.mtd)}  |  ${pct(change(mNet, mPlan))} vs store plan to date  |  ${usd0(tot(s => s.mtd.bin))} from bins.`, 8);
+
+  ink(DIM);
+  page.text(M, 46, "Source: RETJG HUB Retail Summary and category detail; Christmas bin keys from Clover Item Sales. Eastern dates.", 6.5);
+  page.text(M, 37, "Store plan uses the five active-store budgets, which include Live sales, and excludes Holland. It is a benchmark, not a separate Retail/Bins budget.", 6.5);
+  return pdfBuild([page], []);
+}
+
+async function retailBinsDailyAttachment(env, through) {
+  if (!env.DB || !through) return null;
+  try {
+    const rep = await retailBinsDailyReport(env, through);
+    if (!rep) return null;
+    return { filename: `BL-Retail-Bins-${through}.pdf`, content: b64FromBytes(retailBinsDailyPdfBytes(rep)), content_type: "application/pdf" };
+  } catch (e) {
+    console.error(`Retail & Bins daily PDF failed for ${through}: ${e.message}`);
+    return null;
+  }
+}
+
 // Send the store-scoped daily summary to everyone chainWideRecipients() leaves
 // out. Bodies are built ONCE PER DISTINCT STORE SET, not once per recipient:
 // eight managers in prod share six store sets, and each body costs a D1 read
 // plus one KV read per store. Grouping keeps this a fixed small cost as the
 // team grows rather than something that scales with headcount inside a cron.
-async function dispatchScopedDailySummaries(env, date, prefMapAll, livePdf = null) {
+async function dispatchScopedDailySummaries(env, date, prefMapAll, livePdf = null, rbPdf = null) {
   const recipients = await storeScopedRecipients(env);
   if (!recipients.length) return { recipients: 0 };
 
@@ -7696,8 +8237,11 @@ async function dispatchScopedDailySummaries(env, date, prefMapAll, livePdf = nul
     const scopeSuffix = shown.length <= 2 ? ` (${labels.join(' + ')})` : '';
     const emailHtml = buildExecSummaryEmailHtml(exec, totalsLabel, scopeLabel);
     const reportDay = new Date(exec.reportDate + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
-    // Entitlement, not what the body shows: the PDF shows both live stores.
-    const attach = livePdf && WHATNOT_STORES.every(s => stores.includes(s)) ? { attachments: [livePdf] } : {};
+    // Entitlement, not what the body shows: the Live PDF shows both live stores, the Retail & Bins PDF
+    // all five. Neither goes to a scope missing one of its stores. Never the Ecommerce PDF.
+    const files = [livePdf && WHATNOT_STORES.every(s => stores.includes(s)) ? livePdf : null,
+                   rbPdf && EXEC_SUMMARY_STORES.every(s => stores.includes(s)) ? rbPdf : null].filter(Boolean);
+    const attach = files.length ? { attachments: files } : {};
 
     const tb = data.totals.budget, ts = data.totals.sales;
     const budgetLine = tb > 0 ? ` • Budget: ${_fmtVsBudget(ts, tb)}` : '';
@@ -7772,11 +8316,18 @@ async function dispatchDailySummary(env, date) {
   // it, so a re-enable means adding one to buildExecSummaryEmailHtml.
   // The email is the Executive Summary; the push keeps yesterday's one-line
   // total from buildDailySummaryData.
-  const [data, exec] = await Promise.all([buildDailySummaryData(env, date), buildExecSummaryData(env, date)]);
+  const [data, exec] = await Promise.all([buildDailySummaryData(env, date), buildExecSummaryData(env, date, null, { ecom: true })]);
   const { sales: ts, budget: tb } = data.totals;
-  const emailHtml = buildExecSummaryEmailHtml(exec);
-  // Read once here and handed to the scoped pass: one R2 read per send, not per body.
-  const livePdf = await whatnotDailyAttachment(env, exec && exec.through);
+  // Two chain-wide bodies (James, 2026-11-19): the DTC copy, with Ecommerce, for a reader who may see
+  // E-Commerce; today's copy, without it, for everyone else. Built once each, not per recipient.
+  const emailHtml = buildExecSummaryEmailHtml({ ...exec, ecom: null, ecomError: false });
+  const dtcHtml = buildExecSummaryEmailHtml(exec);
+  // Built once here and handed to the scoped pass: one build per send, not per body.
+  const [livePdf, rbPdf, ecomPdf] = await Promise.all([
+    whatnotDailyAttachment(env, exec && exec.through),
+    retailBinsDailyAttachment(env, exec && exec.through),
+    ecomDailyAttachment(env, exec && exec.through),
+  ]);
 
   // Short push body
   const budgetLine = tb > 0 ? ` • Budget: ${_fmtVsBudget(ts, tb)}` : '';
@@ -7802,7 +8353,7 @@ async function dispatchDailySummary(env, date) {
   // construction (allowedStores() null vs non-null), so this cannot double-send.
   // Run it even when the chain-wide list is empty — those are different people,
   // and an empty chain-wide list must not silence the managers too.
-  const scoped = await dispatchScopedDailySummaries(env, date, prefMap, livePdf)
+  const scoped = await dispatchScopedDailySummaries(env, date, prefMap, livePdf, rbPdf)
     .catch(e => { console.error('Scoped daily summary failed:', e.message); return { error: e.message }; });
 
   // All active users (notification_preferences controls per-user opt-in)
@@ -7841,12 +8392,16 @@ async function dispatchDailySummary(env, date) {
     let emailResult = null;                    // null = opted out, nothing attempted
     if (pref.daily_summary) {
       const reportDay = new Date(exec.reportDate + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+      // 🔑 E-Commerce's figures only to a reader the Hub lets see E-Commerce (superuser by role, else an
+      // ecom grant). chainWideRecipients() already loaded each user's grants.
+      const dtc = canAccessBusiness(user, 'ecom');
+      const files = [livePdf, rbPdf, dtc ? ecomPdf : null].filter(Boolean);
       emailResult = await resendSend(env, {
         from: 'RETJG HUB <noreply@retjghub.com>',
         to: user.email,
-        subject: `Executive Summary — ${reportDay}`,
-        html: emailHtml,
-        ...(livePdf ? { attachments: [livePdf] } : {}),
+        subject: `${dtc && exec.ecom ? 'DTC ' : ''}Executive Summary — ${reportDay}`,
+        html: dtc ? dtcHtml : emailHtml,
+        ...(files.length ? { attachments: files } : {}),
       }, `daily-chain-${date}-${user.id}`);
       if (!emailResult.skipped) {
         if (emailResult.ok) summary.email.sent++;
@@ -25684,19 +26239,21 @@ export default {
         return new Response(JSON.stringify({ error: "date must be YYYY-MM-DD" }), { status: 400, headers: corsJson });
       }
       try {
-        const exec = await buildExecSummaryData(env, date);
-        const livePdf = await whatnotDailyAttachment(env, exec.through);
+        // A superuser may see E-Commerce, so this is the DTC copy with all three PDFs.
+        const exec = await buildExecSummaryData(env, date, null, { ecom: true });
+        const files = (await Promise.all([whatnotDailyAttachment(env, exec.through), retailBinsDailyAttachment(env, exec.through),
+          ecomDailyAttachment(env, exec.through)])).filter(Boolean);
         const reportDay = new Date(exec.reportDate + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
         const r = await resendSend(env, {
           from: 'RETJG HUB <noreply@retjghub.com>',
           to: currentUser.email,
-          subject: `[Test] Executive Summary — ${reportDay}`,
+          subject: `[Test] ${exec.ecom ? 'DTC ' : ''}Executive Summary — ${reportDay}`,
           html: buildExecSummaryEmailHtml(exec),
-          ...(livePdf ? { attachments: [livePdf] } : {}),
+          ...(files.length ? { attachments: files } : {}),
         }, `daily-test-${date}-${currentUser.id}-${randomHex(8)}`);
         await logEmailAttempt(env, { userId: currentUser.id, eventType: 'daily-summary-test', result: r });
         return new Response(JSON.stringify({
-          ok: !!r.ok, to: currentUser.email, date, attached: livePdf ? livePdf.filename : null,
+          ok: !!r.ok, to: currentUser.email, date, attached: files.length ? files.map(f => f.filename).join(", ") : null,
           ...(r.ok ? {} : { error: r.error || 'not sent' }),
         }), { status: r.ok ? 200 : 502, headers: corsJson });
       } catch (e) {
@@ -25729,6 +26286,25 @@ export default {
       return new Response(whatnotDailyPdfBytes(rep), { headers: { ...corsHeaders, "Content-Type": "application/pdf",
         "Content-Disposition": `inline; filename="BL-Live-${date}.pdf"`, "Cache-Control": "no-store" } });
     }
+    // ── The DTC Executive Summary's companion PDFs for a day (default yesterday), without sending.
+    //    GET ?action=retail-bins-pdf[&date=]  superuser or admin secret, like live-daily-pdf.
+    //    GET ?action=ecom-daily-pdf[&date=]   superuser SESSION only: the admin secret was public for months
+    //                                         and never reads E-Commerce (as ecom-overview).
+    for (const [action, secretOk, build, bytes, name] of [
+      ["retail-bins-pdf", true, retailBinsDailyReport, retailBinsDailyPdfBytes, "BL-Retail-Bins"],
+      ["ecom-daily-pdf", false, ecomDailyReport, ecomDailyPdfBytes, "BL-Ecommerce"],
+    ]) {
+      if (request.method !== "GET" || url.searchParams.get("action") !== action) continue;
+      if (!(secretOk && hasSnapshotSecret(request, env)) && (!currentUser || currentUser.role !== 'superuser')) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      }
+      const date = url.searchParams.get("date") || addDaysYmd(getETToday().dateStr, -1);
+      if (!isYmdDate(date)) return new Response(JSON.stringify({ error: "date must be YYYY-MM-DD" }), { status: 400, headers: corsJson });
+      const rep = await build(env, date);
+      if (!rep) return new Response(JSON.stringify({ error: `Nothing to report for ${date}` }), { status: 404, headers: corsJson });
+      return new Response(bytes(rep), { headers: { ...corsHeaders, "Content-Type": "application/pdf",
+        "Content-Disposition": `inline; filename="${name}-${date}.pdf"`, "Cache-Control": "no-store" } });
+    }
     if (request.method === "GET" && url.searchParams.get("action") === "preview-daily-summary") {
       const isAdminReq = hasSnapshotSecret(request, env);
       if (!isAdminReq && (!currentUser || currentUser.role !== 'superuser')) {
@@ -25752,7 +26328,8 @@ export default {
       const scopeLabel  = scope ? (single ? (STORE_LABELS[shown[0]] || shown[0]) : 'My Stores') : 'All Stores';
       const totalsLabel = scope ? (single ? 'Total' : 'My Stores') : 'All Stores';
       try {
-        const exec = await buildExecSummaryData(env, dateParam, scope);
+        // &ecom=1 renders the DTC copy an E-Commerce reader gets (chain-wide only; a scope never has it).
+        const exec = await buildExecSummaryData(env, dateParam, scope, { ecom: url.searchParams.get("ecom") === "1" && !!currentUser && currentUser.role === 'superuser' });
         if (!exec) return new Response(JSON.stringify({ error: "None of those stores is in the Executive Summary" }), { status: 400, headers: corsJson });
         const html = buildExecSummaryEmailHtml(exec, totalsLabel, scopeLabel);
         return new Response(html, { headers: { ...corsHeaders, "Content-Type": "text/html; charset=utf-8" } });
