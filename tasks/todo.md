@@ -24,8 +24,11 @@ answered: an admin sees **their businesses** (option 1) — not everyone.
       92/0, edit-grants-bl 40/0, approval-pin 36/0, associate-reveal 42/0 (opens Associates; auth-me mock fixed
       to the real object shape), export-dates 13/0, mobile-menu 166/6 (the same 6 associate failures as main).
       `npm test` 13,023 / 147. Worker dry run 1366.24 KiB.
-- [ ] Brian: deploy the worker (backward-compatible: the old page ignores `grants`, and a push without
-      `audience` means the whole hub), then merge.
+- [x] Worker deployed by Brian 2026-11-19 23:15 UTC: version 0ed86199, 1366.24 KiB. Verified with 3
+      consecutive clean passes: 100% rollout on 0ed86199, live `content/v2` byte-identical to the dry-run bundle
+      of 95600e2 (1,399,027 bytes, sha 6776e2f3…), api.retjghub.com `auth-me` 200 `{"authenticated":false}`,
+      unauthenticated `list-users` 401.
+- [ ] Brian: merge.
 
 **Not changed:** invite-user, update-user, delete-user and associate-save are still gated to Bargain Lane — a
 non-Bargain Lane admin can list people but not yet invite them; nobody like that can reach the page until
