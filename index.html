@@ -38747,7 +38747,7 @@
     const svg = btn && btn.querySelector('svg');
     if (btn) btn.disabled = true;
     if (svg) { svg.style.transition = 'transform .6s ease'; svg.style.transform = 'rotate(360deg)'; }
-    ecomLanding = null;
+    ecomLanding = null; liveLanding = null;
     try { await Promise.resolve(loadAll(true)); }
     finally {
       if (btn) btn.disabled = false;
@@ -38887,6 +38887,33 @@
   // An auction row with no total is unknown, not a $0 auction day, so it counts nowhere.
   const lvAk = (rows) => { const auc = rows.filter(r => r.total != null);
     return { sales: auc.reduce((n, r) => n + Number(r.total), 0), lots: auc.reduce((n, r) => n + (Number(r.count) || 0), 0), days: new Set(auc.map(r => r.date)).size }; };
+
+  // The landing's Live Sales card (Brian, 2026-11-19: laid out like the other cards, showing the
+  // landing's range, so today on Today, not the month). The Live Sales pages' own read for that
+  // range, kept a minute per range like E-Commerce's. Display only: live sales are still inside
+  // Bargain Lane's total (phase 1), so nothing here reaches the hero.
+  let liveLanding = null, liveLandingLoading = false, liveLandingError = null;
+  function liveLandingEnsure(range) {
+    if (!currentUser || !userBusinesses(currentUser).some(b => b.id === 'live')) return;
+    const key = ecomKey(range);
+    if (liveLandingLoading === key) return;
+    if (liveLanding && liveLanding.key === key && Date.now() - liveLanding.at < 60e3) return;
+    liveLandingLoading = key;
+    lvFetch(range.from, range.to)
+      .then(d => { liveLanding = { data: d, at: Date.now(), key }; liveLandingError = null; })
+      .catch(e => { liveLandingError = e.code === 'UNCLASSIFIED_ACTION' ? 'The server has not been updated for Live Sales yet.'
+        : e.status === 503 ? 'Live Sales is not set up yet.' : (e && e.message ? e.message : String(e)); })
+      .finally(() => { if (liveLandingLoading === key) liveLandingLoading = false; if (currentPage === 'landing') { try { renderLanding(); } catch (_) {} } });
+  }
+  // null until the landing's range has loaded.
+  function liveFigures(range) {
+    const d = liveLanding && liveLanding.data;
+    if (!d || liveLanding.key !== ecomKey(range)) return null;
+    const rows = d.channels || [];
+    const k = lvWk(rows.filter(r => r.channel === 'whatnot')), a = lvAk(rows.filter(r => r.channel === 'auction'));
+    return { total: k.sales + a.sales, whatnot: k.sales, auction: a.sales, shows: k.shows, items: k.items, lots: a.lots,
+             selling: new Set(rows.filter(r => Number(r.total) > 0).map(r => r.store)).size, unitCount: (d.units || []).length };
+  }
   // Like-for-like only: a change is shown when the Hub holds both channels for the whole
   // comparison window, otherwise it says which data starts too late.
   function lvCompare(x) {
@@ -40666,6 +40693,7 @@
     // ecomFigures() is null until they land, and this repaints when they do.
     const FIGURES = { bl: () => fig, ecom: () => ecomFigures(LR) };
     ecomLandingEnsure(LR);
+    liveLandingEnsure(LR);
     const figOf = {};
     biz.forEach(b => { figOf[b.id] = FIGURES[b.id] ? FIGURES[b.id]() : null; });
     // Businesses that actually contribute money to the group roll-up. NOT the
@@ -40812,18 +40840,40 @@
         return;
       }
 
-      // A business still inside another (Live Sales, phase 1): its month to date from the
-      // parent's own figures, said to be included there, and a way in. Never summed.
+      // A business still inside another (Live Sales, phase 1): the E-Commerce card's layout over the
+      // landing's range (Brian, 2026-11-19), from liveFigures(). The line under the figure says it is
+      // already in the parent's total, and it is never summed. Live sales have no budget of their own
+      // yet, so the pace row says so over an empty track rather than inventing one.
       if (INSIDE[b.id]) {
         const parent = biz.find(x => x.id === INSIDE[b.id]);
-        const mtd = INSIDE[b.id] === 'bl' && FIGURES.bl ? (lpToday ? fig.liveMtd : fig.auction) : null;
-        card.insertAdjacentHTML('beforeend',
-          `<div class="lp-eyebrow mt-5">${lpToday ? 'Month to date' : escapeHtml(LR.label)}</div>
-           <div class="mt-1 text-3xl font-semibold tabular-nums text-opl-ink dark:text-op-ink">${mtd != null ? fmtDollar(mtd) : '—'}</div>
-           <div class="mt-1 text-sm text-opl-inkDim dark:text-op-inkDim">Already in ${parent ? parent.name : 'Bargain Lane'}'s total, not added again</div>
-           <div class="mt-auto pt-5 text-right">
-             <button type="button" class="lp-enter text-sm font-semibold text-accent-green hover:opacity-80 transition-opacity">Enter ${b.name} →</button>
-           </div>`);
+        const lf = liveFigures(LR);
+        const eyebrow = `<div class="lp-eyebrow mt-5">${lpToday ? "Today's sales" : escapeHtml(LR.label) + ' sales'}</div>`;
+        const enter = `<div class="mt-auto pt-5 text-right"><button type="button" class="lp-enter text-sm font-semibold text-accent-green hover:opacity-80 transition-opacity">Enter ${b.name} →</button></div>`;
+        const ink = (v) => v > 0 ? 'text-opl-ink dark:text-op-ink' : 'text-opl-inkDim dark:text-op-inkDim';
+        card.insertAdjacentHTML('beforeend', !lf
+          ? (liveLandingError
+              ? `<div class="mt-5 text-sm"><span class="font-semibold" style="color:var(--v1-bad)">Couldn’t load live sales.</span> <span class="text-opl-inkDim dark:text-op-inkDim">${escapeHtml(liveLandingError)}</span></div>${enter}`
+              : `${eyebrow}<div class="mt-2"><span class="skel" style="display:block;width:8ch;height:28px;border-radius:6px"></span></div>${enter}`)
+          : `${eyebrow}
+             <div class="mt-1 text-3xl font-semibold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(lf.total)}</div>
+             <div class="mt-1 text-sm text-opl-inkDim dark:text-op-inkDim">Included in ${parent ? parent.name : 'Bargain Lane'}'s total</div>
+             <div class="mt-4 flex items-center justify-between">
+               <span class="lp-eyebrow">Pace · ${lf.selling} of ${lf.unitCount} selling</span>
+               <span class="text-sm font-semibold ${lpPaceColour(null)}">No budget</span>
+             </div>
+             <div class="mt-2 h-1.5 rounded-full bg-[rgba(20,16,8,0.07)] dark:bg-[rgba(255,255,255,0.07)] overflow-hidden"></div>
+             <div class="mt-4 grid grid-cols-3 gap-2">
+               ${[['Whatnot', lf.whatnot], ['Auction', lf.auction], ['Avg show', lf.shows ? lf.whatnot / lf.shows : null]].map(([l, v]) => `<div class="rounded-xl border border-[rgba(20,16,8,0.07)] dark:border-[rgba(255,255,255,0.07)] bg-opl-panelHi dark:bg-[rgba(255,255,255,0.02)] px-3 py-2.5">
+                   <div class="lp-eyebrow" style="font-size:11px">${l}</div>
+                   <div class="mt-1 text-[15px] font-semibold tabular-nums ${ink(v)}">${v != null ? fmtDollar(v) : '—'}</div>
+                 </div>`).join('')}
+             </div>
+             <div class="mt-3 grid grid-cols-4 gap-2">
+               ${lpTile('Shows', lf.shows.toLocaleString('en-US'))}
+               ${lpTile('Items', lf.items.toLocaleString('en-US'))}
+               ${lpTile('Lots', lf.lots.toLocaleString('en-US'))}
+               ${lpTile(b.unitNoun + 's', String(lf.unitCount))}
+             </div>${enter}`);
         const e = card.querySelector('.lp-enter');
         if (e) e.addEventListener('click', () => enterBusiness(b.id));
         wrap.appendChild(card);
