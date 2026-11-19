@@ -1,3 +1,25 @@
+# Admin, phase 3: the doors — Landing gear (superuser), Users for admins, Admin Settings out of the sidebar (2026-11-19) — branch `claude/admin-landing`
+
+**Ask (Brian, after merging #403):** "add the superuser-only gear button to the Landing header that opens Admin, keep
+a Users item in the sidebar for admins that opens Admin › People, and remove Admin Settings from the Bargain Lane
+sidebar". Frontend only.
+
+- [x] Landing header: `#lp-admin` gear after Refresh, the same 40px control, `aria-label="Admin"`; hidden until
+      applyRoleUI reveals it for the superuser; opens `admin-settings`.
+- [x] `#nav-admin-settings` removed — markup, its NAV_BUSINESS entry, applyRoleUI toggle and the Admin nav light.
+      `#nav-users` unchanged (admins and the superuser; opens Admin › People, lit for People).
+- [x] The page is titled "Admin". DESIGN.md §3.1 says where Admin's doors are. Cache v318.
+- [x] Tests: `test-admin-page` 30/0 (5 new); `browser-admin-page` 131/0 (gear on Landing for the superuser in
+      light and on a 375px phone in dark, opens Admin; none for an admin); `browser-mobile-menu` superuser Admin
+      section is `users` alone — 166/6, the same 6 associate failures as main; `browser-landing-range` 29/0,
+      `browser-ecom-overview` 72/0, `browser-export-dates` 13/0, `browser-associate-reveal` 42/0,
+      `browser-invite-multi-business` 92/0; `browser-live-sales` 340/4, the same 4 on main (calendar dates).
+      `npm test` 13,033 / 147.
+- [ ] Brian: merge (Pages deploys it; no worker change).
+
+**Not changed:** opening Admin from Landing enters no business, so the sidebar falls back to Bargain Lane's (as any
+page does with none active); "Switch business" leads back to Landing.
+
 # Admin, phase 2: People (Users + Associates), list-users by business, announcement audience (2026-11-19) — branch `claude/admin-people`
 
 **Ask (Brian, after merging #402):** "move Users and Associates into Admin › People, make list-users return grants
