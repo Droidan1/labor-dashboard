@@ -38734,7 +38734,7 @@
       avgCart: orders > 0 ? T.allCartTotal / orders : null,
       avgItems: orders > 0 ? T.allItemCount / orders : null,
       pace: budget > 0 ? (total / budget) * 100 : null,
-      mtdActual: null, mtdBudget: null, liveMtd: null,
+      mtdActual: null, mtdBudget: null,
     };
   }
   // The landing page's own range (Brian, 2026-11-18: landing-only, not shared with the dashboard).
@@ -40572,7 +40572,6 @@
     let retail = 0, bin = 0, auction = 0, orders = 0, budget = 0, reporting = 0;
     let itemsNum = 0, itemsDen = 0;
     let mtdActual = 0, mtdBudget = 0;
-    let mtdLive = 0;   // live sales (auction column) — the Live Sales card's figure, already in mtdActual
 
     for (const s of STORES) {
       const rows = allStoreData[s] || [];
@@ -40606,7 +40605,6 @@
         const d = r.date && r.date.toISOString().slice(0, 10);
         if (!d || d.slice(0, 7) !== month || d >= todayStr) continue;
         mtdActual += (r.aTotal || 0) + (r.aAuction || 0);
-        mtdLive   += (r.aAuction || 0);
         mtdBudget += (r.bTotal || 0);
       }
     }
@@ -40626,7 +40624,6 @@
       avgItems: itemsDen > 0 ? itemsNum / itemsDen : null,
       pace: budget > 0 ? (total / budget) * 100 : null,
       mtdActual: mtdActual + total,
-      liveMtd: mtdLive + auction,
       mtdBudget: mtdBudget + budget,
     };
   }
@@ -40679,7 +40676,6 @@
       const m = bargainLaneFigures();
       fig.mtdActual = m.mtdActual - m.total + fig.total;
       fig.mtdBudget = m.mtdBudget;
-      fig.liveMtd = m.liveMtd;
     }
     // 🔑 Figures BY BUSINESS. Only Bargain Lane's are computable in this client —
     // bargainLaneFigures() reads Clover feeds — so an id absent from this map has
