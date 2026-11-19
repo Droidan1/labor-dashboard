@@ -1,3 +1,16 @@
+# Remove the unused liveMtd (2026-11-19)
+
+**Ask (Brian):** "yes, remove it and open the PR". Since #396, the Live Sales card shows the landing's
+range, and nothing reads its old month-to-date figure.
+
+- [x] Removed from `index.html`: `mtdLive` in `bargainLaneFigures()` (the variable, the month loop's add,
+      the returned `liveMtd`), `fig.liveMtd = m.liveMtd` in `renderLanding()`, and `liveMtd: null` in
+      `bargainLaneRangeFigures()`. Its entry in test-today-auction-reads' allowlist goes too (that test
+      fails on an entry that no longer matches code). `mtdActual` / `mtdBudget` are untouched. Cache v313.
+- [x] `npm test` 12,565 / 142 green (one fewer: the dropped allowlist check). browser-landing-range 29/0;
+      browser-live-sales 340, same 4 failures as main.
+- [ ] Brian: merge (Pages deploys the frontend).
+
 # Landing: Live Sales card laid out like the others, today not the month (2026-11-19)
 
 **Ask (Brian):** "fix the live sales card so it matches the others, have it display today's sales and
