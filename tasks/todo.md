@@ -21,10 +21,13 @@ E-Commerce access, store managers unchanged; (4) online auction stays inside Liv
       mutants caught; the survivor (Live added to Retail & Bins net) is equivalent: the query never reads `auction`.
       test-exec-summary-test-send + test-scoped-daily-summary updated for the new attachments and the second chain body.
 - [x] npm test: 12,879 assertions, 145 suites. Dry run 1363.86 KiB.
-- [ ] Deploy the worker (Brian) — this changes the next 5 AM send.
-- [ ] After deploy, before 5 AM: `?action=ecom-daily-pdf&date=2026-11-18`, `retail-bins-pdf`, `preview-daily-summary&ecom=1`
-      against James's examples and the Nov 19 email; then `send-test-summary`.
-- [ ] Merge.
+- [x] Deployed by Brian 2026-11-19 20:28Z from 5c55506: worker cfe24080 at 100%, 1363.86 KiB = the dry run; predeploy guard ok.
+- [x] Live, 3 consecutive clean passes (4 requests each) of ecom-daily-pdf, retail-bins-pdf and preview `&ecom=1`.
+- [x] Live PDFs for 2026-11-18 against James's examples, line by line: 53 of 56 match exactly; the other 3 are rounding
+      (a $x.xx5 order average, the WTD total = sum of rows, a $x.50 change). Live DTC email: the 15 store rows equal the
+      Nov 19 email's, the 6 Ecommerce / Total DTC rows equal the E-Commerce Overview's, headline and pace add up, no warnings.
+- [x] `send-test-summary` for 2026-11-18 to Brian: 200, DTC copy with Live + Retail & Bins + Ecommerce PDFs.
+- [ ] Merge (Brian). CI 2/2 green.
 
 # Deploy guard: `wrangler deploy` refuses a stale or dirty checkout (2026-11-19) — branch `claude/predeploy-guard`
 
