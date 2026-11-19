@@ -681,7 +681,8 @@ Many read-only tables over one set of filters:
 
 A page of many unrelated tools:
 
-- **A rail and one tool at a time.** The rail is grouped Hub, then one group per business. Groups for
+- **A rail and one tool at a time.** The rail is grouped People (Users, Associates), then Hub, then
+  one group per business. An admin sees People only; the superuser sees all of it. Groups for
   businesses other than Bargain Lane come from `userBusinesses`, so a business with no tools still gets
   a group saying "No tools yet". On a phone the rail is the page: a tool opens over it, with "‹ Admin
   tools" to go back.

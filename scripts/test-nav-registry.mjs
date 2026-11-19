@@ -148,8 +148,16 @@ for (const p of frontDoors) {
   ok(calls >= 3, `showOnlyPage is defined and called at every switch point (${calls} references)`);
 
   // And the page the nav points at must actually exist as a section.
+  // A page id navigateToPage reroutes before anything is shown counts as its target. 'users' opens
+  // Admin › People since Users moved there (2026-11-19); the reroute itself is asserted, so an alias
+  // cannot be claimed here without the code that honours it.
+  const ALIASES = { users: 'admin-settings' };
+  for (const [from, to] of Object.entries(ALIASES)) {
+    ok(new RegExp(`if \\(page === '${from}'\\) \\{[^}]*page = '${to}';`).test(html),
+       `navigateToPage reroutes '${from}' to '${to}' before showing anything`);
+  }
   const navPages = [...new Set([...html.matchAll(/data-page="([a-z-]+)"/g)].map(m => m[1]))];
-  const missing = navPages.filter(p => !domPages.includes(p));
+  const missing = navPages.filter(p => !domPages.includes(ALIASES[p] || p));
   ok(missing.length === 0, `every nav data-page has a matching page- section (missing: ${missing.join(', ') || 'none'})`);
 }
 

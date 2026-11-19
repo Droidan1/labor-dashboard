@@ -103,7 +103,7 @@ for (const scheme of ['dark','light']) {
       value:{writeText:async t=>{window.__clip=t;}}});}catch(e){}
     window.fetch=async(u,o)=>{const s=String(u);
       const J=x=>new Response(JSON.stringify(x),{status:200,headers:{'content-type':'application/json'}});
-      if(s.includes('auth-me'))return J({authenticated:true,email:'a@b.com',name:'Admin',role:'admin',stores:null,pages:{},businesses:['bl']});
+      if(s.includes('auth-me'))return J({authenticated:true,email:'a@b.com',name:'Admin',role:'admin',stores:null,pages:{},businesses:[{id:'bl',name:'Bargain Lane',unitNoun:'store',unitCount:6,connected:true}]});
       if(s.includes('list-users'))return J({ok:true,users:USERS});
       if(s.includes('grant-options'))return J({ok:true,businesses:[]});
       if(s.includes('user-grants'))return J({ok:true,grants:[]});
@@ -118,7 +118,8 @@ for (const scheme of ['dark','light']) {
   await page.waitForTimeout(1400);
   await page.evaluate(()=>{const l=document.getElementById('login-page');if(l)l.style.display='none';
     const a=document.getElementById('app');if(a)a.style.display='flex';
-    navigateToPage('users');});
+    // Associates are their own tool in Admin › People since 2026-11-19, next to Users.
+    navigateToPage('users'); adOpenTool('associates');});
   await page.waitForTimeout(700);
 
   const t = scheme;

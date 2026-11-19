@@ -1,3 +1,36 @@
+# Admin, phase 2: People (Users + Associates), list-users by business, announcement audience (2026-11-19) — branch `claude/admin-people`
+
+**Ask (Brian, after merging #402):** "move Users and Associates into Admin › People, make list-users return grants
+and drop its Bargain Lane gate, and add the announcement audience picker (businesses + whole hub)". Asked and
+answered: an admin sees **their businesses** (option 1) — not everyone.
+
+- [x] Worker `list-users`: out of `ACTION_BUSINESS` (`["list-users","bl"]`) into `BUSINESS_AGNOSTIC_ACTIONS`;
+      `listUsersFor` cuts rows and grants to `grantOptionsFor`: superuser everyone; an admin sees people with
+      a grant in their businesses (only those grants), people with no grant yet, associates only with
+      Bargain Lane, never a superuser; `stores`/`pages` blank without Bargain Lane. Corrupt units fail closed.
+- [x] Worker announcements: `audience` "all" (also absent, as old pages send) or a non-empty list of ACTIVE
+      business ids, else 400; GET returns it only to people who `canAccessBusiness` one of them. A blob from
+      before the field still goes to everyone.
+- [x] Page: People group first in the rail (Users, Associates); `#page-users` removed, its four dialogs moved
+      into Admin outside every tool; `navigateToPage('users')` reroutes to Admin › Users (sidebar item, phone
+      Menu, history). Admins can open Admin Settings and see People only (Associates needs Bargain Lane);
+      the superuser's loaders run only for the superuser. Users table: a chip per business grant, business
+      filter with counts (2+ businesses), email search, count line. Status pills take `--v1-*` text (ACTIVE
+      was 2.28:1 in light on the old page too). Announcement: Whole hub + business chips, prefilled from the
+      saved one; confirm and result say who it goes to. Cache v317.
+- [x] Tests: new `test-admin-people.mjs` 39/0 (fails on main's worker; 2/2 mutants caught);
+      `test-admin-page.mjs` 25/0; `test-nav-registry` taught the `users` alias (asserts the reroute exists);
+      `browser-admin-page` 115/0 incl. contrast ≥ 5.21:1 over 1,125 checks in four themes; invite-multi-business
+      92/0, edit-grants-bl 40/0, approval-pin 36/0, associate-reveal 42/0 (opens Associates; auth-me mock fixed
+      to the real object shape), export-dates 13/0, mobile-menu 166/6 (the same 6 associate failures as main).
+      `npm test` 13,023 / 147. Worker dry run 1366.24 KiB.
+- [ ] Brian: deploy the worker (backward-compatible: the old page ignores `grants`, and a push without
+      `audience` means the whole hub), then merge.
+
+**Not changed:** invite-user, update-user, delete-user and associate-save are still gated to Bargain Lane — a
+non-Bargain Lane admin can list people but not yet invite them; nobody like that can reach the page until
+phase 3. `ROLE_DOT` is now unused (the Role column became per-business chips).
+
 # Admin Settings, phase 1: rail + one tool at a time, for every business (2026-11-19) — branch `claude/admin-redesign`
 
 **Ask (Brian):** move Users into Admin, then Admin onto the Landing page — but first redesign Admin so it works
