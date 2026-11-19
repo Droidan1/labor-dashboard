@@ -8635,7 +8635,8 @@
 
       <!-- Invite modal -->
       <div id="invite-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-        <div class="bg-opl-panel dark:bg-op-panel rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-borderHi shadow-xl w-full max-w-md">
+        <!-- Scrolls: three businesses with their store grids are taller than a phone. -->
+        <div class="bg-opl-panel dark:bg-op-panel rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-borderHi shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
           <div class="px-6 py-4 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border flex items-center justify-between">
             <h2 class="text-base font-semibold text-opl-ink dark:text-op-ink">Invite User</h2>
             <button onclick="closeInviteModal()" class="text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">
@@ -8647,13 +8648,6 @@
               <label class="block text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim mb-1.5">Email address</label>
               <input id="invite-email" type="email" placeholder="user@example.com" class="w-full border border-[rgba(20,16,8,0.12)] dark:border-op-border rounded-[8px] px-3 py-2.5 text-sm bg-opl-bg dark:bg-[rgba(255,255,255,0.03)] text-opl-ink dark:text-op-ink focus:outline-none focus:ring-2 focus:ring-accent-green/50">
             </div>
-            <!-- Shown only when the inviter can grant more than one business.
-                 With a single option there is nothing to choose, and an inert
-                 dropdown reads as a decision someone forgot to make. -->
-            <div id="invite-business-wrap" class="hidden">
-              <label class="block text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim mb-1.5">Business</label>
-              <select id="invite-business" onchange="toggleInviteStores()" class="w-full border border-[rgba(20,16,8,0.12)] dark:border-op-border rounded-[8px] px-3 py-2.5 text-sm bg-opl-bg dark:bg-[rgba(255,255,255,0.03)] text-opl-ink dark:text-op-ink focus:outline-none focus:ring-2 focus:ring-accent-green/50"></select>
-            </div>
             <div>
               <label class="block text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim mb-1.5">Role</label>
               <select id="invite-role" onchange="toggleInviteStores()" class="w-full border border-[rgba(20,16,8,0.12)] dark:border-op-border rounded-[8px] px-3 py-2.5 text-sm bg-opl-bg dark:bg-[rgba(255,255,255,0.03)] text-opl-ink dark:text-op-ink focus:outline-none focus:ring-2 focus:ring-accent-green/50">
@@ -8661,12 +8655,13 @@
                 <option value="admin" id="invite-role-admin">Admin</option>
               </select>
             </div>
-            <div id="invite-stores-wrap">
-              <label class="block text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim mb-2">Stores</label>
-              <div id="invite-store-grid" class="grid grid-cols-2 gap-2">
-                <!-- rendered by renderStorePicker('invite') — do not hardcode; see USER_STORES -->
-
-              </div>
+            <div>
+              <label class="block text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim mb-2">Access</label>
+              <!-- One block per business the inviter may grant, ticked to include it.
+                   Rendered by renderInviteGrants() from ?action=grant-options, the
+                   same list invite-user validates against. With a single business
+                   there is nothing to choose, so its block carries no tick-box. -->
+              <div id="invite-grants" class="space-y-2.5"></div>
             </div>
             <div class="rounded-[10px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-opl-panelHi dark:bg-[rgba(255,255,255,0.03)] px-4 py-3">
               <div class="text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim mb-1.5">What this person gets</div>
@@ -41556,17 +41551,20 @@
   // Roles that carry an explicit store list. Admins and superusers get every store.
   const roleIsStoreScoped = r => r === 'manager' || r === 'district_manager';
 
-  function renderStorePicker(which) {
-    const grid = el(`${which}-store-grid`);
-    if (!grid) return;
-    grid.innerHTML = USER_STORES.map(([code, name]) => `
+  // One store tile: the associate picker and the invite modal's per-business grids.
+  const storeTile = (code, name, cls) => `
       <label class="flex items-center gap-2.5 rounded-[8px] border border-[rgba(20,16,8,0.10)] dark:border-op-border
                     bg-opl-panelHi dark:bg-[rgba(255,255,255,0.03)] px-3 py-2.5 cursor-pointer
                     hover:border-accent-green/40 transition-colors">
-        <input type="checkbox" value="${code}" class="${which}-store-cb" style="accent-color:rgb(var(--accent-green))">
-        <span class="text-sm font-medium text-opl-ink dark:text-op-ink">${name}</span>
-        <span class="ml-auto text-[11px] tabular-nums text-opl-inkDim dark:text-op-inkDim">${code}</span>
-      </label>`).join('');
+        <input type="checkbox" value="${escapeHtml(code)}" class="${cls}" style="accent-color:rgb(var(--accent-green))">
+        <span class="text-sm font-medium text-opl-ink dark:text-op-ink">${escapeHtml(name)}</span>
+        <span class="ml-auto text-[11px] tabular-nums text-opl-inkDim dark:text-op-inkDim">${escapeHtml(code)}</span>
+      </label>`;
+
+  function renderStorePicker(which) {
+    const grid = el(`${which}-store-grid`);
+    if (!grid) return;
+    grid.innerHTML = USER_STORES.map(([code, name]) => storeTile(code, name, `${which}-store-cb`)).join('');
     grid.querySelectorAll(`.${which}-store-cb`)
         .forEach(cb => cb.addEventListener('change', () => updateAccessSummary(which)));
   }
@@ -41579,17 +41577,33 @@
     const role = el(`${which}-role`).value;
     const label = ROLE_LABEL[role] || role;
 
-    // 🔑 This whole summary is BARGAIN LANE-shaped: "scope" means stores, and an
-    // empty selection means "sees nothing". For another business that is simply
-    // false — E-Commerce has no store picker and no units yet, and the invitee
-    // does see something (the Cases page). Saying "they would sign in and see
-    // nothing" to whoever is inviting that person is worse than saying less.
-    if (which === 'invite' && typeof inviteBusinessId === 'function' && inviteBusinessId() !== 'bl') {
-      const sel = el('invite-business');
-      const bizName = (sel && sel.selectedOptions[0] && sel.selectedOptions[0].textContent) || 'that business';
-      box.innerHTML = `Signs in as <span class="font-semibold text-opl-ink dark:text-op-ink">${escapeHtml(label)}</span>
-         with access to <span class="font-semibold text-opl-ink dark:text-op-ink">${escapeHtml(bizName)}</span>
-         only &mdash; not Bargain Lane.`;
+    // The invite names every business ticked, each with its scope. "Sees nothing"
+    // is only said where it is true: a Bargain Lane manager with no store, or a
+    // business narrowed to no unit at all.
+    if (which === 'invite') {
+      const strong = t => `<span class="font-semibold text-opl-ink dark:text-op-ink">${escapeHtml(t)}</span>`;
+      const picked = collectInviteGrants();
+      if (!picked.length) {
+        box.innerHTML = `<span class="text-opl-inkDim dark:text-op-inkDim">No business ticked yet — pick at least one.</span>`;
+        return;
+      }
+      const missing = picked.find(g => Array.isArray(g.units) ? !g.units.length
+        : (g.business_id === 'bl' && roleIsStoreScoped(role)));
+      if (missing) {
+        box.innerHTML = `<span class="text-opl-inkDim dark:text-op-inkDim">No ${escapeHtml(missing.biz.unitNoun)} picked in
+          ${escapeHtml(missing.biz.name)} yet — they would see nothing there.</span>`;
+        return;
+      }
+      const parts = picked.map(g => {
+        const nameOf = c => (g.biz.units.find(u => u.code === c) || { name: c }).name;
+        const scope = !Array.isArray(g.units) || g.units.length === g.biz.units.length
+          ? (g.biz.units.length ? ` (every ${g.biz.unitNoun})` : '')
+          : ` (${g.units.map(nameOf).join(', ')})`;
+        return strong(g.biz.name) + escapeHtml(scope);
+      });
+      const list = parts.length < 2 ? parts[0]
+        : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+      box.innerHTML = `Signs in as ${strong(label)} with access to ${list}.`;
       return;
     }
 
@@ -41709,15 +41723,8 @@
     // an invite against, so the modal can never offer a business the POST would
     // then refuse.
     if (!grantOptions.businesses.length) { try { await loadGrantOptions(); } catch (_) {} }
-    const bizSel = el('invite-business');
-    if (bizSel) {
-      bizSel.innerHTML = grantOptions.businesses
-        .map(b => `<option value="${b.id}">${b.name}</option>`).join('');
-      if ([...bizSel.options].some(o => o.value === 'bl')) bizSel.value = 'bl';
-      el('invite-business-wrap').classList.toggle('hidden', grantOptions.businesses.length < 2);
-    }
     el('invite-role').value = 'manager';
-    renderStorePicker('invite');
+    renderInviteGrants();
     el('invite-status').classList.add('hidden');
     el('invite-submit-btn').disabled = false;
     toggleInviteStores();
@@ -41726,31 +41733,94 @@
   }
   function closeInviteModal() { el('invite-modal').classList.add('hidden'); }
 
-  // Single source of truth for the chosen business, defaulting to Bargain Lane
-  // so a hidden selector (one grantable business) behaves exactly as before.
-  function inviteBusinessId() {
-    const sel = el('invite-business');
-    return (sel && sel.value) || 'bl';
+  // One block per business the inviter may grant (the list invite-user checks
+  // against). Bargain Lane starts ticked, which is what an invite meant before a
+  // business could be chosen; with a single business it is simply included.
+  function renderInviteGrants() {
+    const wrap = el('invite-grants');
+    if (!wrap) return;
+    const bizs = grantOptions.businesses;
+    if (!bizs.length) {
+      wrap.innerHTML = `<div class="text-xs text-opl-inkDim dark:text-op-inkDim">You cannot grant access to any business.</div>`;
+      return;
+    }
+    const single = bizs.length === 1;
+    const first = bizs.some(b => b.id === 'bl') ? 'bl' : bizs[0].id;
+    wrap.innerHTML = bizs.map(b => {
+      const on = single || b.id === first;
+      const noun = escapeHtml(b.unitNoun || 'unit');
+      const tiles = b.units.map(u => storeTile(u.code, u.name, 'ig-unit')).join('');
+      // ⚠️ No "every store" shortcut for Bargain Lane: there a manager with no
+      // stores listed reaches NO store (see allowedUnits), so stores are picked.
+      // Elsewhere no list genuinely means every unit, and that is the default.
+      const units = !b.units.length ? '' : b.id === 'bl'
+        ? `<div class="ig-units grid grid-cols-2 gap-2">${tiles}</div>`
+        : `<label class="flex items-center gap-2.5 cursor-pointer">
+             <input type="checkbox" class="ig-all" checked style="accent-color:rgb(var(--accent-green))">
+             <span class="text-xs text-opl-inkDim dark:text-op-inkDim">Every ${noun}</span>
+           </label>
+           <div class="ig-units mt-2 grid grid-cols-2 gap-2 hidden">${tiles}</div>`;
+      return `
+      <div class="rounded-[10px] border border-[rgba(20,16,8,0.1)] dark:border-op-border px-3.5 py-3" data-invite-biz="${escapeHtml(b.id)}">
+        <label class="flex items-center gap-2.5${single ? '' : ' cursor-pointer'}">
+          <input type="checkbox" class="ig-on${single ? ' hidden' : ''}" ${on ? 'checked' : ''} style="accent-color:rgb(var(--accent-green))">
+          <span class="text-sm font-semibold text-opl-ink dark:text-op-ink">${escapeHtml(b.name)}</span>
+          ${b.units.length ? '' : `<span class="text-[11px] text-opl-inkDim dark:text-op-inkDim">no ${noun}s yet</span>`}
+        </label>
+        ${units ? `<div class="ig-body mt-3">${units}</div>` : ''}
+      </div>`;
+    }).join('');
+
+    wrap.querySelectorAll('[data-invite-biz]').forEach(box => {
+      const allCb = box.querySelector('.ig-all');
+      const grid = box.querySelector('.ig-units');
+      box.querySelector('.ig-on').addEventListener('change', toggleInviteStores);
+      if (allCb && grid) allCb.addEventListener('change', () => {
+        grid.classList.toggle('hidden', allCb.checked);
+        updateAccessSummary('invite');
+      });
+      box.querySelectorAll('.ig-unit').forEach(cb => cb.addEventListener('change', () => updateAccessSummary('invite')));
+    });
   }
 
+  // Read the blocks back into invite-user's shape: [{business_id, units}], with
+  // `biz` riding along for the summary (the worker ignores it). An admin reaches
+  // every unit by role, so it sends no list even if boxes were ticked earlier.
+  function collectInviteGrants() {
+    const storeScoped = roleIsStoreScoped(el('invite-role').value);
+    const out = [];
+    document.querySelectorAll('#invite-grants [data-invite-biz]').forEach(box => {
+      if (!box.querySelector('.ig-on').checked) return;
+      const biz = grantOptions.businesses.find(b => b.id === box.dataset.inviteBiz);
+      if (!biz) return;
+      const allCb = box.querySelector('.ig-all');
+      const picked = [...box.querySelectorAll('.ig-unit:checked')].map(cb => cb.value);
+      const units = !storeScoped || !biz.units.length || (allCb && allCb.checked) ? null : picked;
+      out.push({ business_id: biz.id, units, biz });
+    });
+    return out;
+  }
+
+  // Unit pickers show only for a ticked business and a store-scoped role.
   function toggleInviteStores() {
-    const role = el('invite-role').value;
-    // The store picker is BARGAIN LANE's. Another business has its own units
-    // (E-Commerce has none yet), so offering BL store codes there would invite
-    // someone to scope a grant with codes that mean nothing inside it.
-    const showStores = inviteBusinessId() === 'bl' && roleIsStoreScoped(role);
-    el('invite-stores-wrap').classList.toggle('hidden', !showStores);
+    const storeScoped = roleIsStoreScoped(el('invite-role').value);
+    document.querySelectorAll('#invite-grants [data-invite-biz]').forEach(box => {
+      const body = box.querySelector('.ig-body');
+      if (body) body.classList.toggle('hidden', !(storeScoped && box.querySelector('.ig-on').checked));
+    });
     updateAccessSummary('invite');
   }
 
   async function submitInvite() {
     const email = el('invite-email').value.trim();
     const role = el('invite-role').value;
-    const stores = [...document.querySelectorAll('.invite-store-cb:checked')].map(cb => cb.value);
+    const grants = collectInviteGrants();
     if (!email || !email.includes('@')) { showInviteStatus('Enter a valid email address.', 'error'); return; }
-    // Only Bargain Lane has stores to demand.
-    if (inviteBusinessId() === 'bl' && (role === 'manager' || role === 'district_manager') && !stores.length) {
-      showInviteStatus('Select at least one store.', 'error'); return;
+    if (!grants.length) { showInviteStatus('Tick at least one business.', 'error'); return; }
+    // The worker refuses both of these too; checked here so a slip costs no round trip.
+    const empty = grants.find(g => Array.isArray(g.units) && !g.units.length);
+    if (empty) {
+      showInviteStatus(`Select at least one ${empty.biz.unitNoun} in ${empty.biz.name}.`, 'error'); return;
     }
     el('invite-submit-btn').disabled = true;
     showInviteStatus('Sending invite…', 'info');
@@ -41759,8 +41829,8 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ email, role, stores: stores.length ? stores : null,
-                               business_id: inviteBusinessId() }),
+        body: JSON.stringify({ email, role,
+          grants: grants.map(({ business_id, units }) => ({ business_id, units })) }),
       });
       const data = await resp.json();
       if (!data.ok) throw new Error(data.error || 'Failed');

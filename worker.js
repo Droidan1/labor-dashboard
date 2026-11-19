@@ -21933,14 +21933,7 @@ export default {
         return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
       }
       try {
-        const { email, role, stores, business_id } = await request.json();
-        // 🔑 Which business this invite grants. Defaults to Bargain Lane — which
-        // is what every invite silently did before, because this endpoint called
-        // upsertBargainLaneGrant() unconditionally. An E-Commerce-only person
-        // still came out holding Bargain Lane's dashboard, inventory and sales
-        // until someone remembered to untick it. That failed OPEN, the wrong
-        // direction for a permissions default.
-        const bizId = (business_id || 'bl').trim();
+        const { email, role, stores, business_id, grants } = await request.json();
         // 'district_manager' was retired by migration-029 and is no longer a
         // valid value for users.role — the CHECK constraint rejects it. It was
         // never a distinct capability, only a manager with more stores.
@@ -21954,10 +21947,55 @@ export default {
         // set-user-grants enforces, resolved from the CALLER's own entitlements
         // and never from what the client sent.
         const inviteOpts = await grantOptionsFor(env, currentUser);
-        if (!inviteOpts.businesses.some(b => b.id === bizId)) {
-          return new Response(JSON.stringify({ error: "You cannot grant access to that business" }),
-            { status: 403, headers: corsJson });
+        const bizById = new Map(inviteOpts.businesses.map(b => [b.id, b]));
+
+        // 🔑 Which businesses this invite grants: `grants: [{business_id, units}]`,
+        // one per business, all with the ONE top-level role. A `role` inside a
+        // grant is ignored, so it cannot carry anything past the check above.
+        //
+        // The older one-business body ({ business_id, stores }) is still read, so
+        // the worker can ship ahead of the page. It defaults to Bargain Lane,
+        // which is what every invite did before the business was choosable; and
+        // its `stores` only ever meant Bargain Lane stores, so they are dropped for
+        // any other business rather than written into a grant where they mean nothing.
+        const wanted = Array.isArray(grants) ? grants : [(() => {
+          const bid = String(business_id || 'bl').trim();
+          return { business_id: bid, units: bid === 'bl' && stores && stores.length ? stores : null };
+        })()];
+        const inviteErr = (status, error) =>
+          new Response(JSON.stringify({ error }), { status, headers: corsJson });
+        if (!wanted.length) return inviteErr(400, "Pick at least one business");
+
+        // 🛑 Every grant is checked BEFORE anything is written. Writing the
+        // businesses that pass and refusing the rest would leave an account with
+        // half the access asked for, and the retry would hit "already exists".
+        const clean = [];
+        for (const g of wanted) {
+          const bid = String(g && g.business_id || '').trim();
+          const biz = bizById.get(bid);
+          if (!biz) return inviteErr(403, `You cannot grant access to ${bid || 'that business'}`);
+          if (clean.some(c => c.business_id === bid)) return inviteErr(400, `${biz.name} is listed twice`);
+          // units: null/absent = every unit. An array is a restriction, and every
+          // code must exist in THAT business, as set-user-grants requires. Codes
+          // are compared verbatim (see set-user-grants on why not to uppercase).
+          let units = null;
+          if (Array.isArray(g.units)) {
+            const valid = new Set(biz.units.map(u => u.code));
+            units = [...new Set(g.units.map(u => String(u).trim()))].filter(Boolean);
+            const bad = units.filter(u => !valid.has(u));
+            if (bad.length) return inviteErr(400, `Not ${biz.name} ${biz.unitNoun}s: ${bad.join(', ')}`);
+            // An empty list reaches no unit at all: an account that signs in to nothing.
+            if (!units.length) return inviteErr(400, `Pick at least one ${biz.unitNoun} in ${biz.name}`);
+          }
+          // ⚠️ Bargain Lane reads units NULL as NO stores for a manager (see
+          // allowedUnits), so a manager there must name stores. An admin reaches
+          // every store by role and needs none.
+          if (bid === 'bl' && role === 'manager' && !units) {
+            return inviteErr(400, "Pick at least one Bargain Lane store");
+          }
+          clean.push({ business_id: bid, units });
         }
+
         const normalized = email.trim().toLowerCase();
         const existing = await env.DB.prepare("SELECT id FROM users WHERE email = ?").bind(normalized).first();
         if (existing) {
@@ -21967,24 +22005,23 @@ export default {
         // users.stores is BARGAIN LANE's legacy scope column — allowedUnits()
         // only consults it for 'bl'. Store codes there would be meaningless for
         // another business; left NULL it fails closed.
-        const storesJson = (bizId === 'bl' && stores && stores.length)
-          ? JSON.stringify(stores) : null;
+        const blGrant = clean.find(g => g.business_id === 'bl');
+        const storesJson = (blGrant && blGrant.units) ? JSON.stringify(blGrant.units) : null;
         await env.DB.prepare(
           "INSERT INTO users (id, email, role, stores, status, created_at) VALUES (?, ?, ?, ?, 'active', datetime('now'))"
         ).bind(id, normalized, role, storesJson).run();
         // Mirror into the grant model. Without this a newly invited user holds
         // no grant and lives permanently on the users.stores fallback.
         // Superusers are not invitable here, so every invite is grantable.
-        if (bizId === 'bl') {
-          await upsertBargainLaneGrant(env, id, role, storesJson);
-        } else {
-          // units NULL = every unit in that business, matching what the grant
-          // editor's "every unit" state writes. E-Commerce has no business_units
-          // rows yet, so there is nothing narrower to pick.
-          await env.DB.prepare(
-            `INSERT INTO user_grants (user_id, business_id, role, units) VALUES (?, ?, ?, NULL)
-             ON CONFLICT(user_id, business_id) DO UPDATE SET role = excluded.role, units = excluded.units`
-          ).bind(id, bizId, role).run();
+        for (const g of clean) {
+          if (g.business_id === 'bl') {
+            await upsertBargainLaneGrant(env, id, role, storesJson);
+          } else {
+            await env.DB.prepare(
+              `INSERT INTO user_grants (user_id, business_id, role, units) VALUES (?, ?, ?, ?)
+               ON CONFLICT(user_id, business_id) DO UPDATE SET role = excluded.role, units = excluded.units`
+            ).bind(id, g.business_id, role, g.units ? JSON.stringify(g.units) : null).run();
+          }
         }
         const token = randomHex(32);
         const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();

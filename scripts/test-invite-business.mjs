@@ -165,6 +165,121 @@ const grantsOf = (email) => {
      'and has a magic link to resend');
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// SEVERAL BUSINESSES IN ONE INVITE — `grants: [{business_id, units}]`
+//
+// Before this the modal had one Business dropdown, so a person who needed
+// Bargain Lane AND E-Commerce was invited into one and then had to be given the
+// other from Edit, which only a superuser can do.
+// ═════════════════════════════════════════════════════════════════════════
+db.exec(fs.readFileSync(path.join(repo, 'migration-085.sql'), 'utf8'));   // Live Sales + its 4 stores
+
+// ── 🔑 THE POINT: one invite, one grant per business picked ──────────────
+{
+  const r = await invite('u-su', { email: 'two@x.com', role: 'manager', grants: [
+    { business_id: 'bl',   units: ['BL1', 'BL4'] },
+    { business_id: 'ecom', units: null },
+  ] });
+  ok(r.status === 200, `a two-business invite succeeds, got ${r.status} ${JSON.stringify(r.body)}`);
+  ok(grantsOf('two@x.com').join(' ') === 'bl:manager:["BL1","BL4"] ecom:manager:ALL',
+     `🔑 one grant per business picked, got [${grantsOf('two@x.com')}]`);
+  // The legacy users columns mirror the Bargain Lane grant, as set-user-grants does.
+  ok(userRow('two@x.com').role === 'manager', 'users.role is the invite role');
+  ok(userRow('two@x.com').stores === '["BL1","BL4"]',
+     `users.stores carries the BL stores, got ${userRow('two@x.com').stores}`);
+
+  // ...and the person can actually open both, through the real auth-me.
+  const u = userRow('two@x.com');
+  db.prepare("INSERT INTO sessions (id,user_id,expires_at,created_at) VALUES (?,?,?,?)")
+    .run('sess-two', u.id, new Date(Date.now() + 3600e3).toISOString(), '2026-01-01');
+  const me = await worker.fetch(new Request('https://api.retjghub.com/?action=auth-me', {
+    headers: { Cookie: 'session=sess-two' } }), env, ctx);
+  const ids = ((JSON.parse(await me.text()).businesses) || []).map(b => b.id).sort();
+  ok(ids.join() === 'bl,ecom', `auth-me lists both businesses for the invitee, got [${ids}]`);
+}
+
+// ── All three, with a unit restriction outside Bargain Lane ──────────────
+{
+  const r = await invite('u-su', { email: 'three@x.com', role: 'manager', grants: [
+    { business_id: 'bl',   units: ['BL2'] },
+    { business_id: 'ecom', units: null },
+    { business_id: 'live', units: ['BL2'] },
+  ] });
+  ok(r.status === 200, `a three-business invite succeeds, got ${r.status} ${JSON.stringify(r.body)}`);
+  ok(grantsOf('three@x.com').join(' ') === 'bl:manager:["BL2"] ecom:manager:ALL live:manager:["BL2"]',
+     `live units stored as picked, got [${grantsOf('three@x.com')}]`);
+}
+
+// ── No Bargain Lane in the list → no Bargain Lane grant, stores NULL ─────
+{
+  const r = await invite('u-su', { email: 'noBL@x.com', role: 'admin', grants: [
+    { business_id: 'ecom', units: null }, { business_id: 'live', units: null },
+  ] });
+  ok(r.status === 200, `an ecom + live invite succeeds, got ${r.status}`);
+  ok(grantsOf('nobl@x.com').join(' ') === 'ecom:admin:ALL live:admin:ALL',
+     `exactly ecom + live, got [${grantsOf('nobl@x.com')}]`);
+  ok(userRow('nobl@x.com').stores === null, 'users.stores stays NULL without a bl grant');
+}
+
+// ── 🛑 ALL OR NOTHING: one business the caller cannot grant refuses the lot ──
+// u-admin lost his ecom grant above. Bargain Lane is fine for him; E-Commerce is
+// not. Writing the bl half and refusing the rest would leave an account nobody
+// asked for, so nothing may be written at all.
+{
+  const r = await invite('u-admin', { email: 'half@x.com', role: 'manager', grants: [
+    { business_id: 'bl', units: ['BL1'] }, { business_id: 'ecom', units: null },
+  ] });
+  ok(r.status === 403, `🛑 one ungrantable business refuses the invite, got ${r.status}`);
+  ok(!userRow('half@x.com'), '🛑 and NO user row is written');
+  ok(db.prepare("SELECT COUNT(*) n FROM magic_links WHERE email='half@x.com'").get().n === 0,
+     'and no magic link');
+}
+
+// ── 🛑 A per-grant role in the body is IGNORED — no escalation ───────────
+// The role is the top-level one, checked against what the caller may assign.
+// An admin smuggling role:'admin' into a grant must still produce a manager.
+{
+  const r = await invite('u-admin', { email: 'smuggle@x.com', role: 'manager', grants: [
+    { business_id: 'bl', role: 'admin', units: ['BL1'] },
+  ] });
+  ok(r.status === 200, `invite succeeds, got ${r.status}`);
+  ok(grantsOf('smuggle@x.com').join() === 'bl:manager:["BL1"]',
+     `🛑 the grant takes the checked top-level role, got [${grantsOf('smuggle@x.com')}]`);
+
+  // Bargain Lane is written by upsertBargainLaneGrant; every other business by a
+  // separate INSERT. Both paths must ignore it. (u-admin holds live via migration-085.)
+  const r2 = await invite('u-admin', { email: 'smuggle2@x.com', role: 'manager', grants: [
+    { business_id: 'live', role: 'admin', units: null },
+  ] });
+  ok(r2.status === 200, `invite succeeds, got ${r2.status} ${JSON.stringify(r2.body)}`);
+  ok(grantsOf('smuggle2@x.com').join() === 'live:manager:ALL',
+     `🛑 ...outside Bargain Lane too, got [${grantsOf('smuggle2@x.com')}]`);
+}
+
+// ── Malformed lists are refused before anything is written ──────────────
+{
+  const cases = [
+    ['empty list',                 { grants: [] }],
+    ['same business twice',        { grants: [{ business_id: 'bl', units: ['BL1'] }, { business_id: 'bl', units: ['BL2'] }] }],
+    ['bl manager with no store',   { grants: [{ business_id: 'bl', units: [] }] }],
+    ['bl manager with units null', { grants: [{ business_id: 'bl', units: null }] }],
+    ['a code from no business',    { grants: [{ business_id: 'bl', units: ['BL99'] }] }],
+    ['a bl code inside ecom',      { grants: [{ business_id: 'ecom', units: ['BL1'] }] }],
+    ['an empty live unit list',    { grants: [{ business_id: 'live', units: [] }] }],
+  ];
+  let i = 0;
+  for (const [name, extra] of cases) {
+    const email = `bad${i++}@x.com`;
+    const r = await invite('u-su', { email, role: 'manager', ...extra });
+    ok(r.status === 400, `${name} → 400, got ${r.status} ${JSON.stringify(r.body)}`);
+    ok(!userRow(email), `${name} → no user row`);
+  }
+  // An admin role needs no stores: it reaches every one by role.
+  const a = await invite('u-su', { email: 'bladmin@x.com', role: 'admin', grants: [{ business_id: 'bl', units: null }] });
+  ok(a.status === 200 && grantsOf('bladmin@x.com').join() === 'bl:admin:ALL',
+     `a bl admin with units null is fine, got ${a.status} [${grantsOf('bladmin@x.com')}]`);
+}
+
 // ── A missing RESEND_API_KEY is reported, not silently swallowed ─────────
 {
   const saved = env.RESEND_API_KEY; env.RESEND_API_KEY = '';
