@@ -677,6 +677,22 @@ Many read-only tables over one set of filters:
 - Colours are page-scoped variables (`--dr-*`): light literals, dark through
   `rgb(var(--op-*))`, the same way Live Sales' `--lv-*` work.
 
+**Admin tools variant (Admin Settings, `#page-admin-settings`, 2026-11-19)**
+
+A page of many unrelated tools:
+
+- **A rail and one tool at a time.** The rail is grouped Hub, then one group per business. Groups for
+  businesses other than Bargain Lane come from `userBusinesses`, so a business with no tools still gets
+  a group saying "No tools yet". On a phone the rail is the page: a tool opens over it, with "‹ Admin
+  tools" to go back.
+- **Every button says what it writes**, with a tag beside it: `Read-only` (neutral outline), `Saves
+  changes` (blue) or `Rewrites history` (amber). A button that rewrites stored sales or snapshots is
+  amber itself, not the green primary. Re-pulls sit together, behind a note that sends you to the tools
+  that find the bad days first.
+- **Store pickers are filled from `STORES` + `BUDGET_ONLY_STORES`.** Closed stores go last, under
+  "Closed". Never type a store list into a page.
+- Colours are page-scoped `--ad-*` variables, the same way `--dr-*` work.
+
 **Token literals for `<style>` blocks**
 
 
