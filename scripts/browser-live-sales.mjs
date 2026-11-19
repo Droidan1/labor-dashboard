@@ -318,15 +318,29 @@ for (const width of [375, 700, 900, 1024, 1400]) {
 for (const live of [false, true]) {
   const { ctx, page, errs } = await open({ live, biz: '' });
   await page.evaluate(() => { try { sessionStorage.removeItem('retjg.activeBusiness'); } catch (_) {} navigateToPage('landing'); });
-  await page.waitForTimeout(200);
+  await page.waitForTimeout(400);
   const r = await page.evaluate(() => ({ total: document.getElementById('landing-hero-total')?.textContent, rep: document.getElementById('landing-hero-reporting')?.textContent,
-    cards: [...document.querySelectorAll('#landing-cards > div')].map(c => c.innerText.replace(/\s+/g, ' ')) }));
+    cards: [...document.querySelectorAll('#landing-cards > div')].map(c => c.innerText.replace(/\s+/g, ' ')),
+    tiles: [...document.querySelectorAll('#landing-cards > div')].map(c => c.querySelectorAll('.lp-tile').length) }));
   if (!live) { globalThis.__heroWithout = r.total; check(r.rep === '1 of 2 reporting', `picker without Live Sales: ${r.rep}`); }
   else {
     check(r.total === globalThis.__heroWithout, `picker hero is the same with Live Sales present (${globalThis.__heroWithout} → ${r.total})`);
     check(r.rep === '1 of 2 reporting', `Live Sales does not count as a separately reporting business (${r.rep})`);
-    const card = r.cards.find(c => c.includes('Live Sales'));
-    check(card && /Already in Bargain Lane's total/.test(card) && /Enter Live Sales/.test(card), `Live Sales card says it is inside Bargain Lane and can be entered (${card})`);
+    // The card whose NAME is Live Sales: Bargain Lane's card has a "Live Sales" channel tile too.
+    const i = r.cards.findIndex(c => c.startsWith('Live Sales')), card = r.cards[i];
+    check(card && /Included in Bargain Lane's total/.test(card) && /Enter Live Sales/.test(card), `Live Sales card says it is inside Bargain Lane and can be entered (${card})`);
+    // Today, not the month (Brian, 2026-11-19): today's stub rows are Whatnot BL1 698 + BL14 240.50,
+    // one show each, 150 + 20 items; no auction today. Laid out like the others.
+    check(card && /Today's sales \$938\.50 /.test(card) && !/Month to date/.test(card), `Live Sales card shows today's sales ($938.50), not the month (${card})`);
+    check(card && /Whatnot \$938\.50 Auction \$0\.00 Avg show \$469\.25 /.test(card), `Live Sales card splits Whatnot / auction / avg show (${card})`);
+    check(card && /Pace · 2 of 4 selling No budget/.test(card) && /Shows 2 Items 170 Lots 0 stores 4/.test(card), `Live Sales card has the pace row and four tiles (${card})`);
+    check(r.tiles[i] === 4 && r.tiles[i] === r.tiles[0], `Live Sales card has the Bargain Lane card's tile row (${r.tiles.join(', ')})`);
+    // Any other range is that range: Yesterday = i = 1 only (Whatnot BL1 1001 + BL14 700).
+    await page.click('#lp-range .rp-trigger');
+    await page.evaluate(() => [...document.querySelectorAll('#lp-range .rp-list button')].find(x => x.textContent.trim() === 'Yesterday').click());
+    await page.waitForTimeout(400);
+    const y = await page.evaluate(() => [...document.querySelectorAll('#landing-cards > div')].map(c => c.innerText.replace(/\s+/g, ' ')).find(c => c.startsWith('Live Sales')));
+    check(y && /Yesterday sales \$1,701\.00 /.test(y), `Live Sales card follows the landing's range (${y})`);
   }
   check(errs.length === 0, `picker (live=${live}): no JS errors${errs.length ? ': ' + errs[0] : ''}`);
   await ctx.close();

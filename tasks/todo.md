@@ -1,3 +1,20 @@
+# Landing: Live Sales card laid out like the others, today not the month (2026-11-19)
+
+**Ask (Brian):** "fix the live sales card so it matches the others, have it display today's sales and
+not the month also"
+
+- [x] The card now follows the landing's date range (Today → today's sales) and has the E-Commerce card's
+      layout: figure, "Included in Bargain Lane's total", Pace · N of 4 selling, tiles Whatnot · Auction ·
+      Avg show, then Shows · Items · Lots · stores. Figures come from `?action=live-sales` (lvFetch, the
+      Live pages' own read) for the range, kept a minute, dropped by the landing's Refresh. Still never
+      added to the hero (phase 1). **No live budget exists**, so the pace row says "No budget".
+      Frontend only; no worker change. Cache v312.
+- [x] Tests: browser-live-sales 340 (the 6 card checks fail on main; its old card check found the Bargain
+      Lane card by its "Live Sales" tile, so it had been failing). 4 failures remain, same on main
+      (This Month tick, 3× calendar 4th-day). browser-landing-range 29/0, browser-ecom-overview 72/0,
+      landing contrast ≥ 5.4:1 light/dark/oled at 1400 + 393. `npm test` 12,566 / 142 green.
+- [ ] Brian: merge (Pages deploys the frontend).
+
 # E-Commerce Items tab: product photos (2026-11-18) — branches `claude/ecom-photo-probe` (#394), `claude/ecom-photos`
 
 **Ask (Brian):** "Add product photos to the Items tab using Sellercloud's catalog ImageUrl or ProductImage
