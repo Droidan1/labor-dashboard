@@ -7938,543 +7938,598 @@
     </div><!-- end #page-accessibility -->
 
     <!-- ── Admin Settings page ──────────────────────────────────── -->
+    <!-- ══ Admin Settings (restructured 2026-11-19, phase 1 of the multi-business Admin) ══
+         One tool on screen at a time, picked from a rail grouped Hub · Bargain Lane · every
+         other business (ad-biz-groups, from userBusinesses — so a new business gets a group
+         with no edit here). On a phone the rail IS the page and a tool opens over it.
+         🔑 Every element id the tools' code reads is unchanged: this rearranges the markup
+         around them and adds the page shell (adOpenTool & co., next to the navigateToPage hook).
+         Colour is stated for BOTH themes on the PAGE through --ad-* (light = opl-* literals,
+         dark re-points through rgb(var(--op-*)) so pure black and Halloween follow).
+         scripts/browser-admin-page.mjs measures it, never by eye. -->
     <div id="page-admin-settings" class="hidden">
+      <style>
+        #page-admin-settings{--ad-panel:#ffffff;--ad-panelHi:#fafaf6;--ad-ink:#14110a;--ad-dim:#6b6453;   /* opl-panel / panelHi / ink / inkDim */
+          --ad-hair:rgba(20,16,8,.10);--ad-border:rgba(20,16,8,.18);--ad-track:rgba(20,16,8,.05);
+          --ad-brand:#166534;--ad-activeBg:rgba(34,197,94,.12);--ad-brandB:rgba(22,101,52,.40);       /* green-800: accent text in light */
+          --ad-warn:#92400e;--ad-warnBg:rgba(245,158,11,.12);--ad-warnB:rgba(245,158,11,.55);         /* amber-800 on the amber wash */
+          --ad-blue:#1d4ed8;--ad-blueBg:rgba(59,130,246,.08);--ad-blueB:rgba(59,130,246,.40);          /* blue-700 */
+          --ad-bad:#c0392b;--ad-badB:rgba(192,57,43,.40);--ad-input:#ffffff;color:var(--ad-ink)}
+        .dark #page-admin-settings{--ad-panel:rgb(var(--op-panel));--ad-panelHi:rgb(var(--op-panelHi));--ad-ink:rgb(var(--op-ink));
+          --ad-dim:rgb(var(--op-inkDim));--ad-hair:rgba(255,255,255,.09);--ad-border:rgba(255,255,255,.16);--ad-track:rgba(255,255,255,.04);
+          --ad-brand:rgb(var(--accent-green));--ad-activeBg:rgb(var(--accent-green) / .10);--ad-brandB:rgb(var(--accent-green) / .40);
+          --ad-warn:#f59e0b;--ad-warnBg:rgba(245,158,11,.10);--ad-warnB:rgba(245,158,11,.45);
+          --ad-blue:#60a5fa;--ad-blueBg:rgba(96,165,250,.08);--ad-blueB:rgba(96,165,250,.38);
+          --ad-bad:#f87171;--ad-badB:rgba(239,68,68,.42);--ad-input:rgba(255,255,255,.04)}
+        .dark #page-admin-settings .ad-pane, .dark #page-admin-settings .ad-rail{color-scheme:dark}   /* date pickers, unchecked boxes (§4.8 trap 4) */
+        #page-admin-settings [hidden]{display:none !important}
+        #page-admin-settings .ad-wrap{max-width:1240px;margin:0 auto;padding:20px 24px 56px;display:grid;grid-template-columns:264px minmax(0,1fr);gap:20px;align-items:start}
+        #page-admin-settings .ad-rail{position:sticky;top:92px;max-height:calc(100vh - 112px);overflow-y:auto;background:var(--ad-panel);
+          border:1px solid var(--ad-hair);border-radius:14px;color:var(--ad-ink)}
+        #page-admin-settings .ad-search{padding:12px;border-bottom:1px solid var(--ad-hair);background:var(--ad-panelHi)}
+        #page-admin-settings .ad-search input{width:100%;height:36px;border-radius:10px;border:1px solid var(--ad-border);background:var(--ad-input);color:var(--ad-ink);padding:0 12px;font-size:14px}
+        #page-admin-settings .ad-search input::placeholder{color:var(--ad-dim)}
+        #page-admin-settings .ad-group{padding:10px 8px 6px;border-bottom:1px solid var(--ad-hair)}
+        #page-admin-settings .ad-ghead{padding:2px 10px 6px;font-size:12px;font-weight:600;color:var(--ad-ink)}
+        #page-admin-settings .ad-item{width:100%;display:flex;align-items:center;gap:10px;min-height:38px;padding:0 10px;border:0;border-radius:10px;
+          background:none;color:var(--ad-dim);font-size:14px;font-weight:500;text-align:left;cursor:pointer;transition:background-color .15s,color .15s}
+        #page-admin-settings .ad-item svg{width:16px;height:16px;flex:none}
+        #page-admin-settings .ad-item:hover{background:var(--ad-track);color:var(--ad-ink)}
+        #page-admin-settings .ad-item[aria-current="page"]{background:var(--ad-activeBg);color:var(--ad-brand);font-weight:600}
+        #page-admin-settings .ad-chev{display:none;margin-left:auto;color:var(--ad-dim)}
+        #page-admin-settings .ad-nomatch{padding:12px 18px;font-size:13px;color:var(--ad-dim)}
+        #page-admin-settings .ad-legend{padding:10px 14px 12px;background:var(--ad-panelHi);font-size:12px;color:var(--ad-dim);display:flex;flex-direction:column;gap:6px}
+        #page-admin-settings .ad-legend div{display:flex;align-items:center;gap:8px}
+        #page-admin-settings .ad-pane{min-width:0;color:var(--ad-ink)}
+        #page-admin-settings .ad-tool{display:flex;flex-direction:column;gap:16px;min-width:0}
+        #page-admin-settings .ad-back{display:none}
+        #page-admin-settings .ad-scope{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;color:var(--ad-dim);
+          border:1px solid var(--ad-border);border-radius:999px;padding:3px 10px;margin-bottom:8px}
+        #page-admin-settings .ad-scope::before{content:"";width:6px;height:6px;border-radius:99px;background:rgb(var(--accent-green))}
+        #page-admin-settings .ad-h2{margin:0;font-size:20px;font-weight:600;letter-spacing:-.01em;color:var(--ad-ink)}
+        #page-admin-settings .ad-lede{margin:4px 0 0;font-size:14px;line-height:1.5;color:var(--ad-dim);max-width:760px}
+        #page-admin-settings .ad-panel{background:var(--ad-panel);border:1px solid var(--ad-hair);border-radius:14px;overflow:hidden;color:var(--ad-ink);min-width:0}
+        #page-admin-settings .ad-bar{background:var(--ad-panelHi);border-bottom:1px solid var(--ad-hair);padding:13px 18px;display:flex;flex-wrap:wrap;gap:10px 14px;align-items:flex-end}
+        #page-admin-settings .ad-bar .ad-right{margin-left:auto;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+        #page-admin-settings .ad-ptitle{font-size:15px;font-weight:600;color:var(--ad-ink);align-self:center}
+        #page-admin-settings .ad-plabel{font-size:12px;font-weight:500;color:var(--ad-dim);align-self:center}
+        #page-admin-settings .ad-body{padding:16px 18px 18px;display:flex;flex-direction:column;gap:14px;min-width:0}
+        #page-admin-settings .ad-note{font-size:13px;line-height:1.5;color:var(--ad-dim)}
+        #page-admin-settings .ad-note b, #page-admin-settings .ad-note strong{color:var(--ad-ink);font-weight:600}
+        #page-admin-settings .ad-warnbox{border:1px solid var(--ad-warnB);background:var(--ad-warnBg);border-radius:10px;padding:10px 14px;font-size:13px;line-height:1.5;color:var(--ad-ink)}
+        #page-admin-settings .ad-warnbox b{color:var(--ad-warn);font-weight:600}
+        #page-admin-settings .ad-field{display:flex;flex-direction:column;gap:5px;min-width:0}
+        #page-admin-settings .ad-field>span{font-size:12px;font-weight:500;color:var(--ad-dim)}
+        #page-admin-settings .ad-in, #page-admin-settings .ad-sel{height:36px;border-radius:8px;border:1px solid var(--ad-border);background:var(--ad-input);color:var(--ad-ink);
+          padding:0 10px;font-size:14px;min-width:0;max-width:100%}
+        #page-admin-settings .ad-sel option, #page-admin-settings .ad-sel optgroup{background:var(--ad-panel);color:var(--ad-ink)}
+        #page-admin-settings .ad-ta{width:100%;border-radius:8px;border:1px solid var(--ad-border);background:var(--ad-input);color:var(--ad-ink);padding:8px 10px;
+          font-family:ui-monospace,Menlo,monospace;font-size:12px;resize:vertical}
+        #page-admin-settings .ad-in::placeholder, #page-admin-settings .ad-ta::placeholder{color:var(--ad-dim)}
+        #page-admin-settings .ad-in:focus, #page-admin-settings .ad-sel:focus, #page-admin-settings .ad-ta:focus{outline:none;box-shadow:0 0 0 1px rgb(var(--accent-green))}
+        #page-admin-settings .ad-row{display:flex;flex-wrap:wrap;gap:10px 12px;align-items:flex-end}
+        #page-admin-settings .ad-act{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
+        #page-admin-settings .ad-btn{height:36px;border-radius:8px;padding:0 14px;font-size:14px;font-weight:600;cursor:pointer;border:1px solid var(--ad-border);
+          background:transparent;color:var(--ad-ink);display:inline-flex;align-items:center;gap:8px;white-space:nowrap;transition:border-color .15s,background-color .15s}
+        #page-admin-settings .ad-btn:hover{border-color:rgb(var(--accent-green) / .5)}
+        #page-admin-settings .ad-btn.ad-primary{background:rgb(var(--accent-green));border-color:rgb(var(--accent-green));color:#06210f}
+        #page-admin-settings .ad-btn.ad-hist{border-color:var(--ad-warnB);background:var(--ad-warnBg);color:var(--ad-warn)}
+        #page-admin-settings .ad-btn.ad-danger{border-color:var(--ad-badB);color:var(--ad-bad)}
+        #page-admin-settings .ad-btn.ad-small{height:30px;padding:0 10px;font-size:13px}
+        #page-admin-settings .ad-btn:disabled{opacity:.5;cursor:not-allowed}
+        #page-admin-settings .ad-tag{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap;border:1px solid}
+        #page-admin-settings .ad-tag.ad-ro{color:var(--ad-dim);border-color:var(--ad-border)}
+        #page-admin-settings .ad-tag.ad-save{color:var(--ad-blue);border-color:var(--ad-blueB);background:var(--ad-blueBg)}
+        #page-admin-settings .ad-tag.ad-hist{color:var(--ad-warn);border-color:var(--ad-warnB);background:var(--ad-warnBg)}
+        #page-admin-settings .ad-seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--ad-border);border-radius:8px;overflow:hidden;align-self:flex-start}
+        #page-admin-settings .ad-seg button{background:none;border:0;padding:0 12px;min-height:32px;font-size:13px;font-weight:500;cursor:pointer;color:var(--ad-dim)}
+        #page-admin-settings .ad-seg button+button{border-left:1px solid var(--ad-hair)}
+        #page-admin-settings .ad-seg button[aria-pressed="true"]{background:rgb(var(--accent-green));color:#06210f;font-weight:600}
+        #page-admin-settings .ad-drop{display:flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 14px;border-radius:8px;
+          border:1px dashed var(--ad-border);color:var(--ad-dim);font-size:13px;font-weight:500;cursor:pointer}
+        #page-admin-settings .ad-drop:hover{border-color:rgb(var(--accent-green))}
+        #page-admin-settings .ad-alist>div{padding:16px 18px;border-bottom:1px solid var(--ad-hair);display:flex;flex-direction:column;gap:12px}
+        #page-admin-settings .ad-alist>div:last-child{border-bottom:0}
+        #page-admin-settings .ad-alist h3{margin:0;font-size:15px;font-weight:600;color:var(--ad-ink)}
+        #page-admin-settings .ad-alist p{margin:4px 0 0;font-size:13px;line-height:1.5;color:var(--ad-dim);max-width:680px}
+        #page-admin-settings .ad-alist p b, #page-admin-settings .ad-alist p em{color:var(--ad-ink)}
+        #page-admin-settings .ad-tbl-wrap{overflow-x:auto}
+        #page-admin-settings .ad-tbl{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums;color:var(--ad-ink)}
+        #page-admin-settings .ad-tbl thead th{height:34px;padding:0 12px;font-size:11px;font-weight:600;color:var(--ad-dim);background:var(--ad-panelHi);border-bottom:1px solid var(--ad-hair);white-space:nowrap}
+        #page-admin-settings .ad-n{display:inline-block;min-width:18px;margin-left:6px;font-variant-numeric:tabular-nums;opacity:.85}
+        @media (max-width:1023.98px){
+          #page-admin-settings .ad-wrap{display:block;padding:16px 16px 40px}
+          #page-admin-settings .ad-rail{position:static;max-height:none}
+          #page-admin-settings .ad-item{min-height:48px;font-size:15px}
+          #page-admin-settings .ad-item[aria-current="page"]{background:none;color:var(--ad-dim);font-weight:500}
+          #page-admin-settings .ad-chev{display:inline}
+          #page-admin-settings .ad-pane{display:none}
+          #page-admin-settings .ad-wrap.ad-open .ad-rail{display:none}
+          #page-admin-settings .ad-wrap.ad-open .ad-pane{display:block}
+          #page-admin-settings .ad-back{display:inline-flex;align-items:center;gap:6px;min-height:40px;border:0;background:none;padding:0;
+            color:var(--ad-brand);font-size:14px;font-weight:600;cursor:pointer;align-self:flex-start}
+          #page-admin-settings .ad-bar .ad-right{margin-left:0;width:100%}
+          #page-admin-settings .ad-row>.ad-field{flex:1 1 140px}
+          #page-admin-settings .ad-bar>.ad-field{flex:1 1 140px}
+        }
+      </style>
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
-        <div class="max-w-3xl mx-auto">
-          <div>
-            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Admin Settings</h1>
-          </div>
+        <div class="max-w-[1240px] mx-auto">
+          <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Admin Settings</h1>
+          <p class="text-sm text-opl-inkDim dark:text-op-inkDim">Hub settings and each business's data tools</p>
         </div>
       </div>
-      <div class="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-6">
 
-        <!-- Announcement (superuser) -->
-        <div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border p-5">
-          <h2 class="text-base font-semibold text-opl-ink dark:text-op-ink mb-1">Announcement</h2>
-          <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-5">Compose a popup and push it to all users. It shows once per person on next open until they dismiss it. Pushing again re-shows it for everyone.</p>
-          <div class="space-y-4">
-            <div>
-              <label class="block text-xs font-semibold text-opl-inkDim dark:text-op-inkDim mb-1">Title</label>
-              <input id="ann-title" type="text" maxlength="120" placeholder="Announcement"
-                class="w-full text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-900 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
-            </div>
-            <div>
-              <label class="block text-xs font-semibold text-opl-inkDim dark:text-op-inkDim mb-1">Items — one per line</label>
-              <textarea id="ann-items" rows="5" placeholder="Refreshed look across the app :: New header, store cards, and charts.&#10;Pull to refresh&#10;Indy East added; Wyoming closed."
-                class="w-full text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-900 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green font-mono"></textarea>
-              <p class="text-[11px] text-opl-inkDim dark:text-op-inkDim mt-1">Optional detail after <code>::</code> — e.g. <code>Title :: short description</code></p>
-            </div>
-            <div class="flex flex-wrap items-center gap-3">
-              <button onclick="pushAnnouncement()" id="ann-push-btn" class="px-4 py-2 text-sm font-semibold rounded-lg bg-accent-green hover:bg-[#1ea34e] text-[#06210f] transition-colors">Push to all users</button>
-              <button onclick="previewAnnouncement()" class="px-4 py-2 text-sm font-semibold rounded-lg border border-gray-200 dark:border-op-border text-gray-700 dark:text-op-ink hover:bg-gray-50 dark:hover:bg-[rgba(255,255,255,0.04)] transition-colors">Preview</button>
-              <button onclick="clearAnnouncement()" class="px-4 py-2 text-sm font-semibold rounded-lg border border-op-bad/30 text-opl-bad dark:text-[#f87171] hover:bg-op-bad/10 transition-colors">Clear</button>
-              <span id="ann-status" class="text-xs"></span>
-            </div>
+      <div class="ad-wrap" id="ad-wrap">
+        <!-- ── The rail. Hub and Bargain Lane are written here; every other business the
+             account can reach gets a group in #ad-biz-groups from adRenderBizGroups(). ── -->
+        <nav class="ad-rail" id="ad-rail" aria-label="Admin tools">
+          <div class="ad-search"><input id="ad-q" type="search" placeholder="Find a tool, e.g. backfill" autocomplete="off" aria-label="Find a tool"></div>
+          <div class="ad-group" data-group="hub">
+            <div class="ad-ghead">Hub</div>
+            <button type="button" class="ad-item" data-tool="announcement" data-kw="announcement popup push message users">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1 1 0 0 0 1 1h3l5 4V6L7 10H4a1 1 0 0 0-1 1z"/><path d="M16 9a3 3 0 0 1 0 6M19 6a7 7 0 0 1 0 12"/></svg><span>Announcement</span><span class="ad-chev">›</span></button>
           </div>
-        </div>
+          <div class="ad-group" data-group="bl">
+            <div class="ad-ghead">Bargain Lane</div>
+            <button type="button" class="ad-item" data-tool="health" data-kw="repair console health check backups restore snapshot">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg><span>Data health</span><span class="ad-chev">›</span></button>
+            <button type="button" class="ad-item" data-tool="manual" data-kw="manual sales override labor hours csv bulk lock live">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg><span>Manual entries</span><span class="ad-chev">›</span></button>
+            <button type="button" class="ad-item" data-tool="compare" data-kw="reconciliation sales report item sales csv clover">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M8 21H3v-5M21 3l-7 7M3 21l7-7"/></svg><span>Compare with Clover</span><span class="ad-chev">›</span></button>
+            <button type="button" class="ad-item" data-tool="costs" data-kw="item master l3 category costs cpu gpm margin">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2A2 2 0 0 1 3 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.6z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg><span>Costs</span><span class="ad-chev">›</span></button>
+            <button type="button" class="ad-item" data-tool="categories" data-kw="custom sales categorization uncategorized l2 l3 rules overrides unmapped">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span>Categories</span><span class="ad-chev">›</span></button>
+            <button type="button" class="ad-item" data-tool="repull" data-kw="re-snapshot resnapshot re-pull backfill rebuild week summaries basket counts t13">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg><span>Re-pull &amp; rebuild</span><span class="ad-chev">›</span></button>
+            <button type="button" class="ad-item" data-tool="stickers" data-kw="sticker template label zebra print shelf">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 15h8M8 11h5"/></svg><span>Shelf stickers</span><span class="ad-chev">›</span></button>
+          </div>
+          <div id="ad-biz-groups"></div>
+          <div class="ad-nomatch" id="ad-nomatch" hidden></div>
+          <div class="ad-legend">
+            <div style="font-weight:500">Buttons say what they write</div>
+            <div><span class="ad-tag ad-ro">Read-only</span> nothing is written</div>
+            <div><span class="ad-tag ad-save">Saves changes</span> settings, costs, rules</div>
+            <div><span class="ad-tag ad-hist">Rewrites history</span> stored sales or snapshots</div>
+          </div>
+        </nav>
 
-        <!-- Repair console — health check (superuser). Read-only: compares the
-             stored item snapshots against D1's independent record of the day.
-             Nothing is fetched from Clover and nothing is written. -->
-        <div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border p-5">
-          <h2 class="text-base font-semibold text-opl-ink dark:text-op-ink mb-1">Repair console — Health check</h2>
-          <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-5">Compares each day's stored item snapshot against D1's record of what that day actually sold, and reports the dates a re-snapshot would actually improve. <strong>Read-only</strong> — it pulls nothing from Clover and writes nothing, so it is safe to run any time. Uses the same threshold the backfill guard uses, so a date listed here is one the repair will accept.</p>
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
-            <select id="rh-store" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
-              <option value="all">All Stores</option>
-              <option value="BL1">BL1 – Coliseum</option>
-              <option value="BL2">BL2 – South Bend</option>
-              <option value="BL4">BL4 – Dupont</option>
-              <option value="BL8">BL8 – Holland</option>
-              <option value="BL14">BL14 – Battle Creek</option>
-              <option value="BL16">BL16 – Indy East</option>
-            </select>
-            <input id="rh-start" type="date" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
-            <input id="rh-end" type="date" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
-            <button id="rh-run" onclick="runRepairHealth()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] rounded-lg transition-colors">Run health check</button>
-          </div>
-          <div id="rh-status" class="hidden text-sm rounded-lg px-4 py-3 border mb-3"></div>
-          <div id="rh-results" class="hidden">
-            <div id="rh-summary" class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4"></div>
-            <div id="rh-truncated" class="hidden text-xs rounded-lg px-4 py-3 border border-op-warn/30 text-op-warn bg-op-warn/5 mb-4"></div>
-            <div id="rh-notes" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim mb-4"></div>
-            <h3 class="text-sm font-semibold text-opl-ink dark:text-op-ink mb-2">By store</h3>
-            <div class="overflow-x-auto border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl mb-5">
-              <table class="min-w-full text-sm">
-                <thead class="bg-[rgba(20,16,8,0.03)] dark:bg-op-panelHi text-xs text-opl-inkDim dark:text-op-inkDim">
-                  <tr>
-                    <th class="px-3 py-2 text-left">Store</th>
-                    <th class="px-3 py-2 text-right">Days</th>
-                    <th class="px-3 py-2 text-right">OK</th>
-                    <th class="px-3 py-2 text-right">Needs repair</th>
-                    <th class="px-3 py-2 text-right">Recoverable</th>
-                    <th class="px-3 py-2 text-right">Uncosted</th>
-                  </tr>
-                </thead>
-                <tbody id="rh-bystore" class="divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></tbody>
-              </table>
-            </div>
-            <h3 class="text-sm font-semibold text-opl-ink dark:text-op-ink mb-2">Dates a repair would improve</h3>
-            <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-3">Biggest recovery first. Everything not listed here is already at or above the threshold — re-snapshotting it would be refused as no improvement, and re-pulling an old date can <strong>lose</strong> refunds that have since dropped out of Clover's window.</p>
-            <div id="rh-needs-empty" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim italic mb-2">Nothing needs repair in this range.</div>
-            <div id="rh-repair-bar" class="hidden flex flex-wrap items-center gap-3 mb-3">
-              <button id="rh-repair" onclick="runRepair()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] rounded-lg transition-colors">Repair these dates</button>
-              <span class="text-xs text-opl-inkDim dark:text-op-inkDim">Each date is backed up before it is touched, and the two data-loss guards still apply — a date that would come back worse is left alone.</span>
-            </div>
-            <div class="overflow-x-auto border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl">
-              <table class="min-w-full text-sm">
-                <thead class="bg-[rgba(20,16,8,0.03)] dark:bg-op-panelHi text-xs text-opl-inkDim dark:text-op-inkDim">
-                  <tr>
-                    <th class="px-3 py-2 text-left">Store</th>
-                    <th class="px-3 py-2 text-left">Date</th>
-                    <th class="px-3 py-2 text-left">Status</th>
-                    <th class="px-3 py-2 text-right">Snapshot</th>
-                    <th class="px-3 py-2 text-right">D1</th>
-                    <th class="px-3 py-2 text-right">Recoverable</th>
-                  </tr>
-                </thead>
-                <tbody id="rh-needs" class="divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></tbody>
-              </table>
-            </div>
+        <section class="ad-pane" id="ad-pane">
+
+          <!-- ═══ Hub › Announcement (superuser) ═══ -->
+          <div class="ad-tool" data-tool="announcement" hidden>
+            <button type="button" class="ad-back" onclick="adCloseTool()">‹ Admin tools</button>
+            <div><span class="ad-scope">Every business</span><h2 class="ad-h2">Announcement</h2>
+              <p class="ad-lede">A popup each person sees once, the next time they open the hub, until they dismiss it. Pushing again shows it to everyone again.</p></div>
+            <div class="ad-panel"><div class="ad-body">
+              <label class="ad-field"><span>Title</span>
+                <input id="ann-title" type="text" maxlength="120" placeholder="Announcement" class="ad-in"></label>
+              <label class="ad-field"><span>Items, one per line</span>
+                <textarea id="ann-items" rows="5" class="ad-ta" placeholder="Refreshed look across the app :: New header, store cards, and charts.&#10;Pull to refresh&#10;Indy East added; Wyoming closed."></textarea></label>
+              <p class="ad-note">Add detail after <code>::</code>, e.g. <code>Title :: short description</code></p>
+              <div class="ad-row">
+                <span class="ad-act"><button type="button" onclick="pushAnnouncement()" id="ann-push-btn" class="ad-btn ad-primary">Push to all users</button><span class="ad-tag ad-save">Saves changes</span></span>
+                <button type="button" onclick="previewAnnouncement()" class="ad-btn">Preview</button>
+                <button type="button" onclick="clearAnnouncement()" class="ad-btn ad-danger">Clear</button>
+                <span id="ann-status" class="text-xs"></span>
+              </div>
+            </div></div>
           </div>
 
-          <div class="border-t border-[rgba(20,16,8,0.08)] dark:border-op-border mt-6 pt-5">
-            <div class="flex items-center justify-between gap-3 mb-2">
-              <h3 class="text-sm font-semibold text-opl-ink dark:text-op-ink">Backups</h3>
-              <button onclick="loadRepairBackups()" class="px-3 py-1.5 text-sm font-semibold border border-gray-200 dark:border-op-border text-gray-700 dark:text-op-ink hover:border-accent-green/50 rounded-lg transition-colors">Refresh</button>
-            </div>
-            <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-3">Every repair saves what it replaced. Restoring is itself reversible — the state you roll back from is saved too. Backups expire after 90 days.</p>
-            <div id="rh-backups-empty" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim italic">No backups yet.</div>
-            <div id="rh-backups-wrap" class="hidden overflow-x-auto border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl">
-              <table class="min-w-full text-sm">
-                <thead class="bg-[rgba(20,16,8,0.03)] dark:bg-op-panelHi text-xs text-opl-inkDim dark:text-op-inkDim">
-                  <tr>
-                    <th class="px-3 py-2 text-left">Taken</th>
-                    <th class="px-3 py-2 text-left">By</th>
-                    <th class="px-3 py-2 text-right">Dates</th>
-                    <th class="px-3 py-2 text-right"></th>
-                  </tr>
-                </thead>
-                <tbody id="rh-backups" class="divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
-        <!-- Sticker template -->
-        <div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border p-5">
-          <h2 class="text-base font-semibold text-opl-ink dark:text-op-ink mb-1">Sticker template</h2>
-          <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-5">What the shelf sticker prints, and where. Positions and sizes are dots on a 1&nbsp;inch square label at 203&nbsp;dpi, so 203 is the far edge. Saving applies to every store the next time anyone prints.</p>
-          <div id="st-bar" class="mb-5"></div>
-          <input id="st-file" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" class="hidden" onchange="stImageChosen(this)">
-          <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_232px]">
-            <div id="st-fields" class="space-y-5"></div>
-            <div>
-              <div id="st-preview"></div>
-              <p class="text-[11px] text-opl-inkDim dark:text-op-inkDim mt-2 leading-snug"><b>Positions and heights are exact</b> &mdash; they are the same dots the printer is given. <b>Widths are an estimate</b>: the printer's font is proportional and this one is not, so a line may run shorter or longer than shown. Print a test label before trusting a roll to it.</p>
-            </div>
-          </div>
-          <div id="st-warn" class="hidden mt-4"></div>
-          <div class="flex flex-wrap gap-3 mt-5">
-            <button onclick="stTest()" class="px-4 py-2 text-sm font-semibold rounded-lg border border-[rgba(20,16,8,0.14)] dark:border-op-border text-opl-ink dark:text-op-ink hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.04)] transition-colors">Print test label</button>
-            <button onclick="stReset()" class="px-4 py-2 text-sm font-semibold rounded-lg border border-[rgba(20,16,8,0.14)] dark:border-op-border text-opl-ink dark:text-op-ink hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.04)] transition-colors">Delete all &amp; use stock</button>
-          </div>
-          <div id="st-status" class="text-xs text-opl-inkDim dark:text-op-inkDim mt-3"></div>
-        </div>
-
-        <!-- Admin Tools -->
-        <div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border p-5">
-          <h2 class="text-base font-semibold text-opl-ink dark:text-op-ink mb-1">Admin Tools</h2>
-          <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-5">Re-build item sales snapshots from Clover for any past day. Set <em>Days back</em> > 1 to backfill a range ending at <em>End Date</em>. Use this after a categorization fix or to fill gaps before running Rebuild Week Summaries.</p>
-
-          <div class="space-y-4">
-            <div class="flex flex-wrap gap-4 items-end">
-              <div>
-                <label class="block text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Store</label>
-                <select id="resnapshot-store" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
-                  <option value="all">All Stores</option>
-                  <option value="BL1">BL1 – Coliseum</option>
-                  <option value="BL2">BL2 – South Bend</option>
-                  <option value="BL4">BL4 – Dupont</option>
-                  <option value="BL8">BL8 – Holland</option>
-                  <option value="BL16">BL16 – Indy East</option>
-                  <option value="BL14">BL14 – Battle Creek</option>
-                </select>
+          <!-- ═══ Bargain Lane › Data health (the repair console) ═══
+               Read-only check: compares the stored item snapshots against D1's independent
+               record of the day. Nothing is fetched from Clover and nothing is written until
+               "Repair these dates", which backs each date up first. -->
+          <div class="ad-tool" data-tool="health" hidden>
+            <button type="button" class="ad-back" onclick="adCloseTool()">‹ Admin tools</button>
+            <div><span class="ad-scope">Bargain Lane · Clover</span><h2 class="ad-h2">Data health</h2>
+              <p class="ad-lede">Checks each day's stored item snapshot against D1's record of what that day sold, and lists only the dates a repair would improve. It uses the same threshold as the backfill guard, so a date listed here is one the repair will accept. Start here before re-pulling anything.</p></div>
+            <div class="ad-panel">
+              <div class="ad-bar">
+                <label class="ad-field"><span>Store</span><select id="rh-store" class="ad-sel" data-ad-stores="all"></select></label>
+                <label class="ad-field"><span>From</span><input id="rh-start" type="date" class="ad-in"></label>
+                <label class="ad-field"><span>To</span><input id="rh-end" type="date" class="ad-in"></label>
+                <div class="ad-right"><span class="ad-act"><button type="button" id="rh-run" onclick="runRepairHealth()" class="ad-btn ad-primary">Run health check</button><span class="ad-tag ad-ro">Read-only</span></span></div>
               </div>
-              <div>
-                <label class="block text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">End Date</label>
-                <input id="resnapshot-date" type="date" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Days back (incl. end date)</label>
-                <input id="resnapshot-days" type="number" min="1" max="30" value="1" class="w-24 text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
-              </div>
-              <button onclick="runReSnapshot()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] rounded-lg transition-colors">
-                Re-snapshot Item Sales
-              </button>
-            </div>
-            <div id="resnapshot-status" class="hidden text-sm rounded-lg px-4 py-3 border"></div>
-          </div>
-
-          <div class="border-t border-[rgba(20,16,8,0.08)] dark:border-op-border mt-6 pt-5 space-y-3">
-            <div>
-              <p class="text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Rebuild Week Summaries</p>
-              <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-3">Re-rolls the trailing 13 weeks of week-summary KV entries. Required to populate the T13 Combined Store Units Sold table. Run this after a re-snapshot backfill.</p>
-              <div class="flex items-center gap-3">
-                <button onclick="runRebuildWeekSummaries()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] rounded-lg transition-colors">
-                  Rebuild Week Summaries
-                </button>
-                <div id="rebuild-weeks-status" class="hidden text-sm rounded-lg px-4 py-3 border flex-1"></div>
+              <div class="ad-body">
+                <div id="rh-status" class="hidden text-sm rounded-lg px-4 py-3 border mb-3"></div>
+                <p class="ad-note">It pulls nothing from Clover and writes nothing, so it is safe to run any time.</p>
               </div>
             </div>
-          </div>
-
-          <div class="border-t border-[rgba(20,16,8,0.08)] dark:border-op-border mt-6 pt-5 space-y-3">
-            <div>
-              <p class="text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Backfill Sales (Last 13 Weeks)</p>
-              <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-3">Re-snapshots <em>daily sales totals</em> from Clover for the last 91 days across all stores, applying the latest reconciliation rules (refunds subtracted to match Clover Sales Summary). Loops one date at a time; takes ~1–2 minutes. Auto-rebuilds week summaries when finished.</p>
-              <div class="flex items-center gap-3">
-                <button onclick="runBackfillSales13w()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] rounded-lg transition-colors">
-                  Backfill Last 13 Weeks
-                </button>
-                <div id="backfill-sales-status" class="hidden text-sm rounded-lg px-4 py-3 border flex-1"></div>
-              </div>
-            </div>
-
-            <div>
-              <p class="text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Backfill Category Basket Counts</p>
-              <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-3">Adds <em>how many baskets touched each category</em> to the last 13 weeks of item snapshots — the denominator the T13 Penetration view needs. <strong>Adds two fields only</strong>: sales figures, categories and totals are never rewritten. Any day whose Clover fetch comes back more than 1% short is skipped and reported rather than written. Loops one store-day at a time; takes several minutes. Run <em>Rebuild Week Summaries</em> afterwards.</p>
-              <div class="flex items-center gap-3">
-                <button onclick="runBackfillCategoryOrders()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] rounded-lg transition-colors">
-                  Backfill Basket Counts
-                </button>
-                <div id="backfill-orders-status" class="hidden text-sm rounded-lg px-4 py-3 border flex-1"></div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Manual Sales Override -->
-          <div class="border-t border-[rgba(20,16,8,0.08)] dark:border-op-border mt-6 pt-5 space-y-3">
-            <div>
-              <p class="text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Manual Sales Override</p>
-              <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-3">Set sales totals for a (store, date) when Clover lost the data. Once saved, the row is locked and the cron snapshot / Sheet backfill will not overwrite it. Auto-rebuilds the affected week summary.</p>
-
-              <!-- Single entry -->
-              <div class="grid grid-cols-2 md:grid-cols-6 gap-2 mb-3">
-                <select id="mso-store" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
-                  <option value="BL1">BL1 – Coliseum</option>
-                  <option value="BL2">BL2 – South Bend</option>
-                  <option value="BL4">BL4 – Dupont</option>
-                  <option value="BL8">BL8 – Holland</option>
-                  <option value="BL16">BL16 – Indy East</option>
-                  <option value="BL14">BL14 – Battle Creek</option>
-                </select>
-                <input id="mso-date" type="date" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
-                <input id="mso-total" type="number" step="0.01" placeholder="Total $" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
-                <input id="mso-retail" type="number" step="0.01" placeholder="Retail $" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
-                <input id="mso-bin" type="number" step="0.01" placeholder="Bin $" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
-                <input id="mso-auction" type="number" step="0.01" placeholder="Live Sales $" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
-              </div>
-              <div class="flex items-center gap-3 mb-4">
-                <button onclick="runManualSalesSingle()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] rounded-lg transition-colors">
-                  Save Single Entry
-                </button>
-              </div>
-
-              <!-- Bulk -->
-              <p class="text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Bulk paste (CSV)</p>
-              <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-2">One row per line: <code>store,date,total,retail,bin,auction</code> — only <code>store</code> and <code>date</code> are required. Header row optional.</p>
-              <textarea id="mso-bulk" rows="6" class="w-full font-mono text-xs rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green" placeholder="BL1,2026-01-28,7761&#10;BL2,2026-01-28,5400"></textarea>
-              <div class="flex items-center gap-3 mt-2">
-                <button onclick="runManualSalesBulk()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] rounded-lg transition-colors">
-                  Save Bulk Entries
-                </button>
-                <div id="mso-status" class="hidden text-sm rounded-lg px-4 py-3 border flex-1"></div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Manual Labor Hours -->
-          <div class="border-t border-[rgba(20,16,8,0.08)] dark:border-op-border mt-6 pt-5 space-y-3">
-            <div>
-              <p class="text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Manual Labor Hours</p>
-              <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-3">Set labor hours for a (store, date). Marks the row as a manual override — the cron snapshot / Sheet backfill will not change it.</p>
-
-              <!-- Single entry -->
-              <div class="grid grid-cols-2 md:grid-cols-3 gap-2 mb-3">
-                <select id="mlh-store" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
-                  <option value="BL1">BL1 – Coliseum</option>
-                  <option value="BL2">BL2 – South Bend</option>
-                  <option value="BL4">BL4 – Dupont</option>
-                  <option value="BL8">BL8 – Holland</option>
-                  <option value="BL16">BL16 – Indy East</option>
-                  <option value="BL14">BL14 – Battle Creek</option>
-                </select>
-                <input id="mlh-date" type="date" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
-                <input id="mlh-hours" type="number" step="0.25" placeholder="Hours" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
-              </div>
-              <div class="flex items-center gap-3 mb-4">
-                <button onclick="runManualLaborSingle()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] rounded-lg transition-colors">
-                  Save Single Entry
-                </button>
-              </div>
-
-              <!-- Bulk -->
-              <p class="text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Bulk paste (CSV)</p>
-              <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-2">One row per line: <code>store,date,hours</code>. Header row optional.</p>
-              <textarea id="mlh-bulk" rows="6" class="w-full font-mono text-xs rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green" placeholder="BL1,2026-01-28,42.5&#10;BL2,2026-01-28,38"></textarea>
-              <div class="flex items-center gap-3 mt-2">
-                <button onclick="runManualLaborBulk()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] rounded-lg transition-colors">
-                  Save Bulk Entries
-                </button>
-                <div id="mlh-status" class="hidden text-sm rounded-lg px-4 py-3 border flex-1"></div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Sales Report Reconciliation -->
-          <div class="border-t border-[rgba(20,16,8,0.08)] dark:border-op-border mt-6 pt-5 space-y-3">
-            <div>
-              <p class="text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Sales Report Reconciliation</p>
-              <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-3">Paste a Clover Sales Report CSV (per store) to compare its monthly Net Sales against our daily totals in D1. For any month that's off by &gt;\$50, click <strong>Re-snapshot This Month</strong> to re-pull from Clover. Manual-override rows are preserved and skipped automatically. Use the <em>Manual Sales Override</em> tool above to revert any specific day if needed.</p>
-
-              <div class="grid grid-cols-2 md:grid-cols-3 gap-2 mb-3">
-                <select id="srr-store" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
-                  <option value="BL1">BL1 – Coliseum</option>
-                  <option value="BL2">BL2 – South Bend</option>
-                  <option value="BL4">BL4 – Dupont</option>
-                  <option value="BL8">BL8 – Holland</option>
-                  <option value="BL16">BL16 – Indy East</option>
-                  <option value="BL14">BL14 – Battle Creek</option>
-                </select>
-                <label class="text-xs flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-dashed border-[rgba(20,16,8,0.16)] dark:border-op-borderHi cursor-pointer hover:border-[#3BB54A] text-opl-inkDim dark:text-op-inkDim">
-                  <span>📄 Upload CSV file</span>
-                  <input id="srr-file" type="file" accept=".csv,text/csv" class="hidden" onchange="onSrrFileChosen(event)">
-                </label>
-                <button onclick="runSrrParse()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] rounded-lg transition-colors">
-                  Parse &amp; Compare
-                </button>
-              </div>
-              <textarea id="srr-csv" rows="8" class="w-full font-mono text-xs rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 mb-2 focus:outline-none focus:ring-1 focus:ring-accent-green" placeholder="Paste the entire Sales Report CSV here, or upload a file above…"></textarea>
-              <div id="srr-status" class="hidden text-sm rounded-lg px-4 py-3 border mb-3"></div>
-              <div id="srr-results"></div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Item Sales Reconciliation -->
-        <div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border p-5">
-          <h2 class="text-base font-semibold text-opl-ink dark:text-op-ink mb-1">Item Sales Reconciliation</h2>
-          <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-5">Upload a Clover <strong>Revenue Item Sales</strong> report CSV to compare its L2 category totals against our stored item snapshots for the same date range. Flags categories where our data is off by more than $50. Use <strong>Re-snapshot Range</strong> to re-pull item sales from Clover for the full period.</p>
-          <div class="grid grid-cols-2 md:grid-cols-3 gap-2 mb-3">
-            <select id="isr-store" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
-              <option value="BL1">BL1 – Coliseum</option>
-              <option value="BL2">BL2 – South Bend</option>
-              <option value="BL4">BL4 – Dupont</option>
-              <option value="BL8">BL8 – Holland</option>
-              <option value="BL16">BL16 – Indy East</option>
-              <option value="BL14">BL14 – Battle Creek</option>
-            </select>
-            <label class="text-xs flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-dashed border-[rgba(20,16,8,0.16)] dark:border-op-borderHi cursor-pointer hover:border-[#3BB54A] text-opl-inkDim dark:text-op-inkDim">
-              <span>📄 Upload CSV file</span>
-              <input id="isr-file" type="file" accept=".csv,text/csv" class="hidden" onchange="onIsrFileChosen(event)">
-            </label>
-            <button onclick="runIsrParse()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] rounded-lg transition-colors">
-              Parse &amp; Compare
-            </button>
-          </div>
-          <textarea id="isr-csv" rows="6" class="w-full font-mono text-xs rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 mb-2 focus:outline-none focus:ring-1 focus:ring-accent-green" placeholder="Paste a Clover Revenue Item Sales CSV here, or upload a file above…"></textarea>
-          <div id="isr-status" class="hidden text-sm rounded-lg px-4 py-3 border mb-3"></div>
-          <div id="isr-results"></div>
-        </div>
-
-        <!-- Item Master Costs -->
-        <div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border p-5">
-          <h2 class="text-base font-semibold text-opl-ink dark:text-op-ink mb-1">Item Master Costs</h2>
-          <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-5">Upload an Item Master export so the Retail Summary can render CPU, Ext Cost, Gross Profit, and GPM% per L2/L3 category. Accepts <code>.html</code> (Item Master export), <code>.csv</code>, or <code>.json</code>. Re-snapshot historical days after uploading to backfill cost into existing data.</p>
-
-          <div class="space-y-4">
-            <div class="flex flex-wrap gap-4 items-end">
-              <div class="flex-1 min-w-[220px]">
-                <label class="block text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">File</label>
-                <input id="im-file" type="file" accept=".html,.htm,.csv,.json,.txt" class="block w-full text-sm text-opl-ink dark:text-op-ink file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-[#3BB54A]/10 file:text-[#3BB54A] hover:file:bg-[#3BB54A]/20">
-              </div>
-              <button onclick="importItemCosts()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] rounded-lg transition-colors">Upload</button>
-              <button onclick="refreshItemCostsStatus()" class="px-4 py-2 text-sm font-semibold border border-gray-200 dark:border-op-border text-gray-700 dark:text-op-ink hover:border-accent-green/50 rounded-lg transition-colors">Refresh status</button>
-            </div>
-            <div id="im-status" class="hidden text-sm rounded-lg px-4 py-3 border"></div>
-            <div id="im-summary" class="text-xs text-opl-inkDim dark:text-op-inkDim">Status: not loaded yet.</div>
-
-            <!-- Per-item editor (edit/add single costs without re-uploading) -->
-            <details id="im-editor" class="border-t border-[rgba(20,16,8,0.08)] dark:border-op-border pt-4">
-              <summary onclick="ensureItemCostsLoaded()" class="cursor-pointer text-sm font-medium text-opl-ink dark:text-op-ink select-none">Edit individual items</summary>
-              <div class="mt-3 space-y-3">
-                <p class="text-xs text-opl-inkDim dark:text-op-inkDim">Fix or add a single item's cost without re-uploading the whole file. Changes merge into the existing master.</p>
-                <input id="ie-search" type="text" placeholder="Search by item # or description…" class="w-full text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
-                <div id="ie-list" class="max-h-[360px] overflow-y-auto border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-lg divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></div>
-                <div class="flex flex-wrap gap-2 items-end pt-1">
-                  <div><label class="block text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim mb-1">New item #</label><input id="ie-new-no" type="text" inputmode="numeric" placeholder="1234" class="w-24 text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-2 py-1 focus:outline-none focus:ring-1 focus:ring-accent-green"></div>
-                  <div><label class="block text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim mb-1">Cost $</label><input id="ie-new-cost" type="number" step="0.01" min="0" placeholder="0.89" class="w-24 text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-2 py-1 focus:outline-none focus:ring-1 focus:ring-accent-green"></div>
-                  <div class="flex-1 min-w-[140px]"><label class="block text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim mb-1">Description (optional)</label><input id="ie-new-desc" type="text" placeholder="" class="w-full text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-2 py-1 focus:outline-none focus:ring-1 focus:ring-accent-green"></div>
-                  <button onclick="ieAddItem()" class="px-3 py-1.5 text-sm font-semibold border border-gray-200 dark:border-op-border text-gray-700 dark:text-op-ink hover:border-accent-green/50 rounded-lg">Add</button>
+            <div id="rh-results" class="hidden">
+              <div class="ad-panel" style="margin-bottom:16px"><div class="ad-body">
+                <div id="rh-summary" class="grid grid-cols-2 md:grid-cols-4 gap-2"></div>
+                <div id="rh-truncated" class="hidden text-xs rounded-lg px-4 py-3 border border-op-warn/30 text-op-warn bg-op-warn/5"></div>
+                <div id="rh-notes" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim"></div>
+              </div></div>
+              <div class="ad-panel" style="margin-bottom:16px">
+                <div class="ad-bar"><span class="ad-ptitle">Dates a repair would improve</span><span class="ad-plabel">biggest recovery first</span></div>
+                <div class="ad-body">
+                  <p class="ad-note">Everything not listed is already at or above the threshold. Re-snapshotting it would be refused as no improvement, and re-pulling an old date can <strong>lose</strong> refunds that have since dropped out of Clover's window.</p>
+                  <div id="rh-needs-empty" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim italic">Nothing needs repair in this range.</div>
+                  <div id="rh-repair-bar" class="hidden flex flex-wrap items-center gap-3">
+                    <span class="ad-act"><button type="button" id="rh-repair" onclick="runRepair()" class="ad-btn ad-hist">Repair these dates</button><span class="ad-tag ad-hist">Rewrites history</span></span>
+                    <span class="ad-note">Each date is backed up before it is touched, and the two data-loss guards still apply: a date that would come back worse is left alone.</span>
+                  </div>
                 </div>
-                <div id="ie-status" class="hidden text-sm rounded-lg px-4 py-3 border"></div>
-                <div class="flex items-center gap-3">
-                  <button onclick="saveItemCostEdits()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] rounded-lg transition-colors">Save changes</button>
-                  <span id="ie-dirty" class="text-xs text-opl-inkDim dark:text-op-inkDim">No pending changes.</span>
-                </div>
-              </div>
-            </details>
-          </div>
-        </div>
-
-        <!-- L3 Category Costs -->
-        <div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border p-5">
-          <h2 class="text-base font-semibold text-opl-ink dark:text-op-ink mb-1">L3 Category Costs</h2>
-          <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-5">Set a flat cost per unit for each L3 category (e.g. <code>FG BL SEASONAL - CHRISTMAS - GM</code>). Used by the Retail Summary as the cost fallback when an item has no Item Master cost. A specific item (IM#) cost always wins over its category cost. Re-snapshot historical days to backfill.</p>
-
-          <div class="space-y-3">
-            <div class="flex flex-wrap gap-3 items-center">
-              <input id="cc-search" type="text" placeholder="Filter categories…" class="flex-1 min-w-[200px] text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
-              <label class="flex items-center gap-1.5 text-xs text-opl-inkDim dark:text-op-inkDim whitespace-nowrap cursor-pointer select-none"><input id="cc-sales-only" type="checkbox" onchange="renderCategoryCosts()" class="rounded"> With sales only</label>
-              <button onclick="saveCategoryCosts()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] rounded-lg transition-colors">Save costs</button>
-              <button onclick="loadCategoryCosts()" class="px-4 py-2 text-sm font-semibold border border-gray-200 dark:border-op-border text-gray-700 dark:text-op-ink hover:border-accent-green/50 rounded-lg transition-colors">Reload</button>
-            </div>
-            <div id="cc-status" class="hidden text-sm rounded-lg px-4 py-3 border"></div>
-            <div id="cc-summary" class="text-xs text-opl-inkDim dark:text-op-inkDim">Status: not loaded yet.</div>
-            <div id="cc-list" class="max-h-[460px] overflow-y-auto border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-lg divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></div>
-          </div>
-        </div>
-
-        <!-- Custom Sales Categorization -->
-        <div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border p-5">
-          <h2 class="text-base font-semibold text-opl-ink dark:text-op-ink mb-1">Custom Sales Categorization</h2>
-          <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-5">Assign uncategorized items to an L2 bucket. Overrides apply to every store and take effect on the next snapshot (use <em>Re-snapshot</em> below to update history).</p>
-
-          <div class="space-y-4">
-            <div class="flex flex-wrap gap-4 items-end">
-              <div>
-                <label class="block text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Store</label>
-                <select id="overrides-store" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
-                  <option value="BL1">BL1 – Coliseum</option>
-                  <option value="BL2">BL2 – South Bend</option>
-                  <option value="BL4">BL4 – Dupont</option>
-                  <option value="BL8">BL8 – Holland</option>
-                  <option value="BL16">BL16 – Indy East</option>
-                  <option value="BL14">BL14 – Battle Creek</option>
-                </select>
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Start</label>
-                <input id="overrides-start" type="date" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">End</label>
-                <input id="overrides-end" type="date" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
-              </div>
-              <button onclick="loadUncategorized()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] rounded-lg transition-colors">
-                Load Uncategorized Items
-              </button>
-            </div>
-
-            <div id="overrides-status" class="hidden text-sm rounded-lg px-4 py-3 border"></div>
-
-            <div id="overrides-table-wrap" class="hidden space-y-6">
-              <div id="overrides-items-section">
-                <h3 class="text-sm font-semibold text-opl-ink dark:text-op-ink mb-2">Custom Sales items</h3>
-                <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-3">Items with no Clover catalog category. Assign each to an L2 and optionally save a prefix rule.</p>
-                <div class="overflow-x-auto border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl">
+                <div class="ad-tbl-wrap">
                   <table class="min-w-full text-sm">
                     <thead class="bg-[rgba(20,16,8,0.03)] dark:bg-op-panelHi text-xs text-opl-inkDim dark:text-op-inkDim">
                       <tr>
-                        <th class="px-3 py-2 text-left">Item Name</th>
-                        <th class="px-3 py-2 text-right">Qty</th>
-                        <th class="px-3 py-2 text-right">Net</th>
-                        <th class="px-3 py-2 text-left">Assign L2</th>
-                        <th class="px-3 py-2 text-left">Assign L3</th>
-                        <th class="px-3 py-2 text-left">Also add rule</th>
+                        <th class="px-3 py-2 text-left">Store</th>
+                        <th class="px-3 py-2 text-left">Date</th>
+                        <th class="px-3 py-2 text-left">Status</th>
+                        <th class="px-3 py-2 text-right">Snapshot</th>
+                        <th class="px-3 py-2 text-right">D1</th>
+                        <th class="px-3 py-2 text-right">Recoverable</th>
                       </tr>
                     </thead>
-                    <tbody id="overrides-tbody" class="divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></tbody>
+                    <tbody id="rh-needs" class="divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></tbody>
                   </table>
                 </div>
-                <p id="overrides-items-empty" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim italic">No Custom Sales items in this range.</p>
               </div>
-
-              <div id="overrides-fallback-section">
-                <h3 class="text-sm font-semibold text-opl-ink dark:text-op-ink mb-2">Items in "Other / unmapped"</h3>
-                <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-3">These reached the right L2 by a guess — a name rule, an IM number, a pattern, or an existing override — so they have no real L3 and fold into the <em>Other / unmapped</em> row. Assign an L3 to give each one a home. Ranked by gross line revenue, which runs above the net shown on the dashboard.</p>
-                <div class="overflow-x-auto border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl">
+              <div class="ad-panel" style="margin-bottom:16px">
+                <div class="ad-bar"><span class="ad-ptitle">By store</span></div>
+                <div class="ad-tbl-wrap">
                   <table class="min-w-full text-sm">
                     <thead class="bg-[rgba(20,16,8,0.03)] dark:bg-op-panelHi text-xs text-opl-inkDim dark:text-op-inkDim">
                       <tr>
-                        <th class="px-3 py-2 text-left">Item Name</th>
-                        <th class="px-3 py-2 text-left">Matched by</th>
-                        <th class="px-3 py-2 text-right">Qty</th>
-                        <th class="px-3 py-2 text-right">Gross</th>
-                        <th class="px-3 py-2 text-left">Assign L2</th>
-                        <th class="px-3 py-2 text-left">Assign L3</th>
-                        <th class="px-3 py-2 text-left">Also add rule</th>
+                        <th class="px-3 py-2 text-left">Store</th>
+                        <th class="px-3 py-2 text-right">Days</th>
+                        <th class="px-3 py-2 text-right">OK</th>
+                        <th class="px-3 py-2 text-right">Needs repair</th>
+                        <th class="px-3 py-2 text-right">Recoverable</th>
+                        <th class="px-3 py-2 text-right">Uncosted</th>
                       </tr>
                     </thead>
-                    <tbody id="overrides-fallback-tbody" class="divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></tbody>
+                    <tbody id="rh-bystore" class="divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></tbody>
                   </table>
                 </div>
-                <p id="overrides-fallback-empty" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim italic">No fallback-resolved items in this range.</p>
-                <p id="overrides-fallback-note" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim mt-2"></p>
               </div>
-
-              <div id="overrides-l3rules-section">
-                <h3 class="text-sm font-semibold text-opl-ink dark:text-op-ink mb-2">L3 rules</h3>
-                <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-3">A rule names the L3 row for every product it matches, without changing which L2 they book to. One IM-number rule covers every product name sharing that number. First match wins, so put the more specific rule first. A rule only fires on lines already booked to its L3's own L2 &mdash; the <em>Fires on</em> column says which that is.</p>
-                <div class="overflow-x-auto border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl">
-                  <table class="min-w-full text-sm">
-                    <thead class="bg-[rgba(20,16,8,0.03)] dark:bg-op-panelHi text-xs text-opl-inkDim dark:text-op-inkDim">
-                      <tr>
-                        <th class="px-3 py-2 text-left">#</th>
-                        <th class="px-3 py-2 text-left">Match</th>
-                        <th class="px-3 py-2 text-left">Names this L3</th>
-                        <th class="px-3 py-2 text-left">Fires on</th>
-                        <th class="px-3 py-2 text-left">Remove</th>
-                      </tr>
-                    </thead>
-                    <tbody id="overrides-l3rules-tbody" class="divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></tbody>
-                  </table>
-                </div>
-                <p id="overrides-l3rules-empty" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim italic">No L3 rules yet.</p>
+            </div>
+            <div class="ad-panel">
+              <div class="ad-bar"><span class="ad-ptitle">Backups</span><span class="ad-plabel">kept 90 days</span>
+                <div class="ad-right"><button type="button" onclick="loadRepairBackups()" class="ad-btn ad-small">Refresh</button></div></div>
+              <div class="ad-body">
+                <p class="ad-note">Every repair saves what it replaced. Restoring is itself reversible: the state you roll back from is saved too.</p>
+                <div id="rh-backups-empty" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim italic">No backups yet.</div>
               </div>
-
-              <div id="overrides-l3-section">
-                <h3 class="text-sm font-semibold text-opl-ink dark:text-op-ink mb-2">Uncategorized L3 categories</h3>
-                <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-3">Clover catalog categories that aren't mapped to an L2 yet. One assignment covers every item in that category across all stores.</p>
-                <div class="overflow-x-auto border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl">
-                  <table class="min-w-full text-sm">
-                    <thead class="bg-[rgba(20,16,8,0.03)] dark:bg-op-panelHi text-xs text-opl-inkDim dark:text-op-inkDim">
-                      <tr>
-                        <th class="px-3 py-2 text-left">Clover L3 Category</th>
-                        <th class="px-3 py-2 text-right">Qty</th>
-                        <th class="px-3 py-2 text-right">Net</th>
-                        <th class="px-3 py-2 text-left">Assign L2</th>
-                      </tr>
-                    </thead>
-                    <tbody id="overrides-l3-tbody" class="divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></tbody>
-                  </table>
-                </div>
-                <p id="overrides-l3-empty" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim italic">No unmapped L3 categories in this range.</p>
-              </div>
-
-              <div class="flex flex-wrap gap-3">
-                <button onclick="saveCategoryOverrides()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-[#06210f] rounded-lg transition-colors">
-                  Save Overrides
-                </button>
-                <button onclick="resnapshotRecent()" class="px-4 py-2 text-sm font-semibold border border-gray-200 dark:border-op-border text-gray-700 dark:text-op-ink hover:border-accent-green/50 rounded-lg transition-colors">
-                  Re-snapshot selected range
-                </button>
+              <div id="rh-backups-wrap" class="hidden ad-tbl-wrap">
+                <table class="min-w-full text-sm">
+                  <thead class="bg-[rgba(20,16,8,0.03)] dark:bg-op-panelHi text-xs text-opl-inkDim dark:text-op-inkDim">
+                    <tr>
+                      <th class="px-3 py-2 text-left">Taken</th>
+                      <th class="px-3 py-2 text-left">By</th>
+                      <th class="px-3 py-2 text-right">Dates</th>
+                      <th class="px-3 py-2 text-right"></th>
+                    </tr>
+                  </thead>
+                  <tbody id="rh-backups" class="divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></tbody>
+                </table>
               </div>
             </div>
           </div>
-        </div>
 
+          <!-- ═══ Bargain Lane › Manual entries (was Manual Sales Override + Manual Labor Hours) ═══
+               Two switches pick the form; ONE save button calls the same four functions the
+               old four buttons did (adSaveManual). -->
+          <div class="ad-tool" data-tool="manual" hidden>
+            <button type="button" class="ad-back" onclick="adCloseTool()">‹ Admin tools</button>
+            <div><span class="ad-scope">Bargain Lane</span><h2 class="ad-h2">Manual entries</h2>
+              <p class="ad-lede">Set a day's sales or labor hours by hand when Clover or the timeclock lost them. A saved day is locked: the nightly snapshot and the Sheet backfill will not change it, and its week summary is rebuilt.</p></div>
+            <div class="ad-panel">
+              <div class="ad-bar">
+                <div class="ad-seg" data-ad-seg="me-kind" role="group" aria-label="What to enter"><button type="button" aria-pressed="true" data-v="sales">Sales</button><button type="button" aria-pressed="false" data-v="labor">Labor hours</button></div>
+                <div class="ad-seg" data-ad-seg="me-mode" role="group" aria-label="How many days"><button type="button" aria-pressed="true" data-v="one">One day</button><button type="button" aria-pressed="false" data-v="csv">Paste CSV</button></div>
+              </div>
+              <div class="ad-body">
+                <div class="ad-row" data-ad-show="me-kind:sales me-mode:one">
+                  <label class="ad-field"><span>Store</span><select id="mso-store" class="ad-sel" data-ad-stores="one"></select></label>
+                  <label class="ad-field"><span>Date</span><input id="mso-date" type="date" class="ad-in"></label>
+                  <label class="ad-field"><span>Total $</span><input id="mso-total" type="number" step="0.01" placeholder="0.00" class="ad-in" style="width:120px"></label>
+                  <label class="ad-field"><span>Retail $</span><input id="mso-retail" type="number" step="0.01" placeholder="0.00" class="ad-in" style="width:120px"></label>
+                  <label class="ad-field"><span>Bin $</span><input id="mso-bin" type="number" step="0.01" placeholder="0.00" class="ad-in" style="width:120px"></label>
+                  <label class="ad-field"><span>Live Sales $</span><input id="mso-auction" type="number" step="0.01" placeholder="0.00" class="ad-in" style="width:120px"></label>
+                </div>
+                <div class="ad-field" data-ad-show="me-kind:sales me-mode:csv">
+                  <span>One row per line: <code>store,date,total,retail,bin,auction</code>. Only store and date are required; a header row is optional.</span>
+                  <textarea id="mso-bulk" rows="6" class="ad-ta" placeholder="BL1,2026-01-28,7761&#10;BL2,2026-01-28,5400"></textarea>
+                </div>
+                <div class="ad-row" data-ad-show="me-kind:labor me-mode:one">
+                  <label class="ad-field"><span>Store</span><select id="mlh-store" class="ad-sel" data-ad-stores="one"></select></label>
+                  <label class="ad-field"><span>Date</span><input id="mlh-date" type="date" class="ad-in"></label>
+                  <label class="ad-field"><span>Hours</span><input id="mlh-hours" type="number" step="0.25" placeholder="0" class="ad-in" style="width:120px"></label>
+                </div>
+                <div class="ad-field" data-ad-show="me-kind:labor me-mode:csv">
+                  <span>One row per line: <code>store,date,hours</code>. A header row is optional.</span>
+                  <textarea id="mlh-bulk" rows="6" class="ad-ta" placeholder="BL1,2026-01-28,42.5&#10;BL2,2026-01-28,38"></textarea>
+                </div>
+                <div class="ad-row">
+                  <span class="ad-act"><button type="button" id="ad-manual-save" onclick="adSaveManual()" class="ad-btn ad-hist">Save and lock</button><span class="ad-tag ad-hist">Rewrites history</span></span>
+                </div>
+                <div data-ad-show="me-kind:sales"><div id="mso-status" class="hidden text-sm rounded-lg px-4 py-3 border flex-1"></div></div>
+                <div data-ad-show="me-kind:labor"><div id="mlh-status" class="hidden text-sm rounded-lg px-4 py-3 border flex-1"></div></div>
+              </div>
+            </div>
+            <p class="ad-note">Live Sales $ is entered here while live sales are still inside Bargain Lane's totals.</p>
+          </div>
+
+          <!-- ═══ Bargain Lane › Compare with Clover (was Sales Report + Item Sales Reconciliation) ═══ -->
+          <div class="ad-tool" data-tool="compare" hidden>
+            <button type="button" class="ad-back" onclick="adCloseTool()">‹ Admin tools</button>
+            <div><span class="ad-scope">Bargain Lane · Clover</span><h2 class="ad-h2">Compare with Clover</h2>
+              <p class="ad-lede">Upload a Clover report for one store and see where the hub's figures are off from it by more than $50. Comparing writes nothing.</p></div>
+            <div class="ad-panel">
+              <div class="ad-bar">
+                <div class="ad-seg" data-ad-seg="cmp" role="group" aria-label="Which report"><button type="button" aria-pressed="true" data-v="sales">Sales report · by month</button><button type="button" aria-pressed="false" data-v="items">Item sales · by category</button></div>
+              </div>
+              <div class="ad-body" data-ad-show="cmp:sales">
+                <p class="ad-note">A Clover <b>Sales Report</b> CSV. Each month's Net Sales is compared with the daily totals in D1. Days you set in Manual entries are kept and skipped. <b>Re-snapshot This Month</b> on a month that is off re-pulls that month from Clover, which rewrites its stored totals.</p>
+                <div class="ad-row">
+                  <label class="ad-field"><span>Store</span><select id="srr-store" class="ad-sel" data-ad-stores="one"></select></label>
+                  <label class="ad-drop"><span>Upload a CSV file</span><input id="srr-file" type="file" accept=".csv,text/csv" class="hidden" onchange="onSrrFileChosen(event)"></label>
+                  <span class="ad-act"><button type="button" onclick="runSrrParse()" class="ad-btn ad-primary">Parse &amp; compare</button><span class="ad-tag ad-ro">Read-only</span></span>
+                </div>
+                <textarea id="srr-csv" rows="8" class="ad-ta" placeholder="Paste the entire Sales Report CSV here, or upload a file above…"></textarea>
+                <div id="srr-status" class="hidden text-sm rounded-lg px-4 py-3 border"></div>
+                <div id="srr-results"></div>
+              </div>
+              <div class="ad-body" data-ad-show="cmp:items">
+                <p class="ad-note">A Clover <b>Revenue Item Sales</b> CSV. Its L2 category totals are compared with the stored item snapshots for the same dates. <b>Re-snapshot Range</b> re-pulls item sales from Clover for the whole period, which rewrites them.</p>
+                <div class="ad-row">
+                  <label class="ad-field"><span>Store</span><select id="isr-store" class="ad-sel" data-ad-stores="one"></select></label>
+                  <label class="ad-drop"><span>Upload a CSV file</span><input id="isr-file" type="file" accept=".csv,text/csv" class="hidden" onchange="onIsrFileChosen(event)"></label>
+                  <span class="ad-act"><button type="button" onclick="runIsrParse()" class="ad-btn ad-primary">Parse &amp; compare</button><span class="ad-tag ad-ro">Read-only</span></span>
+                </div>
+                <textarea id="isr-csv" rows="6" class="ad-ta" placeholder="Paste a Clover Revenue Item Sales CSV here, or upload a file above…"></textarea>
+                <div id="isr-status" class="hidden text-sm rounded-lg px-4 py-3 border"></div>
+                <div id="isr-results"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ═══ Bargain Lane › Costs (was Item Master Costs + L3 Category Costs) ═══ -->
+          <div class="ad-tool" data-tool="costs" hidden>
+            <button type="button" class="ad-back" onclick="adCloseTool()">‹ Admin tools</button>
+            <div><span class="ad-scope">Bargain Lane</span><h2 class="ad-h2">Costs</h2>
+              <p class="ad-lede">What the Retail Summary uses for CPU, Ext Cost, Gross Profit and GPM% per L2/L3 category. An item's own cost (IM#) always wins; a category's flat cost covers items that have none. Re-pull past days in Re-pull &amp; rebuild to carry new costs into history.</p></div>
+            <div class="ad-panel">
+              <div class="ad-bar">
+                <div class="ad-seg" data-ad-seg="cost" role="group" aria-label="Which costs"><button type="button" aria-pressed="true" data-v="im">Item costs</button><button type="button" aria-pressed="false" data-v="l3">Category costs</button></div>
+              </div>
+              <div class="ad-body" data-ad-show="cost:im">
+                <div class="ad-row">
+                  <label class="ad-field" style="flex:1 1 260px"><span>Item Master export (.html, .csv or .json)</span>
+                    <input id="im-file" type="file" accept=".html,.htm,.csv,.json,.txt" class="block w-full text-sm text-opl-ink dark:text-op-ink file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-[#3BB54A]/10 file:text-[#3BB54A] hover:file:bg-[#3BB54A]/20"></label>
+                  <span class="ad-act"><button type="button" onclick="importItemCosts()" class="ad-btn ad-primary">Upload</button><span class="ad-tag ad-save">Saves changes</span></span>
+                  <button type="button" onclick="refreshItemCostsStatus()" class="ad-btn">Refresh status</button>
+                </div>
+                <div id="im-status" class="hidden text-sm rounded-lg px-4 py-3 border"></div>
+                <div id="im-summary" class="ad-note">Status: not loaded yet.</div>
+                <!-- Per-item editor (edit/add single costs without re-uploading) -->
+                <details id="im-editor" class="border-t border-[rgba(20,16,8,0.08)] dark:border-op-border pt-4">
+                  <summary onclick="ensureItemCostsLoaded()" class="cursor-pointer text-sm font-medium text-opl-ink dark:text-op-ink select-none">Edit individual items</summary>
+                  <div class="mt-3 space-y-3">
+                    <p class="ad-note">Fix or add a single item's cost without re-uploading the whole file. Changes merge into the existing master.</p>
+                    <input id="ie-search" type="text" placeholder="Search by item # or description…" class="ad-in" style="width:100%">
+                    <div id="ie-list" class="max-h-[360px] overflow-y-auto border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-lg divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></div>
+                    <div class="ad-row">
+                      <label class="ad-field"><span>New item #</span><input id="ie-new-no" type="text" inputmode="numeric" placeholder="1234" class="ad-in" style="width:110px"></label>
+                      <label class="ad-field"><span>Cost $</span><input id="ie-new-cost" type="number" step="0.01" min="0" placeholder="0.89" class="ad-in" style="width:110px"></label>
+                      <label class="ad-field" style="flex:1 1 160px"><span>Description (optional)</span><input id="ie-new-desc" type="text" placeholder="" class="ad-in"></label>
+                      <button type="button" onclick="ieAddItem()" class="ad-btn">Add</button>
+                    </div>
+                    <div id="ie-status" class="hidden text-sm rounded-lg px-4 py-3 border"></div>
+                    <div class="ad-row">
+                      <span class="ad-act"><button type="button" onclick="saveItemCostEdits()" class="ad-btn ad-primary">Save changes</button><span class="ad-tag ad-save">Saves changes</span></span>
+                      <span id="ie-dirty" class="ad-note">No pending changes.</span>
+                    </div>
+                  </div>
+                </details>
+              </div>
+              <div class="ad-body" data-ad-show="cost:l3">
+                <p class="ad-note">A flat cost per unit for each L3 category (e.g. <code>FG BL SEASONAL - CHRISTMAS - GM</code>), used when an item has no Item Master cost.</p>
+                <div class="ad-row">
+                  <input id="cc-search" type="text" placeholder="Filter categories…" class="ad-in" style="flex:1 1 200px">
+                  <label class="flex items-center gap-1.5 text-xs text-opl-inkDim dark:text-op-inkDim whitespace-nowrap cursor-pointer select-none" style="height:36px"><input id="cc-sales-only" type="checkbox" onchange="renderCategoryCosts()" class="rounded"> With sales only</label>
+                  <span class="ad-act"><button type="button" onclick="saveCategoryCosts()" class="ad-btn ad-primary">Save costs</button><span class="ad-tag ad-save">Saves changes</span></span>
+                  <button type="button" onclick="loadCategoryCosts()" class="ad-btn">Reload</button>
+                </div>
+                <div id="cc-status" class="hidden text-sm rounded-lg px-4 py-3 border"></div>
+                <div id="cc-summary" class="ad-note">Status: not loaded yet.</div>
+                <div id="cc-list" class="max-h-[460px] overflow-y-auto border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-lg divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ═══ Bargain Lane › Categories (was Custom Sales Categorization) ═══
+               The four tables were stacked; each now has its own switch with its row count
+               (adCountCategoryRows). Hidden tables stay in the DOM, so Save still saves all four. -->
+          <div class="ad-tool" data-tool="categories" hidden>
+            <button type="button" class="ad-back" onclick="adCloseTool()">‹ Admin tools</button>
+            <div><span class="ad-scope">Bargain Lane</span><h2 class="ad-h2">Categories</h2>
+              <p class="ad-lede">Give items that sold with no Clover category, or only a guessed one, a home in an L2 and L3. Assignments apply to every store from the next snapshot; re-pull the range to update history.</p></div>
+            <div class="ad-panel">
+              <div class="ad-bar">
+                <label class="ad-field"><span>Store</span><select id="overrides-store" class="ad-sel" data-ad-stores="one"></select></label>
+                <label class="ad-field"><span>Start</span><input id="overrides-start" type="date" class="ad-in"></label>
+                <label class="ad-field"><span>End</span><input id="overrides-end" type="date" class="ad-in"></label>
+                <div class="ad-right"><span class="ad-act"><button type="button" onclick="loadUncategorized()" class="ad-btn ad-primary">Load uncategorized items</button><span class="ad-tag ad-ro">Read-only</span></span></div>
+              </div>
+              <div class="ad-body">
+                <div id="overrides-status" class="hidden text-sm rounded-lg px-4 py-3 border"></div>
+                <div id="overrides-table-wrap" class="hidden space-y-4">
+                  <div class="ad-seg" data-ad-seg="cat" role="group" aria-label="Which items">
+                    <button type="button" aria-pressed="true" data-v="items">No category<span class="ad-n" data-ad-count="overrides-tbody"></span></button><button type="button" aria-pressed="false" data-v="fallback">Other / unmapped<span class="ad-n" data-ad-count="overrides-fallback-tbody"></span></button><button type="button" aria-pressed="false" data-v="rules">L3 rules<span class="ad-n" data-ad-count="overrides-l3rules-tbody"></span></button><button type="button" aria-pressed="false" data-v="l3">Unmapped Clover categories<span class="ad-n" data-ad-count="overrides-l3-tbody"></span></button>
+                  </div>
+                  <div id="overrides-items-section" data-ad-show="cat:items">
+                    <p class="ad-note mb-3">Items with no Clover catalog category. Assign each to an L2 and optionally save a prefix rule.</p>
+                    <div class="overflow-x-auto border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl">
+                      <table class="min-w-full text-sm">
+                        <thead class="bg-[rgba(20,16,8,0.03)] dark:bg-op-panelHi text-xs text-opl-inkDim dark:text-op-inkDim">
+                          <tr>
+                            <th class="px-3 py-2 text-left">Item Name</th>
+                            <th class="px-3 py-2 text-right">Qty</th>
+                            <th class="px-3 py-2 text-right">Net</th>
+                            <th class="px-3 py-2 text-left">Assign L2</th>
+                            <th class="px-3 py-2 text-left">Assign L3</th>
+                            <th class="px-3 py-2 text-left">Also add rule</th>
+                          </tr>
+                        </thead>
+                        <tbody id="overrides-tbody" class="divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></tbody>
+                      </table>
+                    </div>
+                    <p id="overrides-items-empty" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim italic">No Custom Sales items in this range.</p>
+                  </div>
+
+                  <div id="overrides-fallback-section" data-ad-show="cat:fallback">
+                    <p class="ad-note mb-3">These reached the right L2 by a guess — a name rule, an IM number, a pattern, or an existing override — so they have no real L3 and fold into the <em>Other / unmapped</em> row. Assign an L3 to give each one a home. Ranked by gross line revenue, which runs above the net shown on the dashboard.</p>
+                    <div class="overflow-x-auto border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl">
+                      <table class="min-w-full text-sm">
+                        <thead class="bg-[rgba(20,16,8,0.03)] dark:bg-op-panelHi text-xs text-opl-inkDim dark:text-op-inkDim">
+                          <tr>
+                            <th class="px-3 py-2 text-left">Item Name</th>
+                            <th class="px-3 py-2 text-left">Matched by</th>
+                            <th class="px-3 py-2 text-right">Qty</th>
+                            <th class="px-3 py-2 text-right">Gross</th>
+                            <th class="px-3 py-2 text-left">Assign L2</th>
+                            <th class="px-3 py-2 text-left">Assign L3</th>
+                            <th class="px-3 py-2 text-left">Also add rule</th>
+                          </tr>
+                        </thead>
+                        <tbody id="overrides-fallback-tbody" class="divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></tbody>
+                      </table>
+                    </div>
+                    <p id="overrides-fallback-empty" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim italic">No fallback-resolved items in this range.</p>
+                    <p id="overrides-fallback-note" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim mt-2"></p>
+                  </div>
+
+                  <div id="overrides-l3rules-section" data-ad-show="cat:rules">
+                    <p class="ad-note mb-3">A rule names the L3 row for every product it matches, without changing which L2 they book to. One IM-number rule covers every product name sharing that number. First match wins, so put the more specific rule first. A rule only fires on lines already booked to its L3's own L2 &mdash; the <em>Fires on</em> column says which that is.</p>
+                    <div class="overflow-x-auto border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl">
+                      <table class="min-w-full text-sm">
+                        <thead class="bg-[rgba(20,16,8,0.03)] dark:bg-op-panelHi text-xs text-opl-inkDim dark:text-op-inkDim">
+                          <tr>
+                            <th class="px-3 py-2 text-left">#</th>
+                            <th class="px-3 py-2 text-left">Match</th>
+                            <th class="px-3 py-2 text-left">Names this L3</th>
+                            <th class="px-3 py-2 text-left">Fires on</th>
+                            <th class="px-3 py-2 text-left">Remove</th>
+                          </tr>
+                        </thead>
+                        <tbody id="overrides-l3rules-tbody" class="divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></tbody>
+                      </table>
+                    </div>
+                    <p id="overrides-l3rules-empty" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim italic">No L3 rules yet.</p>
+                  </div>
+
+                  <div id="overrides-l3-section" data-ad-show="cat:l3">
+                    <p class="ad-note mb-3">Clover catalog categories that aren't mapped to an L2 yet. One assignment covers every item in that category across all stores.</p>
+                    <div class="overflow-x-auto border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl">
+                      <table class="min-w-full text-sm">
+                        <thead class="bg-[rgba(20,16,8,0.03)] dark:bg-op-panelHi text-xs text-opl-inkDim dark:text-op-inkDim">
+                          <tr>
+                            <th class="px-3 py-2 text-left">Clover L3 Category</th>
+                            <th class="px-3 py-2 text-right">Qty</th>
+                            <th class="px-3 py-2 text-right">Net</th>
+                            <th class="px-3 py-2 text-left">Assign L2</th>
+                          </tr>
+                        </thead>
+                        <tbody id="overrides-l3-tbody" class="divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></tbody>
+                      </table>
+                    </div>
+                    <p id="overrides-l3-empty" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim italic">No unmapped L3 categories in this range.</p>
+                  </div>
+
+                  <div class="ad-row">
+                    <span class="ad-act"><button type="button" onclick="saveCategoryOverrides()" class="ad-btn ad-primary">Save overrides</button><span class="ad-tag ad-save">Saves changes</span></span>
+                    <span class="ad-act"><button type="button" onclick="resnapshotRecent()" class="ad-btn ad-hist">Re-snapshot selected range</button><span class="ad-tag ad-hist">Rewrites history</span></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ═══ Bargain Lane › Re-pull & rebuild ═══
+               Everything that fetches from Clover again or rebuilds from stored snapshots.
+               Backfill Sales (Last 13 Weeks) was retired here (Brian, 2026-11-19): it re-pulled
+               91 days for every store whether or not a day was off — the blind range re-pull
+               destructive-ops rule 1 forbids. -->
+          <div class="ad-tool" data-tool="repull" hidden>
+            <button type="button" class="ad-back" onclick="adCloseTool()">‹ Admin tools</button>
+            <div><span class="ad-scope">Bargain Lane · Clover</span><h2 class="ad-h2">Re-pull &amp; rebuild</h2>
+              <p class="ad-lede">Fetch days from Clover again, or rebuild the summaries made from them. Everything here rewrites stored history.</p></div>
+            <div class="ad-warnbox"><b>Find the days first.</b> Data health (item snapshots) and Compare with Clover (daily totals) list the days that are actually off. Re-pulling a day that is already right can drop refunds that have aged out of Clover's window.
+              <button type="button" class="ad-btn ad-small" style="margin-left:6px" onclick="adOpenTool('health')">Open Data health</button></div>
+            <div class="ad-panel ad-alist">
+              <div>
+                <div><h3>Re-snapshot item sales</h3>
+                  <p>Re-builds item sales snapshots from Clover for a day. Set <em>Days</em> above 1 to fill a range ending on the date. Use it after a categorization fix, then rebuild week summaries.</p></div>
+                <div class="ad-row">
+                  <label class="ad-field"><span>Store</span><select id="resnapshot-store" class="ad-sel" data-ad-stores="all"></select></label>
+                  <label class="ad-field"><span>End date</span><input id="resnapshot-date" type="date" class="ad-in"></label>
+                  <label class="ad-field"><span>Days (incl. end date)</span><input id="resnapshot-days" type="number" min="1" max="30" value="1" class="ad-in" style="width:96px"></label>
+                  <span class="ad-act"><button type="button" onclick="runReSnapshot()" class="ad-btn ad-hist">Re-snapshot item sales</button><span class="ad-tag ad-hist">Rewrites history</span></span>
+                </div>
+                <div id="resnapshot-status" class="hidden text-sm rounded-lg px-4 py-3 border"></div>
+              </div>
+              <div>
+                <div><h3>Rebuild week summaries</h3>
+                  <p>Re-rolls the trailing 13 weeks of week summaries from the stored snapshots. The T13 Combined Store Units Sold table reads these. Run it after a re-snapshot.</p></div>
+                <div class="ad-row">
+                  <span class="ad-act"><button type="button" onclick="runRebuildWeekSummaries()" class="ad-btn ad-hist">Rebuild week summaries</button><span class="ad-tag ad-hist">Rewrites history</span></span>
+                  <div id="rebuild-weeks-status" class="hidden text-sm rounded-lg px-4 py-3 border flex-1"></div>
+                </div>
+              </div>
+              <div>
+                <div><h3>Backfill category basket counts</h3>
+                  <p>Adds <em>how many baskets touched each category</em> to the last 13 weeks of item snapshots, for the T13 Penetration view. <b>Adds two fields only</b>: sales figures, categories and totals are never rewritten. A day whose Clover fetch comes back more than 1% short is skipped and reported. Takes several minutes; rebuild week summaries afterwards.</p></div>
+                <div class="ad-row">
+                  <span class="ad-act"><button type="button" onclick="runBackfillCategoryOrders()" class="ad-btn ad-hist">Backfill basket counts</button><span class="ad-tag ad-hist">Rewrites history</span></span>
+                  <div id="backfill-orders-status" class="hidden text-sm rounded-lg px-4 py-3 border flex-1"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ═══ Bargain Lane › Shelf stickers (was Sticker template) ═══ -->
+          <div class="ad-tool" data-tool="stickers" hidden>
+            <button type="button" class="ad-back" onclick="adCloseTool()">‹ Admin tools</button>
+            <div><span class="ad-scope">Bargain Lane · every store</span><h2 class="ad-h2">Shelf stickers</h2>
+              <p class="ad-lede">What the shelf sticker prints, and where. Positions and sizes are dots on a 1&nbsp;inch square label at 203&nbsp;dpi, so 203 is the far edge. Saving applies to every store the next time anyone prints.</p></div>
+            <div class="ad-panel"><div class="ad-body">
+              <div id="st-bar"></div>
+              <input id="st-file" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" class="hidden" onchange="stImageChosen(this)">
+              <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_232px]">
+                <div id="st-fields" class="space-y-5"></div>
+                <div>
+                  <div id="st-preview"></div>
+                  <p class="text-[11px] text-opl-inkDim dark:text-op-inkDim mt-2 leading-snug"><b>Positions and heights are exact</b> &mdash; they are the same dots the printer is given. <b>Widths are an estimate</b>: the printer's font is proportional and this one is not, so a line may run shorter or longer than shown. Print a test label before trusting a roll to it.</p>
+                </div>
+              </div>
+              <div id="st-warn" class="hidden"></div>
+              <div class="ad-row">
+                <button type="button" onclick="stTest()" class="ad-btn">Print test label</button>
+                <button type="button" onclick="stReset()" class="ad-btn ad-danger">Delete all &amp; use stock</button>
+              </div>
+              <div id="st-status" class="ad-note"></div>
+            </div></div>
+          </div>
+
+          <!-- ═══ Any other business: no tools yet (filled by adOpenTool) ═══ -->
+          <div class="ad-tool" data-tool="biz" hidden>
+            <button type="button" class="ad-back" onclick="adCloseTool()">‹ Admin tools</button>
+            <div><span class="ad-scope" id="ad-biz-scope"></span><h2 class="ad-h2" id="ad-biz-title"></h2></div>
+            <div class="ad-panel"><div class="ad-body">
+              <div style="font-size:16px;font-weight:600" id="ad-biz-empty"></div>
+              <p class="ad-note" id="ad-biz-note"></p>
+            </div></div>
+          </div>
+
+        </section>
       </div>
     </div><!-- end #page-admin-settings -->
 
@@ -17819,18 +17874,9 @@
   }
   window.runRebuildWeekSummaries = runRebuildWeekSummaries;
 
-  // Loop the snapshot endpoint over the trailing 91 days to backfill
-  // daily_sales totals with the current reconciliation rules
-  // (Phase 2A: refunds subtracted). Each date is one worker invocation
-  // so subrequest budget is per-day, not cumulative.
-  // Resilience:
-  //   - Each date gets up to 2 retries on transient errors
-  //   - Failed dates are remembered; re-running picks them up
-  //   - If the auto-rebuild fails, retry it 2× with backoff before giving up
-  let _backfillFailed = []; // sticky list of failed dates from prior runs
   // Backfill per-category basket counts across the trailing 13 weeks, one
   // STORE-DAY per worker invocation so each request's Clover fetch and
-  // subrequest budget stays small. Mirrors runBackfillSales13w's resilience:
+  // subrequest budget stays small. Resilience:
   // retries per unit, a sticky failed list so re-running resumes, and a
   // per-unit result so skipped days are visible rather than silent.
   let _ordFillFailed = [];
@@ -17906,102 +17952,6 @@
     setStatus(msg, failed.length ? 'error' : 'ok');
   }
   window.runBackfillCategoryOrders = runBackfillCategoryOrders;
-
-  async function runBackfillSales13w() {
-    const statusEl = el('backfill-sales-status');
-    const setStatus = (msg, tone) => {
-      statusEl.classList.remove('hidden');
-      const colors = {
-        info:  'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-300',
-        ok:    'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-700 text-green-700 dark:text-green-300',
-        error: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-700 text-red-700 dark:text-red-300',
-      };
-      statusEl.className = `text-sm rounded-lg px-4 py-3 border flex-1 ${colors[tone]}`;
-      statusEl.innerHTML = msg;
-    };
-
-    // If the previous run left dates incomplete, only retry those.
-    let dateList;
-    if (_backfillFailed.length) {
-      dateList = [..._backfillFailed];
-    } else {
-      // Build descending date list: today, yesterday, ... back 91 days.
-      const days = 91;
-      dateList = [];
-      const today = new Date();
-      today.setHours(12, 0, 0, 0);
-      for (let i = 0; i < days; i++) {
-        const d = new Date(today.getTime() - i * 86400000);
-        dateList.push(d.toISOString().slice(0, 10));
-      }
-    }
-    const total = dateList.length;
-
-    const fetchWithRetry = async (url, opts, attempts = 3) => {
-      let lastErr;
-      for (let i = 0; i < attempts; i++) {
-        try {
-          const resp = await fetch(url, opts);
-          const data = await resp.json();
-          if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
-          return data;
-        } catch (err) {
-          lastErr = err;
-          if (i < attempts - 1) await new Promise(r => setTimeout(r, 800 * (i + 1))); // 800, 1600ms
-        }
-      }
-      throw lastErr;
-    };
-
-    let done = 0;
-    const failed = [];
-    const startTime = Date.now();
-
-    // Sequential (BATCH=1) to stay well under Clover's per-merchant
-    // rate limits. The worker now retries 429s internally with backoff,
-    // so individual dates self-heal — no need to push batch concurrency.
-    const BATCH = 1;
-    for (let i = 0; i < dateList.length; i += BATCH) {
-      const batch = dateList.slice(i, i + BATCH);
-      const elapsed = Math.round((Date.now() - startTime) / 1000);
-      setStatus(`Backfilling sales (${done}/${total}) — current batch: ${batch.join(', ')} · ${elapsed}s elapsed…`, 'info');
-      const settled = await Promise.allSettled(batch.map(date =>
-        fetchWithRetry(
-          `${WORKER_BASE}?action=snapshot&store=all&date=${encodeURIComponent(date)}`,
-          { method: 'POST', credentials: 'include'}
-        ).then(data => ({ date, data }))
-      ));
-      for (let j = 0; j < settled.length; j++) {
-        const r = settled[j];
-        const date = batch[j];
-        if (r.status === 'fulfilled') {
-          const storeErrs = Object.entries(r.value.data.results || {}).filter(([, v]) => v?.error);
-          if (storeErrs.length) failed.push(date); else done++;
-        } else {
-          failed.push(date);
-        }
-      }
-    }
-    _backfillFailed = failed; // remember for next click
-
-    // Auto-rebuild with retry; on persistent failure, prompt manual rebuild.
-    setStatus(`Backfill complete (${done}/${total}). Rebuilding week summaries…`, 'info');
-    try {
-      const data = await fetchWithRetry(
-        `${WORKER_BASE}?action=rebuild-week-summaries`,
-        { method: 'POST', credentials: 'include'},
-        3
-      );
-      const failNote = failed.length
-        ? `<br><span class="text-xs">${failed.length} date(s) still failed — click <strong>Backfill Last 13 Weeks</strong> again to retry just those.</span>`
-        : '';
-      setStatus(`<strong>Done</strong> — ${done}/${total} dates re-snapshotted, ${data.written} week summaries rebuilt.${failNote}`,
-        failed.length ? 'error' : 'ok');
-    } catch (err) {
-      setStatus(`Backfill done (${done}/${total}). Rebuild failed: ${err.message}<br><span class="text-xs">Click <strong>Rebuild Week Summaries</strong> above to retry the rebuild manually.</span>`, 'error');
-    }
-  }
-  window.runBackfillSales13w = runBackfillSales13w;
 
   // ── Manual override helpers ────────────────────────────────────
   // Shared status renderer + POST function for the manual-override
@@ -25837,9 +25787,157 @@
           rs.value = ymdShift(today, -29);
         }
         if (typeof loadRepairBackups === 'function') loadRepairBackups();
+        adEnter();
       }
     };
   })();
+
+  // ── Admin Settings page shell (2026-11-19) ────────────────────────────────
+  // The rail picks ONE tool and the pane shows it; on a phone the rail is the page and a
+  // tool opens over it, with "‹ Admin tools" to go back. The tools' own code is untouched:
+  // every id it reads is still in the markup, this only moves it around.
+  const AD_LAST = 'retjg.adminTool';            // the last tool, per tab (sessionStorage)
+  const adIsPhone = () => window.matchMedia('(max-width: 1023.98px)').matches;
+  const adWrap = () => document.getElementById('ad-wrap');
+
+  // Every store picker on the page, filled from the dashboard's own store list rather than
+  // seven typed-out copies of it. Closed stores (BUDGET_ONLY_STORES: Holland) come last,
+  // under "Closed", and stay pickable — their history can still need a fix.
+  function adStoreOptions(withAll) {
+    const split = s => { const m = String(s).match(/^([^/\s]+)\/\S+\s+(.+)$/); return m ? [m[1], m[2]] : null; };
+    const opt = ([code, name]) => `<option value="${code}">${code} – ${name}</option>`;
+    const closed = BUDGET_ONLY_STORES.map(split).filter(Boolean);
+    return (withAll ? '<option value="all">All Stores</option>' : '')
+      + STORES.map(split).filter(Boolean).map(opt).join('')
+      + (closed.length ? `<optgroup label="Closed">${closed.map(opt).join('')}</optgroup>` : '');
+  }
+  document.querySelectorAll('#page-admin-settings select[data-ad-stores]')
+    .forEach(s => { s.innerHTML = adStoreOptions(s.dataset.adStores === 'all'); });
+
+  // A group for every business this account reaches besides Bargain Lane, from the same list
+  // the landing page draws (auth-me), so a new business shows up here with no edit.
+  function adRenderBizGroups() {
+    const host = document.getElementById('ad-biz-groups');
+    if (!host) return;
+    const icon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="6" y1="12" x2="18" y2="12"/></svg>';
+    host.innerHTML = userBusinesses(currentUser).filter(b => b.id !== 'bl').map(b =>
+      `<div class="ad-group" data-group="${escapeHtml(b.id)}"><div class="ad-ghead">${escapeHtml(b.name)}</div>
+        <button type="button" class="ad-item" data-tool="biz" data-biz="${escapeHtml(b.id)}" data-kw="${escapeHtml(b.name)}">${icon}<span>No tools yet</span><span class="ad-chev">›</span></button></div>`).join('');
+    adFilter();
+  }
+
+  function adShow(id, biz) {
+    const wrap = adWrap();
+    if (!wrap) return;
+    const known = biz ? userBusinesses(currentUser).find(b => b.id === biz)
+      : wrap.querySelector(`.ad-tool[data-tool="${id}"]`);
+    if (!known) { id = 'health'; biz = null; }
+    const tool = biz ? 'biz' : id;
+    wrap.querySelectorAll('.ad-tool').forEach(t => { t.hidden = t.dataset.tool !== tool; });
+    wrap.querySelectorAll('.ad-item').forEach(b => {
+      const on = biz ? b.dataset.biz === biz : (b.dataset.tool === id && !b.dataset.biz);
+      if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+    });
+    if (biz) {
+      el('ad-biz-scope').textContent = known.name;
+      el('ad-biz-title').textContent = known.name;
+      el('ad-biz-empty').textContent = `No admin tools for ${known.name} yet`;
+      el('ad-biz-note').textContent = `When one is built it appears here, and only for people who can see ${known.name}.`
+        + (biz === 'live' ? " Live Sales $ for a day is still entered in Bargain Lane › Manual entries, because live sales are still inside Bargain Lane's totals." : '');
+    }
+    try { sessionStorage.setItem(AD_LAST, biz ? 'biz:' + biz : id); } catch (_) {}
+  }
+  function adOpenTool(id, biz) {
+    adShow(id, biz);
+    adWrap().classList.add('ad-open');
+    if (adIsPhone()) window.scrollTo(0, 0);
+  }
+  function adCloseTool() {
+    adWrap().classList.remove('ad-open');
+    window.scrollTo(0, 0);
+  }
+  // Entering the page: the desktop reopens the last tool; a phone starts on the list.
+  function adEnter() {
+    adRenderBizGroups();
+    let last = null;
+    try { last = sessionStorage.getItem(AD_LAST); } catch (_) {}
+    const [id, biz] = last && last.startsWith('biz:') ? ['biz', last.slice(4)] : [last || 'health', null];
+    adShow(id, biz);
+    adWrap().classList.toggle('ad-open', !adIsPhone());
+  }
+
+  // Find a tool: by its name, its group, or the words of what it used to be called.
+  function adFilter() {
+    const q = ((el('ad-q') || {}).value || '').trim().toLowerCase();
+    let any = false;
+    document.querySelectorAll('#ad-rail .ad-group').forEach(g => {
+      const head = g.querySelector('.ad-ghead').textContent;
+      let shown = 0;
+      g.querySelectorAll('.ad-item').forEach(b => {
+        const hit = !q || `${b.textContent} ${b.dataset.kw || ''} ${head}`.toLowerCase().includes(q);
+        b.hidden = !hit; if (hit) shown++;
+      });
+      g.hidden = !shown; if (shown) any = true;
+    });
+    const none = el('ad-nomatch');
+    if (none) { none.hidden = any; none.textContent = `No tool matches “${q}”.`; }
+  }
+
+  // Switches inside a tool: an element with data-ad-show="seg:value …" shows when every named
+  // switch is on that value.
+  function adApplySegs(tool) {
+    const on = {};
+    tool.querySelectorAll('[data-ad-seg]').forEach(s => {
+      const b = s.querySelector('[aria-pressed="true"]'); on[s.dataset.adSeg] = b && b.dataset.v;
+    });
+    tool.querySelectorAll('[data-ad-show]').forEach(n => {
+      n.hidden = !n.dataset.adShow.split(' ').every(t => { const [k, v] = t.split(':'); return on[k] === v; });
+    });
+  }
+  const adSeg = name => {
+    const b = document.querySelector(`#page-admin-settings [data-ad-seg="${name}"] [aria-pressed="true"]`);
+    return b && b.dataset.v;
+  };
+
+  // Manual entries: one save button for what used to be four.
+  function adSaveManual() {
+    const sales = adSeg('me-kind') === 'sales', csv = adSeg('me-mode') === 'csv';
+    return sales ? (csv ? runManualSalesBulk() : runManualSalesSingle())
+                 : (csv ? runManualLaborBulk() : runManualLaborSingle());
+  }
+
+  // Categories: each switch carries its table's row count, kept current as the tables refill.
+  function adCountCategoryRows() {
+    document.querySelectorAll('#page-admin-settings [data-ad-count]').forEach(n => {
+      const tb = document.getElementById(n.dataset.adCount);
+      n.textContent = tb ? tb.querySelectorAll(':scope > tr').length : '';
+    });
+  }
+
+  (function adWire() {
+    const rail = el('ad-rail'), pane = el('ad-pane');
+    if (!rail || !pane) return;
+    rail.addEventListener('click', e => {
+      const b = e.target.closest('.ad-item');
+      if (b) adOpenTool(b.dataset.tool, b.dataset.biz || null);
+    });
+    el('ad-q').addEventListener('input', adFilter);
+    pane.addEventListener('click', e => {
+      const b = e.target.closest('[data-ad-seg] button');
+      if (!b) return;
+      b.parentElement.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+      adApplySegs(b.closest('.ad-tool'));
+    });
+    pane.querySelectorAll('.ad-tool').forEach(adApplySegs);
+    const mo = new MutationObserver(adCountCategoryRows);
+    document.querySelectorAll('#page-admin-settings [data-ad-count]').forEach(n => {
+      const tb = document.getElementById(n.dataset.adCount);
+      if (tb) mo.observe(tb, { childList: true });
+    });
+  })();
+  window.adOpenTool = adOpenTool;
+  window.adCloseTool = adCloseTool;
+  window.adSaveManual = adSaveManual;
 
   // Marketing sidebar dropdown: toggle (or force) the Ad Reporting / Flow
   // Calendar sub-menu. Pass true/false to force open/closed; omit to toggle.

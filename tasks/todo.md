@@ -1,3 +1,30 @@
+# Admin Settings, phase 1: rail + one tool at a time, for every business (2026-11-19) — branch `claude/admin-redesign`
+
+**Ask (Brian):** move Users into Admin, then Admin onto the Landing page — but first redesign Admin so it works
+for every business, not just Bargain Lane. Preview `_preview/admin-preview.html` (gitignored) approved with three
+decisions: (1) retire Backfill Last 13 Weeks; (2) announcements pick businesses, plus a "whole hub" option;
+(3) Landing gets a gear button visible to the superuser only. Then: "start phase 1".
+
+- [x] `#page-admin-settings` rebuilt as a rail (Hub · Bargain Lane · one group per other business from
+      `userBusinesses`) + one tool at a time; a phone opens on the list and a tool opens over it.
+      Nine stacked panels → Announcement + seven Bargain Lane tools: Data health, Manual entries, Compare with
+      Clover, Costs, Categories, Re-pull & rebuild, Shelf stickers. Every one of the 91 ids the tools read kept.
+- [x] Seven typed-out store lists → filled from `STORES` + `BUDGET_ONLY_STORES` (Holland under "Closed").
+- [x] Buttons labelled Read-only / Saves changes / Rewrites history; history-rewriting buttons are amber.
+- [x] Manual Sales Override + Manual Labor Hours → one form, two switches, one Save (`adSaveManual` → the
+      same four functions). Sales Report + Item Sales reconciliation → one tool with a switch; Item Master +
+      L3 costs likewise; Categories' four stacked tables → switches carrying live row counts.
+- [x] Backfill Last 13 Weeks retired: button, status box, `runBackfillSales13w`, `_backfillFailed`. The
+      worker's `?action=snapshot` it looped over is shared, so nothing to remove there.
+- [x] Tests: new `test-admin-page.mjs` 16/0 (10 fail on main); new `browser-admin-page.mjs` 75/0 incl.
+      contrast ≥ 5.21:1 over 963 checks in light / dark / pure black / Halloween and no sideways scroll at
+      375px; 2/2 mutants caught. `browser-export-dates` 13/0. `npm test` 12,920 / 146. Cache v316.
+- [ ] Brian: review + merge (frontend only, Pages deploys it; no worker change).
+
+**Not in phase 1:** Users moving in + `list-users` returning grants and losing its Bargain Lane gate (phase 2,
+worker); announcement audience (phase 2, worker); Landing gear + removing Users/Admin Settings from the
+Bargain Lane sidebar (phase 3). The page title stays "Admin Settings" until it moves.
+
 # DTC Executive Summary: Ecommerce row + Retail & Bins and Ecommerce PDFs (2026-11-19) — branch `claude/dtc-exec-summary`
 
 **Ask (James, by email, for the Fri Nov 20 send):** rename to "DTC Executive Summary", tagline "All Stores, Live Sales, and
