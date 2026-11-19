@@ -20,7 +20,7 @@ had to be invited into one and then given the other from Edit (superuser only).
       skipped instead of refused, BL-manager-needs-a-store removed, per-grant role honoured, all caught;
       the third survived until a non-BL smuggle case was added). New `scripts/browser-invite-multi-business.mjs`
       92/0 in dark + light at 1300 and 375 px, every added text style ≥ 4.5:1 measured on the modal; it
-      times out on main's page. `npm test` 12,594 / 142 green. Cache v313, shell-cache pin re-recorded.
+      times out on main's page. `npm test` 12,594 / 142 green. Cache v314 (main took v313 for #397), shell-cache pin re-recorded.
       Worker dry run 1326.45 KiB, wrangler.toml unchanged from main.
 - [ ] Brian: deploy the worker, then merge.
 
@@ -30,6 +30,21 @@ store codes not in `business_units` are now refused (400). The old page never se
 `allUnits`) writes units NULL, which `allowedUnits` (`worker.js` `if (businessId === 'bl') return
 unitList(g.units)`) reads as NO stores for a manager, so ticking it locks a BL manager out. Reproduced in
 the worker harness: u-mgr1's auth-me `stores` went `["BL1"]` → `[]` after that save. Left for its own change.
+
+# Remove the unused liveMtd (2026-11-19)
+
+**Ask (Brian):** "yes, remove it and open the PR". Since #396, the Live Sales card shows the landing's
+range, and nothing reads its old month-to-date figure.
+
+- [x] Removed from `index.html`: `mtdLive` in `bargainLaneFigures()` (the variable, the month loop's add,
+      the returned `liveMtd`), `fig.liveMtd = m.liveMtd` in `renderLanding()`, and `liveMtd: null` in
+      `bargainLaneRangeFigures()`. Its entry in test-today-auction-reads' allowlist goes too (that test
+      fails on an entry that no longer matches code). `mtdActual` / `mtdBudget` are untouched. Cache v313.
+- [x] `npm test` 12,565 / 142 green (one fewer: the dropped allowlist check). browser-landing-range 29/0;
+      browser-live-sales 340, same 4 failures as main.
+- [ ] Brian: merge (Pages deploys the frontend).
+
+# Landing: Live Sales card laid out like the others, today not the month (2026-11-19)
 
 **Ask (Brian):** "fix the live sales card so it matches the others, have it display today's sales and
 not the month also"
