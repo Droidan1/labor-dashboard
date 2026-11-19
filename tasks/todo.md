@@ -1,3 +1,36 @@
+# Users: invite a new user into several businesses at once (2026-11-19) — branch `claude/invite-multi-business`
+
+**Ask (Brian):** "today when I add new users there isn't a way to give new users access to multiple
+businesses, let's add this feature"
+
+Today the Invite modal has a single Business dropdown, so a person needing Bargain Lane + E-Commerce
+had to be invited into one and then given the other from Edit (superuser only).
+
+- [x] Worker `invite-user` takes `grants: [{business_id, units}]` + one top-level `role`. Every grant is
+      validated BEFORE anything is written (all or nothing): business must be one the caller can grant
+      (grantOptionsFor), no duplicates, unit codes must belong to THAT business, a Bargain Lane manager
+      needs ≥ 1 store, an empty unit list elsewhere is refused. A per-grant `role` in the body is ignored
+      (no escalation). The old `{role, stores, business_id}` body still works (mapped to one grant), so the
+      worker can ship before the page. users.role/stores mirror as today (stores = BL units).
+- [x] Invite modal: Role first, then "Access" with one block per grantable business (tick to include;
+      Bargain Lane store grid; other businesses "Every <unit>" or pick). One business → no tick-box.
+      Summary line names every business. Same look as the Edit modal's Access blocks. Panel now scrolls
+      (`max-h-[90vh] overflow-y-auto`, the pattern other modals use): three open grids are taller than a phone.
+- [x] Tests: `test-invite-business.mjs` 62/0 (23 new assertions failed on main; 3 mutants: unknown business
+      skipped instead of refused, BL-manager-needs-a-store removed, per-grant role honoured, all caught;
+      the third survived until a non-BL smuggle case was added). New `scripts/browser-invite-multi-business.mjs`
+      92/0 in dark + light at 1300 and 375 px, every added text style ≥ 4.5:1 measured on the modal; it
+      times out on main's page. `npm test` 12,594 / 142 green. Cache v314 (main took v313 for #397), shell-cache pin re-recorded.
+      Worker dry run 1326.45 KiB, wrangler.toml unchanged from main.
+- [ ] Brian: deploy the worker, then merge.
+
+**Review.** Behaviour change on the old one-business body: a Bargain Lane manager with no stores and
+store codes not in `business_units` are now refused (400). The old page never sent either.
+**Found, not fixed:** the Edit modal's "Every store" for Bargain Lane (`index.html` renderGrantEditor,
+`allUnits`) writes units NULL, which `allowedUnits` (`worker.js` `if (businessId === 'bl') return
+unitList(g.units)`) reads as NO stores for a manager, so ticking it locks a BL manager out. Reproduced in
+the worker harness: u-mgr1's auth-me `stores` went `["BL1"]` → `[]` after that save. Left for its own change.
+
 # Remove the unused liveMtd (2026-11-19)
 
 **Ask (Brian):** "yes, remove it and open the PR". Since #396, the Live Sales card shows the landing's
