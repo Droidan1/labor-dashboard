@@ -1,4 +1,4 @@
-# E-Commerce Items tab: product photos (2026-11-18) — branch `claude/ecom-photo-probe`
+# E-Commerce Items tab: product photos (2026-11-18) — branches `claude/ecom-photo-probe` (#394), `claude/ecom-photos`
 
 **Ask (Brian):** "Add product photos to the Items tab using Sellercloud's catalog ImageUrl or ProductImage
 endpoint, and check first that the read-only login can see them."
@@ -11,10 +11,25 @@ Order lines carry no photo (0 of 106 in the cost check), so a photo has to come 
       3 photo URLs with NO login to see whether a page could show them. No orders read; the bearer token
       never goes to a photo host. test-sellercloud 78 (4 mutants caught); `npm test` 12,531 / 141.
       Dry run 1320.02 KiB.
-- [ ] Brian: deploy the worker (superuser-only and additive: deploy and merge in either order).
-- [ ] Run the check on real SKUs, then plan from what it shows:
-      public photos → store one URL per SKU and draw thumbnails; login-only photos → they would need the
-      worker to fetch and cache them (R2), a bigger step to agree first; none visible → ask Sellercloud's admin.
+- [x] Worker 76ba5cab (3/3 clean passes), #394 merged. Check on 20 real SKUs: the catalog's ImageUrl comes
+      back for a comma list (10/10 top sellers); photos open with NO login from jay.cwa.sellercloud.us;
+      a "NoImageAvailable.gif" placeholder exists; 4 of the 10 latest SKUs are already gone from the
+      catalog (one-offs leave once sold); GetProductsImages answers 500 if ANY SKU in the batch is
+      missing, so the catalog is the source. **Cost is HIDDEN from this login** (SiteCostVisible and
+      LastCostVisible false on all 20): the ask for Sellercloud's admin is cost visibility.
+- [x] Step 2, the photos (branch `claude/ecom-photos`): migration-092 `ecom_products` (one row per SKU:
+      photo URL, in_catalog, checked_at). The sync looks up SKUs with no row, newest sale first, 50 to a
+      catalog call, 200 a run; only an https photo on Sellercloud's host, never the placeholder; a missing
+      SKU is recorded so it is not asked again; photo trouble never fails the orders. `POST
+      ?action=ecom-photos {limit ≤ 5000}` (superuser) catches up the ~14,000 SKUs already sold.
+      ecom-items returns `image` (and still answers before migration-092). Items rows get a 40px lazy,
+      no-referrer thumbnail; no photo / a failed load keeps the same box. sw.js leaves
+      `*.sellercloud.us|com` to the page. Cache v311.
+- [x] Tests: test-ecom-photos 33 (7 mutants caught), test-sw-routing 17, browser-ecom-company 75 in both
+      themes + phone (3 thumbnail mutants caught). `npm test` 12,566 / 142 green. Dry run 1324.96 KiB.
+- [ ] Brian: migration-092 → worker → merge (the page asks for `image`, which an older worker just omits).
+- [ ] Brian's yes: run the catch-up (`ecom-photos`) so SKUs sold before today get their photos. Expect
+      many older one-offs to be gone from the catalog already (no photo, nothing to do about it).
 
 # E-Commerce Items tab: products per company (2026-11-18) — branch `claude/ecom-items`
 

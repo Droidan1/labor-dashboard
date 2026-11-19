@@ -80,6 +80,8 @@ console.log('Service worker routing');
   const shell = await get('https://www.retjghub.com/index.html');
   eq(shell?.status, 503, 'the app shell is still the worker\'s — offline fallback intact');
   eq(await get('https://api.retjghub.com/?action=auth-me'), null, 'the API still bypasses the worker');
+  eq(await get('https://jay.cwa.sellercloud.us/images/products/193880.jpg'), null, 'Sellercloud product photos are left to the page (E-Commerce Items)');
+  ok(await get('https://sellercloud.us.example.com/x.jpg') !== null, '…by exact host family: a look-alike host is not');
   ok(await get('https://fonts.gstatic.com/s/x.woff2').catch(() => 'rejected') !== null,
      'fonts are still cache-first through the worker');
 }

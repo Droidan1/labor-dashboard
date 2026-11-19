@@ -5541,6 +5541,7 @@ const ACTION_BUSINESS = new Map([
   // One company's View Details (2026-11-18), unit-scoped inside the handler.
   ["ecom-company", "ecom"],
   ["ecom-items", "ecom"],
+  ["ecom-photos", "ecom"],
   // Live Sales (migration-085). Phase 1 reads the same live-sales rows Bargain Lane still counts; the
   // whatnot-* actions below stay on bl until the phase-2 cutover moves the money.
   ["live-sales", "live"],
@@ -17414,10 +17415,55 @@ function sellercloudPageStatements(env, mine, companyId, syncedAt, { lines = tru
   return { stmts, lines: withLines.reduce((n, o) => n + o.Items.length, 0) };
 }
 
+// ── Product photos → ecom_products (migration-092, 2026-11-18) ──────────────────────────────
+// Brian: photos on the Items tab. Order lines carry none, but the catalog's ImageUrl reaches this
+// read-only login and opens with no login on Sellercloud's image host (probe, 2026-11-18), so the
+// row keeps the URL and the page loads it directly. SKUs with no row yet are looked up, newest
+// sale first, SELLERCLOUD_PAGE to a call (the catalog takes a comma-separated list) — once per
+// SKU, soon after it first sells: 🛑 one-of-a-kind items leave the catalog once sold. The UPSERT
+// keeps a stored photo (COALESCE) should a SKU ever be looked up twice.
+const SELLERCLOUD_PHOTOS_PER_SYNC = 200;    // 4 catalog calls on a 15-minute run
+const SELLERCLOUD_PHOTO_UPSERT = `INSERT INTO ecom_products (sku, image_url, in_catalog, checked_at) VALUES (?, ?, ?, ?)
+  ON CONFLICT(sku) DO UPDATE SET image_url = COALESCE(excluded.image_url, ecom_products.image_url),
+    in_catalog = excluded.in_catalog, checked_at = excluded.checked_at`;
+// Only an https photo on Sellercloud's own image host, and never its "no image available" placeholder.
+function sellercloudPhotoUrl(u) {
+  let url; try { url = new URL(String(u || "")); } catch { return null; }
+  if (url.protocol !== "https:" || !/(^|\.)sellercloud\.(us|com)$/i.test(url.hostname)) return null;
+  if (/noimageavailable/i.test(url.pathname)) return null;
+  return url.toString().slice(0, 500);
+}
+async function sellercloudPhotos(env, sc, { limit = SELLERCLOUD_PHOTOS_PER_SYNC, now = new Date() } = {}) {
+  const out = { checked: 0, found: 0, withPhoto: 0, calls: 0 };
+  const skus = (((await env.DB.prepare(
+    `SELECT i.sku AS sku, MAX(i.order_date) AS d FROM ecom_order_items i
+      WHERE i.sku IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ecom_products p WHERE p.sku = i.sku)
+      GROUP BY i.sku ORDER BY d DESC, i.sku LIMIT ?`).bind(limit).all()).results) || []).map(r => r.sku);
+  const at = now.toISOString();
+  const write = (rows) => env.DB.batch(rows.map(([sku, img, inCatalog]) => env.DB.prepare(SELLERCLOUD_PHOTO_UPSERT).bind(sku, img, inCatalog, at)));
+  // A SKU with a comma cannot ride in the list; record it as not found so it is not picked again.
+  const odd = skus.filter(x => x.includes(",")), plain = skus.filter(x => !x.includes(","));
+  if (odd.length) { await write(odd.map(x => [x, null, 0])); out.checked += odd.length; }
+  for (let k = 0; k < plain.length; k += SELLERCLOUD_PAGE) {
+    const batch = plain.slice(k, k + SELLERCLOUD_PAGE);
+    const body = await sc.get("/Catalog", { sKU: batch.join(","), activeStatus: -1, pageSize: SELLERCLOUD_PAGE, pageNumber: 1 });
+    out.calls++;
+    const byId = new Map(((body && Array.isArray(body.Items)) ? body.Items : []).map(p => [String(p.ID).toLowerCase(), p]));
+    await write(batch.map(sku => {
+      const p = byId.get(sku.toLowerCase()), img = p ? sellercloudPhotoUrl(p.ImageUrl) : null;
+      if (p) out.found++;
+      if (img) out.withPhoto++;
+      return [sku, img, p ? 1 : 0];
+    }));
+    out.checked += batch.length;
+  }
+  return out;
+}
+
 // Copy [from, to) of every E-Commerce company's orders into ecom_orders. UPSERT only: a short
 // fetch adds or updates rows and never removes one. A company whose fetch stops short of
 // Sellercloud's TotalResults is reported `incomplete`.
-async function syncSellercloud(env, { from, to, deep = false, budget = SELLERCLOUD_SYNC_BUDGET, now = new Date(), record = true } = {}) {
+async function syncSellercloud(env, { from, to, deep = false, budget = SELLERCLOUD_SYNC_BUDGET, now = new Date(), record = true, photos = SELLERCLOUD_PHOTOS_PER_SYNC } = {}) {
   if (!env.DB || !sellercloudReady(env)) return { skipped: "not configured" };
   const sc = sellercloudClient(env, { budget });
   const syncedAt = now.toISOString();
@@ -17454,12 +17500,20 @@ async function syncSellercloud(env, { from, to, deep = false, budget = SELLERCLO
       if (e instanceof SellercloudBudgetError || /no such table/i.test(String(e && e.message))) break;
     }
   }
+  // Photos for SKUs not looked up yet. Its own trouble is reported and never fails the orders.
+  if (photos > 0) {
+    try { out.photos = await sellercloudPhotos(env, sc, { limit: photos, now }); }
+    catch (e) {
+      out.photos = /no such table/i.test(String(e && e.message)) ? { skipped: "not set up" }
+        : { error: String((e && e.message) || e).slice(0, 200), status: (e && e.status) || null };
+    }
+  }
   out.calls = sc.calls;
   out.ok = !out.errors.length && !out.incomplete.length;
   // The page's "Synced …" is the 15-minute sync's; a history load does not move it.
   if (record && env.SALES_SNAPSHOTS) {
     await env.SALES_SNAPSHOTS.put("ecom:sync", JSON.stringify({ at: syncedAt, ok: out.ok, from, to, deep,
-      orders: out.orders, lines: out.lines, linesSkipped: out.linesSkipped, incomplete: out.incomplete, errors: out.errors })).catch(() => {});
+      orders: out.orders, lines: out.lines, linesSkipped: out.linesSkipped, photos: out.photos || null, incomplete: out.incomplete, errors: out.errors })).catch(() => {});
   }
   return out;
 }
@@ -17560,16 +17614,23 @@ async function ecomItems(env, unit, from, to, { sort = "sales", q = "" } = {}) {
   };
   const totals = tidy(await env.DB.prepare(`SELECT ${SUMS} ${base}`).bind(...args).first());
   const matched = needle ? tidy(await env.DB.prepare(`SELECT ${SUMS} ${base}${search}`).bind(...sargs).first()) : null;
-  const order = sort === "units" ? "units DESC, sales DESC" : "sales DESC, units DESC";
-  const rows = ((await env.DB.prepare(
-    `SELECT ${KEY} AS k, MAX(i.sku) AS sku, MAX(i.name) AS name, SUM(i.qty) AS units, SUM(i.line_total) AS sales,
+  const order = (g = "") => sort === "units" ? `${g}units DESC, ${g}sales DESC, ${g}k` : `${g}sales DESC, ${g}units DESC, ${g}k`;
+  const ROWS = `SELECT ${KEY} AS k, MAX(i.sku) AS sku, MAX(i.name) AS name, SUM(i.qty) AS units, SUM(i.line_total) AS sales,
        COUNT(DISTINCT i.order_id) AS orders, SUM(i.qty_returned) AS returned, SUM(i.refunded) AS refunded, MAX(i.order_date) AS lastSold,
        SUM(CASE WHEN ${UC} IS NOT NULL THEN i.line_total ELSE 0 END) AS costedSales,
        SUM(CASE WHEN ${UC} IS NOT NULL THEN i.qty * ${UC} ELSE 0 END) AS cost
-     ${base}${search} GROUP BY k ORDER BY ${order}, k LIMIT ${ECOM_ITEMS_LIMIT}`
-  ).bind(...sargs).all()).results || []).map(r => ({ sku: r.sku, name: r.name, units: r.units || 0, sales: roundCents(r.sales || 0),
+     ${base}${search} GROUP BY k ORDER BY ${order()} LIMIT ${ECOM_ITEMS_LIMIT}`;
+  // The photo (migration-092) rides along; before that table exists the rows come without one.
+  let raw;
+  try {
+    raw = await env.DB.prepare(`SELECT g.*, p.image_url AS image FROM (${ROWS}) g LEFT JOIN ecom_products p ON p.sku = g.sku ORDER BY ${order("g.")}`).bind(...sargs).all();
+  } catch (e) {
+    if (!/no such table: ecom_products/i.test(String(e && e.message))) throw e;
+    raw = await env.DB.prepare(ROWS).bind(...sargs).all();
+  }
+  const rows = (raw.results || []).map(r => ({ sku: r.sku, name: r.name, units: r.units || 0, sales: roundCents(r.sales || 0),
     orders: r.orders || 0, returned: r.returned || 0, refunded: roundCents(r.refunded || 0), lastSold: r.lastSold,
-    costedSales: roundCents(r.costedSales || 0), cost: roundCents(r.cost || 0) }));
+    costedSales: roundCents(r.costedSales || 0), cost: roundCents(r.cost || 0), image: r.image || null }));
   // How much of the range has its products stored: orders sold vs orders with lines kept.
   const kept = await env.DB.prepare(
     `SELECT COUNT(*) AS orders, COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM ecom_order_items x WHERE x.order_id = o.order_id) THEN 1 ELSE 0 END), 0) AS withLines
@@ -20208,6 +20269,40 @@ export default {
           return new Response(JSON.stringify({ ok: false, setup: false, error: "ecom_order_items is missing (migration-091)" }), { status: 503, headers: corsJson });
         }
         throw e;
+      }
+    }
+
+    // ── E-Commerce product photos: catch up (2026-11-18) ──────────
+    //    POST ?action=ecom-photos   {"limit": 2000}
+    // Looks up photos for SKUs that have none checked yet, the same lookup the 15-minute sync does
+    // 200 at a time, so the ~14,000 SKUs already sold need not wait for it. Reads Sellercloud's
+    // catalog only; writes only ecom_products; never blanks a stored photo. 🔒 Superuser, POST only.
+    if (url.searchParams.get("action") === "ecom-photos") {
+      if (!currentUser || currentUser.role !== "superuser") {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "SUPERUSER_ONLY" }), { status: 403, headers: corsJson });
+      }
+      if (request.method !== "POST") {
+        return new Response(JSON.stringify({ error: "POST only" }), { status: 405, headers: corsJson });
+      }
+      const body = await request.json().catch(() => ({}));
+      const limit = body && body.limit != null ? Number(body.limit) : 2000;
+      if (!Number.isInteger(limit) || limit < 1 || limit > 5000) {
+        return new Response(JSON.stringify({ error: "limit must be a whole number from 1 to 5000" }), { status: 400, headers: corsJson });
+      }
+      if (!sellercloudReady(env)) {
+        return new Response(JSON.stringify({ error: "Sellercloud is not configured" }), { status: 503, headers: corsJson });
+      }
+      try {
+        const sc = sellercloudClient(env, { budget: Math.ceil(limit / SELLERCLOUD_PAGE) + 5 });
+        const r = await sellercloudPhotos(env, sc, { limit });
+        const left = await env.DB.prepare(`SELECT COUNT(DISTINCT i.sku) AS n FROM ecom_order_items i
+          WHERE i.sku IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ecom_products p WHERE p.sku = i.sku)`).first();
+        return new Response(JSON.stringify({ ok: true, ...r, remaining: (left && left.n) || 0 }), { headers: corsJson });
+      } catch (e) {
+        if (/no such table/i.test(String(e && e.message))) {
+          return new Response(JSON.stringify({ ok: false, setup: false, error: "ecom_products is missing (migration-092)" }), { status: 503, headers: corsJson });
+        }
+        return new Response(JSON.stringify({ ok: false, error: String((e && e.message) || e).slice(0, 200), status: (e && e.status) || null }), { status: 502, headers: corsJson });
       }
     }
 
