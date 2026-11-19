@@ -243,5 +243,42 @@ const grantsOf = (id) =>
   ok((sup.body.grants || []).length === 2, 'superuser still sees both');
 }
 
+// ── 🛑 A Bargain Lane grant below admin must name its stores ────────────────
+// The Edit modal's "Every store" sent units NULL. allowedUnits() reads NULL as
+// NO stores for 'bl' (deliberately: migration-030's backfill), so ticking
+// "Every store" for a manager signed them in to nothing. Reproduced 2026-11-19:
+// u-mgr1's auth-me `stores` went ["BL1"] → [] after that save. Only an admin
+// reaches every store by role, so only an admin may hold no list.
+{
+  const before = JSON.stringify(grantsOf('u-mgr1'));
+  const storesOf = async (u) => (await call('/?action=auth-me', u)).body.stores;
+  ok(JSON.stringify(await storesOf('u-mgr1')) === '["BL8"]', `precondition: u-mgr1 reaches BL8, got ${JSON.stringify(await storesOf('u-mgr1'))}`);
+  for (const [name, g] of [
+    ['manager, units null', { business_id: 'bl', role: 'manager', units: null }],
+    ['manager, units []',   { business_id: 'bl', role: 'manager', units: [] }],
+    ['executive, units null', { business_id: 'bl', role: 'executive', units: null }],
+    ['staff, units null',   { business_id: 'bl', role: 'staff', units: null }],
+  ]) {
+    const r = await call('/?action=set-user-grants', 'u-su', { id: 'u-mgr1', grants: [g] });
+    ok(r.status === 400, `🛑 bl ${name} is refused, got ${r.status} ${JSON.stringify(r.body)}`);
+    ok(/Bargain Lane store/.test(r.body.error || ''), `and says why, got ${r.body.error}`);
+    ok(JSON.stringify(grantsOf('u-mgr1')) === before, `🛑 and NOTHING is written (bl ${name})`);
+  }
+  ok(JSON.stringify(await storesOf('u-mgr1')) === '["BL8"]', 'u-mgr1 still reaches BL8 afterwards');
+
+  // Refused even alongside a valid business: the whole replace is all or nothing.
+  const mixed = await call('/?action=set-user-grants', 'u-su', { id: 'u-mgr1', grants: [
+    { business_id: 'ecom', role: 'manager', units: null }, { business_id: 'bl', role: 'manager', units: null } ] });
+  ok(mixed.status === 400 && JSON.stringify(grantsOf('u-mgr1')) === before,
+     `a refused bl grant writes no ecom grant either, got ${mixed.status}`);
+
+  // An admin needs no list; every other business keeps NULL = every unit.
+  const adm = await call('/?action=set-user-grants', 'u-su', { id: 'u-mgr2', grants: [
+    { business_id: 'bl', role: 'admin', units: null }, { business_id: 'ecom', role: 'manager', units: null } ] });
+  ok(adm.status === 200, `a bl ADMIN with units null is fine, got ${adm.status} ${JSON.stringify(adm.body)}`);
+  ok(grantsOf('u-mgr2').map(g => `${g.business_id}:${g.role}:${g.units}`).join(' ') === 'bl:admin:null ecom:manager:null',
+     `stored as sent, got ${JSON.stringify(grantsOf('u-mgr2'))}`);
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
 if (fail || pass === 0) process.exit(1);
