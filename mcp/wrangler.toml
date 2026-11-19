@@ -19,6 +19,14 @@ compatibility_date = "2026-09-01"
 compatibility_flags = ["global_fetch_strictly_public"]
 workers_dev = false
 
+# 🛑 Deploy guard, the same one as the main worker's wrangler.toml: refuses a deploy from a
+# checkout with uncommitted tracked changes, a merge/rebase in progress, or a HEAD that does
+# not contain a freshly fetched origin/main. A stale deploy here drops MCP tools. `--dry-run`
+# is not checked. See scripts/predeploy-check.sh.
+# Emergency override:  ALLOW_STALE_DEPLOY=1 npx wrangler deploy -c mcp/wrangler.toml
+[build]
+command = 'bash "$(git rev-parse --show-toplevel)/scripts/predeploy-check.sh"'
+
 routes = [{ pattern = "mcp.retjghub.com", custom_domain = true }]
 
 # The RETJG HUB user Claude's static key (MCP_KEY) acts for when it writes: Brian.

@@ -31,6 +31,10 @@ An installable **PWA sales + labor dashboard** for the Bargain Lane / RETJG reta
 - **Prod app** (www.retjghub.com) — push to **`main`** → GitHub Pages Action (`.github/workflows/deploy-pages.yml`) runs `scripts/build.sh` and publishes (~30 s). CNAME pins the domain.
 - **Staging app** — Cloudflare Pages builds **any non-`main` branch**; `build.sh` rewrites the API base to `api-staging.retjghub.com` for non-main builds. (There is also a dedicated `staging` branch.)
 - **Worker** — **manual** `npx wrangler deploy` (no CI). Same worker code serves prod; staging worker is separate.
+  A `[build]` guard (`scripts/predeploy-check.sh`) refuses a prod or MCP deploy from a checkout with
+  uncommitted tracked changes, a merge/rebase in progress, or a HEAD missing commits from a freshly
+  fetched `origin/main`. It can't reach GitHub? It refuses too. `--dry-run` and staging are not checked.
+  Emergency only: `ALLOW_STALE_DEPLOY=1 npx wrangler deploy` (it still prints what is wrong).
 - **D1 migrations** — **manual** `npx wrangler d1 execute labor-dashboard-db --remote --file migration-0XX.sql`.
 - **Force-refresh installed PWAs** — bump `CACHE_NAME` in `sw.js` (service worker is network-first but open apps won't self-update otherwise).
 

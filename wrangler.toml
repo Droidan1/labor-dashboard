@@ -2,6 +2,16 @@ name = "clover-sales-api"
 main = "worker.js"
 compatibility_date = "2024-01-01"
 
+# 🛑 Deploy guard. Wrangler runs this before it bundles worker.js, and a failure aborts the
+# deploy before anything is uploaded. It refuses a PRODUCTION deploy (and `versions upload`)
+# from a checkout that has uncommitted tracked changes, is mid-merge/rebase, or whose HEAD
+# does not contain a freshly fetched origin/main. A bare deploy from a stale Desktop checkout
+# reverted prod three times (2026-07-28, 2026-11-09, 2026-11-19). `--dry-run`, `dev` and
+# `types` are not checked. Staging opts out below. See scripts/predeploy-check.sh.
+# Emergency override (still prints every problem):  ALLOW_STALE_DEPLOY=1 npx wrangler deploy
+[build]
+command = 'bash "$(git rev-parse --show-toplevel)/scripts/predeploy-check.sh"'
+
 # Cron triggers:
 #   - "55 3 * * *"  — 11:55 PM ET (03:55 UTC) daily end-of-day snapshot rollup
 #   - "* * * * *"   — every minute: sale scheduler (activate pending, revert expired)
@@ -76,6 +86,10 @@ bucket_name = "bl-marketing-media"
 # Named environments do NOT inherit top-level [vars], so they are repeated here.
 [env.staging]
 name = "clover-sales-api-staging"
+
+# No deploy guard on staging: it is deployed from feature branches on purpose. Named envs
+# inherit the top-level [build], and this empty table is what stops that.
+[env.staging.build]
 
 # Staging runs ONLY the Meta marketing refresh cron — NOT the snapshot /
 # notification jobs (those would double-fire against prod data). Named envs

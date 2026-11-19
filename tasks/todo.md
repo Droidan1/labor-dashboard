@@ -1,3 +1,31 @@
+# Deploy guard: `wrangler deploy` refuses a stale or dirty checkout (2026-11-19) — branch `claude/predeploy-guard`
+
+**Ask (session task):** make a bare `wrangler deploy` of the production worker refuse to run from a stale or
+dirty checkout (prod reverted 2026-07-28, 2026-11-09, 2026-11-19: Desktop `main` 44 behind, 62 s without E-Commerce).
+
+- [x] Checked wrangler 4.80 (global `wrangler`) and 4.165 (`npx wrangler`) source + a probe project: `[build]`
+      runs inside `getEntry` for deploy, deploy --dry-run, versions upload, preview, dev and types, with
+      `WRANGLER_COMMAND` set (`deploy` for a dry run too); a non-zero exit aborts before upload; the caller's env
+      reaches it; `build.cwd` is NOT relative to the config file; an empty `[env.staging.build]` stops staging
+      inheriting it.
+- [x] `scripts/predeploy-check.sh`: refuses mid-merge/rebase/cherry-pick/revert, tracked changes vs HEAD, HEAD
+      not containing a fresh `origin/main` (ahead is fine), and fetch failure/timeout (60 s, fail closed).
+      Skips dev/types and `--dry-run`, read from the wrangler CLI process's args (recognised by its
+      `wrangler-dist/cli.js` script arg, ≤ 2 levels up, only with WRANGLER_COMMAND set). `-c <other checkout>` checks that one.
+      `ALLOW_STALE_DEPLOY=1` prints every problem, then allows.
+- [x] Wired into `wrangler.toml` (prod; staging opted out) and `mcp/wrangler.toml`.
+- [x] `scripts/test-predeploy-check.mjs` 61/0: temp origin/seed/deployer repos (behind, dirty, staged, untracked,
+      mid-merge ×2, rebase, cherry-pick, ahead, diverged, worktree, offline, hanging fetch, not a repo, override,
+      command filter, dry-run detection, -c), the repo's wiring, and a REAL `wrangler deploy` through the exact
+      command with both wranglers (entry point missing + dummy token, so nothing can upload). 9/9 guard mutants caught.
+- [x] Real dry runs from the dirty worktree, both wranglers: prod 1326.72 KiB + MCP 366.53 KiB (guard steps aside),
+      staging runs no build.
+- [ ] Brian: merge. Then `git pull` the Desktop checkout once (it has tracked changes and is 49 behind), or
+      every deploy from it is refused, which is the point.
+
+**Not changed:** the guard checks provenance, not content. Prod ahead of main (an unmerged deploy-ahead) is still
+reverted by a later deploy from a current main. Untracked files never block.
+
 # Users: Edit modal's Bargain Lane "Every store" can't leave a manager with no stores (2026-11-19) — branch `claude/bl-every-store-fix`
 
 **Ask (Brian):** "Fix the Edit modal's "Every store" for Bargain Lane so it can't save a manager with no

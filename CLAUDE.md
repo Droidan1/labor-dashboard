@@ -95,7 +95,8 @@ automatically, so a merged `index.html` change reaches www.retjghub.com with no
 further step. The worker and every migration still need an explicit `wrangler` run, and
 the Destructive Operations rules below apply to those in full and are not softened by
 this. Claude does not run `wrangler deploy` or a migration: ask for each one under
-**Blocked on me**. Ask for a backward-compatible worker change to be deployed as soon as it
+**Blocked on me**. `wrangler.toml`'s `[build]` guard refuses a stale or dirty prod deploy; never
+hand Brian a command containing `ALLOW_STALE_DEPLOY=1` unless he has named the emergency. Ask for a backward-compatible worker change to be deployed as soon as it
 is pushed, before review: it is inert until a frontend calls it, and shipping it first means
 a merge can never put the frontend ahead of its worker.
 
