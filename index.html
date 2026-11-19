@@ -41890,6 +41890,16 @@
       const canMove = currentUser && currentUser.role === 'superuser';
       const allUnits = !g || g.units == null;
       const picked = (g && Array.isArray(g.units)) ? g.units : [];
+      // 🛑 Bargain Lane gets no "Every store" shortcut: there units NULL means NO
+      // stores for anyone below admin (allowedUnits), so that box signed a manager
+      // in to nothing. Stores are picked; an admin reaches them all by role.
+      const isBl = b.id === 'bl';
+      const blAdmin = isBl && (g ? g.role : grantOptions.roles[0]) === 'admin';
+      const unitBoxes = b.units.map(u => `
+              <label class="flex items-center gap-2 text-xs cursor-pointer text-opl-ink dark:text-op-ink">
+                <input type="checkbox" class="gr-unit accent-accent-green" value="${u.code}" ${picked.includes(u.code) ? 'checked' : ''}>
+                <span>${u.name}</span>
+              </label>`).join('');
       return `
       <div class="rounded-[10px] border border-[rgba(20,16,8,0.1)] dark:border-op-border px-3.5 py-3" data-biz="${b.id}">
         <label class="flex items-center gap-2.5 cursor-pointer">
@@ -41903,18 +41913,16 @@
           <select class="gr-role w-full border border-[rgba(20,16,8,0.12)] dark:border-op-border rounded-[8px] px-3 py-2 text-sm bg-opl-bg dark:bg-[rgba(255,255,255,0.03)] text-opl-ink dark:text-op-ink">
             ${grantOptions.roles.map(r => `<option value="${r}" ${g && g.role === r ? 'selected' : ''}>${GRANT_ROLE_LABEL[r] || r}</option>`).join('')}
           </select>
-          ${b.units.length ? `
+          ${!b.units.length ? '' : isBl ? `
+          <div class="gr-units mt-3 grid grid-cols-2 gap-2 ${blAdmin ? 'hidden' : ''}">${unitBoxes}
+          </div>
+          <p class="gr-warn mt-2 text-xs text-[#b45309] dark:text-[#f59e0b] hidden">No store picked — they would see nothing in ${b.name}.</p>` : `
           <label class="mt-3 flex items-center gap-2.5 cursor-pointer">
             <input type="checkbox" class="gr-all accent-accent-green" ${allUnits ? 'checked' : ''}>
             <span class="text-xs text-opl-inkDim dark:text-op-inkDim">Every ${b.unitNoun}</span>
           </label>
-          <div class="gr-units mt-2 grid grid-cols-2 gap-2 ${allUnits ? 'hidden' : ''}">
-            ${b.units.map(u => `
-              <label class="flex items-center gap-2 text-xs cursor-pointer text-opl-ink dark:text-op-ink">
-                <input type="checkbox" class="gr-unit accent-accent-green" value="${u.code}" ${picked.includes(u.code) ? 'checked' : ''}>
-                <span>${u.name}</span>
-              </label>`).join('')}
-          </div>` : ''}
+          <div class="gr-units mt-2 grid grid-cols-2 gap-2 ${allUnits ? 'hidden' : ''}">${unitBoxes}
+          </div>`}
         </div>
       </div>`;
     }).join('');
@@ -41926,19 +41934,37 @@
       const units = box.querySelector('.gr-units');
       onCb.addEventListener('change', () => body.classList.toggle('hidden', !onCb.checked));
       if (allCb && units) allCb.addEventListener('change', () => units.classList.toggle('hidden', allCb.checked));
+      // Bargain Lane: the grid follows the role, and an empty pick is flagged
+      // as it happens rather than only when Save is refused.
+      const warn = box.querySelector('.gr-warn');
+      if (warn && units) {
+        const roleSel = box.querySelector('.gr-role');
+        const sync = () => {
+          const admin = roleSel.value === 'admin';
+          units.classList.toggle('hidden', admin);
+          warn.classList.toggle('hidden', admin || !!units.querySelector('.gr-unit:checked'));
+        };
+        roleSel.addEventListener('change', sync);
+        units.querySelectorAll('.gr-unit').forEach(cb => cb.addEventListener('change', sync));
+        sync();
+      }
     });
   }
 
   // Read the editor back into the wire shape. Absent business = revoke.
+  // Bargain Lane sends its picked stores (none for an admin, who reaches all by
+  // role); elsewhere "Every …" ticked sends NULL, which there means every unit.
   function collectGrants() {
     const out = [];
     document.querySelectorAll('#edit-grants [data-biz]').forEach(box => {
       if (!box.querySelector('.gr-on').checked) return;
+      const role = box.querySelector('.gr-role').value;
       const allCb = box.querySelector('.gr-all');
-      const units = allCb && !allCb.checked
-        ? [...box.querySelectorAll('.gr-unit:checked')].map(cb => cb.value)
-        : null;
-      out.push({ business_id: box.dataset.biz, role: box.querySelector('.gr-role').value, units });
+      const picked = [...box.querySelectorAll('.gr-unit:checked')].map(cb => cb.value);
+      const units = box.dataset.biz === 'bl'
+        ? (role === 'admin' ? null : picked)
+        : (allCb && !allCb.checked ? picked : null);
+      out.push({ business_id: box.dataset.biz, role, units });
     });
     return out;
   }
@@ -42057,6 +42083,13 @@
     const status = el('edit-status').value;
     const u = usersData.find(x => x.id === id);
     const isSu = u && u.role === 'superuser';
+    // Checked BEFORE either request: update-user goes first, so a refusal from
+    // set-user-grants would otherwise save the status and drop the access edit.
+    // The worker refuses this too (set-user-grants).
+    if (!isSu && collectGrants().some(g => g.business_id === 'bl' && g.role !== 'admin' && !(g.units && g.units.length))) {
+      showEditUserStatus('Select at least one Bargain Lane store. Without one they see nothing there.', 'error');
+      return;
+    }
     el('edit-user-submit-btn').disabled = true;
     showEditUserStatus('Saving…', 'info');
     try {

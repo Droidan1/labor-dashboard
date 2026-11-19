@@ -1,3 +1,31 @@
+# Users: Edit modal's Bargain Lane "Every store" can't leave a manager with no stores (2026-11-19) — branch `claude/bl-every-store-fix`
+
+**Ask (Brian):** "Fix the Edit modal's "Every store" for Bargain Lane so it can't save a manager with no
+stores, and give me the read-only query to find anyone already locked out"
+
+"Every store" saved a Bargain Lane grant with units NULL; `allowedUnits` reads NULL (and `[]`) as NO stores
+below admin, so the person signed in to nothing (harness: u-mgr1 `["BL1"]` → `[]`).
+
+- [x] Worker `set-user-grants`: a Bargain Lane grant whose role is not admin must name ≥ 1 store (400
+      otherwise, checked before the DELETE, so nothing is written). Admin + NULL still fine; other
+      businesses keep NULL = every unit. `allowedUnits` unchanged.
+- [x] Edit modal: no "Every store" box for Bargain Lane; the store grid shows directly, hides for an admin,
+      and an amber "No store picked — they would see nothing in Bargain Lane." shows while empty. Save
+      sends nothing (not even the status) while a non-admin BL grant has no store. Other businesses keep
+      "Every …". Cache v315.
+- [x] `scripts/sql/bl-store-lockouts.sql`, read-only, tested by `test-bl-store-lockouts.mjs` 18/0 against
+      the REAL enforcement (its list == users whose auth-me `stores` is [] while holding a bl grant);
+      2 SQL mutants caught.
+- [x] Tests: test-grant-editor 64/0 (14 new fail on main); new browser-edit-grants-bl 40/0 dark + light,
+      warning ≥ 4.5:1 measured, fails on main's page; browser-invite-multi-business still 92/0;
+      `npm test` 12,630 / 143. Worker dry run 1326.72 KiB.
+- [ ] Brian: run the lockout query; deploy the worker (it only refuses the bad save, safe ahead of the
+      page); merge. Fixing anyone listed is a prod write: pick their stores in the Edit modal.
+
+**Not changed:** `update-user` still accepts `stores`/`role` and mirrors them into the bl grant
+(`worker.js` update-user), so an API caller could still write an empty BL list. The page only sends it
+`status`.
+
 # Users: invite a new user into several businesses at once (2026-11-19) — branch `claude/invite-multi-business`
 
 **Ask (Brian):** "today when I add new users there isn't a way to give new users access to multiple

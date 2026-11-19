@@ -22552,6 +22552,14 @@ export default {
             }
             units = picked;
           }
+          // 🛑 Bargain Lane reads units NULL, and an empty list, as NO stores for
+          // anyone below admin (allowedUnits keeps migration-030's reading). So
+          // "every store" saved as NULL signed a manager in to nothing. Only an
+          // admin reaches every store by role; everyone else names their stores.
+          if (bid === 'bl' && role !== 'admin' && !(units && units.length)) {
+            return new Response(JSON.stringify({ error: `Pick at least one Bargain Lane store for a ${role}` }),
+              { status: 400, headers: corsJson });
+          }
           clean.push({ business_id: bid, role, units });
         }
 
