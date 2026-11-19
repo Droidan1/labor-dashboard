@@ -98,7 +98,18 @@ for p in MERGE_HEAD:merge rebase-merge:rebase rebase-apply:rebase CHERRY_PICK_HE
   fi
 done
 
-if ! git diff --quiet HEAD -- 2>/dev/null; then
+# git re-reads every file whose timestamps changed. In the iCloud Desktop checkout that means
+# downloading each evicted file first, which took minutes on 2026-11-19, so say why it is slow
+# rather than look frozen. No timeout: slow is not wrong, and Ctrl-C still stops the deploy.
+git diff --quiet HEAD -- 2>/dev/null &
+dpid=$! ticks=0
+while kill -0 "$dpid" 2>/dev/null; do
+  [ "$ticks" -eq 30 ] && echo "predeploy-check: still comparing tracked files with HEAD. git is reading files iCloud evicted, which can take minutes the first time."
+  sleep 0.1
+  ticks=$((ticks + 1))
+done
+wait "$dpid"
+if [ $? -ne 0 ]; then
   changed=$(git diff --name-only HEAD -- 2>/dev/null)
   n=$(printf '%s\n' "$changed" | grep -c .)
   add "$n tracked file(s) differ from HEAD, so this would ship uncommitted code: $(printf '%s\n' "$changed" | head -5 | tr '\n' ' ')"

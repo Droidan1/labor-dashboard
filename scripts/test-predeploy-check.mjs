@@ -332,6 +332,13 @@ ok('env.staging.build' in main && buildCommand(main['env.staging.build']) === nu
   'wrangler.toml: staging has its own empty [env.staging.build], so it does not inherit the guard');
 ok(!Object.keys(main).some(k => k.startsWith('env.') && k !== 'env.staging' && !k.startsWith('env.staging.')),
   'wrangler.toml: no other named env that would inherit the guard unnoticed');
+// Wrangler rewrites and deletes its own .wrangler/ cache. A TRACKED file in there turns every
+// checkout dirty after a deploy, so the guard refuses the next one (found 2026-11-19: the
+// account cache was re-added by a "restore 65 files" commit and showed as deleted on Desktop).
+{
+  const r = spawnSync('git', ['ls-files', '--', '.wrangler', 'mcp/.wrangler'], { cwd: repo, encoding: 'utf8' });
+  ok(r.status === 0 && r.stdout.trim() === '', 'nothing under .wrangler/ is tracked (wrangler writes there)', r.stdout || r.stderr);
+}
 
 // ── a real `wrangler deploy` through that exact command ──────────────────────
 const wranglers = [];

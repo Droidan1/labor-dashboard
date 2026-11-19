@@ -20,8 +20,15 @@ dirty checkout (prod reverted 2026-07-28, 2026-11-09, 2026-11-19: Desktop `main`
       command with both wranglers (entry point missing + dummy token, so nothing can upload). 9/9 guard mutants caught.
 - [x] Real dry runs from the dirty worktree, both wranglers: prod 1326.72 KiB + MCP 366.53 KiB (guard steps aside),
       staging runs no build.
-- [ ] Brian: merge. Then `git pull` the Desktop checkout once (it has tracked changes and is 49 behind), or
-      every deploy from it is refused, which is the point.
+- [x] Untracked `.wrangler/cache/wrangler-account.json` (gitignored, but re-added by a "restore 65 files"
+      commit). Wrangler rewrites or deletes it, so a deploy would make the next one look dirty; it showed as deleted
+      on Desktop. Test: nothing under `.wrangler/` is tracked (fails before the untrack).
+- [x] Guard prints why it is slow when the tracked-file comparison runs over 3 s (iCloud downloading evicted files).
+- [x] Desktop checkout cleaned at Brian's request: its "354 modified files" were iCloud metadata only (`git diff-files`
+      stat-dirty, 218 evicted). After a 57 s index refresh the one real change was the deleted wrangler cache file,
+      restored from HEAD. `git merge --ff-only` 6e1da48 → 97500e8; bytes of worker.js/index.html/wrangler.toml/
+      mcp/worker.mjs match HEAD; guard ok; dry run 1326.72 KiB.
+- [ ] Brian: merge.
 
 **Not changed:** the guard checks provenance, not content. Prod ahead of main (an unmerged deploy-ahead) is still
 reverted by a later deploy from a current main. Untracked files never block.
