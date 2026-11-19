@@ -137,28 +137,30 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}${JSON.
 
 const b = await chromium.launch({ executablePath: CHROME });
 
-async function open({ theme = 'light', width = 1400, height = 900, mobile = false, businesses = BUSINESSES, role = 'superuser' } = {}) {
+async function open({ theme = 'light', width = 1400, height = 900, mobile = false, businesses = BUSINESSES, role = 'superuser', landing = false } = {}) {
   const ctx = await b.newContext({ timezoneId: TZ, viewport: { width, height }, ...(mobile ? { isMobile: true, hasTouch: true, deviceScaleFactor: 2 } : {}) });
   const page = await ctx.newPage();
   const errs = [], escaped = [];
   page.on('pageerror', e => errs.push(e.message));
   page.on('dialog', d => d.dismiss().catch(() => {}));
   await ctx.route(/retjghub\.com/, r => { escaped.push(r.request().url()); r.abort(); });
-  await page.addInitScript(({ theme }) => {
+  await page.addInitScript(({ theme, landing }) => {
     try {
       localStorage.setItem('darkMode', String(theme !== 'light'));
       localStorage.setItem('darkFlavor', theme === 'light' ? 'dark' : theme);
-      sessionStorage.setItem('retjg.activeBusiness', 'bl');
+      if (!landing) sessionStorage.setItem('retjg.activeBusiness', 'bl');
       localStorage.setItem('bioPromptDismissed', '1');
       localStorage.setItem('dashWhatsNewDismissed', '1');   // the mocked announcement is already dismissed
     } catch (e) {}
-  }, { theme });
+  }, { theme, landing });
   await page.addInitScript(mockScript({ role, businesses, health: HEALTH, people: PEOPLE[role] || PEOPLE.superuser, announcement: ANNOUNCEMENT }));
   await page.goto(URL_, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => !document.getElementById('app')?.classList.contains('hidden'), { timeout: 15000 }).catch(() => {});
   await page.waitForTimeout(400);
-  await page.evaluate(() => navigateToPage('admin-settings'));
-  await page.waitForTimeout(300);
+  if (!landing) {
+    await page.evaluate(() => navigateToPage('admin-settings'));
+    await page.waitForTimeout(300);
+  }
   return { ctx, page, errs, escaped };
 }
 const visibleTools = (page) => page.$$eval('#page-admin-settings .ad-tool', ts => ts.filter(t => !t.hidden).map(t => t.dataset.tool));
@@ -319,12 +321,11 @@ const TOOLS = ['users', 'associates', 'announcement', 'health', 'manual', 'compa
   await page.evaluate(() => navigateToPage('users'));
   await page.waitForTimeout(150);
   eq(await page.evaluate(() => [currentPage, document.getElementById('nav-users').classList.contains('active'),
-    document.getElementById('nav-admin-settings').classList.contains('active')]), ['admin-settings', true, false],
-    "navigateToPage('users') opens Admin with Users lit in the sidebar");
+    !!document.getElementById('nav-admin-settings')]), ['admin-settings', true, false],
+    "navigateToPage('users') opens Admin with Users lit in the sidebar (and there is no Admin Settings item)");
   eq(await visibleTools(page), ['users'], '…on the Users tool, whatever was open last');
   await page.click('#ad-rail .ad-item[data-tool="costs"]');
-  eq(await page.evaluate(() => [document.getElementById('nav-users').classList.contains('active'),
-    document.getElementById('nav-admin-settings').classList.contains('active')]), [false, true], 'a data tool lights Admin Settings instead');
+  eq(await page.evaluate(() => document.getElementById('nav-users').classList.contains('active')), false, 'a data tool does not light Users');
 
   // 11. The announcement's audience.
   await page.click('#ad-rail .ad-item[data-tool="announcement"]');
@@ -365,6 +366,35 @@ const TOOLS = ['users', 'associates', 'announcement', 'health', 'manual', 'compa
   await page.evaluate(() => { try { sessionStorage.setItem('retjg.adminTool', 'repull'); } catch (_) {} navigateToPage('dashboard'); navigateToPage('admin-settings'); });
   eq(await visibleTools(page), ['users'], '…nor through a remembered last tool');
   eq(await page.evaluate(() => window.__adMock.posts.length), 0, 'and nothing was posted');
+  eq(errs, [], 'no page errors');
+  await ctx.close();
+}
+
+// ── 12. The doors (phase 3): the Landing gear, superuser only ───────────────
+for (const [role, theme, mobile] of [['superuser', 'light', false], ['superuser', 'dark', true], ['admin', 'light', false]]) {
+  console.log(`\n[Landing, ${role}, ${theme}${mobile ? ', phone' : ''}]`);
+  const businesses = role === 'admin' ? BUSINESSES.filter(b => b.id !== 'ecom') : BUSINESSES;
+  const { ctx, page, errs } = await open({ role, theme, businesses, landing: true, ...(mobile ? { width: 375, height: 812, mobile: true } : {}) });
+  await page.waitForTimeout(300);
+  eq(await page.evaluate(() => currentPage), 'landing', 'an account with two or more businesses starts on Landing');
+  if (role === 'superuser') {
+    ok(await shown(page, '#lp-admin'), 'the Landing header shows the Admin gear');
+    eq(await page.$eval('#lp-admin', b => [b.getAttribute('aria-label'), b.getBoundingClientRect().width >= 40, b.getBoundingClientRect().height >= 40]),
+      ['Admin', true, true], '…labelled for a screen reader, and at least 40px square');
+    if (mobile) {
+      const w = await page.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]);
+      ok(w[0] <= w[1], `…and the header still fits a 375px phone (${w[0]} ≤ ${w[1]})`);
+      await page.screenshot({ path: path.join(SHOTS, 'admin-landing-phone-dark.png') });
+    } else {
+      await page.screenshot({ path: path.join(SHOTS, 'admin-landing-desktop-light.png'), clip: { x: 0, y: 0, width: 1400, height: 120 } });
+    }
+    await page.click('#lp-admin');
+    await page.waitForTimeout(250);
+    eq(await page.evaluate(() => currentPage), 'admin-settings', 'the gear opens Admin');
+    eq(await page.$eval('#page-admin-settings h1', h => h.textContent), 'Admin', '…which is called Admin');
+  } else {
+    ok(!(await shown(page, '#lp-admin')), "an admin's Landing has no gear");
+  }
   eq(errs, [], 'no page errors');
   await ctx.close();
 }

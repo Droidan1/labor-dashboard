@@ -10,7 +10,9 @@
 //   5. every button that rewrites history is labelled so, and the entry hook opens the shell;
 //   6. Backfill Last 13 Weeks is retired: no button, no status box, no function;
 //   7. Users and Associates moved in as People (every id they read, once), the dialogs outside
-//      every tool, admins let in for People, and the announcement push carries its audience.
+//      every tool, admins let in for People, and the announcement push carries its audience;
+//   8. the doors: Admin is out of the Bargain Lane sidebar, the superuser's gear on Landing opens it,
+//      and Users stays for admins.
 import fs from 'node:fs'; import path from 'node:path';
 const html = fs.readFileSync(path.join(process.argv[2] || '.', 'index.html'), 'utf8');
 
@@ -97,6 +99,15 @@ ok(/if \(currentUser && currentUser\.role === 'superuser'\) \{\n\s+loadCategoryC
 ok(/id="ann-aud"/.test(page) && /body: JSON\.stringify\(\{ title, items, audience: to\.audience \}\)/.test(html),
   'the announcement push sends who it is for');
 ok(/u\.grants\.map\(g => `<span class="ad-grant">/.test(html), 'the Users table draws a chip per business grant');
+
+// 8. Phase 3 (2026-11-19): the doors
+ok(!/nav-admin-settings/.test(html), 'Admin Settings is out of the Bargain Lane sidebar: no item, no business mapping, no toggle');
+ok(/<button id="lp-admin" type="button" onclick="navigateToPage\('admin-settings'\)"[^>]*\n\s+class="hidden /.test(html),
+  'the Landing header has an Admin gear that opens Admin, hidden until revealed');
+ok(/el\('lp-admin'\)\.classList\.toggle\('hidden', !isSuperuser\);/.test(html), '…and only the superuser gets it');
+ok(/<div id="nav-users"[^>]*onclick="navigateToPage\('users'\)"/.test(html) && /el\('nav-users'\)\.classList\.toggle\('hidden', !isAdmin\);/.test(html),
+  'Users stays in the sidebar for admins (and the superuser), and opens Admin › People');
+ok(/<h1 class="[^"]*">Admin<\/h1>/.test(page), 'the page is called Admin');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

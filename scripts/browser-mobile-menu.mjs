@@ -61,7 +61,8 @@ const EXPECT = {
   superuser: { role: 'superuser', businesses: [BL, ECOM], biz: 'bl',
     bar: ['Dashboard', 'Retail', 'Content', 'Flow', 'Menu'],
     menu: [['Store', STORE], ['Marketing', MARKETING], ['Merchandising', MERCH], ['Inventory', INVENTORY],
-           ['Admin', ['users', 'admin-settings']], ['Account', ['@switch', 'settings', '@signout']]] },
+           // Admin Settings left the sidebar for the Landing gear (2026-11-19); Users opens Admin › People.
+           ['Admin', ['users']], ['Account', ['@switch', 'settings', '@signout']]] },
   admin: { role: 'admin', businesses: [BL], biz: 'bl',
     bar: ['Dashboard', 'Retail', 'Content', 'Flow', 'Menu'],
     menu: [['Store', STORE], ['Marketing', MARKETING], ['Merchandising', MERCH], ['Inventory', INVENTORY],

@@ -251,9 +251,12 @@ V1 "comfortable" density:
 
 - **Sidebar** (`#sidebar`): persistent, `op-sidebar` bg, 256 px wide
   / 64 px collapsed. Nav items: Dashboard, Weekly Retail Summary,
-  Inventory, Supply Request, Users, Admin Settings, Settings. Role-
-  gated items (`#nav-inventory`, `#nav-users`, `#nav-admin-settings`,
+  Inventory, Supply Request, Users, Settings. Role-
+  gated items (`#nav-inventory`, `#nav-users`,
   `#nav-settings`) start `.hidden` and are revealed by app logic.
+  Admin is hub-level and has no item of its own: the superuser opens
+  it from the gear in the Landing header (`#lp-admin`), and Users
+  (admins and the superuser) opens Admin › People.
   Active nav item = `bg-accent-green/10` + `text-accent-green` pill.
 - **Main scroller** (`#main-scroll`): `flex-1 overflow-y-auto`. The
   document itself scrolls (the flex parent is `min-h-screen`), so
@@ -677,7 +680,7 @@ Many read-only tables over one set of filters:
 - Colours are page-scoped variables (`--dr-*`): light literals, dark through
   `rgb(var(--op-*))`, the same way Live Sales' `--lv-*` work.
 
-**Admin tools variant (Admin Settings, `#page-admin-settings`, 2026-11-19)**
+**Admin tools variant (Admin, `#page-admin-settings`, 2026-11-19)**
 
 A page of many unrelated tools:
 
@@ -875,8 +878,6 @@ flagging when you pick them up:
 - **Other pages not V1-converted:**
   - Inventory page
   - Supply Request page
-  - Users page
-  - Admin Settings page
   - Store Detail page (uses the new selector style now, but
     internal content/charts are pre-redesign)
   - Weekly Retail Summary (selector restyled; inner T13 tables and
