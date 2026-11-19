@@ -5504,6 +5504,7 @@ function resolveCors(request, env) {
   //   grant-options   self-filters to the caller's grants (grantOptionsFor).
   //   user-grants     self-filters the response (added when this was found leaking).
   //   set-user-grants validates every element against grantOptionsFor per business.
+//   list-users      self-filters rows and grants to grantOptionsFor (listUsersFor).
   //   push-subscribe / update-notif-prefs
   //                   these enrol a device in the BL summary, but gating them would
   //                   lock a future E-Commerce-only user out of push entirely. The
@@ -5517,6 +5518,10 @@ const BUSINESS_AGNOSTIC_ACTIONS = new Set([
   "push-subscribe", "push-subscription-status", "push-test", "push-unsubscribe",
   "update-notif-prefs", "vapid-public-key", "resend-invite",
   "grant-options", "user-grants", "set-user-grants",
+  // Self-filters like user-grants (2026-11-19, Admin › People): rows and grants are cut to
+  // the businesses the caller may grant (grantOptionsFor). Was ["list-users","bl"], which
+  // locked out an admin of any other business and showed a Bargain Lane admin everyone.
+  "list-users",
   // Both self-gate ABOVE the auth gate (there is no session yet — signing in is
   // the point) and return before reaching this one. Listed so the completeness
   // test stays satisfied, same as ebay-handler-ingest below.
@@ -5674,7 +5679,6 @@ const ACTION_BUSINESS = new Map([
   ["labor", "bl"],
   ["labor-plan", "bl"],
   ["list-sale-schedules", "bl"],
-  ["list-users", "bl"],
   ["ly-sales", "bl"],
   ["manual-override", "bl"],
   ["marketing-insights", "bl"],
@@ -16365,6 +16369,51 @@ async function grantOptionsFor(env, caller) {
   return { businesses, roles };
 }
 
+// Who list-users shows, and which of their grants (Brian, 2026-11-19: "their businesses").
+//
+// The superuser sees every account and every grant. Anyone else sees:
+//   - people holding a grant in a business the caller may grant (grantOptionsFor), with
+//     ONLY those grants — the same cut user-grants makes, so an admin of one business
+//     cannot read which stores someone holds in another;
+//   - people with no grant at all, so they can be given one;
+//   - associates only if the caller can see Bargain Lane, the one business they exist in;
+//   - never a superuser.
+// `stores` and `pages` are Bargain Lane fields (the legacy store list, an associate's pages),
+// so they are blanked for a caller who cannot see Bargain Lane.
+async function listUsersFor(env, caller, rows) {
+  const isSu = caller && caller.role === 'superuser';
+  const byUser = new Map();
+  try {
+    const { results } = await env.DB.prepare(
+      `SELECT g.user_id, g.business_id, g.role, g.units
+         FROM user_grants g JOIN businesses b ON b.id = g.business_id
+        WHERE b.active = 1`
+    ).all();
+    for (const g of results || []) {
+      let units = null;
+      // Fail CLOSED on corrupt JSON, as loadGrants does: null means "every unit".
+      try { units = g.units ? JSON.parse(g.units) : null; } catch (_) { units = []; }
+      if (!byUser.has(g.user_id)) byUser.set(g.user_id, []);
+      byUser.get(g.user_id).push({ business_id: g.business_id, role: g.role, units });
+    }
+  } catch (_) {
+    // No user_grants table (pre migration-030): nobody has a grant to show or to cut by.
+  }
+  const visible = isSu ? null : new Set((await grantOptionsFor(env, caller)).businesses.map(b => b.id));
+  const sees = (id) => isSu || visible.has(id);
+  return rows.filter(u => {
+    if (isSu) return true;
+    if (u.role === 'superuser') return false;
+    if (u.associate) return sees('bl');
+    const gs = byUser.get(u.id) || [];
+    return !gs.length || gs.some(g => sees(g.business_id));
+  }).map(u => {
+    const out = { ...u, grants: (byUser.get(u.id) || []).filter(g => sees(g.business_id)) };
+    if (!sees('bl')) { out.stores = null; out.pages = null; }
+    return out;
+  });
+}
+
 function canAccessBusiness(user, businessId) {
   if (!user) return false;
   if (user.role === 'superuser') return true;
@@ -22379,7 +22428,8 @@ export default {
                 approval_pin_failures
            FROM users ORDER BY created_at DESC`
       ).all();
-      return new Response(JSON.stringify({ ok: true, users: results || [] }), { headers: corsJson });
+      const users = await listUsersFor(env, currentUser, results || []);
+      return new Response(JSON.stringify({ ok: true, users }), { headers: corsJson });
     }
 
     // ── The manager approval code ────────────────────────────────────
@@ -31710,22 +31760,28 @@ export default {
       }
     }
 
-    // ── "What's New" announcement (superuser authors; all users see) ──
+    // ── "What's New" announcement (superuser authors) ──
     // Stored as a single KV JSON blob. Bumping it (new id) re-shows the
-    // popup for everyone, even users who dismissed the previous one.
+    // popup for everyone it is for, even users who dismissed the previous one.
+    // `audience` (2026-11-19) is "all" — the whole hub — or a list of business ids:
+    // then only people who can reach one of them (canAccessBusiness) are sent it.
+    // A blob from before the field has none and means "all", as it always did.
     // GET ?action=announcement  — any authenticated user.
     if (request.method === "GET" && url.searchParams.get("action") === "announcement") {
       if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
       try {
         const a = env.SALES_SNAPSHOTS ? await env.SALES_SNAPSHOTS.get("announcement:current", "json") : null;
-        return new Response(JSON.stringify({ ok: true, announcement: a || null }), { headers: corsJson });
+        const forThem = !a || !Array.isArray(a.audience) || a.audience.some(id => canAccessBusiness(currentUser, id));
+        return new Response(JSON.stringify({ ok: true, announcement: forThem ? a : null }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
     }
 
     // POST ?action=announcement-set  — superuser only.
-    // Body: { title, items: [{ t, d }] }  → saved as the current announcement.
+    // Body: { title, items: [{ t, d }], audience? }  → saved as the current announcement.
+    // audience: "all" (or absent, as an older page sends) = the whole hub; otherwise a
+    // non-empty list of ACTIVE business ids. Anything else is refused, never widened to all.
     if (request.method === "POST" && url.searchParams.get("action") === "announcement-set") {
       if (!currentUser || currentUser.role !== 'superuser') {
         return new Response(JSON.stringify({ error: "Superuser required" }), { status: 403, headers: corsJson });
@@ -31740,7 +31796,16 @@ export default {
         if (!title && items.length === 0) {
           return new Response(JSON.stringify({ error: "Title or at least one item required" }), { status: 400, headers: corsJson });
         }
-        const announcement = { id: String(Date.now()), title, items, createdAt: new Date().toISOString(), createdBy: currentUser.email || currentUser.id || "superuser" };
+        let audience = "all";
+        if (body.audience !== undefined && body.audience !== null && body.audience !== "all") {
+          const active = new Set(currentUser.allBusinessIds || []);
+          const ids = Array.isArray(body.audience) ? [...new Set(body.audience.map(String))] : null;
+          if (!ids || !ids.length || ids.some(id => !active.has(id))) {
+            return new Response(JSON.stringify({ error: 'audience must be "all" or a list of active businesses' }), { status: 400, headers: corsJson });
+          }
+          audience = ids;
+        }
+        const announcement = { id: String(Date.now()), title, items, audience, createdAt: new Date().toISOString(), createdBy: currentUser.email || currentUser.id || "superuser" };
         await env.SALES_SNAPSHOTS.put("announcement:current", JSON.stringify(announcement));
         return new Response(JSON.stringify({ ok: true, announcement }), { headers: corsJson });
       } catch (e) {

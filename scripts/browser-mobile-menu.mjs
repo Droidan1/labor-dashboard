@@ -228,7 +228,10 @@ for (const key of Object.keys(EXPECT)) {
     await row.click({ timeout: 3000 });
     await page.waitForTimeout(80);
     const shown = await visiblePages(page);
-    if (JSON.stringify(shown) !== JSON.stringify(['page-' + p])) dead.push(`${p} -> ${shown}`);
+    // Users opens Admin › People since it moved there (2026-11-19): its row must land on that tool.
+    const want = p === 'users' ? 'admin-settings' : p;
+    const tool = p === 'users' ? await page.$$eval('#page-admin-settings .ad-tool', ts => ts.filter(t => !t.hidden).map(t => t.dataset.tool).join()) : null;
+    if (JSON.stringify(shown) !== JSON.stringify(['page-' + want]) || (tool !== null && tool !== 'users')) dead.push(`${p} -> ${shown} ${tool || ''}`);
   }
   check(dead.length === 0, `${key}: all ${rowPages.length} page rows open their page${dead.length ? ': ' + dead.join(', ') : ''}`);
   // ...and the lit tab follows: a page with a tab lights it, anything else lights Menu.

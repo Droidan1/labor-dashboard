@@ -21,7 +21,12 @@
 //   7. Backfill Last 13 Weeks is gone, button and function;
 //   8. a phone opens on the list, a tool opens over it and goes back, with no sideways page scroll;
 //   9. contrast COMPUTED against the composited background of every text node, ≥ 4.5:1, in every
-//      tool and every theme — never a screenshot.
+//      tool and every theme — never a screenshot;
+//  10. People (phase 2): Users draws a chip per business grant, filters by business and by email,
+//      and its dialogs open from inside Admin; the old 'users' page id opens the Users tool, even on
+//      a phone; an admin sees People and nothing else, and cannot be sent anywhere else;
+//  11. the announcement's audience: Whole hub or businesses, shown back from the saved one, and the
+//      push sends exactly what is picked.
 let chromium;
 try {
   ({ chromium } = await import('playwright-core'));
@@ -72,6 +77,33 @@ const HEALTH = {
   ],
 };
 
+// What the worker's listUsersFor answers each caller with (scripts/test-admin-people.mjs pins that).
+const U = (id, email, role, grants, extra = {}) => ({ id, email, role, status: 'active', last_login: '2026-11-18T14:00:00Z', grants, ...extra });
+const BL_UNITS = [['BL1', 'Coliseum'], ['BL2', 'South Bend'], ['BL4', 'Dupont'], ['BL14', 'Battle Creek'], ['BL16', 'Indy East']].map(([code, name]) => ({ code, name }));
+const OPT = {
+  bl: { id: 'bl', name: 'Bargain Lane', unitNoun: 'store', units: BL_UNITS },
+  ecom: { id: 'ecom', name: 'E-Commerce', unitNoun: 'storefront', units: [] },
+  live: { id: 'live', name: 'Live Sales', unitNoun: 'store', units: BL_UNITS.filter(u => ['BL1', 'BL2', 'BL14', 'BL16'].includes(u.code)) },
+};
+const ASSOC = U('u-assoc', 'assoc-u-assoc@associate.local', 'staff', [{ business_id: 'bl', role: 'staff', units: ['BL1'] }],
+  { associate: 1, name: 'Dee Ramirez', stores: '["BL1"]', pages: '{"bin-dump":"edit"}', pin_recoverable: 1 });
+const ALL_PEOPLE = [
+  U('u-su', 'owner@example.com', 'superuser', []),
+  U('u-ops', 'ops.lead@example.com', 'admin', [{ business_id: 'bl', role: 'admin', units: null }, { business_id: 'live', role: 'admin', units: null }]),
+  U('u-col', 'coliseum.manager@example.com', 'manager', [{ business_id: 'bl', role: 'manager', units: ['BL1', 'BL2'] }, { business_id: 'live', role: 'manager', units: ['BL1'] }]),
+  U('u-ecom', 'ecom.lead@example.com', 'admin', [{ business_id: 'ecom', role: 'admin', units: null }]),
+  U('u-fin', 'finance@example.com', 'executive', [{ business_id: 'bl', role: 'executive', units: null }], { last_login: null }),
+  U('u-new', 'new.hire@example.com', 'manager', [], { last_login: null }),
+  ASSOC,
+];
+const PEOPLE = {
+  superuser: { users: ALL_PEOPLE, options: { businesses: [OPT.bl, OPT.ecom, OPT.live], roles: ['admin', 'executive', 'manager', 'staff'] } },
+  // An admin of Bargain Lane and Live Sales: no superuser, no E-Commerce-only people, only their grants.
+  admin: { users: ALL_PEOPLE.filter(u => !['u-su', 'u-ecom'].includes(u.id)).map(u => ({ ...u, grants: u.grants.filter(g => g.business_id !== 'ecom') })),
+           options: { businesses: [OPT.bl, OPT.live], roles: ['manager'] } },
+};
+const ANNOUNCEMENT = { id: '1', title: 'Stores and live', items: [{ t: 'Admin moved', d: '' }], audience: ['bl', 'live'] };
+
 function installFetch(cfg) {
   const log = window.__adMock = { posts: [] };
   window.fetch = async (u, o = {}) => {
@@ -86,6 +118,14 @@ function installFetch(cfg) {
       return J({ ok: true, count: body.entries.length, total: body.entries.length, results: [], rebuilt: [] });
     }
     if (q.action === 'repair-health') return J(cfg.health);
+    if (q.action === 'list-users') return J({ ok: true, users: cfg.people.users });
+    if (q.action === 'grant-options') return J(cfg.people.options);
+    if (q.action === 'announcement') return J({ ok: true, announcement: cfg.announcement });
+    if (q.action === 'announcement-set') {
+      const body = JSON.parse(o.body);
+      log.posts.push({ announcement: body });
+      return J({ ok: true, announcement: { ...body, id: '2' } });
+    }
     return J({ ok: true });
   };
 }
@@ -110,9 +150,10 @@ async function open({ theme = 'light', width = 1400, height = 900, mobile = fals
       localStorage.setItem('darkFlavor', theme === 'light' ? 'dark' : theme);
       sessionStorage.setItem('retjg.activeBusiness', 'bl');
       localStorage.setItem('bioPromptDismissed', '1');
+      localStorage.setItem('dashWhatsNewDismissed', '1');   // the mocked announcement is already dismissed
     } catch (e) {}
   }, { theme });
-  await page.addInitScript(mockScript({ role, businesses, health: HEALTH }));
+  await page.addInitScript(mockScript({ role, businesses, health: HEALTH, people: PEOPLE[role] || PEOPLE.superuser, announcement: ANNOUNCEMENT }));
   await page.goto(URL_, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => !document.getElementById('app')?.classList.contains('hidden'), { timeout: 15000 }).catch(() => {});
   await page.waitForTimeout(400);
@@ -123,16 +164,16 @@ async function open({ theme = 'light', width = 1400, height = 900, mobile = fals
 const visibleTools = (page) => page.$$eval('#page-admin-settings .ad-tool', ts => ts.filter(t => !t.hidden).map(t => t.dataset.tool));
 const current = (page) => page.$$eval('#ad-rail .ad-item[aria-current="page"]', bs => bs.map(x => x.dataset.biz || x.dataset.tool));
 const shown = (page, sel) => page.$eval(sel, n => !!n.getClientRects().length).catch(() => false);
-const TOOLS = ['announcement', 'health', 'manual', 'compare', 'costs', 'categories', 'repull', 'stickers'];
+const TOOLS = ['users', 'associates', 'announcement', 'health', 'manual', 'compare', 'costs', 'categories', 'repull', 'stickers'];
 
 // ── 1–7: desktop, light ─────────────────────────────────────────────────────
 {
   console.log('\n[desktop, superuser]');
   const { ctx, page, errs, escaped } = await open();
   eq(await page.$$eval('#ad-rail .ad-ghead', hs => hs.map(h => h.textContent.trim())),
-    ['Hub', 'Bargain Lane', 'E-Commerce', 'Live Sales'], 'the rail has Hub, Bargain Lane, and a group for each other business auth-me lists');
-  eq(await visibleTools(page), ['health'], 'a first visit opens Data health, and only it');
-  eq(await current(page), ['health'], '…and its rail row is the current one');
+    ['People', 'Hub', 'Bargain Lane', 'E-Commerce', 'Live Sales'], 'the rail has People, Hub, Bargain Lane, and a group for each other business auth-me lists');
+  eq(await visibleTools(page), ['users'], 'a first visit opens Users, and only it');
+  eq(await current(page), ['users'], '…and its rail row is the current one');
 
   for (const t of TOOLS) {
     await page.click(`#ad-rail .ad-item[data-tool="${t}"]`);
@@ -224,7 +265,7 @@ const TOOLS = ['announcement', 'health', 'manual', 'compare', 'costs', 'categori
   await page.fill('#ad-q', 'zzz');
   ok(await shown(page, '#ad-nomatch') && (await rows()).length === 0, 'nothing matching says so');
   await page.fill('#ad-q', '');
-  eq((await rows()).length, 10, 'clearing the box brings all ten rows back');
+  eq((await rows()).length, 12, 'clearing the box brings all twelve rows back');
 
   // 7. Retired
   eq(await page.evaluate(() => [typeof window.runBackfillSales13w, !!document.getElementById('backfill-sales-status'),
@@ -234,6 +275,97 @@ const TOOLS = ['announcement', 'health', 'manual', 'compare', 'costs', 'categori
   eq(errs, [], 'no page errors');
   eq(escaped, [], 'nothing reached a real host');
   await page.screenshot({ path: path.join(SHOTS, 'admin-desktop-light.png'), fullPage: false });
+  await ctx.close();
+}
+
+// ── 10. People ─────────────────────────────────────────────────────────────
+{
+  console.log('\n[People, superuser]');
+  const { ctx, page, errs } = await open();
+  await page.waitForFunction(() => !/Loading/.test(document.getElementById('users-tbody').textContent));
+  const rowsOf = () => page.$$eval('#users-tbody tr', trs => trs.map(tr => [tr.cells[0]?.innerText.replace(/\s+You$/, '').trim(),
+    [...tr.querySelectorAll('.ad-grant')].map(g => g.innerText.replace(/\s+/g, ' ').trim())]));
+  const rows = await rowsOf();
+  eq(rows.find(r => r[0] === 'coliseum.manager@example.com')?.[1], ['Bargain Lane Manager · Coliseum, South Bend', 'Live Sales Manager · Coliseum'],
+    'a person with two businesses shows a chip for each, with role and stores by name');
+  eq(rows.find(r => r[0] === 'ops.lead@example.com')?.[1], ['Bargain Lane Admin · every store', 'Live Sales Admin · every store'], 'every store reads "every store"');
+  eq(rows.find(r => r[0] === 'owner@example.com')?.[1], ['Superuser every business'], 'the superuser reads "every business"');
+  ok((await page.$eval('#users-tbody', t => t.innerText)).includes('No access yet'), 'someone with no grant says "No access yet"');
+  ok(!rows.some(r => /Dee Ramirez|associate\.local/.test(r[0])), 'associates are not in the Users table');
+  eq(await page.$$eval('#users-biz .ad-chip', cs => cs.map(c => c.innerText.replace(/\s+/g, ' ').trim())),
+    ['All 6', 'Bargain Lane 4', 'E-Commerce 2', 'Live Sales 3'], 'the business filter counts the people in each (the superuser is in all)');
+  await page.click('#users-biz [data-users-biz="ecom"]');
+  eq((await rowsOf()).map(r => r[0]), ['owner@example.com', 'ecom.lead@example.com'], '…and E-Commerce narrows the table to its people');
+  await page.click('#users-biz [data-users-biz="all"]');
+  await page.fill('#users-q', 'FINANCE');
+  eq((await rowsOf()).map(r => r[0]), ['finance@example.com'], 'the search finds an email, whatever the case');
+  ok((await page.$eval('#users-count', n => n.textContent)).includes('1 invited'), '…and the count line says they have not signed in yet');
+  await page.fill('#users-q', 'zzz');
+  ok((await page.$eval('#users-tbody', t => t.innerText)).includes('Nobody matches'), 'a search with no match says so');
+  await page.fill('#users-q', '');
+
+  await page.click('#page-admin-settings button:has-text("Invite user")');
+  await page.waitForTimeout(150);
+  ok(await shown(page, '#invite-modal'), 'Invite user opens its dialog from inside Admin');
+  ok((await page.$$eval('#invite-grants input[type=checkbox]', b => b.length)) > 0, '…with the grant blocks drawn');
+  await page.evaluate(() => closeInviteModal());
+  await page.click('#ad-rail .ad-item[data-tool="associates"]');
+  await page.waitForTimeout(100);
+  ok((await page.$eval('#assoc-tbody', t => t.innerText)).includes('Dee Ramirez'), 'Associates lists the associate');
+
+  // The old page id opens the Users tool, and lights the Users item.
+  await page.click('#ad-rail .ad-item[data-tool="health"]');
+  await page.evaluate(() => navigateToPage('dashboard'));
+  await page.evaluate(() => navigateToPage('users'));
+  await page.waitForTimeout(150);
+  eq(await page.evaluate(() => [currentPage, document.getElementById('nav-users').classList.contains('active'),
+    document.getElementById('nav-admin-settings').classList.contains('active')]), ['admin-settings', true, false],
+    "navigateToPage('users') opens Admin with Users lit in the sidebar");
+  eq(await visibleTools(page), ['users'], '…on the Users tool, whatever was open last');
+  await page.click('#ad-rail .ad-item[data-tool="costs"]');
+  eq(await page.evaluate(() => [document.getElementById('nav-users').classList.contains('active'),
+    document.getElementById('nav-admin-settings').classList.contains('active')]), [false, true], 'a data tool lights Admin Settings instead');
+
+  // 11. The announcement's audience.
+  await page.click('#ad-rail .ad-item[data-tool="announcement"]');
+  await page.waitForTimeout(100);
+  const aud = () => page.$$eval('#ann-aud .ad-chip', cs => cs.map(c => c.textContent + (c.getAttribute('aria-pressed') === 'true' ? '*' : '')));
+  eq(await aud(), ['Whole hub', 'Bargain Lane*', 'E-Commerce', 'Live Sales*'], "the saved announcement's businesses show as picked");
+  await page.click('#ann-aud [data-aud="all"]');
+  eq(await aud(), ['Whole hub*', 'Bargain Lane', 'E-Commerce', 'Live Sales'], 'Whole hub clears the businesses');
+  await page.click('#ann-aud [data-aud="ecom"]');
+  eq(await aud(), ['Whole hub', 'Bargain Lane', 'E-Commerce*', 'Live Sales'], 'picking a business drops Whole hub');
+  await page.click('#ann-aud [data-aud="ecom"]');
+  eq(await aud(), ['Whole hub*', 'Bargain Lane', 'E-Commerce', 'Live Sales'], 'un-picking the last business brings Whole hub back');
+  await page.click('#ann-aud [data-aud="ecom"]'); await page.click('#ann-aud [data-aud="live"]');
+  await page.evaluate(() => { window.__confirms = []; window.uiConfirm = async (m) => { window.__confirms.push(m); return true; }; });
+  await page.click('#ann-push-btn'); await page.waitForTimeout(200);
+  eq(await page.evaluate(() => window.__adMock.posts.filter(p => p.announcement).map(p => p.announcement.audience)), [['ecom', 'live']],
+    'the push sends exactly the businesses picked');
+  eq(await page.evaluate(() => [window.__confirms[0], document.getElementById('ann-status').textContent]),
+    ['Push this announcement to people in E-Commerce and Live Sales now?', '✓ Pushed to people in E-Commerce and Live Sales'], '…and says who it goes to, before and after');
+  await page.click('#ann-aud [data-aud="all"]');
+  await page.click('#ann-push-btn'); await page.waitForTimeout(200);
+  eq(await page.evaluate(() => window.__adMock.posts.filter(p => p.announcement).map(p => p.announcement.audience).at(-1)), 'all', 'Whole hub sends "all"');
+  eq(errs, [], 'no page errors');
+  await ctx.close();
+}
+{
+  console.log('\n[People, admin]');
+  const { ctx, page, errs } = await open({ role: 'admin', businesses: BUSINESSES.filter(b => b.id !== 'ecom') });
+  eq(await page.evaluate(() => currentPage), 'admin-settings', 'an admin can open Admin Settings');
+  eq(await page.$$eval('#ad-rail .ad-item', bs => bs.filter(b => b.getClientRects().length).map(b => b.dataset.tool)), ['users', 'associates'],
+    '…and sees People, nothing else');
+  ok(!(await shown(page, '#ad-q')) && !(await shown(page, '#ad-rail .ad-legend')), '…with no search box or legend to go with one group');
+  await page.waitForFunction(() => !/Loading/.test(document.getElementById('users-tbody').textContent));
+  eq(await page.$eval('#users-scope', n => n.textContent), 'Bargain Lane, Live Sales', 'the scope names their businesses');
+  ok(!(await page.$eval('#users-tbody', t => t.innerText)).includes('E-Commerce'), 'no E-Commerce grant is drawn for them');
+  await page.evaluate(() => adOpenTool('health'));
+  eq(await visibleTools(page), ['users'], 'a data tool cannot be opened by hand: it falls back to Users');
+  await page.evaluate(() => { try { sessionStorage.setItem('retjg.adminTool', 'repull'); } catch (_) {} navigateToPage('dashboard'); navigateToPage('admin-settings'); });
+  eq(await visibleTools(page), ['users'], '…nor through a remembered last tool');
+  eq(await page.evaluate(() => window.__adMock.posts.length), 0, 'and nothing was posted');
+  eq(errs, [], 'no page errors');
   await ctx.close();
 }
 
@@ -261,6 +393,10 @@ const TOOLS = ['announcement', 'health', 'manual', 'compare', 'costs', 'categori
     ok(await shown(page, '#ad-rail'), `…and ‹ Admin tools goes back to the list`);
   }
   await page.screenshot({ path: path.join(SHOTS, 'admin-phone-dark-list.png') });
+  await page.evaluate(() => { navigateToPage('dashboard'); navigateToPage('users'); });
+  await page.waitForTimeout(150);
+  ok(await shown(page, '.ad-tool[data-tool="users"]') && !(await shown(page, '#ad-rail')), "on a phone, the Users item opens Users itself, not the list");
+  await page.screenshot({ path: path.join(SHOTS, 'admin-phone-dark-users.png') });
   eq(errs, [], 'no page errors on the phone');
   await ctx.close();
 }
@@ -297,6 +433,8 @@ const audit = (page) => page.evaluate(() => {
 for (const theme of ['light', 'dark', 'oled', 'halloween']) {
   console.log(`\n[contrast, ${theme}]`);
   const { ctx, page } = await open({ theme });
+  await page.waitForFunction(() => !/Loading/.test(document.getElementById('users-tbody').textContent));
+  await page.click('#ad-rail .ad-item[data-tool="health"]');
   await page.click('#rh-run');
   await page.waitForFunction(() => !document.getElementById('rh-results').classList.contains('hidden'));
   await page.evaluate(() => { document.getElementById('overrides-table-wrap').classList.remove('hidden'); });

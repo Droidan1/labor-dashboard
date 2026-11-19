@@ -8036,6 +8036,14 @@
         #page-admin-settings .ad-tbl-wrap{overflow-x:auto}
         #page-admin-settings .ad-tbl{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums;color:var(--ad-ink)}
         #page-admin-settings .ad-tbl thead th{height:34px;padding:0 12px;font-size:11px;font-weight:600;color:var(--ad-dim);background:var(--ad-panelHi);border-bottom:1px solid var(--ad-hair);white-space:nowrap}
+        #page-admin-settings .ad-off{display:none !important}
+        #page-admin-settings .ad-chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+        #page-admin-settings .ad-chip{height:30px;padding:0 11px;border-radius:999px;border:1px solid var(--ad-border);background:transparent;color:var(--ad-dim);
+          font-size:13px;font-weight:500;cursor:pointer;display:inline-flex;gap:6px;align-items:center}
+        #page-admin-settings .ad-chip[aria-pressed="true"]{background:var(--ad-activeBg);border-color:var(--ad-brandB);color:var(--ad-brand);font-weight:600}
+        #page-admin-settings .ad-grant{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:8px;font-size:12px;border:1px solid var(--ad-hair);
+          background:var(--ad-panelHi);color:var(--ad-dim);white-space:nowrap}
+        #page-admin-settings .ad-grant b{font-weight:600;color:var(--ad-ink)}
         #page-admin-settings .ad-n{display:inline-block;min-width:18px;margin-left:6px;font-variant-numeric:tabular-nums;opacity:.85}
         @media (max-width:1023.98px){
           #page-admin-settings .ad-wrap{display:block;padding:16px 16px 40px}
@@ -8065,6 +8073,13 @@
              account can reach gets a group in #ad-biz-groups from adRenderBizGroups(). ── -->
         <nav class="ad-rail" id="ad-rail" aria-label="Admin tools">
           <div class="ad-search"><input id="ad-q" type="search" placeholder="Find a tool, e.g. backfill" autocomplete="off" aria-label="Find a tool"></div>
+          <div class="ad-group" data-group="people" data-ad-admin>
+            <div class="ad-ghead">People</div>
+            <button type="button" class="ad-item" data-tool="users" data-kw="users invite edit access role grants email suspend">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span>Users</span><span class="ad-chev">›</span></button>
+            <button type="button" class="ad-item" data-tool="associates" data-ad-needs="bl" data-kw="associates code pin six-digit bin dump">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="11" r="2.5"/><path d="M15 9h3M15 13h3M5.5 17a3.5 3.5 0 0 1 7 0"/></svg><span>Associates</span><span class="ad-chev">›</span></button>
+          </div>
           <div class="ad-group" data-group="hub">
             <div class="ad-ghead">Hub</div>
             <button type="button" class="ad-item" data-tool="announcement" data-kw="announcement popup push message users">
@@ -8099,6 +8114,75 @@
 
         <section class="ad-pane" id="ad-pane">
 
+          <!-- ═══ People › Users (was the Users page, 2026-11-19) ═══
+               list-users answers only for the caller's businesses (listUsersFor in the worker),
+               with each person's grants; renderUsersTable draws a chip per business. -->
+          <div class="ad-tool" data-tool="users" hidden>
+            <button type="button" class="ad-back" onclick="adCloseTool()">‹ Admin tools</button>
+            <div><span class="ad-scope" id="users-scope">Every business</span><h2 class="ad-h2">Users</h2>
+              <p class="ad-lede">Everyone who signs in with an email. Access is set per business: a role, and which stores or companies they see in it.</p></div>
+            <div id="users-status" class="hidden mb-4 text-sm px-4 py-3 rounded-lg border"></div>
+            <div class="ad-panel">
+              <div class="ad-bar">
+                <span class="ad-plabel" id="users-biz-label">Business</span>
+                <div class="ad-chips" id="users-biz" role="group" aria-label="Show people in"></div>
+                <div class="ad-right">
+                  <input id="users-q" type="search" placeholder="Search email" autocomplete="off" aria-label="Search email" class="ad-in" style="width:200px">
+                  <button type="button" onclick="openInviteModal()" class="ad-btn ad-primary"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Invite user</button>
+                </div>
+              </div>
+              <p class="ad-note" id="users-count" style="padding:10px 18px 0"></p>
+              <div id="users-table-wrap" class="ad-tbl-wrap" style="margin-top:10px">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="border-b border-[rgba(20,16,8,0.08)] dark:border-op-border text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim">
+                      <th class="text-left px-4 py-3 font-semibold">Email</th>
+                      <th class="text-left px-4 py-3 font-semibold">Access</th>
+                      <th class="text-left px-4 py-3 font-semibold">Status</th>
+                      <th class="text-left px-4 py-3 font-semibold">Last login</th>
+                      <th class="px-4 py-3"></th>
+                    </tr>
+                  </thead>
+                  <tbody id="users-tbody">
+                    <tr><td colspan="5" class="text-center text-opl-inkDim dark:text-op-inkDim py-8 text-sm">Loading…</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- ═══ People › Associates (Bargain Lane only) ═══
+               🔑 Its own tool rather than more rows in Users, because almost every column
+               differs — no email, no invite to resend, no role to change, and a page list where
+               the role would be. Both are fed by ONE ?action=list-users response, split on the
+               `associate` flag, so they cannot disagree about who exists. -->
+          <div class="ad-tool" data-tool="associates" hidden>
+            <button type="button" class="ad-back" onclick="adCloseTool()">‹ Admin tools</button>
+            <div><span class="ad-scope">Bargain Lane</span><h2 class="ad-h2">Associates</h2>
+              <p class="ad-lede">They sign in with a name and a six-digit code, and see only the pages ticked here, in their stores.</p></div>
+            <div class="ad-panel">
+              <div class="ad-bar"><span class="ad-ptitle">Associates</span>
+                <div class="ad-right"><button type="button" onclick="openAssociateModal()" class="ad-btn ad-primary"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add associate</button></div></div>
+              <div class="ad-tbl-wrap">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="border-b border-[rgba(20,16,8,0.08)] dark:border-op-border text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim">
+                      <th class="text-left px-4 py-3 font-semibold">Name</th>
+                      <th class="text-left px-4 py-3 font-semibold">Stores</th>
+                      <th class="text-left px-4 py-3 font-semibold">Pages</th>
+                      <th class="text-left px-4 py-3 font-semibold">Status</th>
+                      <th class="text-left px-4 py-3 font-semibold">Last login</th>
+                      <th class="px-4 py-3"></th>
+                    </tr>
+                  </thead>
+                  <tbody id="assoc-tbody">
+                    <tr><td colspan="6" class="text-center text-opl-inkDim dark:text-op-inkDim py-8 text-sm">Loading…</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
           <!-- ═══ Hub › Announcement (superuser) ═══ -->
           <div class="ad-tool" data-tool="announcement" hidden>
             <button type="button" class="ad-back" onclick="adCloseTool()">‹ Admin tools</button>
@@ -8110,8 +8194,11 @@
               <label class="ad-field"><span>Items, one per line</span>
                 <textarea id="ann-items" rows="5" class="ad-ta" placeholder="Refreshed look across the app :: New header, store cards, and charts.&#10;Pull to refresh&#10;Indy East added; Wyoming closed."></textarea></label>
               <p class="ad-note">Add detail after <code>::</code>, e.g. <code>Title :: short description</code></p>
+              <div class="ad-field"><span>Who sees it</span>
+                <div class="ad-chips" id="ann-aud" role="group" aria-label="Who sees it"></div>
+                <p class="ad-note">The whole hub is everyone who signs in. Pick businesses to send it only to people with access to one of them.</p></div>
               <div class="ad-row">
-                <span class="ad-act"><button type="button" onclick="pushAnnouncement()" id="ann-push-btn" class="ad-btn ad-primary">Push to all users</button><span class="ad-tag ad-save">Saves changes</span></span>
+                <span class="ad-act"><button type="button" onclick="pushAnnouncement()" id="ann-push-btn" class="ad-btn ad-primary">Push</button><span class="ad-tag ad-save">Saves changes</span></span>
                 <button type="button" onclick="previewAnnouncement()" class="ad-btn">Preview</button>
                 <button type="button" onclick="clearAnnouncement()" class="ad-btn ad-danger">Clear</button>
                 <span id="ann-status" class="text-xs"></span>
@@ -8531,163 +8618,9 @@
 
         </section>
       </div>
-    </div><!-- end #page-admin-settings -->
 
-    <!-- ── Users page ────────────────────────────────────────────── -->
-    <!-- ── Landing: pick a business ────────────────────────────────────
-         Only reachable by an account with 2+ businesses (today: the superuser,
-         who sees every business because the flag means "all"). Everyone else
-         holds one grant and routes straight past this to their dashboard. -->
-    <div id="page-landing" class="hidden">
-      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
-        <div class="max-w-5xl mx-auto flex items-center justify-between gap-x-4 gap-y-2 flex-wrap">
-          <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">RETJG Hub</h1>
-          <!-- The dashboard's date picker and refresh button (Brian, 2026-11-18). The landing page
-               keeps its OWN range: picking one here does not move the Bargain Lane dashboard's. -->
-          <div class="flex items-center gap-2">
-            <div id="lp-range" class="relative"></div>
-            <button id="lp-refresh" type="button" onclick="lpRefresh(this)" aria-label="Refresh" title="Refresh"
-              class="w-10 h-10 rounded-[10px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim flex items-center justify-center transition-colors hover:border-accent-green/40 hover:text-opl-ink dark:hover:text-op-ink focus:outline-none focus:ring-1 focus:ring-accent-green disabled:opacity-50">
-              <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div class="max-w-6xl mx-auto px-6 py-8">
-        <!-- Group hero: every business this account can see, rolled up. -->
-        <div class="rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-opl-panel dark:bg-op-panel p-card mb-gridgap transition-colors">
-          <div class="flex items-start justify-between gap-4">
-            <div class="min-w-0">
-              <div class="lp-eyebrow" id="landing-hero-label">Today · All businesses</div>
-              <div class="mt-2 text-4xl sm:text-5xl font-semibold tabular-nums text-opl-ink dark:text-op-ink" id="landing-hero-total">—</div>
-              <div class="mt-1.5 text-sm" id="landing-hero-vs"></div>
-            </div>
-            <div class="text-right flex-shrink-0">
-              <span class="lp-pill lp-pill-live" id="landing-hero-live">● Live</span>
-              <div class="lp-eyebrow mt-3.5">Pace</div>
-              <div class="mt-1 text-3xl font-semibold tabular-nums" id="landing-hero-pace">—</div>
-              <div class="mt-1 text-xs text-opl-inkDim dark:text-op-inkDim" id="landing-hero-reporting"></div>
-            </div>
-          </div>
-          <div class="mt-4 h-1.5 rounded-full bg-[rgba(20,16,8,0.07)] dark:bg-[rgba(255,255,255,0.07)] overflow-hidden">
-            <div class="h-full rounded-full transition-[width] duration-500 bg-accent-green" id="landing-hero-bar" style="width:0%"></div>
-          </div>
-          <!-- Budget bar endpoints, mirroring the dashboard hero. -->
-          <div class="mt-1.5 flex items-center justify-between text-xs">
-            <span class="text-opl-inkDim dark:text-op-inkDim">$0</span>
-            <span class="font-semibold text-opl-ink dark:text-op-ink tabular-nums" id="landing-hero-budget"></span>
-          </div>
-
-          <div class="my-5 h-px bg-[rgba(20,16,8,0.08)] dark:bg-op-border"></div>
-
-          <!-- Channel mix: ONE stacked bar + a legend, matching the dashboard.
-               No Matrix tiles here — with one connected business they would just
-               repeat the Bargain Lane card's. -->
-          <div class="flex items-baseline justify-between">
-            <span class="lp-eyebrow">Channel mix</span>
-            <span class="text-xs text-opl-inkDim dark:text-op-inkDim" id="landing-mix-count"></span>
-          </div>
-          <div class="mt-3 flex h-1.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.07)] dark:bg-[rgba(255,255,255,0.07)]" id="landing-mix-bar"></div>
-          <div class="mt-3 grid grid-cols-3 gap-4 text-xs" id="landing-mix-legend"></div>
-
-          <div class="mt-5 flex items-center justify-between gap-4 text-xs text-opl-inkDim dark:text-op-inkDim">
-            <div id="landing-hero-mtd"></div>
-            <div id="landing-hero-updated"></div>
-          </div>
-        </div>
-
-        <div id="landing-cards" class="grid gap-gridgap lg:grid-cols-2"></div>
-      </div>
-    </div>
-
-    <div id="page-no-access" class="hidden">
-      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
-        <div class="max-w-3xl mx-auto">
-          <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">RETJG Hub</h1>
-        </div>
-      </div>
-      <div class="max-w-3xl mx-auto px-6 py-16 text-center">
-        <div class="text-lg font-semibold text-opl-ink dark:text-op-ink">You&rsquo;re signed in, but nothing is assigned to you yet.</div>
-        <p class="mt-3 text-sm text-opl-inkDim dark:text-op-inkDim max-w-md mx-auto">
-          Your account doesn&rsquo;t have access to sales or reporting. Ask an admin to grant you
-          what you need &mdash; you can close this and come back once they have.
-        </p>
-        <p class="mt-6 text-xs text-opl-inkDim dark:text-op-inkDim" id="no-access-who"></p>
-      </div>
-    </div>
-
-    <div id="page-users" class="hidden">
-      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
-        <div class="max-w-5xl mx-auto flex items-center justify-between">
-          <div>
-            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Users</h1>
-          </div>
-          <button onclick="openInviteModal()" class="flex items-center gap-2 bg-accent-green hover:brightness-110 text-[#04140a] text-sm font-semibold px-4 py-2 rounded-full transition-all">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            Invite User
-          </button>
-        </div>
-      </div>
-      <div class="max-w-5xl mx-auto px-6 py-6">
-        <div id="users-status" class="hidden mb-4 text-sm px-4 py-3 rounded-lg border"></div>
-        <div class="bg-opl-panel dark:bg-op-panel rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden transition-colors">
-          <div id="users-table-wrap" class="overflow-x-auto">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="border-b border-[rgba(20,16,8,0.08)] dark:border-op-border text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim">
-                  <th class="text-left px-4 py-3 font-semibold">Email</th>
-                  <th class="text-left px-4 py-3 font-semibold">Role</th>
-                  <th class="text-left px-4 py-3 font-semibold">Access</th>
-                  <th class="text-left px-4 py-3 font-semibold">Status</th>
-                  <th class="text-left px-4 py-3 font-semibold">Last login</th>
-                  <th class="px-4 py-3"></th>
-                </tr>
-              </thead>
-              <tbody id="users-tbody">
-                <tr><td colspan="6" class="text-center text-opl-inkDim dark:text-op-inkDim py-8 text-sm">Loading…</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- Associates: the code-login accounts.
-             🔑 Its own panel rather than more rows in the table above, because
-             almost every column differs — there is no email, no invite to resend,
-             no role to change, and a page list where the role would be. The two
-             are fed by ONE ?action=list-users response, split on the `associate`
-             flag, so they cannot disagree about who exists. -->
-        <div class="mt-10 flex items-end justify-between gap-3 flex-wrap">
-          <div>
-            <h2 class="text-sm font-semibold text-opl-ink dark:text-op-ink">Associates</h2>
-            <p class="text-xs text-opl-inkDim dark:text-op-inkDim mt-1">They sign in with a name and a six-digit code, and see only the pages ticked here.</p>
-          </div>
-          <button onclick="openAssociateModal()" class="flex items-center gap-2 bg-accent-green hover:brightness-110 text-[#04140a] text-sm font-semibold px-4 py-2 rounded-full transition-all">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            Add associate
-          </button>
-        </div>
-        <div class="bg-opl-panel dark:bg-op-panel rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden transition-colors mt-4">
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="border-b border-[rgba(20,16,8,0.08)] dark:border-op-border text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim">
-                  <th class="text-left px-4 py-3 font-semibold">Name</th>
-                  <th class="text-left px-4 py-3 font-semibold">Stores</th>
-                  <th class="text-left px-4 py-3 font-semibold">Pages</th>
-                  <th class="text-left px-4 py-3 font-semibold">Status</th>
-                  <th class="text-left px-4 py-3 font-semibold">Last login</th>
-                  <th class="px-4 py-3"></th>
-                </tr>
-              </thead>
-              <tbody id="assoc-tbody">
-                <tr><td colspan="6" class="text-center text-opl-inkDim dark:text-op-inkDim py-8 text-sm">Loading…</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
+      <!-- People's dialogs (moved with Users from its old page). Outside every .ad-tool: a fixed
+           overlay inside a hidden tool would never show. -->
       <!-- Invite modal -->
       <div id="invite-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
         <!-- Scrolls: three businesses with their store grids are taller than a phone. -->
@@ -8912,7 +8845,91 @@
         </div>
       </div>
 
-    </div><!-- end #page-users -->
+    </div><!-- end #page-admin-settings -->
+
+    <!-- ── Landing: pick a business ────────────────────────────────────
+         Only reachable by an account with 2+ businesses (today: the superuser,
+         who sees every business because the flag means "all"). Everyone else
+         holds one grant and routes straight past this to their dashboard. -->
+    <div id="page-landing" class="hidden">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-5xl mx-auto flex items-center justify-between gap-x-4 gap-y-2 flex-wrap">
+          <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">RETJG Hub</h1>
+          <!-- The dashboard's date picker and refresh button (Brian, 2026-11-18). The landing page
+               keeps its OWN range: picking one here does not move the Bargain Lane dashboard's. -->
+          <div class="flex items-center gap-2">
+            <div id="lp-range" class="relative"></div>
+            <button id="lp-refresh" type="button" onclick="lpRefresh(this)" aria-label="Refresh" title="Refresh"
+              class="w-10 h-10 rounded-[10px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim flex items-center justify-center transition-colors hover:border-accent-green/40 hover:text-opl-ink dark:hover:text-op-ink focus:outline-none focus:ring-1 focus:ring-accent-green disabled:opacity-50">
+              <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="max-w-6xl mx-auto px-6 py-8">
+        <!-- Group hero: every business this account can see, rolled up. -->
+        <div class="rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-opl-panel dark:bg-op-panel p-card mb-gridgap transition-colors">
+          <div class="flex items-start justify-between gap-4">
+            <div class="min-w-0">
+              <div class="lp-eyebrow" id="landing-hero-label">Today · All businesses</div>
+              <div class="mt-2 text-4xl sm:text-5xl font-semibold tabular-nums text-opl-ink dark:text-op-ink" id="landing-hero-total">—</div>
+              <div class="mt-1.5 text-sm" id="landing-hero-vs"></div>
+            </div>
+            <div class="text-right flex-shrink-0">
+              <span class="lp-pill lp-pill-live" id="landing-hero-live">● Live</span>
+              <div class="lp-eyebrow mt-3.5">Pace</div>
+              <div class="mt-1 text-3xl font-semibold tabular-nums" id="landing-hero-pace">—</div>
+              <div class="mt-1 text-xs text-opl-inkDim dark:text-op-inkDim" id="landing-hero-reporting"></div>
+            </div>
+          </div>
+          <div class="mt-4 h-1.5 rounded-full bg-[rgba(20,16,8,0.07)] dark:bg-[rgba(255,255,255,0.07)] overflow-hidden">
+            <div class="h-full rounded-full transition-[width] duration-500 bg-accent-green" id="landing-hero-bar" style="width:0%"></div>
+          </div>
+          <!-- Budget bar endpoints, mirroring the dashboard hero. -->
+          <div class="mt-1.5 flex items-center justify-between text-xs">
+            <span class="text-opl-inkDim dark:text-op-inkDim">$0</span>
+            <span class="font-semibold text-opl-ink dark:text-op-ink tabular-nums" id="landing-hero-budget"></span>
+          </div>
+
+          <div class="my-5 h-px bg-[rgba(20,16,8,0.08)] dark:bg-op-border"></div>
+
+          <!-- Channel mix: ONE stacked bar + a legend, matching the dashboard.
+               No Matrix tiles here — with one connected business they would just
+               repeat the Bargain Lane card's. -->
+          <div class="flex items-baseline justify-between">
+            <span class="lp-eyebrow">Channel mix</span>
+            <span class="text-xs text-opl-inkDim dark:text-op-inkDim" id="landing-mix-count"></span>
+          </div>
+          <div class="mt-3 flex h-1.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.07)] dark:bg-[rgba(255,255,255,0.07)]" id="landing-mix-bar"></div>
+          <div class="mt-3 grid grid-cols-3 gap-4 text-xs" id="landing-mix-legend"></div>
+
+          <div class="mt-5 flex items-center justify-between gap-4 text-xs text-opl-inkDim dark:text-op-inkDim">
+            <div id="landing-hero-mtd"></div>
+            <div id="landing-hero-updated"></div>
+          </div>
+        </div>
+
+        <div id="landing-cards" class="grid gap-gridgap lg:grid-cols-2"></div>
+      </div>
+    </div>
+
+    <div id="page-no-access" class="hidden">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-3xl mx-auto">
+          <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">RETJG Hub</h1>
+        </div>
+      </div>
+      <div class="max-w-3xl mx-auto px-6 py-16 text-center">
+        <div class="text-lg font-semibold text-opl-ink dark:text-op-ink">You&rsquo;re signed in, but nothing is assigned to you yet.</div>
+        <p class="mt-3 text-sm text-opl-inkDim dark:text-op-inkDim max-w-md mx-auto">
+          Your account doesn&rsquo;t have access to sales or reporting. Ask an admin to grant you
+          what you need &mdash; you can close this and come back once they have.
+        </p>
+        <p class="mt-6 text-xs text-opl-inkDim dark:text-op-inkDim" id="no-access-who"></p>
+      </div>
+    </div>
+
 
     </div><!-- end main content -->
   </div>
@@ -14066,6 +14083,10 @@
   document.addEventListener('visibilitychange', stopCamerasWhenHidden);
 
   function navigateToPage(page, pushHistory = true) {
+    // Users and Associates live in Admin › People (2026-11-19). The old page id still works —
+    // the sidebar item, the phone's Menu, deep links and history entries all say 'users' —
+    // and opens the Users tool there.
+    if (page === 'users') { adPendingTool = 'users'; page = 'admin-settings'; }
     // 🔑 FIRST guard, above every role list below. An associate is on none of
     // those lists — they are gated by PAGE, not by role — so without this they
     // could open nothing at all, and with only the Bin Dump list widened they
@@ -14090,7 +14111,7 @@
         && !(page === 'supply-request' && pageLevel('supply-request') >= 1)) return;
 
     // Guard admin-only pages
-    const adminOnly = ['inventory-add', 'inventory-viewer', 'inventory-sale', 'users', 'marketing', 'flow-calendar', 'content', 'comments', 'merch-criteria', 'merch-coverage', 'merch-manifests', 'merch-velocity', 'merch-products'];
+    const adminOnly = ['inventory-add', 'inventory-viewer', 'inventory-sale', 'marketing', 'flow-calendar', 'content', 'comments', 'merch-criteria', 'merch-coverage', 'merch-manifests', 'merch-velocity', 'merch-products'];
     // Price Scan is the one Merchandising page a MANAGER uses — they price items on the
     // floor. Everything else there is a buying surface and stays admin-only.
     const managerPages = ['merch-scan'];
@@ -14167,10 +14188,11 @@
     if (page.startsWith('live-')) {
       if (!userBusinesses(currentUser).some(b => b.id === 'live')) return;
     }
-    // Guard superuser-only pages
+    // Admin Settings: the superuser sees every tool; an admin sees People only (adEnter),
+    // the same line the old Users (admin) and Admin Settings (superuser) pages drew.
     if (page === 'admin-settings') {
-      if (!currentUser || currentUser.role !== 'superuser') return;
-      try { loadAnnouncementForm(); } catch (_) {}
+      if (!currentUser || (currentUser.role !== 'superuser' && currentUser.role !== 'admin')) return;
+      if (currentUser.role === 'superuser') { try { loadAnnouncementForm(); } catch (_) {} }
     }
     // The picker is meaningless with fewer than two businesses — refuse it so a
     // stale deep link or history entry can't strand someone on an empty page.
@@ -14269,9 +14291,6 @@
     if (page !== 'live-calendar' && typeof window.lcClose === 'function') window.lcClose();
     if (page.startsWith('live-')) {
       if (typeof lvInit === 'function') lvInit(page);
-    }
-    if (page === 'users') {
-      loadUsers();
     }
     if (page === 'supply-request') {
       if (typeof initSRPage === 'function') initSRPage();
@@ -24254,6 +24273,7 @@
     try {
       const data = await cachedFetch(`${WORKER_BASE}?action=announcement`, { credentials: 'include' });
       const a = data && data.announcement;
+      annAudienceFrom(a);
       if (a && el('ann-title')) {
         el('ann-title').value = a.title || '';
         el('ann-items').value = (a.items || []).map(it => it.d ? `${it.t} :: ${it.d}` : it.t).join('\n');
@@ -24279,20 +24299,21 @@
     const title = (el('ann-title')?.value || '').trim();
     const items = _parseAnnItems();
     if (!title && items.length === 0) { _annStatus('Add a title or at least one item.', 'error'); return; }
-    if (!await uiConfirm('Push this announcement to all users now?')) return;
+    const to = annAudienceOut();
+    if (!await uiConfirm(`Push this announcement to ${to.words} now?`)) return;
     const btn = el('ann-push-btn'); if (btn) { btn.disabled = true; btn.textContent = 'Pushing…'; }
     try {
       const resp = await fetch(`${WORKER_BASE}?action=announcement-set`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, items }),
+        body: JSON.stringify({ title, items, audience: to.audience }),
       });
       const data = await resp.json();
       if (!data.ok) throw new Error(data.error || 'Failed');
       _apiCache.clear();
-      _annStatus('✓ Pushed to all users', 'ok');
+      _annStatus(`✓ Pushed to ${to.words}`, 'ok');
     } catch (e) { _annStatus(e.message, 'error'); }
-    finally { if (btn) { btn.disabled = false; btn.textContent = 'Push to all users'; } }
+    finally { if (btn) { btn.disabled = false; btn.textContent = 'Push'; } }
   }
   window.pushAnnouncement = pushAnnouncement;
 
@@ -25772,21 +25793,24 @@
       // panel that actually shows it left ccCosts EMPTY. Save then POSTs
       // { costs: {} } to an authoritative-replace endpoint and wipes every
       // stored cost. Load on the page the editor is really on.
-      if (page === 'admin-settings') {
-        loadCategoryCosts();
-        stLoad();
-        // Default the health check to the last 30 days. Populate only if blank
-        // so a superuser mid-investigation doesn't lose the range they typed.
-        // The stores' calendar and calendar days, as the Last 30 Days preset counts
-        // them: 29 × 24 hours back from the phone's clock started a day out near
-        // midnight whenever a clock change fell inside the window.
-        const rs = el('rh-start'), re = el('rh-end');
-        if (rs && re && !rs.value && !re.value) {
-          const today = etTodayStr();
-          re.value = today;
-          rs.value = ymdShift(today, -29);
+      if (currentPage === 'admin-settings' && (page === 'admin-settings' || page === 'users')) {
+        // People is the only part an admin sees, so the superuser's loaders run for the superuser.
+        if (currentUser && currentUser.role === 'superuser') {
+          loadCategoryCosts();
+          stLoad();
+          // Default the health check to the last 30 days. Populate only if blank
+          // so a superuser mid-investigation doesn't lose the range they typed.
+          // The stores' calendar and calendar days, as the Last 30 Days preset counts
+          // them: 29 × 24 hours back from the phone's clock started a day out near
+          // midnight whenever a clock change fell inside the window.
+          const rs = el('rh-start'), re = el('rh-end');
+          if (rs && re && !rs.value && !re.value) {
+            const today = etTodayStr();
+            re.value = today;
+            rs.value = ymdShift(today, -29);
+          }
+          if (typeof loadRepairBackups === 'function') loadRepairBackups();
         }
-        if (typeof loadRepairBackups === 'function') loadRepairBackups();
         adEnter();
       }
     };
@@ -25797,6 +25821,19 @@
   // tool opens over it, with "‹ Admin tools" to go back. The tools' own code is untouched:
   // every id it reads is still in the markup, this only moves it around.
   const AD_LAST = 'retjg.adminTool';            // the last tool, per tab (sessionStorage)
+  // Set by navigateToPage('users') before the page opens; `var`, so a call that lands before this
+  // line has run cannot hit the temporal dead zone.
+  var adPendingTool = null;
+  const AD_PEOPLE = ['users', 'associates'];
+  let adShown = null;                           // the tool on screen, to load People once per visit
+  const adIsSu = () => !!currentUser && currentUser.role === 'superuser';
+  const adReaches = (id) => adIsSu() || userBusinesses(currentUser).some(b => b.id === id);
+  // What this account may open here: the superuser, everything; an admin, People only — and
+  // Associates only with Bargain Lane, the one business they exist in.
+  function adAllowed(tool) {
+    if (tool === 'associates') return adReaches('bl') && (adIsSu() || (currentUser && currentUser.role === 'admin'));
+    return adIsSu() || AD_PEOPLE.includes(tool);
+  }
   const adIsPhone = () => window.matchMedia('(max-width: 1023.98px)').matches;
   const adWrap = () => document.getElementById('ad-wrap');
 
@@ -25829,9 +25866,9 @@
   function adShow(id, biz) {
     const wrap = adWrap();
     if (!wrap) return;
-    const known = biz ? userBusinesses(currentUser).find(b => b.id === biz)
-      : wrap.querySelector(`.ad-tool[data-tool="${id}"]`);
-    if (!known) { id = 'health'; biz = null; }
+    const known = biz ? (adIsSu() && userBusinesses(currentUser).find(b => b.id === biz))
+      : (adAllowed(id) && wrap.querySelector(`.ad-tool[data-tool="${id}"]`));
+    if (!known) { id = 'users'; biz = null; }
     const tool = biz ? 'biz' : id;
     wrap.querySelectorAll('.ad-tool').forEach(t => { t.hidden = t.dataset.tool !== tool; });
     wrap.querySelectorAll('.ad-item').forEach(b => {
@@ -25845,6 +25882,13 @@
       el('ad-biz-note').textContent = `When one is built it appears here, and only for people who can see ${known.name}.`
         + (biz === 'live' ? " Live Sales $ for a day is still entered in Bargain Lane › Manual entries, because live sales are still inside Bargain Lane's totals." : '');
     }
+    // People's list is fetched once per visit, not again for each of its two tools.
+    if (AD_PEOPLE.includes(tool) && !AD_PEOPLE.includes(adShown) && typeof loadUsers === 'function') loadUsers();
+    adShown = tool;
+    // The sidebar keeps its two doors: Users lights for People, Admin Settings for the rest.
+    const people = AD_PEOPLE.includes(tool);
+    if (el('nav-users')) el('nav-users').classList.toggle('active', people);
+    if (el('nav-admin-settings')) el('nav-admin-settings').classList.toggle('active', !people);
     try { sessionStorage.setItem(AD_LAST, biz ? 'biz:' + biz : id); } catch (_) {}
   }
   function adOpenTool(id, biz) {
@@ -25858,22 +25902,34 @@
   }
   // Entering the page: the desktop reopens the last tool; a phone starts on the list.
   function adEnter() {
+    const su = adIsSu();
     adRenderBizGroups();
+    document.querySelectorAll('#ad-rail .ad-group').forEach(g => g.classList.toggle('ad-off', !su && !g.hasAttribute('data-ad-admin')));
+    document.querySelectorAll('#ad-rail .ad-item[data-tool]').forEach(b => { if (!b.dataset.biz) b.classList.toggle('ad-off', !adAllowed(b.dataset.tool)); });
+    document.querySelectorAll('#ad-rail .ad-search, #ad-rail .ad-legend').forEach(n => n.classList.toggle('ad-off', !su));
+    const sub = document.querySelector('#page-admin-settings h1 + p');
+    if (sub) sub.textContent = su ? "People, hub settings and each business's data tools" : 'People in the businesses you administer';
+    if (su) adRenderAudience();
+    adFilter();
+    const want = adPendingTool;
+    adPendingTool = null;
+    adShown = null;
     let last = null;
     try { last = sessionStorage.getItem(AD_LAST); } catch (_) {}
-    const [id, biz] = last && last.startsWith('biz:') ? ['biz', last.slice(4)] : [last || 'health', null];
+    const [id, biz] = want ? [want, null]
+      : last && last.startsWith('biz:') ? ['biz', last.slice(4)] : [last || 'users', null];
     adShow(id, biz);
-    adWrap().classList.toggle('ad-open', !adIsPhone());
+    adWrap().classList.toggle('ad-open', !!want || !adIsPhone());
   }
 
   // Find a tool: by its name, its group, or the words of what it used to be called.
   function adFilter() {
     const q = ((el('ad-q') || {}).value || '').trim().toLowerCase();
     let any = false;
-    document.querySelectorAll('#ad-rail .ad-group').forEach(g => {
+    document.querySelectorAll('#ad-rail .ad-group:not(.ad-off)').forEach(g => {
       const head = g.querySelector('.ad-ghead').textContent;
       let shown = 0;
-      g.querySelectorAll('.ad-item').forEach(b => {
+      g.querySelectorAll('.ad-item:not(.ad-off)').forEach(b => {
         const hit = !q || `${b.textContent} ${b.dataset.kw || ''} ${head}`.toLowerCase().includes(q);
         b.hidden = !hit; if (hit) shown++;
       });
@@ -25899,6 +25955,39 @@
     return b && b.dataset.v;
   };
 
+  // Who an announcement goes to: 'all' (the whole hub) or a Set of business ids. Picking a
+  // business drops "Whole hub"; un-picking the last one brings it back, so there is always an
+  // answer and it is never an empty list (which the worker refuses).
+  let annAudience = 'all';
+  function adRenderAudience() {
+    const host = el('ann-aud');
+    if (!host) return;
+    const chip = (v, label, on) => `<button type="button" class="ad-chip" data-aud="${escapeHtml(v)}" aria-pressed="${on}">${escapeHtml(label)}</button>`;
+    host.innerHTML = chip('all', 'Whole hub', annAudience === 'all')
+      + userBusinesses(currentUser).map(b => chip(b.id, b.name, annAudience !== 'all' && annAudience.has(b.id))).join('');
+  }
+  function adSetAudience(v) {
+    if (v === 'all') annAudience = 'all';
+    else {
+      const next = new Set(annAudience === 'all' ? [] : annAudience);
+      if (next.has(v)) next.delete(v); else next.add(v);
+      annAudience = next.size ? next : 'all';
+    }
+    adRenderAudience();
+  }
+  // For the push: the body's `audience`, and the words for the confirm and the result.
+  function annAudienceOut() {
+    if (annAudience === 'all') return { audience: 'all', words: 'the whole hub' };
+    const names = userBusinesses(currentUser).filter(b => annAudience.has(b.id)).map(b => b.name);
+    return { audience: [...annAudience], words: `people in ${names.length < 2 ? names[0] : names.slice(0, -1).join(', ') + ' and ' + names.at(-1)}` };
+  }
+  // The saved announcement's audience, shown back when the page opens.
+  function annAudienceFrom(a) {
+    const ids = a && Array.isArray(a.audience) ? a.audience.filter(id => userBusinesses(currentUser).some(b => b.id === id)) : [];
+    annAudience = ids.length ? new Set(ids) : 'all';
+    adRenderAudience();
+  }
+
   // Manual entries: one save button for what used to be four.
   function adSaveManual() {
     const sales = adSeg('me-kind') === 'sales', csv = adSeg('me-mode') === 'csv';
@@ -25922,7 +26011,12 @@
       if (b) adOpenTool(b.dataset.tool, b.dataset.biz || null);
     });
     el('ad-q').addEventListener('input', adFilter);
+    if (el('users-q')) el('users-q').addEventListener('input', () => renderUsersTable());
     pane.addEventListener('click', e => {
+      const aud = e.target.closest('#ann-aud .ad-chip');
+      if (aud) { adSetAudience(aud.dataset.aud); return; }
+      const ub = e.target.closest('[data-users-biz]');
+      if (ub) { usersBiz = ub.dataset.usersBiz; renderUsersTable(); return; }
       const b = e.target.closest('[data-ad-seg] button');
       if (!b) return;
       b.parentElement.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
@@ -41736,18 +41830,34 @@
   async function loadUsers() {
     // What this caller may hand out. Fetched with the list so the edit modal
     // opens instantly; the server re-derives it on every write regardless.
-    loadGrantOptions();
-    el('users-tbody').innerHTML = '<tr><td colspan="6" class="text-center text-opl-inkDim dark:text-op-inkDim py-8 text-sm">Loading…</td></tr>';
+    // The Users table names each grant's stores from these, so they are awaited before drawing.
+    const options = loadGrantOptions();
+    el('users-tbody').innerHTML = '<tr><td colspan="5" class="text-center text-opl-inkDim dark:text-op-inkDim py-8 text-sm">Loading…</td></tr>';
     try {
       const resp = await fetch(`${WORKER_BASE}?action=list-users`, { credentials: 'include' });
       const data = await resp.json();
       if (!data.ok) throw new Error(data.error || 'Failed to load');
       usersData = data.users || [];
+      await options;
       renderUsersTable();
       renderAssociates();
     } catch (e) {
-      el('users-tbody').innerHTML = `<tr><td colspan="6" class="text-center text-opl-bad dark:text-[#f87171] py-8 text-sm">${escapeHtml(e.message)}</td></tr>`;
+      el('users-tbody').innerHTML = `<tr><td colspan="5" class="text-center text-opl-bad dark:text-[#f87171] py-8 text-sm">${escapeHtml(e.message)}</td></tr>`;
     }
+  }
+
+  // Which business the Users table is showing ('all' or a business id), and how to name things.
+  let usersBiz = 'all';
+  const grantBiz = id => (grantOptions.businesses || []).find(b => b.id === id)
+    || userBusinesses(currentUser).find(b => b.id === id) || { id, name: id, unitNoun: 'unit', units: [] };
+  // A grant's reach in words. `units: null` is EVERY unit and `[]` is none — opposite meanings,
+  // so they never share a label.
+  function grantScope(g) {
+    const biz = grantBiz(g.business_id), noun = biz.unitNoun || 'unit';
+    if (!Array.isArray(g.units)) return `every ${noun}`;
+    if (!g.units.length) return `no ${noun}s`;
+    const nameOf = c => ((biz.units || []).find(u => u.code === c) || {}).name || (g.business_id === 'bl' ? storeName(c) : c);
+    return g.units.map(nameOf).join(', ');
   }
 
   function renderUsersTable() {
@@ -41757,37 +41867,71 @@
     // them), Resend invite (to an address that cannot receive mail) and a role
     // column that is always the same word.
     const rows = usersData.filter(u => !u.associate);
-    if (!rows.length) {
-      el('users-tbody').innerHTML = '<tr><td colspan="6" class="text-center text-opl-inkDim dark:text-op-inkDim py-8 text-sm">No users yet.</td></tr>';
+    // A worker from before 2026-11-19 sends no grants; then the old store chips are all there is.
+    const withGrants = rows.some(u => Array.isArray(u.grants));
+    const inBiz = (u, id) => u.role === 'superuser' || (u.grants || []).some(g => g.business_id === id);
+
+    // The business filter: only worth showing with two or more businesses to tell apart.
+    const bizList = withGrants ? (grantOptions.businesses || []) : [];
+    if (!bizList.some(b => b.id === usersBiz)) usersBiz = 'all';
+    const chip = (id, label, n) => `<button type="button" class="ad-chip" data-users-biz="${escapeHtml(id)}" aria-pressed="${usersBiz === id}">${escapeHtml(label)} <span class="tabular-nums">${n}</span></button>`;
+    const chips = el('users-biz');
+    if (chips) {
+      chips.innerHTML = bizList.length > 1
+        ? chip('all', 'All', rows.length) + bizList.map(b => chip(b.id, b.name, rows.filter(u => inBiz(u, b.id)).length)).join('')
+        : '';
+      el('users-biz-label').classList.toggle('hidden', bizList.length < 2);
+    }
+    const scope = el('users-scope');
+    if (scope) scope.textContent = isSuperuser ? 'Every business'
+      : (grantOptions.businesses || []).map(b => b.name).join(', ') || 'Your businesses';
+
+    const q = ((el('users-q') || {}).value || '').trim().toLowerCase();
+    const shown = rows.filter(u => (usersBiz === 'all' || inBiz(u, usersBiz)) && (!q || String(u.email || '').toLowerCase().includes(q)));
+    const invited = shown.filter(u => u.status === 'active' && !u.last_login).length;
+    const suspended = shown.filter(u => u.status !== 'active').length;
+    const count = el('users-count');
+    if (count) count.textContent = `${shown.length} ${shown.length === 1 ? 'person' : 'people'}`
+      + (invited ? ` · ${invited} invited, not signed in yet` : '') + (suspended ? ` · ${suspended} suspended` : '');
+
+    if (!rows.length || !shown.length) {
+      el('users-tbody').innerHTML = `<tr><td colspan="5" class="text-center text-opl-inkDim dark:text-op-inkDim py-8 text-sm">${rows.length ? 'Nobody matches.' : 'No users yet.'}</td></tr>`;
       return;
     }
-    el('users-tbody').innerHTML = rows.map(u => {
-      // Store chips carry the name; the code is the small print. `null` = every store.
-      let parsed = null;
-      try { parsed = u.stores ? JSON.parse(u.stores) : null; } catch (_) { parsed = null; }
-      const stores = (parsed && parsed.length)
-        ? parsed.map(c => `<span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-[8px] text-[11px] font-semibold
-              border border-accent-green/25 bg-accent-green/10 text-accent-green whitespace-nowrap">${storeName(c)}
-              <span class="text-[11px] tabular-nums opacity-60">${escapeHtml(c)}</span></span>`).join(' ')
-        : `<span class="inline-flex items-center px-2 py-1 rounded-[8px] text-[11px] font-semibold
-              border border-[rgba(20,16,8,0.14)] dark:border-op-borderHi text-opl-inkDim dark:text-op-inkDim
-              whitespace-nowrap">All stores</span>`;
+    el('users-tbody').innerHTML = shown.map(u => {
+      let access;
+      if (u.role === 'superuser') {
+        access = `<span class="ad-grant"><b>Superuser</b>every business</span>`;
+      } else if (withGrants) {
+        access = (u.grants || []).length
+          ? u.grants.map(g => `<span class="ad-grant"><b>${escapeHtml(grantBiz(g.business_id).name)}</b>${escapeHtml(ROLE_LABEL[g.role] || g.role)} · ${escapeHtml(grantScope(g))}</span>`).join(' ')
+          : `<span class="text-xs text-opl-inkDim dark:text-op-inkDim">No access yet</span>`;
+      } else {
+        // Store chips carry the name; the code is the small print. `null` = every store.
+        let parsed = null;
+        try { parsed = u.stores ? JSON.parse(u.stores) : null; } catch (_) { parsed = null; }
+        access = (parsed && parsed.length)
+          ? parsed.map(c => `<span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-[8px] text-[11px] font-semibold
+                border border-accent-green/25 bg-accent-green/10 text-accent-green whitespace-nowrap">${storeName(c)}
+                <span class="text-[11px] tabular-nums opacity-60">${escapeHtml(c)}</span></span>`).join(' ')
+          : `<span class="inline-flex items-center px-2 py-1 rounded-[8px] text-[11px] font-semibold
+                border border-[rgba(20,16,8,0.14)] dark:border-op-borderHi text-opl-inkDim dark:text-op-inkDim
+                whitespace-nowrap">All stores</span>`;
+      }
 
       const lastLogin = u.last_login ? new Date(u.last_login).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Never';
 
       // There is no 'invited' status in the schema — an active user who has never
       // logged in is one who hasn't accepted yet, so derive it rather than invent it.
-      const pill = (color, text) => `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold"
-        style="border:1px solid ${color}66;color:${color}"><span style="width:5px;height:5px;border-radius:9999px;background:${color}"></span>${text}</span>`;
+      // The dot and border keep the brand hex; the WORD takes --v1-*, which the theme re-points
+      // (an inline colour cannot carry a dark: override — #22c55e is 2.28:1 on a light panel).
+      const pill = (color, ink, text) => `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold"
+        style="border:1px solid ${color}66;color:var(${ink})"><span style="width:5px;height:5px;border-radius:9999px;background:${color}"></span>${text}</span>`;
       const statusBadge = u.status !== 'active'
-        ? pill('#ef4444', 'SUSPENDED')
-        : (u.last_login ? pill('#22c55e', 'ACTIVE') : pill('#f59e0b', 'INVITED'));
+        ? pill('#ef4444', '--v1-bad', 'SUSPENDED')
+        : (u.last_login ? pill('#22c55e', '--v1-good', 'ACTIVE') : pill('#f59e0b', '--v1-warn', 'INVITED'));
 
-      const dot = ROLE_DOT[u.role] || 'rgb(var(--op-inkDim))';
       const isMe = currentUser && u.id === currentUser.id;
-      const roleCell = `<span class="inline-flex items-center gap-2 whitespace-nowrap">
-        <span style="width:7px;height:7px;border-radius:9999px;background:${dot};flex:none"></span>
-        <span class="text-opl-ink dark:text-op-ink">${ROLE_LABEL[u.role] || u.role}</span></span>`;
       const meBadge = isMe
         ? ` <span class="ml-1.5 align-[1px] px-1.5 py-0.5 rounded-full text-[11px] font-semibold
              border border-accent-green/40 text-accent-green">You</span>`
@@ -41798,8 +41942,7 @@
       return `<tr class="border-b border-[rgba(20,16,8,0.06)] dark:border-op-border last:border-b-0
                          hover:bg-opl-panelHi dark:hover:bg-op-panelHi transition-colors${isMe ? ' bg-accent-green/[0.04]' : ''}">
         <td class="px-4 py-3 text-sm font-medium text-opl-ink dark:text-op-ink">${escapeHtml(u.email)}${meBadge}</td>
-        <td class="px-4 py-3 text-sm">${roleCell}</td>
-        <td class="px-4 py-3"><div class="flex flex-wrap gap-1.5">${stores}</div></td>
+        <td class="px-4 py-3"><div class="flex flex-wrap gap-1.5">${access}</div></td>
         <td class="px-4 py-3">${statusBadge}</td>
         <td class="px-4 py-3 text-xs tabular-nums text-opl-inkDim dark:text-op-inkDim whitespace-nowrap">${lastLogin}</td>
         <td class="px-4 py-3 text-right whitespace-nowrap">
@@ -42229,8 +42372,11 @@
   // Same ?action=list-users payload as the table above, split on the `associate`
   // flag the worker derives from pin_hash. One request, one source of truth about
   // who exists.
+  // The word takes the theme's --v1-* text colour, as the Users table's pills do: the brand hex
+  // stays on the dot and border only (#22c55e as text is 2.28:1 on a light panel).
+  const ASSOC_INK = { '#22c55e': '--v1-good', '#ef4444': '--v1-bad', '#f59e0b': '--v1-warn' };
   const ASSOC_PILL = (color, text) => `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold"
-    style="border:1px solid ${color}66;color:${color}"><span style="width:5px;height:5px;border-radius:9999px;background:${color}"></span>${text}</span>`;
+    style="border:1px solid ${color}66;color:${ASSOC_INK[color] ? `var(${ASSOC_INK[color]})` : color}"><span style="width:5px;height:5px;border-radius:9999px;background:${color}"></span>${text}</span>`;
 
   function assocAgo(iso) {
     const mins = Math.max(0, Math.round((Date.now() - new Date(iso)) / 60000));
