@@ -1,3 +1,34 @@
+# DTC Executive Summary: Ecommerce row + Retail & Bins and Ecommerce PDFs (2026-11-19) — branch `claude/dtc-exec-summary`
+
+**Ask (James, by email, for the Fri Nov 20 send):** rename to "DTC Executive Summary", tagline "All Stores, Live Sales, and
+Static Listings", one Ecommerce row under the stores in each table with "Total DTC", plan and variance; keep the Live PDF and
+add Ecommerce and Retail & Bins PDFs laid out like his examples; check they tie to the Hub and the email.
+**Decided (Brian, 2026-11-19):** (1) Retail & Bins keeps James's "vs store plan" (store budgets include Live; footer says so);
+(2) Ecommerce sales stay the Hub's (shipping + tax in, refunds not taken out); (3) Ecommerce row and PDF only to readers with
+E-Commerce access, store managers unchanged; (4) online auction stays inside Live, no PDF of its own.
+
+- [x] Tie-out of James's two examples against the Hub (Nov 18): every figure matches; preview + review shared as an artifact.
+- [x] `ecomExecFigures` + `buildExecSummaryData(…, { ecom })`: Ecommerce sales by ECOM_SALE, plan $57,000 spread by day, pace,
+      stale/failed Sellercloud sync warning, "could not be read" warning instead of silently leaving it out.
+- [x] `buildExecSummaryEmailHtml`: DTC title, tagline, headline, Ecommerce row, Total DTC, footer. The plain copy is
+      byte-identical to main's (5 fixtures compared).
+- [x] `ecomDailyReport/PdfBytes/Attachment`, `retailBinsDailyReport/PdfBytes/Attachment` (shared `dtcPdfKit`), drawn with
+      pdfPage/pdfBuild like the Live PDF.
+- [x] Sends: chain-wide copies split by `canAccessBusiness(user, 'ecom')` (DTC + Ecommerce PDF vs today's copy); Retail & Bins
+      PDF on every chain-wide copy and a scope holding all five stores; test send = DTC + all PDFs; preview `&ecom=1`
+      (superuser session only). `?action=ecom-daily-pdf` (superuser session, `ecom`) and `?action=retail-bins-pdf` (`bl`).
+- [x] `scripts/test-dtc-exec-summary.mjs` (93): figures by hand, warnings, access, PDF text, the 5 AM routing. 13/14
+      mutants caught; the survivor (Live added to Retail & Bins net) is equivalent: the query never reads `auction`.
+      test-exec-summary-test-send + test-scoped-daily-summary updated for the new attachments and the second chain body.
+- [x] npm test: 12,879 assertions, 145 suites. Dry run 1363.86 KiB.
+- [x] Deployed by Brian 2026-11-19 20:28Z from 5c55506: worker cfe24080 at 100%, 1363.86 KiB = the dry run; predeploy guard ok.
+- [x] Live, 3 consecutive clean passes (4 requests each) of ecom-daily-pdf, retail-bins-pdf and preview `&ecom=1`.
+- [x] Live PDFs for 2026-11-18 against James's examples, line by line: 53 of 56 match exactly; the other 3 are rounding
+      (a $x.xx5 order average, the WTD total = sum of rows, a $x.50 change). Live DTC email: the 15 store rows equal the
+      Nov 19 email's, the 6 Ecommerce / Total DTC rows equal the E-Commerce Overview's, headline and pace add up, no warnings.
+- [x] `send-test-summary` for 2026-11-18 to Brian: 200, DTC copy with Live + Retail & Bins + Ecommerce PDFs.
+- [ ] Merge (Brian). CI 2/2 green.
+
 # Deploy guard: `wrangler deploy` refuses a stale or dirty checkout (2026-11-19) — branch `claude/predeploy-guard`
 
 **Ask (session task):** make a bare `wrangler deploy` of the production worker refuse to run from a stale or

@@ -79,7 +79,7 @@ console.log('superuser: one copy, to them, with the Whatnot PDF');
   calls.length = 0;
   const r = await send(h, { user: 'u-su' });
   const j = await r.json().catch(() => ({}));
-  eq([r.status, j.ok, j.to, j.date, j.attached], [200, true, 'bhoward@bargainlane.com', '2026-10-18', 'BL-Live-2026-10-18.pdf'],
+  eq([r.status, j.ok, j.to, j.date, j.attached], [200, true, 'bhoward@bargainlane.com', '2026-10-18', 'BL-Live-2026-10-18.pdf, BL-Retail-Bins-2026-10-18.pdf'],
      'defaults to yesterday in ET and reports what it sent');
   const sent = resend();
   eq(sent.map(s => s.to), ['bhoward@bargainlane.com'], 'exactly one email, to the signed-in superuser');
@@ -88,7 +88,8 @@ console.log('superuser: one copy, to them, with the Whatnot PDF');
   ok((m.subject || '').startsWith('[Test] Executive Summary — '), `subject marks it as a test (${m.subject})`);
   ok((m.html || '').includes('>All Stores</td>'), 'the body is the chain-wide Executive Summary');
   eq((m.attachments || []).map(a => [a.filename, isPdf(a.content), a.content_type]),
-     [['BL-Live-2026-10-18.pdf', true, 'application/pdf']], 'the Whatnot PDF, built from the API data, is attached');
+     [['BL-Live-2026-10-18.pdf', true, 'application/pdf'], ['BL-Retail-Bins-2026-10-18.pdf', true, 'application/pdf']],
+     'the Whatnot PDF, built from the API data, and the Retail & Bins PDF are attached (no ecom_orders here, so no Ecommerce PDF)');
   const log = h.db.prepare("SELECT user_id, event_type, status, provider_message_id FROM notification_log").all();
   eq(log.map(l => [l.user_id, l.event_type, l.status, l.provider_message_id]), [['u-su', 'daily-summary-test', 'sent', 'msg_1']],
      'logged as a test send, apart from the daily-summary rows');
@@ -128,8 +129,8 @@ console.log('\ndates and a missing PDF');
   calls.length = 0;
   const r = await send(h, { user: 'u-su', qs: '&date=2026-10-18' });
   const j = await r.json().catch(() => ({}));
-  eq([r.status, j.attached], [200, null], 'no Whatnot show that day: still sends, and says nothing was attached');
-  ok(resend().length === 1 && !('attachments' in resend()[0]), 'the email carries no attachments key');
+  eq([r.status, j.attached], [200, 'BL-Retail-Bins-2026-10-18.pdf'], 'no Whatnot show that day: still sends, with the Retail & Bins PDF alone');
+  ok(resend().length === 1 && (resend()[0].attachments || []).map(a => a.filename).join() === 'BL-Retail-Bins-2026-10-18.pdf', 'the email carries no Live PDF');
 }
 for (const bad of ['2026-10-1', '2026-13-01', 'yesterday', '2026-02-30']) {
   const h = setup();
@@ -143,7 +144,7 @@ for (const bad of ['2026-10-1', '2026-13-01', 'yesterday', '2026-02-30']) {
   calls.length = 0;
   const r = await send(h, { user: 'u-su', qs: '&date=2026-10-17' });
   const j = await r.json().catch(() => ({}));
-  eq([r.status, j.date, j.attached], [200, '2026-10-17', 'BL-Live-2026-10-17.pdf'], 'an explicit date sends that day, with that day\'s PDF');
+  eq([r.status, j.date, j.attached], [200, '2026-10-17', 'BL-Live-2026-10-17.pdf, BL-Retail-Bins-2026-10-17.pdf'], 'an explicit date sends that day, with that day\'s PDF');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
