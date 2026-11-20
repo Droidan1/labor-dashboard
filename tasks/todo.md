@@ -1,3 +1,24 @@
+# delete-user keeps supply requests (2026-11-20) — branch `claude/delete-user-keeps-supply`
+
+**Ask:** Brian: "Yes, fix it", about the cascade found while mapping the schema for Brandon's infrastructure
+review. `delete-user` ran `DELETE FROM users`, and `supply_requests.user_id` is `ON DELETE CASCADE`
+(migration-011), with items and history cascading from the request. Deleting a person deleted every supply
+request they had submitted. Fix chosen: refuse while any are on file and tell the superuser to suspend (no
+schema change: rebuilding `supply_requests` to drop the cascade would itself cascade-delete its children on D1).
+
+- [x] `scripts/test-delete-user-keeps-supply.mjs` (harness, real `worker.fetch`, real migration-011 tables with
+      foreign keys ON). **origin/main 10/8**: request, line and history all gone. **Branch 18/0.**
+- [x] `delete-user`: the delete carries `NOT EXISTS (SELECT 1 FROM supply_requests …)`, so a request submitted
+      mid-delete cannot slip through; 0 changes plus requests on file → 409 with the count and "Suspend the
+      account instead". No requests → deletes as before. The page needs no change: it shows the error as
+      "Failed to delete: …".
+- [x] Other instances: no other code deletes `users`; `trucks` is never deleted; the two `supply_requests`
+      deletes (single delete, 30-day purge) remove the request on purpose, so its lines going with it is right.
+
+## Review
+- `npm test`: 13,213 assertions across 149 suites, all passed (new suite included).
+- Deploy: worker only, backward compatible (the page already handles an error answer). No migration.
+
 # Sale scheduler: no stuck prices, per-store items (2026-11-20) — branch `claude/sale-scheduler-fix`
 
 **Ask:** fix the scheduler found stranding 17 BL1 items at 30% off after the 2026-10-14 flash sale (restored

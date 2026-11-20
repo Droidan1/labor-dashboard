@@ -23415,7 +23415,23 @@ export default {
         if (id === currentUser.id) {
           return new Response(JSON.stringify({ error: "Cannot delete your own account" }), { status: 400, headers: corsJson });
         }
-        await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(id).run();
+        // 🛑 supply_requests.user_id is ON DELETE CASCADE (migration-011), and its items and
+        // history cascade from it, so deleting a person used to delete every supply request they
+        // ever submitted. Refuse while any are on file; suspending keeps them. The check sits in
+        // the DELETE itself, so a request submitted between a separate check and the delete
+        // cannot slip through. scripts/test-delete-user-keeps-supply.mjs
+        const del = await env.DB.prepare(
+          "DELETE FROM users WHERE id = ? AND NOT EXISTS (SELECT 1 FROM supply_requests WHERE user_id = ?)"
+        ).bind(id, id).run();
+        if (!(del && del.meta && del.meta.changes)) {
+          const held = await env.DB.prepare("SELECT COUNT(*) AS n FROM supply_requests WHERE user_id = ?").bind(id).first();
+          const n = Number(held && held.n) || 0;
+          if (n) {
+            return new Response(JSON.stringify({
+              error: `They have ${n} supply request${n === 1 ? '' : 's'} on file, and deleting the account would delete ${n === 1 ? 'it' : 'them'} too. Suspend the account instead: that removes their access and keeps the requests.`,
+            }), { status: 409, headers: corsJson });
+          }
+        }
         return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
