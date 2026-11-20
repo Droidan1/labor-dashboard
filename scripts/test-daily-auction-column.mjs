@@ -38,6 +38,8 @@ const slice = (fromAnchor, toAnchor) => {
 
 const rowAuctionSrc = slice("  // A store-day's auction dollars", '  function sumRows(rows) {');
 const buildSrc = slice('  function buildWeeklyTable(storeName) {', '  function buildAllStoresWeeklyTable() {');
+// The week-key helpers buildWeeklyTable labels its total row with (weekLabel).
+const weekKeySrc = slice('  const weekNumberOfKey = new Map();', '  let liveDataLoading = false;');
 // The row's day key, which today is matched on. One line in index.html.
 const rowDayKeySrc = (html.match(/^  function rowDayKey\(r\) .*$/m) || [''])[0];
 ok(rowDayKeySrc.includes('return'), 'found rowDayKey in index.html');
@@ -60,6 +62,7 @@ const build = (ctx) => new Function('ctx', `
           escapeHtml, fmtDollar, fmtPct, normalizeLaborPct, LABOR_TARGET,
           _buildSdSelectors, _buildSdMonthSummary } = ctx;
   ${rowDayKeySrc}
+  ${weekKeySrc}
   ${rowAuctionSrc}
   ${buildSrc}
   return buildWeeklyTable;

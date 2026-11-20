@@ -709,6 +709,18 @@ with.
    recoverable target it could have been pointed at, not by how this instance landed.
 </rules>
 
+### Recurred (2026-11-19, year-safe weeks): I anchored an edit on a heading from a stale base
+
+I prepended my entry correctly, then rebased onto `origin/main` (Desktop `main` was 15 commits behind), then
+replaced "my checklist up to the next entry" by anchoring on the `# Deploy guard` heading, which had been the
+next entry on the stale base. On `origin/main`, six newer entries sat between mine and that heading, and the
+edit deleted all 178 of their lines. `git diff origin/main --numstat -- tasks/todo.md` caught it before any
+commit (`23 178`). Rebuilt as my entry plus `git show origin/main:tasks/todo.md`, which gave `25 0`.
+
+5. **Anchor an edit to text you wrote, never to a neighbour you saw earlier.** What sits next to your entry is
+   whatever the base had when you looked. A rebase or a merge changes it without touching your text. And
+   after any edit to a log, run `--numstat` against the base: **any deletion is the finding.**
+
 ## A deploy-order dependency cannot be enforced by a note (2026-09-18)
 
 The Inventory Receiver read-back needed the worker out before the frontend. I put that in the

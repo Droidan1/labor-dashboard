@@ -10128,6 +10128,27 @@
   // says why no other time of day will do on the two Sundays the clocks change.
   function etStartOfDay(ymd) { const t = Date.parse(ymd + 'T04:00:00Z'); return etDayOf(t) === ymd ? t : t + 3600000; }
   let allWeeks       = [];
+  // 🔑 A history row's `week` is a key that is unique ACROSS YEARS, not the Sheet's number.
+  // The Sheet numbers fiscal weeks 1..52 and starts again at 1 every year (FY2026 week 1 is
+  // 2025-12-28..2026-01-03, FY2027 week 1 starts 2026-12-27), and the page holds more than
+  // one year at once, so `r.week === selectedWeek` on the bare number also matched last
+  // year's week of that number. The key is the week's Saturday as YYYYMMDD: retail weeks run
+  // Sun–Sat, so all seven days share it, it orders by date, and it stays numeric, so the
+  // parseFloat / Number sorts on allWeeks, the trend cache and the week picker are unchanged.
+  // It is the same grouping the worker's T13 fix uses (date(date, 'weekday 6')).
+  // weekLabel() turns a key back into the number people see. scripts/browser-year-safe-weeks.mjs
+  const weekNumberOfKey = new Map();
+  function weekKeyOf(dateStr, week) {
+    if (week == null || week === '') return null;
+    const d = new Date(dateStr + 'T12:00:00Z');
+    d.setUTCDate(d.getUTCDate() + (6 - d.getUTCDay()));
+    const key = d.toISOString().slice(0, 10).replace(/-/g, '');
+    weekNumberOfKey.set(key, String(week));
+    return key;
+  }
+  function weekLabel(key) {
+    return key == null ? '' : (weekNumberOfKey.get(String(key)) ?? String(key));
+  }
   let liveDataLoading = false;
   let historicalDataLoading = false;
   let weeklyTotalsCache = {}; // { storeName: { weekNum: aTotal } }
@@ -10592,11 +10613,6 @@
 
   async function loadStoreFromD1(storeName) {
     const storeKey = storeName.split('/')[0]; // "BL1/BL6 Coliseum" → "BL1"
-    const url = `${WORKER_BASE}?history_d1=true&store=${storeKey}&from=2025-01-01&to=2026-12-31`;
-    const data = await cachedFetch(url, { credentials: 'include' });
-
-    const rows = [];
-    const cloverHistory = {};
     // ET-aware today key — the dashboard's day filter, live data, and
     // renderCards all key off ET dates (because the business operates in ET).
     // Using UTC here caused today's row to NOT get its stored fields nulled
@@ -10604,6 +10620,16 @@
     // which let renderCards double-count today's sales: m.aTotal kept its
     // stale stored value AND liveSales was added on top.
     const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+    // Through Dec 31 of NEXT year, worked out from today. It was a literal 2026-12-31, so from
+    // 2027-01-01 no current day was loaded. Next year, not this one: the week that spans New
+    // Year needs January's rows in late December, and the nightly import writes plan rows
+    // through the end of next month.
+    const histTo = `${Number(todayStr.slice(0, 4)) + 1}-12-31`;
+    const url = `${WORKER_BASE}?history_d1=true&store=${storeKey}&from=2025-01-01&to=${histTo}`;
+    const data = await cachedFetch(url, { credentials: 'include' });
+
+    const rows = [];
+    const cloverHistory = {};
 
     for (const [dateStr, d] of Object.entries(data)) {
       const date = new Date(dateStr + "T12:00:00");
@@ -10617,7 +10643,7 @@
       const isToday = dateStr === todayStr;
       rows.push({
         date,
-        week: d.week,
+        week: weekKeyOf(dateStr, d.week),   // year-unique key; weekLabel() for display
         bTotal: d.budget,
         aRetail: isToday ? null : d.retail,
         aBins: isToday ? null : d.bin,
@@ -12652,7 +12678,7 @@
       `<option value="${key}" ${key === sdMonthFilter ? 'selected' : ''}>${escapeHtml(v.label)}</option>`
     ).join('');
     const weekOpts = monthWeeks.map(w =>
-      `<option value="${w}" ${w === sdWeekFilter ? 'selected' : ''}>Week ${escapeHtml(w)}</option>`
+      `<option value="${w}" ${w === sdWeekFilter ? 'selected' : ''}>Week ${escapeHtml(weekLabel(w))}</option>`
     ).join('');
 
     return `
@@ -12738,7 +12764,7 @@
 
     if (sorted.length === 0) {
       return selectorsHtml + monthSummaryHtml
-        + `<div class="p-8 text-center text-opl-inkDim dark:text-op-inkDim">No data for Week ${escapeHtml(String(effectiveWeek))}.</div>`;
+        + `<div class="p-8 text-center text-opl-inkDim dark:text-op-inkDim">No data for Week ${escapeHtml(weekLabel(effectiveWeek))}.</div>`;
     }
 
     // Live boost for today. Today is the stores' Eastern date, matched on each row's day key:
@@ -12896,7 +12922,7 @@
 
     const totalRow = `
       <div class="grid items-center ${gridCols} gap-3 sm:gap-4 px-4 sm:px-5 py-3.5 border-t border-[rgba(20,16,8,0.16)] dark:border-op-borderHi bg-[rgba(20,16,8,0.02)] dark:bg-[rgba(255,255,255,0.025)]">
-        <div class="kpi-l text-center text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim leading-tight">Week ${escapeHtml(String(effectiveWeek))}<br/>Total</div>
+        <div class="kpi-l text-center text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim leading-tight">Week ${escapeHtml(weekLabel(effectiveWeek))}<br/>Total</div>
         <div class="min-w-0">
           <div class="text-lg sm:text-xl font-semibold tabular-nums text-opl-ink dark:text-op-ink tracking-tight">${fmtDollar(wkSales)}</div>
           <div class="mt-0.5 text-[12px] text-opl-inkDim dark:text-op-inkDim tabular-nums">vs <b class="text-opl-ink dark:text-op-ink font-semibold">${fmtDollar(wkBudget)}</b> · ${reportedDays} of ${sorted.length} days reported</div>
@@ -12961,7 +12987,7 @@
     // Sun-first (ascending) for visual consistency with the day chips.
     const sorted = Object.values(dayMap).sort((a, b) => a.dateObj - b.dateObj);
     if (!sorted.length) {
-      return `<div class="p-8 text-center text-opl-inkDim dark:text-op-inkDim">No data for Week ${escapeHtml(String(selectedWeek))}.</div>`;
+      return `<div class="p-8 text-center text-opl-inkDim dark:text-op-inkDim">No data for Week ${escapeHtml(weekLabel(selectedWeek))}.</div>`;
     }
 
     const firstDate = sorted[0].dateObj, lastDate = sorted[sorted.length - 1].dateObj;
@@ -13045,7 +13071,7 @@
 
     const totalRow = `
       <div class="grid items-center gap-3 sm:gap-4 px-4 sm:px-5 py-3.5 border-t border-[rgba(20,16,8,0.16)] dark:border-op-borderHi bg-[rgba(20,16,8,0.02)] dark:bg-[rgba(255,255,255,0.025)]" style="grid-template-columns:60px 1fr auto">
-        <div class="kpi-l text-center text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim leading-tight">Week ${escapeHtml(String(selectedWeek))}<br/>Total</div>
+        <div class="kpi-l text-center text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim leading-tight">Week ${escapeHtml(weekLabel(selectedWeek))}<br/>Total</div>
         <div class="min-w-0">
           <div class="text-lg sm:text-xl font-semibold tabular-nums text-opl-ink dark:text-op-ink tracking-tight">${fmtDollar(totSales)}</div>
           <div class="mt-0.5 text-[12px] text-opl-inkDim dark:text-op-inkDim tabular-nums">vs <b class="text-opl-ink dark:text-op-ink font-semibold">${fmtDollar(totBudget)}</b> · ${reportedDays} of ${sorted.length} days reported</div>
@@ -13234,10 +13260,10 @@
     const cardEl = el('sd-chart-card');
     if (cardEl) {
       cardEl.innerHTML = _buildChartCardHTML({
-        title: `Sales Trend · Week ${escapeHtml(String(selectedWeek))}`,
+        title: `Sales Trend · Week ${escapeHtml(weekLabel(selectedWeek))}`,
         subtitle: 'vs Last Week · Last Year',
         twTotal, lwTotal, lyTotal, budgetTotal,
-        twLabel: isCurrentWeek ? 'This Week' : `Week ${selectedWeek}`,
+        twLabel: isCurrentWeek ? 'This Week' : `Week ${weekLabel(selectedWeek)}`,
       });
     }
 
@@ -13637,9 +13663,9 @@
     el('mobile-menu-btn').classList.add('hidden');
 
     el('store-detail-title').textContent = shortName(storeName);
-    el('store-detail-subtitle').textContent = `Week ${selectedWeek} · Daily Breakdown`;
+    el('store-detail-subtitle').textContent = `Week ${weekLabel(selectedWeek)} · Daily Breakdown`;
     const wkChip = el('sd-week-chip-label');
-    if (wkChip) wkChip.textContent = `Week ${selectedWeek}`;
+    if (wkChip) wkChip.textContent = `Week ${weekLabel(selectedWeek)}`;
 
     // Sales metrics summary
     const sm = getStoreMetrics(storeName);
@@ -13692,7 +13718,7 @@
     const liveCol = showLive ? 'var(--v1-good)' : 'rgb(var(--op-inkDim))';
     const liveDot = showLive ? '#22c55e' : 'rgb(var(--op-inkDim))';   // fill, not text
     const liveBorder = showLive ? 'rgba(34,197,94,0.4)' : 'rgb(var(--op-inkDim) / 0.35)';
-    const wkLbl = sm.isCurrentWeek ? 'This Week' : `Week ${selectedWeek}`;
+    const wkLbl = sm.isCurrentWeek ? 'This Week' : `Week ${weekLabel(selectedWeek)}`;
 
     el('store-detail-metrics').innerHTML = `
       <section class="relative overflow-hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 lg:p-6 transition-colors">
@@ -16830,9 +16856,9 @@
 
   function showAllStoresDetail(fromHistory) {
     if (!fromHistory) pushNavHistory();
-    el('as-subtitle').textContent = `Week ${selectedWeek} · Combined`;
+    el('as-subtitle').textContent = `Week ${weekLabel(selectedWeek)} · Combined`;
     const chip = el('as-week-chip-label');
-    if (chip) chip.textContent = `Week ${selectedWeek}`;
+    if (chip) chip.textContent = `Week ${weekLabel(selectedWeek)}`;
     el('as-metrics').innerHTML = buildAllStoresHero();
 
     showOnlyPage('all-stores-detail');
@@ -16921,7 +16947,7 @@
     const liveCol = showLive ? 'var(--v1-good)' : 'rgb(var(--op-inkDim))';
     const liveDot = showLive ? '#22c55e' : 'rgb(var(--op-inkDim))';   // fill, not text
     const liveBorder = showLive ? 'rgba(34,197,94,0.4)' : 'rgb(var(--op-inkDim) / 0.35)';
-    const wkLbl = t.isCurrentWeek ? 'This Week' : `Week ${selectedWeek}`;
+    const wkLbl = t.isCurrentWeek ? 'This Week' : `Week ${weekLabel(selectedWeek)}`;
 
     return `
       <section class="relative overflow-hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 lg:p-6 transition-colors">
@@ -17036,7 +17062,7 @@
 
     const headerHtml = `
       <div class="flex items-center justify-between gap-3 px-4 sm:px-5 py-3.5 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
-        <h3 class="text-[14px] font-semibold text-opl-ink dark:text-op-ink">By Store · Week ${escapeHtml(String(selectedWeek))}</h3>
+        <h3 class="text-[14px] font-semibold text-opl-ink dark:text-op-ink">By Store · Week ${escapeHtml(weekLabel(selectedWeek))}</h3>
         <span class="text-[12px] text-opl-inkDim dark:text-op-inkDim">tap a store to drill in</span>
       </div>`;
 
@@ -17145,10 +17171,10 @@
     const cardEl = el('as-chart-card');
     if (cardEl) {
       cardEl.innerHTML = _buildChartCardHTML({
-        title: `Sales Trend · Week ${escapeHtml(String(selectedWeek))} · All Stores`,
+        title: `Sales Trend · Week ${escapeHtml(weekLabel(selectedWeek))} · All Stores`,
         subtitle: 'vs Last Week · Last Year',
         twTotal, lwTotal, lyTotal, budgetTotal,
-        twLabel: isCurrentWeek ? 'This Week' : `Week ${selectedWeek}`,
+        twLabel: isCurrentWeek ? 'This Week' : `Week ${weekLabel(selectedWeek)}`,
       });
     }
 

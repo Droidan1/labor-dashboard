@@ -66,6 +66,9 @@ const pageSrc = [
   lineFn('etTodayStr'), lineFn('etDayOf'), lineFn('etStartOfDay'), lineFn('rowDayKey'),
   blockFn('  function budgetOnlyRows(keep) {'), blockFn('  function budgetOnlyTotal(keep) {'),
   blockFn('  function rowAuction(r) {'),
+  // The week key loadStoreFromD1 stamps on every row, and the label the tables print it with.
+  (html.match(/^  const weekNumberOfKey = new Map\(\);$/m) || [''])[0],
+  blockFn('  function weekKeyOf(dateStr, week) {'), blockFn('  function weekLabel(key) {'),
   blockFn('  async function loadStoreFromD1(storeName) {'),
   blockFn('  async function fetchLiveCloverSales(storeKey) {'),
   blockFn('  function getTodayRow(storeName) {'),
@@ -249,8 +252,14 @@ for (const { iso, why } of INSTANTS) {
     eq(run('STORES.map(s => liveCloverData[s] && liveCloverData[s].day).join()'), Array(5).fill(today).join(), `${at}: each payload is stamped with the Eastern date`);
 
     // 3. The current week is the week of the Eastern today.
-    eq(run('currentWeek'), wk, `${at}: currentWeek is the week of ${today}`);
-    eq(run('selectedWeek'), wk, `${at}: and Today selects that same week`);
+    // A row's week is a year-unique key (the week's Saturday, YYYYMMDD), not the Sheet's number;
+    // weekLabel() is what a table prints. Both are checked: the key picks the right week of the
+    // right year, the label is the number a manager reads.
+    const sat = new RealDate(RealDate.parse(today + 'T12:00:00Z') + (6 - new RealDate(RealDate.parse(today + 'T12:00:00Z')).getUTCDay()) * 86400000);
+    const wkKey = sat.toISOString().slice(0, 10).replace(/-/g, '');
+    eq(run('currentWeek'), wkKey, `${at}: currentWeek is the week of ${today}`);
+    eq(run('selectedWeek'), wkKey, `${at}: and Today selects that same week`);
+    eq(run('weekLabel(selectedWeek)'), String(wk), `${at}: and it is labelled as the Sheet's week ${wk}`);
 
     // 4. getTodayRow picks the Eastern-today row, for every store.
     const tb = JSON.parse(run('JSON.stringify(STORES.concat(BUDGET_ONLY_STORES).map(s => (getTodayRow(s) || {}).bTotal ?? null))'));
