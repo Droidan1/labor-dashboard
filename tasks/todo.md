@@ -24,7 +24,7 @@ so FY27 wk1 would sum with FY26 wk1. Brian chose the full fix.
 - `npm test`: 13,139 assertions across 147 suites, all passed. Two slicing tests now include the real
   `weekKeyOf`/`weekLabel` (`test-daily-auction-column`, `test-today-eastern`, which also asserts the key AND the
   label); the `shell-cache` fixture was re-pinned to v321 with its documented command.
-- Not done: nothing is committed or pushed.
+- PR #407 opened (a9a865f). Frontend only: Pages deploys it on merge, no worker deploy or migration.
 
 # Admin layout: its own sidebar, Users only from Landing, admins start on Landing (2026-11-19) — branch `claude/admin-own-sidebar`
 
