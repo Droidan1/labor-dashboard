@@ -31,6 +31,12 @@ store's item by **code + name**, and skip items with no single match, showing th
   checked against the store's own catalogue). The new page against the OLD worker would schedule on its dry
   run (the old worker ignores `dryRun`), then schedule again.
 - Not changed: the 2026-10-14 rows still read `error` in D1 (prices were restored by hand on 2026-11-19).
+- **PR #408.** Worker deployed 2026-11-20 16:25:31Z from a fresh GitHub clone of 06c834c (guard ok): version
+  7dfae080, upload 1376.45 KiB = dry run, 100% on 4 `deployments status` passes 16:25–16:29Z. No sale was
+  pending or active at any open store, and the cron reads only `pending`/`active` rows, so the Oct 14 `error`
+  rows are untouched.
+- [x] Brian merged #408 at 16:26:42Z (fa68276), after the worker. Live `/` and `/sw.js` byte-identical to
+      main on 3 passes at 16:29:50Z, cache v322. Main's tree = 06c834c, so live worker 7dfae080 = main.
 
 
 # Year-safe dashboard weeks + history range from today (2026-11-19) — branch `claude/year-safe-weeks`
