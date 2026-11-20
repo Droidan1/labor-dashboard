@@ -63,11 +63,13 @@ for (const scheme of ['light', 'dark']) {
   page.on('pageerror', e => errs.push(e.message));
   await page.addInitScript(({ DATA, OPEN, dark }) => {
     try { localStorage.setItem('darkMode', dark ? 'true' : 'false'); } catch (e) {}
+    // An admin opens on Landing (2026-11-19); this checks the dashboard, so Bargain Lane is entered already.
+    try { sessionStorage.setItem('retjg.activeBusiness', 'bl'); } catch (e) {}
     const real = window.fetch;
     window.fetch = async (u, o) => {
       const s = String(u);
       const J = (x) => new Response(JSON.stringify(x), { status: 200, headers: { 'content-type': 'application/json' } });
-      if (s.includes('auth-me')) return J({ authenticated: true, email: 'a@b.com', name: 'Admin', role: 'admin', stores: null, pages: {}, businesses: ['bl'] });
+      if (s.includes('auth-me')) return J({ authenticated: true, email: 'a@b.com', name: 'Admin', role: 'admin', stores: null, pages: {}, businesses: [{ id: 'bl', name: 'Bargain Lane', unitNoun: 'store', unitCount: 6, connected: true }] });
       if (s.includes('history_d1=true')) return J(DATA[new URL(s).searchParams.get('store')] || {});
       const q = s.includes('?') ? new URL(s).searchParams : null;
       if (q && q.get('since') && q.get('store')) {

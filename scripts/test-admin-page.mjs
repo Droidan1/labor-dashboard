@@ -13,7 +13,8 @@
 //      every tool, admins let in for People, and the announcement push carries its audience;
 //   8. the doors: Admin is out of the Bargain Lane sidebar, the superuser's gear on Landing opens it,
 //      and Users stays for admins;
-//   9. Users shows in every business, and the Edit dialog never asks for a power the admin lacks.
+//   9. the Edit dialog never asks for a power the admin lacks, and every admin can reach Landing;
+//  10. Admin's own sidebar replaces the business's, outside the Menu's reach; no business bar on a phone.
 import fs from 'node:fs'; import path from 'node:path';
 const html = fs.readFileSync(path.join(process.argv[2] || '.', 'index.html'), 'utf8');
 
@@ -103,20 +104,31 @@ ok(/u\.grants\.map\(g => `<span class="ad-grant">/.test(html), 'the Users table 
 
 // 8. Phase 3 (2026-11-19): the doors
 ok(!/nav-admin-settings/.test(html), 'Admin Settings is out of the Bargain Lane sidebar: no item, no business mapping, no toggle');
-ok(/<button id="lp-admin" type="button" onclick="navigateToPage\('admin-settings'\)"[^>]*\n\s+class="hidden /.test(html),
-  'the Landing header has an Admin gear that opens Admin, hidden until revealed');
-ok(/el\('lp-admin'\)\.classList\.toggle\('hidden', !isSuperuser\);/.test(html), '…and only the superuser gets it');
-ok(/<div id="nav-users"[^>]*onclick="navigateToPage\('users'\)"/.test(html) && /el\('nav-users'\)\.classList\.toggle\('hidden', !isAdmin\);/.test(html),
-  'Users stays in the sidebar for admins (and the superuser), and opens Admin › People');
+ok(/<button id="lp-admin" type="button" data-go="admin-settings" onclick="navigateToPage\(this\.dataset\.go\)"[^>]*\n\s+class="hidden /.test(html),
+  'the Landing header has the Admin button, hidden until revealed');
+ok(/lpa\.classList\.toggle\('hidden', !isAdmin\);/.test(html) && /lpa\.dataset\.go = isSuperuser \? 'admin-settings' : 'users';/.test(html),
+  "…the superuser's gear opens Admin, an admin's Users button opens Admin › People, nobody else gets it");
+ok(!/id="nav-users"/.test(html) && !/'nav-users'/.test(html), 'Users is out of every business sidebar (2026-11-19): Landing is its door');
 ok(/<h1 class="[^"]*">Admin<\/h1>/.test(page), 'the page is called Admin');
 
 // 9. People from any business (2026-11-19)
-ok(/'nav-users': null,/.test(html), 'Users is hub-level: it shows inside every business, for that business\'s admins');
+ok(/function landingReachable\(user\) \{\n\s+const n = userBusinesses\(user\)\.length;\n\s+return n >= 2 \|\| \(!!user && user\.role === 'admin' && n >= 1\);/.test(html)
+  && /if \(landingReachable\(user\)\) \{\n\s+const active = activeBusiness\(\);/.test(html) && /if \(!landingReachable\(currentUser\)\) return;/.test(html),
+  'every admin starts on (and can reach) Landing, even with one business — it holds their Users button');
 ok(/id="edit-status-note"/.test(page) && /const statusLocked = !!u\.elsewhere && !\(currentUser && currentUser\.role === 'superuser'\);/.test(html),
   "the Edit dialog locks the status of someone with access elsewhere, and says why");
 ok(/if \(!u \|\| u\.status !== status\) \{\n\s+const r1 = await fetch\(`\$\{WORKER_BASE\}\?action=update-user`/.test(html),
   'Save sends the status only when it changed');
 ok(!/ROLE_DOT/.test(html), 'the unused Role-column colour map is gone');
+
+// 10. Admin's own sidebar (2026-11-19)
+const side = html.indexOf('<div id="ad-side"');
+ok(side > html.indexOf('</nav>', html.indexOf('<aside id="sidebar"')) && side < html.indexOf('<!-- Bottom Section -->'),
+  "Admin's sidebar sits outside the sidebar's <nav>, so the phone Menu (which walks #sidebar nav) never lists it");
+ok(/el\('sidebar'\)\.classList\.toggle\('ad-mode', page === 'admin-settings'\);/.test(html), "…and replaces the business's items on Admin only");
+ok(/#sidebar\.ad-mode > nav, #sidebar\.ad-mode #nav-switch-business\{display:none !important\}/.test(html), "…hiding every business item while it does");
+ok(/preApp \|\| \(id === 'bottom-nav' && page === 'admin-settings'\)/.test(html), 'Admin has no business bottom bar on a phone');
+ok(/id="ad-hub" onclick="navigateToPage\('landing'\)" class="lg:hidden/.test(page), "…and a ‹ Hub link instead");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

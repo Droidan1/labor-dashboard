@@ -168,6 +168,13 @@ async function open({ theme = 'light', width = 1400, height = 900, mobile = fals
 const visibleTools = (page) => page.$$eval('#page-admin-settings .ad-tool', ts => ts.filter(t => !t.hidden).map(t => t.dataset.tool));
 const current = (page) => page.$$eval('#ad-rail .ad-item[aria-current="page"]', bs => bs.map(x => x.dataset.biz || x.dataset.tool));
 const shown = (page, sel) => page.$eval(sel, n => !!n.getClientRects().length).catch(() => false);
+// Click a tool in Admin's sidebar, opening its business first if it is shut.
+async function sideTool(page, tool, biz) {
+  const sel = biz ? `#ad-side .nav-item[data-ad-biz="${biz}"]` : `#ad-side .nav-item[data-ad-tool="${tool}"]`;
+  const sub = await page.$eval(sel, n => (n.closest('[data-ad-sub]') && !n.getClientRects().length) ? n.closest('[data-ad-sub]').dataset.adSub : null);
+  if (sub) await page.click(`#ad-side [data-ad-group="${sub}"]`);
+  await page.click(sel);
+}
 const TOOLS = ['users', 'associates', 'announcement', 'health', 'manual', 'compare', 'costs', 'categories', 'repull', 'stickers'];
 
 // ── 1–7: desktop, light ─────────────────────────────────────────────────────
@@ -176,18 +183,43 @@ const TOOLS = ['users', 'associates', 'announcement', 'health', 'manual', 'compa
   const { ctx, page, errs, escaped } = await open();
   eq(await page.$$eval('#ad-rail .ad-ghead', hs => hs.map(h => h.textContent.trim())),
     ['People', 'Hub', 'Bargain Lane', 'E-Commerce', 'Live Sales'], 'the rail has People, Hub, Bargain Lane, and a group for each other business auth-me lists');
+  eq(await page.$$eval('#ad-side [data-ad-group]', hs => hs.map(h => h.innerText.trim())), ['People', 'Hub', 'Bargain Lane', 'E-Commerce', 'Live Sales'],
+    "🔑 on Admin the sidebar is Admin's own: the same groups as the rail");
+  eq(await page.$$eval('#ad-side [data-ad-group]', hs => hs.map(h => h.getAttribute('aria-expanded'))), ['true', 'false', 'false', 'false', 'false'],
+    '…every group a collapsible heading, with only the open tool\'s (People) open (Brian: collapse them all)');
+  ok(!(await shown(page, '#ad-side .nav-item[data-ad-tool="health"]')), "…so Bargain Lane's tools are out of sight");
+  await page.click('#ad-side [data-ad-group="bl"]');
+  eq([await page.$eval('#ad-side [data-ad-group="bl"]', h => h.getAttribute('aria-expanded')),
+    await page.$$eval('#ad-side [data-ad-sub="bl"] .nav-item', ns => ns.filter(n => n.getClientRects().length).map(n => n.dataset.adTool))],
+    ['true', ['health', 'manual', 'compare', 'costs', 'categories', 'repull', 'stickers']], 'opening Bargain Lane shows its seven tools');
+  const fitOpen = await page.$eval('#ad-side', n => [n.scrollHeight, n.clientHeight]);
+  eq(await page.$eval('#ad-side [data-ad-group="people"]', h => h.getAttribute('aria-expanded')), 'false', '…which shuts People: one group open at a time');
+  ok(fitOpen[0] <= fitOpen[1] + 1, `…so with Bargain Lane open the list fits a 900px-tall window too (${fitOpen[0]} ≤ ${fitOpen[1]})`);
+  await page.click('#ad-side [data-ad-group="bl"]');
+  eq(await page.$eval('#ad-side [data-ad-group="bl"]', h => h.getAttribute('aria-expanded')), 'false', '…and it shuts again');
+  await page.evaluate(() => adOpenTool('repull'));
+  eq(await page.$$eval('#ad-side [data-ad-group]', hs => hs.map(h => h.getAttribute('aria-expanded'))), ['false', 'false', 'true', 'false', 'false'],
+    "opening a tool any other way opens its group and shuts the rest");
+  await page.click('#ad-side [data-ad-group="bl"]');
+  await page.evaluate(() => adOpenTool('users'));
+  eq(await page.evaluate(() => [!!document.querySelector('#sidebar > nav').getClientRects().length, !!document.getElementById('ad-side').getClientRects().length,
+    document.querySelector('#ad-side .nav-item').innerText.trim()]), [false, true, 'Back to Hub'], "…in place of Bargain Lane's items, with Back to Hub first");
+  ok(!(await shown(page, '#ad-rail')), "…so the page's own rail steps aside on a desktop");
+  const fit = await page.$eval('#ad-side', n => [n.scrollHeight, n.clientHeight]);
+  ok(fit[0] <= fit[1] + 1, `…and with the businesses shut the superuser's list fits a 900px-tall window without scrolling (${fit[0]} ≤ ${fit[1]})`);
+  ok(await shown(page, '#ad-legend-top'), "…and the 'what it writes' legend moves to the top of the pane");
   eq(await visibleTools(page), ['users'], 'a first visit opens Users, and only it');
   eq(await current(page), ['users'], '…and its rail row is the current one');
 
   for (const t of TOOLS) {
-    await page.click(`#ad-rail .ad-item[data-tool="${t}"]`);
+    await sideTool(page, t);
     eq(await visibleTools(page), [t], `the ${t} row opens exactly the ${t} tool`);
   }
-  await page.click('#ad-rail .ad-item[data-biz="ecom"]');
+  await sideTool(page, null, 'ecom');
   eq(await visibleTools(page), ['biz'], 'a business with no tools opens the empty-business view');
   eq(await page.$eval('#ad-biz-empty', n => n.textContent), 'No admin tools for E-Commerce yet', '…naming that business');
   eq(await current(page), ['ecom'], '…and only its row is current');
-  await page.click('#ad-rail .ad-item[data-biz="live"]');
+  await sideTool(page, null, 'live');
   ok((await page.$eval('#ad-biz-note', n => n.textContent)).includes('Manual entries'), "Live Sales' empty view says where Live Sales $ is entered today");
 
   // 2. Store pickers
@@ -204,7 +236,7 @@ const TOOLS = ['users', 'associates', 'announcement', 'health', 'manual', 'compa
   eq(await page.$eval('#mso-store', s => s.options[0].textContent), 'BL1 – Coliseum', 'an option reads "BL1 – Coliseum", as before');
 
   // 3. The entry hooks, and the reordered health results
-  await page.click('#ad-rail .ad-item[data-tool="health"]');
+  await sideTool(page, 'health');
   ok(/^\d{4}-\d{2}-\d{2}$/.test(await page.inputValue('#rh-start')) && /^\d{4}-\d{2}-\d{2}$/.test(await page.inputValue('#rh-end')),
     "entering the page still fills the health check's default range");
   await page.click('#rh-run');
@@ -215,7 +247,7 @@ const TOOLS = ['users', 'associates', 'announcement', 'health', 'manual', 'compa
   ok(await shown(page, '#rh-repair'), 'the Repair button shows when there are dates to repair');
 
   // 4. Manual entries: one save, four shapes
-  await page.click('#ad-rail .ad-item[data-tool="manual"]');
+  await sideTool(page, 'manual');
   const seg = (name, v) => page.click(`[data-ad-seg="${name}"] button[data-v="${v}"]`);
   await page.selectOption('#mso-store', 'BL2');
   await page.fill('#mso-date', '2026-11-17'); await page.fill('#mso-total', '7761.5'); await page.fill('#mso-auction', '120');
@@ -236,14 +268,14 @@ const TOOLS = ['users', 'associates', 'announcement', 'health', 'manual', 'compa
   ok(await shown(page, '#mlh-status') && !(await shown(page, '#mso-status')), "labor's result shows while Labor is picked, and sales' is out of the way");
 
   // 5. Switches, and the Categories counts on a second render
-  await page.click('#ad-rail .ad-item[data-tool="compare"]');
+  await sideTool(page, 'compare');
   ok(await shown(page, '#srr-csv') && !(await shown(page, '#isr-csv')), 'Compare opens on the Sales report');
   await page.click('[data-ad-seg="cmp"] button[data-v="items"]');
   ok(await shown(page, '#isr-csv') && !(await shown(page, '#srr-csv')), '…and the switch swaps in Item sales');
-  await page.click('#ad-rail .ad-item[data-tool="costs"]');
+  await sideTool(page, 'costs');
   await page.click('[data-ad-seg="cost"] button[data-v="l3"]');
   ok(await shown(page, '#cc-list') && !(await shown(page, '#im-file')), 'Costs switches to category costs');
-  await page.click('#ad-rail .ad-item[data-tool="categories"]');
+  await sideTool(page, 'categories');
   const fill = (id, n) => page.evaluate(([id, n]) => {
     document.getElementById('overrides-table-wrap').classList.remove('hidden');
     document.getElementById(id).innerHTML = '<tr><td>x</td></tr>'.repeat(n);
@@ -257,19 +289,6 @@ const TOOLS = ['users', 'associates', 'announcement', 'health', 'manual', 'compa
   ok(await shown(page, '#overrides-fallback-tbody') && !(await shown(page, '#overrides-tbody')), 'the switch shows one table at a time');
   eq(await page.$$eval('#overrides-tbody, #overrides-fallback-tbody, #overrides-l3rules-tbody, #overrides-l3-tbody', t => t.length), 4,
     '…while all four stay in the page, so Save still saves every table');
-
-  // 6. Find a tool
-  const rows = () => page.$$eval('#ad-rail .ad-item', bs => bs.filter(x => !x.hidden).map(x => x.dataset.biz || x.dataset.tool));
-  await page.fill('#ad-q', 'backfill');
-  eq(await rows(), ['repull'], '"backfill" finds Re-pull & rebuild');
-  await page.fill('#ad-q', 'manual sales override');
-  eq(await rows(), ['manual'], 'a tool is found by its old name');
-  await page.fill('#ad-q', 'e-commerce');
-  eq(await rows(), ['ecom'], 'a business is found by its name');
-  await page.fill('#ad-q', 'zzz');
-  ok(await shown(page, '#ad-nomatch') && (await rows()).length === 0, 'nothing matching says so');
-  await page.fill('#ad-q', '');
-  eq((await rows()).length, 12, 'clearing the box brings all twelve rows back');
 
   // 7. Retired
   eq(await page.evaluate(() => [typeof window.runBackfillSales13w, !!document.getElementById('backfill-sales-status'),
@@ -313,24 +332,29 @@ const TOOLS = ['users', 'associates', 'announcement', 'health', 'manual', 'compa
   ok(await shown(page, '#invite-modal'), 'Invite user opens its dialog from inside Admin');
   ok((await page.$$eval('#invite-grants input[type=checkbox]', b => b.length)) > 0, '…with the grant blocks drawn');
   await page.evaluate(() => closeInviteModal());
-  await page.click('#ad-rail .ad-item[data-tool="associates"]');
+  await sideTool(page, 'associates');
   await page.waitForTimeout(100);
   ok((await page.$eval('#assoc-tbody', t => t.innerText)).includes('Dee Ramirez'), 'Associates lists the associate');
 
   // The old page id opens the Users tool, and lights the Users item.
-  await page.click('#ad-rail .ad-item[data-tool="health"]');
+  await sideTool(page, 'health');
   await page.evaluate(() => navigateToPage('dashboard'));
   await page.evaluate(() => navigateToPage('users'));
   await page.waitForTimeout(150);
-  eq(await page.evaluate(() => [currentPage, document.getElementById('nav-users').classList.contains('active'),
-    !!document.getElementById('nav-admin-settings')]), ['admin-settings', true, false],
-    "navigateToPage('users') opens Admin with Users lit in the sidebar (and there is no Admin Settings item)");
+  eq(await page.evaluate(() => [currentPage, [...document.querySelectorAll('#ad-side .nav-item.active')].map(n => n.dataset.adTool),
+    !!document.getElementById('nav-admin-settings'), !!document.getElementById('nav-users')]), ['admin-settings', ['users'], false, false],
+    "navigateToPage('users') opens Admin with Users lit in Admin's sidebar (and no business item for either exists)");
   eq(await visibleTools(page), ['users'], '…on the Users tool, whatever was open last');
-  await page.click('#ad-rail .ad-item[data-tool="costs"]');
-  eq(await page.evaluate(() => document.getElementById('nav-users').classList.contains('active')), false, 'a data tool does not light Users');
+  await sideTool(page, 'costs');
+  eq(await page.evaluate(() => [...document.querySelectorAll('#ad-side .nav-item.active')].map(n => n.dataset.adTool)), ['costs'], 'the open tool is the lit one');
+  await page.evaluate(() => navigateToPage('dashboard'));
+  eq(await page.evaluate(() => [!!document.querySelector('#sidebar > nav').getClientRects().length, !!document.getElementById('ad-side').getClientRects().length]),
+    [true, false], "leaving Admin brings the business's sidebar back");
+  await page.evaluate(() => navigateToPage('admin-settings'));
+  await sideTool(page, 'costs');
 
   // 11. The announcement's audience.
-  await page.click('#ad-rail .ad-item[data-tool="announcement"]');
+  await sideTool(page, 'announcement');
   await page.waitForTimeout(100);
   const aud = () => page.$$eval('#ann-aud .ad-chip', cs => cs.map(c => c.textContent + (c.getAttribute('aria-pressed') === 'true' ? '*' : '')));
   eq(await aud(), ['Whole hub', 'Bargain Lane*', 'E-Commerce', 'Live Sales*'], "the saved announcement's businesses show as picked");
@@ -357,9 +381,9 @@ const TOOLS = ['users', 'associates', 'announcement', 'health', 'manual', 'compa
   console.log('\n[People, admin]');
   const { ctx, page, errs } = await open({ role: 'admin', businesses: BUSINESSES.filter(b => b.id !== 'ecom') });
   eq(await page.evaluate(() => currentPage), 'admin-settings', 'an admin can open Admin Settings');
-  eq(await page.$$eval('#ad-rail .ad-item', bs => bs.filter(b => b.getClientRects().length).map(b => b.dataset.tool)), ['users', 'associates'],
-    '…and sees People, nothing else');
-  ok(!(await shown(page, '#ad-q')) && !(await shown(page, '#ad-rail .ad-legend')), '…with no search box or legend to go with one group');
+  eq(await page.$$eval('#ad-side .nav-item', bs => bs.map(b => b.dataset.adTool || b.dataset.adGroup || 'hub')), ['hub', 'people', 'users', 'associates'],
+    "…and Admin's sidebar is Hub and People, nothing else");
+  ok(!(await shown(page, '#ad-legend-top')), '…with no legend for tools they cannot open');
   await page.waitForFunction(() => !/Loading/.test(document.getElementById('users-tbody').textContent));
   eq(await page.$eval('#users-scope', n => n.textContent), 'Bargain Lane, Live Sales', 'the scope names their businesses');
   ok(!(await page.$eval('#users-tbody', t => t.innerText)).includes('E-Commerce'), 'no E-Commerce grant is drawn for them');
@@ -373,12 +397,13 @@ const TOOLS = ['users', 'associates', 'announcement', 'health', 'manual', 'compa
 }
 
 // ── 12. The doors (phase 3): the Landing gear, superuser only ───────────────
-for (const [role, theme, mobile] of [['superuser', 'light', false], ['superuser', 'dark', true], ['admin', 'light', false]]) {
+for (const [role, theme, mobile, oneBiz] of [['superuser', 'light', false], ['superuser', 'dark', true], ['admin', 'light', false], ['admin', 'dark', true, true]]) {
   console.log(`\n[Landing, ${role}, ${theme}${mobile ? ', phone' : ''}]`);
-  const businesses = role === 'admin' ? BUSINESSES.filter(b => b.id !== 'ecom') : BUSINESSES;
+  const businesses = oneBiz ? BUSINESSES.filter(b => b.id === 'bl') : role === 'admin' ? BUSINESSES.filter(b => b.id !== 'ecom') : BUSINESSES;
   const { ctx, page, errs } = await open({ role, theme, businesses, landing: true, ...(mobile ? { width: 375, height: 812, mobile: true } : {}) });
   await page.waitForTimeout(300);
-  eq(await page.evaluate(() => currentPage), 'landing', 'an account with two or more businesses starts on Landing');
+  eq(await page.evaluate(() => currentPage), 'landing', oneBiz ? '🔑 an admin with ONE business starts on Landing too (its Users button is their door)'
+    : 'an account with two or more businesses starts on Landing');
   if (role === 'superuser') {
     ok(await shown(page, '#lp-admin'), 'the Landing header shows the Admin gear');
     eq(await page.$eval('#lp-admin', b => [b.getAttribute('aria-label'), b.getBoundingClientRect().width >= 40, b.getBoundingClientRect().height >= 40]),
@@ -395,7 +420,11 @@ for (const [role, theme, mobile] of [['superuser', 'light', false], ['superuser'
     eq(await page.evaluate(() => currentPage), 'admin-settings', 'the gear opens Admin');
     eq(await page.$eval('#page-admin-settings h1', h => h.textContent), 'Admin', '…which is called Admin');
   } else {
-    ok(!(await shown(page, '#lp-admin')), "an admin's Landing has no gear");
+    eq(await page.$eval('#lp-admin', b => [!!b.getClientRects().length, b.getAttribute('aria-label'), !b.querySelector('.lp-users').classList.contains('hidden'),
+      !b.querySelector('.lp-gear').classList.contains('hidden')]), [true, 'Users', true, false], "an admin's Landing has a Users button instead of the gear");
+    await page.click('#lp-admin');
+    await page.waitForTimeout(250);
+    eq([await page.evaluate(() => currentPage), await visibleTools(page)], ['admin-settings', ['users']], '…which opens Admin › Users');
   }
   eq(errs, [], 'no page errors');
   await ctx.close();
@@ -418,11 +447,17 @@ for (const [role, theme, mobile] of [['superuser', 'light', false], ['superuser'
   const { ctx, page, errs } = await open({ role: 'admin', biz: 'live', people: LIVE_PEOPLE,
     businesses: [{ id: 'live', name: 'Live Sales', unitNoun: 'store', unitCount: 4, connected: true }] });
   await page.waitForTimeout(300);
-  ok(await shown(page, '#nav-users'), "🔑 inside Live Sales, an admin's sidebar has Users (it was Bargain Lane's only)");
-  await page.click('#nav-users');
+  ok(!(await page.$('#nav-users')), 'no business sidebar has a Users item');
+  eq(await page.$eval('#nav-switch-business', n => [!!n.getClientRects().length, n.innerText.trim()]), [true, 'Hub'],
+    '🔑 a one-business admin has Hub in the sidebar, back to Landing');
+  await page.click('#nav-switch-business');
+  await page.waitForTimeout(300);
+  eq(await page.evaluate(() => currentPage), 'landing', '…which opens Landing');
+  eq(await page.$eval('#lp-admin', b => [!!b.getClientRects().length, b.getAttribute('aria-label')]), [true, 'Users'], "…where the admin's button is Users");
+  await page.click('#lp-admin');
   await page.waitForTimeout(250);
   eq([await page.evaluate(() => currentPage), await visibleTools(page)], ['admin-settings', ['users']], '…and it opens Admin › Users');
-  eq(await page.$$eval('#ad-rail .ad-item', bs => bs.filter(b => b.getClientRects().length).map(b => b.dataset.tool)), ['users'],
+  eq(await page.$$eval('#ad-side .nav-item', bs => bs.map(b => b.dataset.adTool || b.dataset.adGroup || 'hub')), ['hub', 'people', 'users'],
     'Associates is not offered: they exist only in Bargain Lane');
   await page.waitForFunction(() => !/Loading/.test(document.getElementById('users-tbody').textContent));
   eq(await page.$eval('#users-scope', n => n.textContent), 'Live Sales', 'the scope says Live Sales');
@@ -463,6 +498,19 @@ for (const [role, theme, mobile] of [['superuser', 'light', false], ['superuser'
   console.log('\n[phone 375]');
   const { ctx, page, errs } = await open({ width: 375, height: 812, mobile: true, theme: 'dark' });
   ok(await shown(page, '#ad-rail') && !(await shown(page, '#ad-pane')), 'a phone opens on the list of tools');
+  ok(!(await shown(page, '#bottom-nav')) && await shown(page, '#ad-hub'), "Admin has no business bottom bar on a phone, and ‹ Hub at the top instead");
+  // Find a tool (the rail and its box are the phone's list)
+  const rows = () => page.$$eval('#ad-rail .ad-item', bs => bs.filter(x => !x.hidden).map(x => x.dataset.biz || x.dataset.tool));
+  await page.fill('#ad-q', 'backfill');
+  eq(await rows(), ['repull'], '"backfill" finds Re-pull & rebuild');
+  await page.fill('#ad-q', 'manual sales override');
+  eq(await rows(), ['manual'], 'a tool is found by its old name');
+  await page.fill('#ad-q', 'e-commerce');
+  eq(await rows(), ['ecom'], 'a business is found by its name');
+  await page.fill('#ad-q', 'zzz');
+  ok(await shown(page, '#ad-nomatch') && (await rows()).length === 0, 'nothing matching says so');
+  await page.fill('#ad-q', '');
+  eq((await rows()).length, 12, 'clearing the box brings all twelve rows back');
   for (const t of TOOLS) {
     await page.click(`#ad-rail .ad-item[data-tool="${t}"]`);
     await page.waitForTimeout(60);
@@ -478,12 +526,14 @@ for (const [role, theme, mobile] of [['superuser', 'light', false], ['superuser'
   await page.waitForTimeout(150);
   ok(await shown(page, '.ad-tool[data-tool="users"]') && !(await shown(page, '#ad-rail')), "on a phone, the Users item opens Users itself, not the list");
   await page.screenshot({ path: path.join(SHOTS, 'admin-phone-dark-users.png') });
+  await page.click('#ad-hub'); await page.waitForTimeout(250);
+  eq(await page.evaluate(() => currentPage), 'landing', '‹ Hub goes back to Landing');
   eq(errs, [], 'no page errors on the phone');
   await ctx.close();
 }
 
 // ── 9: contrast, every tool, every theme ─────────────────────────────────────
-const audit = (page) => page.evaluate(() => {
+const audit = (page, rootId = 'page-admin-settings') => page.evaluate((rootId) => {
   const parse = (s) => { const m = String(s).match(/rgba?\(([^)]+)\)/); if (!m) return null; const p = m[1].split(/[\s,/]+/).filter(Boolean).map(Number); return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 }; };
   const over = (t, u) => ({ r: t.r * t.a + u.r * (1 - t.a), g: t.g * t.a + u.g * (1 - t.a), b: t.b * t.a + u.b * (1 - t.a), a: 1 });
   const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b); };
@@ -495,7 +545,7 @@ const audit = (page) => page.evaluate(() => {
     for (let i = layers.length - 1; i >= 0; i--) base = over(layers[i], base);
     return base;
   };
-  const root = document.getElementById('page-admin-settings');
+  const root = document.getElementById(rootId);
   let min = 99, n = 0; const low = [];
   for (const e of root.querySelectorAll('*')) {
     if (['STYLE', 'SCRIPT', 'OPTION', 'OPTGROUP'].includes(e.tagName) || e.closest('svg')) continue;
@@ -510,24 +560,25 @@ const audit = (page) => page.evaluate(() => {
     if (v < 4.5) low.push(`${e.tagName.toLowerCase()}.${[...e.classList].slice(0, 3).join('.')} "${(e.innerText || e.value || '').trim().slice(0, 30)}" ${v.toFixed(2)}`);
   }
   return { min, n, low };
-});
+}, rootId);
 for (const theme of ['light', 'dark', 'oled', 'halloween']) {
   console.log(`\n[contrast, ${theme}]`);
   const { ctx, page } = await open({ theme });
   await page.waitForFunction(() => !/Loading/.test(document.getElementById('users-tbody').textContent));
-  await page.click('#ad-rail .ad-item[data-tool="health"]');
+  await sideTool(page, 'health');
   await page.click('#rh-run');
   await page.waitForFunction(() => !document.getElementById('rh-results').classList.contains('hidden'));
   await page.evaluate(() => { document.getElementById('overrides-table-wrap').classList.remove('hidden'); });
   let worst = 99, n = 0; const low = [];
   for (const t of TOOLS.concat(['ecom'])) {
-    await page.click(t === 'ecom' ? '#ad-rail .ad-item[data-biz="ecom"]' : `#ad-rail .ad-item[data-tool="${t}"]`);
+    await (t === 'ecom' ? sideTool(page, null, 'ecom') : sideTool(page, t));
     for (const segBtn of await page.$$(`.ad-tool:not([hidden]) [data-ad-seg] button`)) {
       await segBtn.click();
       const a = await audit(page); worst = Math.min(worst, a.min); n += a.n; low.push(...a.low);
     }
     const a = await audit(page); worst = Math.min(worst, a.min); n += a.n; low.push(...a.low);
   }
+  const sideA = await audit(page, 'ad-side'); worst = Math.min(worst, sideA.min); n += sideA.n; low.push(...sideA.low);
   ok(worst >= 4.5, `every text node in every tool ≥ 4.5:1 in ${theme} (min ${worst.toFixed(2)} over ${n} checks)${low.length ? '\n        ' + [...new Set(low)].slice(0, 12).join('\n        ') : ''}`);
   if (theme === 'dark') await page.screenshot({ path: path.join(SHOTS, 'admin-desktop-dark.png') });
   await ctx.close();

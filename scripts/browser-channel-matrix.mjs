@@ -184,6 +184,8 @@ function stub({ HIST, LIVE, PAST, dark, live, hold }) {
     o.retail.net = Math.round(o.retail.net * 100) / 100; o.bin.net = Math.round(o.bin.net * 100) / 100;
     return o;
   };
+  // An admin opens on Landing (2026-11-19); this checks the dashboard, so Bargain Lane is entered already.
+  try { sessionStorage.setItem('retjg.activeBusiness', 'bl'); } catch (e) {}
   window.fetch = async (u) => {
     const s = String(u);
     const q = new URL(s, location.href).searchParams;
@@ -191,7 +193,7 @@ function stub({ HIST, LIVE, PAST, dark, live, hold }) {
     api.log.push(s);
     if (s.includes('auth-me')) {
       return J({ authenticated: true, email: 'a@b.com', name: 'Admin', role: 'admin',
-                 stores: null, pages: {}, businesses: ['bl'] });
+                 stores: null, pages: {}, businesses: [{ id: 'bl', name: 'Bargain Lane', unitNoun: 'store', unitCount: 6, connected: true }] });
     }
     if (q.get('history_d1') === 'true') return J(HIST[st] || {});
     if (q.get('action') === 'channel-range') {

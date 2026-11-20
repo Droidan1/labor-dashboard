@@ -254,9 +254,13 @@ V1 "comfortable" density:
   Inventory, Supply Request, Users, Settings. Role-
   gated items (`#nav-inventory`, `#nav-users`,
   `#nav-settings`) start `.hidden` and are revealed by app logic.
-  Admin is hub-level and has no item of its own: the superuser opens
-  it from the gear in the Landing header (`#lp-admin`), and Users
-  (admins and the superuser) opens Admin › People.
+  Admin is hub-level and no business sidebar links to it: Landing's
+  header button (`#lp-admin`) is the only door — a gear for the
+  superuser (all of Admin), Users for an admin (Admin › People). On
+  Admin the sidebar is Admin's own (`#ad-side`, shown by
+  `#sidebar.ad-mode`): Back to Hub, then every group as a collapsible
+  heading (the Inventory/Marketing dropdown pattern), one open at a
+  time, so it fits a 900px laptop.
   Active nav item = `bg-accent-green/10` + `text-accent-green` pill.
 - **Main scroller** (`#main-scroll`): `flex-1 overflow-y-auto`. The
   document itself scrolls (the flex parent is `min-h-screen`), so
@@ -685,7 +689,9 @@ Many read-only tables over one set of filters:
 A page of many unrelated tools:
 
 - **A rail and one tool at a time.** The rail is grouped People (Users, Associates), then Hub, then
-  one group per business. An admin sees People only; the superuser sees all of it. Groups for
+  one group per business. An admin sees People only; the superuser sees all of it. On a desktop
+  the rail moves into the app sidebar (an accordion of collapsible groups) and the page's own rail
+  steps aside; a phone keeps the rail as its list page, with no business bottom bar and "‹ Hub". Groups for
   businesses other than Bargain Lane come from `userBusinesses`, so a business with no tools still gets
   a group saying "No tools yet". On a phone the rail is the page: a tool opens over it, with "‹ Admin
   tools" to go back.

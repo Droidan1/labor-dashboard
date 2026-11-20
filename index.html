@@ -721,8 +721,10 @@
     .dark .sidebar .nav-item { color: rgb(var(--op-inkDim)); }
     .sidebar .nav-item:hover { background: rgba(20,16,8,0.035); color: #14110a; }
     .dark .sidebar .nav-item:hover { background: rgba(255,255,255,0.04); color: rgb(var(--op-ink)); }
+    /* Light text is #166534 (green-800, DESIGN.md §4.8): #22c55e as text on this pill measured 2.44:1
+       (found 2026-11-19 by browser-admin-page's audit of Admin's sidebar; every lit item had it). */
     .sidebar .nav-item.active {
-      background: rgba(34,197,94,0.10); color: #22c55e;
+      background: rgba(34,197,94,0.10); color: #166534;
       border-left-color: transparent; font-weight: 600;
     }
     .dark .sidebar .nav-item.active { background: rgb(var(--accent-green) / .12); color: rgb(var(--accent-green)); }
@@ -1315,11 +1317,11 @@
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/><line x1="9" y1="9" x2="10" y2="9"/></svg></span>
           <span class="nav-label">Supply Request</span>
         </div>
-        <div id="nav-users" class="hidden nav-item" data-page="users" data-menu-section="Admin" onclick="navigateToPage('users')">
-          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
-          <span class="nav-label">Users</span>
-        </div>
       </nav>
+      <!-- Admin's own sidebar (Brian, 2026-11-19): on Admin the business's items give way to the
+           admin tools, drawn from the page's rail by adRenderSide(). Shown by #sidebar.ad-mode,
+           which navigateToPage sets on admin-settings and clears everywhere else. -->
+      <div id="ad-side" class="flex-1 px-2 space-y-1 overflow-y-auto" aria-label="Admin tools"></div>
 
       <!-- Bottom Section -->
       <div id="sidebar-dark-toggle" class="px-2 pb-2 space-y-1">
@@ -8033,6 +8035,15 @@
         #page-admin-settings .ad-tbl{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums;color:var(--ad-ink)}
         #page-admin-settings .ad-tbl thead th{height:34px;padding:0 12px;font-size:11px;font-weight:600;color:var(--ad-dim);background:var(--ad-panelHi);border-bottom:1px solid var(--ad-hair);white-space:nowrap}
         #page-admin-settings .ad-off{display:none !important}
+        /* Admin's own sidebar: #sidebar.ad-mode swaps the business's items for #ad-side. */
+        #sidebar.ad-mode > nav, #sidebar.ad-mode #nav-switch-business{display:none !important}
+        #sidebar:not(.ad-mode) #ad-side{display:none !important}
+        #page-admin-settings .ad-legend-top{display:none;align-items:center;flex-wrap:wrap;gap:6px 8px;font-size:12px;color:var(--ad-dim);margin-bottom:16px}
+        @media (min-width:1024px){
+          #page-admin-settings .ad-wrap{grid-template-columns:minmax(0,1fr)}
+          #page-admin-settings .ad-rail{display:none}
+          #page-admin-settings .ad-legend-top.ad-su{display:flex}
+        }
         #page-admin-settings .ad-chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
         #page-admin-settings .ad-chip{height:30px;padding:0 11px;border-radius:999px;border:1px solid var(--ad-border);background:transparent;color:var(--ad-dim);
           font-size:13px;font-weight:500;cursor:pointer;display:inline-flex;gap:6px;align-items:center}
@@ -8059,6 +8070,7 @@
       </style>
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
         <div class="max-w-[1240px] mx-auto">
+          <button type="button" id="ad-hub" onclick="navigateToPage('landing')" class="lg:hidden inline-flex items-center min-h-[40px] -mt-2 text-sm font-semibold text-accent-green">‹ Hub</button>
           <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Admin</h1>
           <p class="text-sm text-opl-inkDim dark:text-op-inkDim">Hub settings and each business's data tools</p>
         </div>
@@ -8109,6 +8121,8 @@
         </nav>
 
         <section class="ad-pane" id="ad-pane">
+          <div class="ad-legend-top" id="ad-legend-top">Buttons say what they write: <span class="ad-tag ad-ro">Read-only</span>
+            <span class="ad-tag ad-save">Saves changes</span> <span class="ad-tag ad-hist">Rewrites history</span></div>
 
           <!-- ═══ People › Users (was the Users page, 2026-11-19) ═══
                list-users answers only for the caller's businesses (listUsersFor in the worker),
@@ -8863,11 +8877,13 @@
               class="w-10 h-10 rounded-[10px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim flex items-center justify-center transition-colors hover:border-accent-green/40 hover:text-opl-ink dark:hover:text-op-ink focus:outline-none focus:ring-1 focus:ring-accent-green disabled:opacity-50">
               <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
             </button>
-            <!-- Admin (Brian, 2026-11-19): superuser only — applyRoleUI reveals it. Admin is hub-level,
-                 so its door is here rather than in one business's sidebar. -->
-            <button id="lp-admin" type="button" onclick="navigateToPage('admin-settings')" aria-label="Admin" title="Admin"
+            <!-- The door to Admin (Brian, 2026-11-19), and the only one: Admin is hub-level. The superuser
+                 gets the gear (all of Admin); an admin gets Users (Admin › People). applyRoleUI sets
+                 which, through data-go, and reveals it for those two roles only. -->
+            <button id="lp-admin" type="button" data-go="admin-settings" onclick="navigateToPage(this.dataset.go)" aria-label="Admin" title="Admin"
               class="hidden w-10 h-10 rounded-[10px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim flex items-center justify-center transition-colors hover:border-accent-green/40 hover:text-opl-ink dark:hover:text-op-ink focus:outline-none focus:ring-1 focus:ring-accent-green">
-              <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              <svg class="lp-users hidden w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              <svg class="lp-gear w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             </button>
           </div>
         </div>
@@ -14203,7 +14219,7 @@
     // The picker is meaningless with fewer than two businesses — refuse it so a
     // stale deep link or history entry can't strand someone on an empty page.
     if (page === 'landing') {
-      if (userBusinesses(currentUser).length < 2) return;
+      if (!landingReachable(currentUser)) return;
       try { renderLanding(); } catch (_) {}
     }
     // Push the outgoing page onto the back stack — but only on forward
@@ -14228,8 +14244,11 @@
     const preApp = (page === 'landing' || page === 'no-access');
     ['sidebar', 'bottom-nav'].forEach(id => {
       const n = el(id);
-      if (n) n.classList.toggle('hidden', preApp);
+      // Admin is hub-level too (2026-11-19): it keeps the sidebar — its OWN, below — but no
+      // business's bottom bar; its app bar has "‹ Hub" on a phone instead.
+      if (n) n.classList.toggle('hidden', preApp || (id === 'bottom-nav' && page === 'admin-settings'));
     });
+    if (el('sidebar')) el('sidebar').classList.toggle('ad-mode', page === 'admin-settings');
 
     // Business-aware nav. After the role gates above, never instead of them.
     try { applyBusinessNav(); } catch (_) {}
@@ -25891,9 +25910,15 @@
     // People's list is fetched once per visit, not again for each of its two tools.
     if (AD_PEOPLE.includes(tool) && !AD_PEOPLE.includes(adShown) && typeof loadUsers === 'function') loadUsers();
     adShown = tool;
-    // The sidebar's one door here is Users, lit for People; the rest of Admin is reached from Landing.
-    const people = AD_PEOPLE.includes(tool);
-    if (el('nav-users')) el('nav-users').classList.toggle('active', people);
+    document.querySelectorAll('#ad-side .nav-item[data-ad-tool]').forEach(n => {
+      const on = biz ? n.dataset.adBiz === biz : (n.dataset.adTool === id && !n.dataset.adBiz);
+      n.classList.toggle('active', on);
+      const sub = on && n.closest('[data-ad-sub]');
+      if (sub) {
+        document.querySelectorAll('#ad-side [data-ad-sub]').forEach(x => { if (x !== sub) adSideToggle(x.dataset.adSub, false); });
+        adSideToggle(sub.dataset.adSub, true);
+      }
+    });
     try { sessionStorage.setItem(AD_LAST, biz ? 'biz:' + biz : id); } catch (_) {}
   }
   function adOpenTool(id, biz) {
@@ -25916,6 +25941,9 @@
     if (sub) sub.textContent = su ? "People, hub settings and each business's data tools" : 'People in the businesses you administer';
     if (su) adRenderAudience();
     adFilter();
+    adRenderSide();
+    const legend = el('ad-legend-top');
+    if (legend) legend.classList.toggle('ad-su', su);
     const want = adPendingTool;
     adPendingTool = null;
     adShown = null;
@@ -25925,6 +25953,65 @@
       : last && last.startsWith('biz:') ? ['biz', last.slice(4)] : [last || 'users', null];
     adShow(id, biz);
     adWrap().classList.toggle('ad-open', !!want || !adIsPhone());
+  }
+
+  // Admin's sidebar: the rail's groups and rows as sidebar items, so one list decides both (and the
+  // role gates the rail applied — .ad-off — carry over). "Back to Hub" leads, to Landing. Every group
+  // — People, Hub and each business — is a collapsible heading over its tools (Brian, 2026-11-19), the
+  // sidebar's own dropdown pattern (Inventory, Marketing), as an accordion: opening a group — by its
+  // heading or by opening one of its tools — shuts the others, so the list always fits a 900px laptop.
+  const AD_SIDE_OPEN = new Set();               // groups open now
+  const AD_SVG = (p) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+  const AD_BIZ_ICON = {
+    people: AD_SVG('<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>'),
+    hub: AD_SVG('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>'),
+    bl: AD_SVG('<path d="M3 9l1.5-5h15L21 9"/><path d="M4 9v11h16V9"/><path d="M9 20v-6h6v6"/>'),
+    ecom: AD_SVG('<circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M2 3h3l2.7 12.4a1 1 0 0 0 1 .8h9.6a1 1 0 0 0 1-.8L21 7H6"/>'),
+    live: AD_SVG('<rect x="2" y="6" width="14" height="12" rx="2"/><path d="M22 8l-6 4 6 4z"/>'),
+  };
+  const AD_CHEV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
+  function adRenderSide() {
+    const side = el('ad-side');
+    if (!side) return;
+    const back = AD_SVG('<path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/>');
+    const tool = (b, sub) => {
+      const svg = b.querySelector('svg') ? b.querySelector('svg').outerHTML : '';
+      const label = b.querySelector('span') ? b.querySelector('span').textContent : '';
+      return `<div class="nav-item${sub ? ' nav-subitem' : ''}" role="button" tabindex="0" data-ad-tool="${escapeHtml(b.dataset.tool)}"${b.dataset.biz ? ` data-ad-biz="${escapeHtml(b.dataset.biz)}"` : ''}>`
+        + `<span class="nav-icon">${svg}</span><span class="nav-label">${escapeHtml(label)}</span></div>`;
+    };
+    let html = `<div class="nav-item" role="button" tabindex="0" data-ad-hub="1"><span class="nav-icon">${back}</span><span class="nav-label">Back to Hub</span></div>`;
+    document.querySelectorAll('#ad-rail .ad-group:not(.ad-off)').forEach(g => {
+      const items = [...g.querySelectorAll('.ad-item:not(.ad-off)')];
+      if (!items.length) return;
+      const id = g.dataset.group, name = g.querySelector('.ad-ghead').textContent.trim();
+      const open = AD_SIDE_OPEN.has(id);
+      html += `<div class="nav-item" role="button" tabindex="0" aria-expanded="${open}" data-ad-group="${escapeHtml(id)}">`
+        + `<span class="nav-icon">${AD_BIZ_ICON[id] || AD_BIZ_ICON.bl}</span><span class="nav-label">${escapeHtml(name)}</span>`
+        + `<span class="nav-chev nav-label"${open ? ' style="transform:rotate(90deg)"' : ''}>${AD_CHEV}</span></div>`
+        + `<div class="nav-sub${open ? '' : ' hidden'}" data-ad-sub="${escapeHtml(id)}">${items.map(b => tool(b, true)).join('')}</div>`;
+    });
+    side.innerHTML = html;
+  }
+  // Open or shut one business heading (force: true/false; omit to toggle).
+  function adSideToggle(id, force) {
+    const head = document.querySelector(`#ad-side [data-ad-group="${id}"]`);
+    const sub = document.querySelector(`#ad-side [data-ad-sub="${id}"]`);
+    if (!head || !sub) return;
+    const open = force === undefined ? sub.classList.contains('hidden') : force;
+    sub.classList.toggle('hidden', !open);
+    head.setAttribute('aria-expanded', String(open));
+    const chev = head.querySelector('.nav-chev');
+    if (chev) chev.style.transform = open ? 'rotate(90deg)' : '';
+    if (open) AD_SIDE_OPEN.add(id); else AD_SIDE_OPEN.delete(id);
+  }
+  // A heading click: open this group and shut the rest, or shut it if it is open.
+  function adSideAccordion(id) {
+    const sub = document.querySelector(`#ad-side [data-ad-sub="${id}"]`);
+    if (!sub) return;
+    const opening = sub.classList.contains('hidden');
+    if (opening) document.querySelectorAll('#ad-side [data-ad-sub]').forEach(x => { if (x !== sub) adSideToggle(x.dataset.adSub, false); });
+    adSideToggle(id, opening);
   }
 
   // Find a tool: by its name, its group, or the words of what it used to be called.
@@ -26016,6 +26103,16 @@
       if (b) adOpenTool(b.dataset.tool, b.dataset.biz || null);
     });
     el('ad-q').addEventListener('input', adFilter);
+    const side = el('ad-side');
+    if (side) {
+      const go = (n) => n.dataset.adGroup ? adSideAccordion(n.dataset.adGroup)
+        : n.dataset.adHub ? navigateToPage('landing') : adOpenTool(n.dataset.adTool, n.dataset.adBiz || null);
+      side.addEventListener('click', e => { const n = e.target.closest('.nav-item'); if (n) go(n); });
+      side.addEventListener('keydown', e => {
+        const n = e.target.closest('.nav-item');
+        if (n && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); go(n); }
+      });
+    }
     if (el('users-q')) el('users-q').addEventListener('input', () => renderUsersTable());
     pane.addEventListener('click', e => {
       const aud = e.target.closest('#ann-aud .ad-chip');
@@ -39851,6 +39948,13 @@
     return PAGE_LEVEL_N[(u && u.pages || {})[page]] || 0;
   }
 
+  // Can this account open Landing? With two or more businesses, as ever; and every admin, even with
+  // one (Brian, 2026-11-19), because Landing's header button is their only door to Users.
+  function landingReachable(user) {
+    const n = userBusinesses(user).length;
+    return n >= 2 || (!!user && user.role === 'admin' && n >= 1);
+  }
+
   function landingPageFor(user) {
     // An associate has no dashboard to land on: the first page they hold IS their
     // front door. Registry order rather than grant order, so it is the same page
@@ -39861,7 +39965,7 @@
     }
     if (!canSeeFinancials(user)) return 'no-access';
     const biz = userBusinesses(user);
-    if (biz.length >= 2) {
+    if (landingReachable(user)) {
       const active = activeBusiness();
       // Only honour a selection that is still reachable — a revoked grant must
       // not keep routing someone into a business they have lost.
@@ -40621,8 +40725,6 @@
     'nav-labor': 'bl',
     'nav-discounts': 'bl',
     'nav-supply-request': 'bl',
-    // Hub-level since 2026-11-19: Users opens Admin › People, which every business's admins use.
-    'nav-users': null,
     'nav-marketing': 'bl',
     'nav-marketing-group': 'bl',
     'nav-marketing-ads': 'bl',
@@ -41149,7 +41251,12 @@
     // Driven by the business count, not by role — an executive granted two
     // businesses needs it just as much as the superuser does.
     const swb = el('nav-switch-business');
-    if (swb) swb.classList.toggle('hidden', userBusinesses(user).length < 2);
+    if (swb) {
+      swb.classList.toggle('hidden', !landingReachable(user));
+      // With one business there is nothing to switch to — it is just the way back to Landing.
+      const lbl = swb.querySelector('.nav-label');
+      if (lbl) lbl.textContent = userBusinesses(user).length < 2 ? 'Hub' : 'Switch business';
+    }
 
     // Show/hide nav items based on role
     const isAdmin = user.role === 'superuser' || user.role === 'admin';
@@ -41263,10 +41370,15 @@
       || pageLevel('mos', user) >= 1 || pageLevel('opportunity-buys', user) >= 1;
     el('nav-inventory-group').classList.toggle('hidden', !isAdmin && !seesInvFloor);
     el('nav-supply-request').classList.toggle('hidden', !isAdmin && user.role !== 'district_manager' && user.role !== 'manager');
-    el('nav-users').classList.toggle('hidden', !isAdmin);
-    // Admin is hub-level (2026-11-19): the superuser reaches it from the Landing header's gear,
-    // and an admin from the Users item above, which opens Admin › People.
-    el('lp-admin').classList.toggle('hidden', !isSuperuser);
+    // Admin's one door is Landing's header button (Brian, 2026-11-19): the gear for the superuser
+    // (all of Admin), Users for an admin (Admin › People). Nobody else gets it.
+    const lpa = el('lp-admin');
+    lpa.classList.toggle('hidden', !isAdmin);
+    lpa.dataset.go = isSuperuser ? 'admin-settings' : 'users';
+    lpa.setAttribute('aria-label', isSuperuser ? 'Admin' : 'Users');
+    lpa.title = isSuperuser ? 'Admin' : 'Users';
+    lpa.querySelector('.lp-gear').classList.toggle('hidden', !isSuperuser);
+    lpa.querySelector('.lp-users').classList.toggle('hidden', isSuperuser);
     el('nav-settings').classList.remove('hidden');
     const adminOpt = el('invite-role-admin');
     if (adminOpt) adminOpt.classList.toggle('hidden', !isSuperuser);
