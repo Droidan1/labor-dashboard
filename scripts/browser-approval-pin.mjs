@@ -61,7 +61,7 @@ for (const scheme of ['dark','light']) {
     const real=window.fetch;
     window.fetch=async(u,o)=>{const s=String(u);
       const J=x=>new Response(JSON.stringify(x),{status:200,headers:{'content-type':'application/json'}});
-      if(s.includes('auth-me'))return J({authenticated:true,email:'a@b.com',name:'Admin',role:'admin',stores:null,pages:{},businesses:['bl']});
+      if(s.includes('auth-me'))return J({authenticated:true,email:'a@b.com',name:'Admin',role:'admin',stores:null,pages:{},businesses:[{id:'bl',name:'Bargain Lane',unitNoun:'store',unitCount:6,connected:true}]});
       if(s.includes('list-users'))return J({ok:true,users:USERS});
       if(s.includes('user-grants'))return J({ok:true,grants:[]});
       if(s.includes('grant-options'))return J({ok:true,businesses:[]});

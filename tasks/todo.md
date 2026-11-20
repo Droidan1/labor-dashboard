@@ -1,3 +1,32 @@
+# Admin › People from any business: invite/update-user off the Bargain Lane gate, suspend scoping (2026-11-19) — branch `claude/admin-people-any-business`
+
+**Ask (Brian):** "Let's fix all of this" — the Bargain Lane gate on invite-user and the other user actions, so an
+admin of any business can manage their own people. Asked and answered: an admin may suspend someone only when
+**all** their access is in the admin's businesses.
+
+- [x] Worker: `invite-user` and `update-user` move to `BUSINESS_AGNOSTIC_ACTIONS`. invite-user already checked each
+      business against `grantOptionsFor`. New `userReach(env, caller, id)` → `sees` (list-users' rule) and `manages`
+      (every grant in the caller's businesses; associates need Bargain Lane; nobody but the superuser reaches a
+      superuser). update-user: `role`/`stores` are the superuser's only (they write the Bargain Lane grant, so an
+      admin could add someone to Bargain Lane — set-user-grants refuses that; no page sends them), status must be
+      active|suspended, a status CHANGE needs `manages`, an unchanged one only `sees` (today's page sends it on
+      every Save). `resend-invite` reaches only people the caller sees (404 otherwise). `list-users` adds
+      `elsewhere` (yes/no, never where). `delete-user` (superuser only) and `associate-save` (associates are
+      Bargain Lane's) keep their gate.
+- [x] Page: `nav-users` is hub-level, so Users shows inside every business for its admins (and the superuser).
+      Edit dialog: status locked with the reason for someone with access elsewhere; Save sends the status only
+      when it changed; the Bargain Lane approval code shows only when editor and person both reach Bargain Lane.
+      `ROLE_DOT` (unused) removed. Cache v319.
+- [x] Tests: `test-admin-people` 70/0 (56/14 on main's worker; 2/2 mutants caught); `test-privilege-guards` and
+      `test-request-scoping` updated to the stricter rule (an admin changes no role through update-user);
+      `test-admin-page` 34/0; `browser-admin-page` 141/0 (a Live Sales-only admin inside Live Sales: Users in the
+      sidebar, People without Associates, the status lock, grants-only Save); `browser-mobile-menu` superuser's
+      E-Commerce and Live Sales Menus gain Admin › Users (166/6, the same 6 associate failures as main);
+      `browser-approval-pin` 36/0 (auth-me mock → real object shape); edit-grants-bl 40/0, invite 92/0,
+      associate-reveal 42/0, ecom-overview 72/0. `npm test` 13,105 / 147. Worker dry run 1368.11 KiB.
+- [ ] Brian: deploy the worker (backward-compatible both ways: today's page still saves; the new page with
+      today's worker only meets a 403 if an admin outside Bargain Lane invites), then merge.
+
 # Admin, phase 3: the doors — Landing gear (superuser), Users for admins, Admin Settings out of the sidebar (2026-11-19) — branch `claude/admin-landing`
 
 **Ask (Brian, after merging #403):** "add the superuser-only gear button to the Landing header that opens Admin, keep
@@ -15,7 +44,9 @@ sidebar". Frontend only.
       `browser-ecom-overview` 72/0, `browser-export-dates` 13/0, `browser-associate-reveal` 42/0,
       `browser-invite-multi-business` 92/0; `browser-live-sales` 340/4, the same 4 on main (calendar dates).
       `npm test` 13,033 / 147.
-- [ ] Brian: merge (Pages deploys it; no worker change).
+- [x] Merged as #404 (98ed2f7). The push's Pages deploy failed twice on GitHub's artifact listing (a rerun
+      duplicates the artifact); a fresh `gh workflow run deploy-pages.yml` deployed it, and live `/` + `/sw.js`
+      matched main byte for byte on 3 passes (cache v318).
 
 **Not changed:** opening Admin from Landing enters no business, so the sidebar falls back to Bargain Lane's (as any
 page does with none active); "Switch business" leads back to Landing.

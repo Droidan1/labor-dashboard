@@ -96,12 +96,13 @@ const EXPECT = {
   // E-Commerce (2026-11-18): Overview is the front door and eBay Cases its own page.
   ecom: { role: 'superuser', businesses: [BL, ECOM], biz: 'ecom',
     bar: ['Overview', 'eBay Cases', 'Menu'],
-    menu: [['E-Commerce', ['ecom-overview', 'ebay-cases']], ['Account', ['@switch', 'settings', '@signout']]] },
+    menu: [['E-Commerce', ['ecom-overview', 'ebay-cases']], ['Admin', ['users']], ['Account', ['@switch', 'settings', '@signout']]] },
+  // Users is hub-level since 2026-11-19, so the superuser finds it in every business (Admin › People).
   // Live Sales (migration-085): four tabs + Menu. The Show Calendar took Auction's tab (2026-11-03), so
   // Online Auction and Promotion are reached from the Menu.
   live: { role: 'superuser', businesses: [BL, ECOM, LIVE], biz: 'live',
     bar: ['Overview', 'Shows', 'Calendar', 'Money', 'Menu'],
-    menu: [['Live Sales', ['live-overview', 'live-shows', 'live-calendar', 'live-auction', 'live-promotion', 'live-money']], ['Account', ['@switch', 'settings', '@signout']]] },
+    menu: [['Live Sales', ['live-overview', 'live-shows', 'live-calendar', 'live-auction', 'live-promotion', 'live-money']], ['Admin', ['users']], ['Account', ['@switch', 'settings', '@signout']]] },
 };
 
 const results = [];

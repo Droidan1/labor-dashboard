@@ -126,8 +126,13 @@ console.log('\nupdate-user cannot escalate:');
   ok('admin cannot touch the superuser', r.status === 403, String(r.status));
 }
 {
+  // A role change writes the Bargain Lane grant, so it is the superuser's alone (2026-11-19).
   const r = await call('/?action=update-user', { user: 'u-admin', method: 'POST', body: { id: 'u-mgr1', role: 'manager' } });
-  ok('admin CAN still make an ordinary edit', r.status === 200, `${r.status} ${r.text.slice(0, 50)}`);
+  ok('admin cannot change a role through update-user', r.status === 403, `${r.status} ${r.text.slice(0, 50)}`);
+}
+{
+  const r = await call('/?action=update-user', { user: 'u-admin', method: 'POST', body: { id: 'u-mgr1', status: 'active' } });
+  ok('admin CAN still make an ordinary edit (status, on someone in their business)', r.status === 200, `${r.status} ${r.text.slice(0, 50)}`);
 }
 {
   const r = await call('/?action=update-user', { user: 'u-mgr1', method: 'POST', body: { id: 'u-mgr2', role: 'manager' } });

@@ -6,6 +6,9 @@
 //      people holding a grant in a business they may grant — with only those grants — plus
 //      people with no grant yet, associates only with Bargain Lane, and never a superuser.
 //      Bargain Lane-only fields (stores, pages) are blank for a caller without Bargain Lane.
+//   3. invite-user and update-user are off the Bargain Lane gate too: an admin of any business
+//      invites into, and suspends people wholly in, their own businesses; a role (which writes the
+//      Bargain Lane grant) is the superuser's alone; resend-invite reaches only people they see;
 //   2. announcement-set takes an audience — "all" (the whole hub) or a list of active businesses
 //      — and refuses anything else rather than widening it; GET sends an announcement only to
 //      people who can reach one of its businesses. A blob from before the field still goes to all.
@@ -131,6 +134,75 @@ console.log('\nannouncement audience');
   // A blob written before the field existed.
   await env.SALES_SNAPSHOTS.put('announcement:current', JSON.stringify({ id: '1', title: 'Legacy', items: ITEMS }));
   ok((await seen('u-ecomstaff'))?.title === 'Legacy' && (await seen('u-mgr1'))?.title === 'Legacy', 'an announcement saved before audiences still goes to everyone');
+}
+
+// ── 3. Managing people from any business (2026-11-19) ──────────────────────
+console.log('\ninvite, suspend, resend — from any business');
+{
+  const { db, env } = world();
+  const post = (action, who, body) => call(`/?action=${action}`, { user: who, method: 'POST', body, env });
+  const statusOf = (id) => db.prepare('SELECT status FROM users WHERE id = ?').get(id).status;
+  const grantsOf = (email) => db.prepare('SELECT g.business_id b FROM user_grants g JOIN users u ON u.id = g.user_id WHERE u.email = ? ORDER BY b').all(email).map(r => r.b);
+
+  // invite-user: off the Bargain Lane gate, still only into the caller's businesses.
+  let r = await post('invite-user', 'u-ecomadmin', { email: 'New.Lister@example.com', role: 'manager', grants: [{ business_id: 'ecom', units: null }] });
+  eq(r.status, 200, '🔑 an E-Commerce-only admin can invite into E-Commerce (the Bargain Lane gate is gone)');
+  eq(grantsOf('new.lister@example.com'), ['ecom'], '…and the new person holds E-Commerce and nothing else');
+  r = await post('invite-user', 'u-ecomadmin', { email: 'sneak@example.com', role: 'manager', grants: [{ business_id: 'bl', units: ['BL1'] }] });
+  eq(r.status, 403, '🛑 …but cannot invite anyone into Bargain Lane');
+  r = await post('invite-user', 'u-ecomadmin', { email: 'sneak2@example.com', role: 'manager', stores: ['BL1'] });
+  eq(r.status, 403, '🛑 …not even through the old one-business body, which means Bargain Lane');
+  r = await post('invite-user', 'u-ecomadmin', { email: 'boss@example.com', role: 'admin', grants: [{ business_id: 'ecom', units: null }] });
+  eq(r.status, 400, '🛑 …nor make an admin');
+  r = await post('invite-user', 'u-admin', { email: 'cross@example.com', role: 'manager', grants: [{ business_id: 'ecom', units: null }] });
+  eq(r.status, 403, '🛑 a Bargain Lane admin cannot invite into E-Commerce');
+  eq(db.prepare("SELECT COUNT(*) n FROM users WHERE email IN ('sneak@example.com','sneak2@example.com','boss@example.com','cross@example.com')").get().n, 0,
+    '…and a refused invite writes no account');
+
+  // update-user: status, on someone wholly in the caller's businesses.
+  eq((await post('update-user', 'u-admin', { id: 'u-mgr1', status: 'suspended' })).status, 200, 'a Bargain Lane admin can suspend a Bargain Lane manager');
+  eq(statusOf('u-mgr1'), 'suspended', '…and they are suspended');
+  r = await post('update-user', 'u-admin', { id: 'u-both', status: 'suspended' });
+  eq([r.status, (await json(r)).code], [403, 'NOT_ALL_YOURS'],
+    '🛑 …but not someone who also works in Live Sales, which they do not run (Brian: "all access in their businesses")');
+  eq(statusOf('u-both'), 'active', '…who stays active');
+  eq((await post('update-user', 'u-admin', { id: 'u-both', status: 'active' })).status, 200,
+    '🔑 …while an UNCHANGED status still saves (the page before this sent it with every grants edit)');
+  eq((await post('update-user', 'u-ecomadmin', { id: 'u-mgr1', status: 'suspended' })).status, 403,
+    '🛑 and someone the caller cannot even see is refused whatever the status');
+  eq((await post('update-user', 'u-su', { id: 'u-both', status: 'suspended' })).status, 200, 'the superuser can');
+  eq((await post('update-user', 'u-ecomadmin', { id: 'u-ecomstaff', status: 'suspended' })).status, 200, '🔑 an E-Commerce admin can suspend their own staffer');
+  eq((await post('update-user', 'u-ecomadmin', { id: 'u-mgr2', status: 'suspended' })).status, 403, '🛑 …and not a Bargain Lane manager');
+  eq(statusOf('u-mgr2'), 'active', '…who stays active');
+  eq((await post('update-user', 'u-ecomadmin', { id: 'u-none', status: 'suspended' })).status, 200, 'anyone with no access yet can be suspended by any admin');
+  eq((await post('update-user', 'u-admin', { id: 'u-su', status: 'suspended' })).status, 403, '🛑 nobody but the superuser touches the superuser');
+  eq((await post('update-user', 'u-admin', { id: 'u-assoc', status: 'suspended' })).status, 400, 'an associate is managed from Associates');
+  eq((await post('update-user', 'u-admin', { id: 'u-mgr1', status: 'deleted' })).status, 400, 'an unknown status is refused');
+  eq((await post('update-user', 'u-admin', { id: 'nobody', status: 'active' })).status, 404, 'an unknown person is not found');
+
+  // 🛑 The hole: a role sent here wrote a Bargain Lane grant, adding someone to Bargain Lane.
+  r = await post('update-user', 'u-admin', { id: 'u-ecomstaff', role: 'manager' });
+  eq([r.status, (await json(r)).code], [403, 'USE_GRANTS'], '🛑 an admin can no longer change a role here');
+  eq(grantsOf('u-ecomstaff@example.com'), ['ecom'], '🛑 …so an E-Commerce staffer cannot be slipped into Bargain Lane');
+  eq((await post('update-user', 'u-admin', { id: 'u-mgr2', stores: ['BL1', 'BL2'] })).status, 403, '🛑 …nor stores');
+
+  // resend-invite: only to someone the caller can see.
+  const links = (email) => db.prepare('SELECT COUNT(*) n FROM magic_links WHERE email = ?').get(email).n;
+  r = await post('resend-invite', 'u-ecomadmin', { email: 'u-mgr2@example.com' });
+  eq([r.status, links('u-mgr2@example.com')], [404, 0], '🛑 an E-Commerce admin cannot mail a Bargain Lane manager a sign-in link');
+  db.prepare("UPDATE users SET status = 'active' WHERE id = 'u-ecomstaff'").run();
+  r = await post('resend-invite', 'u-ecomadmin', { email: 'u-ecomstaff@example.com' });
+  ok(r.status !== 403 && r.status !== 404 && links('u-ecomstaff@example.com') === 1, `…but can resend one to their own staffer (${r.status}: link written, the harness has no mailer)`);
+  r = await post('resend-invite', 'u-admin', { email: 'u-ecomstaff@example.com' });
+  eq(r.status, 404, '🛑 and a Bargain Lane admin cannot mail an E-Commerce staffer');
+
+  // list-users says, yes/no, when someone has access the caller cannot see.
+  const rows = async (who) => (await json(await call('/?action=list-users', { user: who, env }))).users;
+  const bl = await rows('u-admin');
+  eq(['u-both', 'u-mgr2', 'u-none'].map(id => bl.find(u => u.id === id).elsewhere), [true, false, false],
+    'a Bargain Lane admin is told u-both has access elsewhere, and nobody else');
+  ok(!JSON.stringify(bl.find(u => u.id === 'u-both')).includes('live'), '…without being told where');
+  ok((await rows('u-su')).every(u => u.elsewhere === undefined), 'the superuser sees everything, so is never told');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

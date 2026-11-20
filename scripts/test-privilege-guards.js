@@ -70,30 +70,32 @@ const uuStart = worker.indexOf('action") === "update-user"');
 const uuNext = worker.indexOf('url.searchParams.get("action") ===', uuStart + 50);
 const uuRegion = worker.slice(uuStart, uuNext > -1 ? uuNext : worker.length);
 ok('an assignable-role allowlist exists', /const assignable = /.test(uuRegion));
-// Check the ARRAY LITERALS, not the whole expression — `currentUser.role ===
-// 'superuser'` is the condition selecting the branch, so a naive proximity
-// match on the assignment reports a false failure.
+// Since 2026-11-19 a role (and stores) can be changed here by the SUPERUSER only: they write the
+// Bargain Lane grant, so an admin sending them could add someone to Bargain Lane, which
+// set-user-grants refuses anyone but the superuser. So: ONE allowlist, for the superuser, and a
+// non-superuser refused any role before the write.
 const aIdx = uuRegion.indexOf('const assignable');
 const arrays = aIdx === -1 ? []
-  : [...uuRegion.slice(aIdx, aIdx + 260).matchAll(/\[[^\]]*\]/g)].map(m => m[0]);
-ok('found both allowlist arrays', arrays.length === 2, arrays.join(' | ') || 'none');
-ok("'superuser' appears in no assignable-role array",
-   arrays.length === 2 && !arrays.some(a => a.includes('superuser')),
-   arrays.join(' | ') || 'no arrays found');
-ok('a non-superuser caller may assign only manager',
-   /: \['manager'\]/.test(uuRegion));
+  : [...uuRegion.slice(aIdx, aIdx + 120).matchAll(/\[[^\]]*\]/g)].map(m => m[0]);
+ok('found the allowlist array', arrays.length === 1, arrays.join(' | ') || 'none');
+ok("'superuser' is not in it", arrays.length === 1 && !arrays[0].includes('superuser'), arrays.join(' | ') || 'no array found');
+ok('a non-superuser may not send a role or stores at all',
+   /if \(\(role !== undefined \|\| stores !== undefined\) && currentUser\.role !== 'superuser'\)/.test(uuRegion));
 // Both halves must be FOUND before they are ordered. Comparing against a -1 is
 // how the truncation above hid itself.
+const uuNonSu  = uuRegion.indexOf('code: "USE_GRANTS"');
 const uuReject = uuRegion.indexOf('You cannot assign that role');
 const uuWrite  = uuRegion.indexOf('UPDATE users SET');
-ok('the handler region contains both the guard and the write',
-   uuReject > -1 && uuWrite > -1, `guard@${uuReject} write@${uuWrite}`);
-ok('an out-of-allowlist role is rejected before the UPDATE runs',
-   uuReject > -1 && uuWrite > -1 && uuReject < uuWrite);
+ok('the handler region contains both guards and the write',
+   uuNonSu > -1 && uuReject > -1 && uuWrite > -1, `non-su@${uuNonSu} guard@${uuReject} write@${uuWrite}`);
+ok('both role guards run before the UPDATE',
+   uuNonSu > -1 && uuReject > -1 && uuWrite > -1 && uuNonSu < uuWrite && uuReject < uuWrite);
+// Who may be edited at all is userReach's: nobody but the superuser reaches a superuser.
+const reachFn = (worker.match(/async function userReach\([\s\S]*?\n\}/) || [''])[0];
 ok('a non-superuser cannot edit a superuser target',
-   /SELECT role FROM users WHERE id = \?/.test(uuRegion) &&
-   /target\[0\]\.role === 'superuser'/.test(uuRegion));
-const uuTarget = uuRegion.indexOf("target[0].role === 'superuser'");
+   /if \(target\.role === 'superuser'\) return \{ target, sees: false, manages: false \};/.test(reachFn) &&
+   /const reach = await userReach\(env, currentUser, id\);/.test(uuRegion));
+const uuTarget = uuRegion.indexOf('if (!reach.sees)');
 ok('that target check also runs before the UPDATE',
    uuTarget > -1 && uuWrite > -1 && uuTarget < uuWrite);
 

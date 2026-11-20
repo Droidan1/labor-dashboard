@@ -8681,10 +8681,14 @@
             </div>
             <div>
               <label class="block text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim mb-1.5">Status</label>
-              <select id="edit-status" class="w-full border border-[rgba(20,16,8,0.12)] dark:border-op-border rounded-[8px] px-3 py-2.5 text-sm bg-opl-bg dark:bg-[rgba(255,255,255,0.03)] text-opl-ink dark:text-op-ink focus:outline-none focus:ring-2 focus:ring-accent-green/50">
+              <select id="edit-status" class="w-full border border-[rgba(20,16,8,0.12)] dark:border-op-border rounded-[8px] px-3 py-2.5 text-sm bg-opl-bg dark:bg-[rgba(255,255,255,0.03)] text-opl-ink dark:text-op-ink focus:outline-none focus:ring-2 focus:ring-accent-green/50 disabled:opacity-60 disabled:cursor-not-allowed">
                 <option value="active">Active</option>
                 <option value="suspended">Suspended</option>
               </select>
+              <!-- Suspending signs someone out of EVERY business, so an admin may only do it to someone
+                   whose access is all in their own businesses (Brian, 2026-11-19); update-user refuses
+                   the rest. list-users says who that is (`elsewhere`), never where. -->
+              <p id="edit-status-note" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim mt-1.5 leading-relaxed">Only the superuser can suspend them: they also have access to a business you don't run.</p>
             </div>
             <!-- Manager approval code. Shown only for a role that could actually
                  approve with it — the worker refuses to write one for anyone else,
@@ -40617,7 +40621,8 @@
     'nav-labor': 'bl',
     'nav-discounts': 'bl',
     'nav-supply-request': 'bl',
-    'nav-users': 'bl',
+    // Hub-level since 2026-11-19: Users opens Admin › People, which every business's admins use.
+    'nav-users': null,
     'nav-marketing': 'bl',
     'nav-marketing-group': 'bl',
     'nav-marketing-ads': 'bl',
@@ -41726,8 +41731,6 @@
   // Longer wording, used only in the grant editor's role dropdown.
   const GRANT_ROLE_LABEL = { admin: 'Admin', executive: 'Executive (read-only)',
                              manager: 'Manager', staff: 'Staff' };
-  // Colour per role so a row's standing reads before the label does.
-  const ROLE_DOT = { superuser: '#f59e0b', admin: '#22c55e', district_manager: '#8b5cf6', manager: 'rgb(var(--op-inkDim))' };
   // Single source for both modals' store pickers. Was six hardcoded <label>s per
   // modal (twelve total, codes only) plus a stale ALL_STORES that still listed
   // retired BL12 and omitted BL16.
@@ -42218,6 +42221,9 @@
     el('edit-user-id').value = u.id;
     el('edit-user-email').textContent = u.email;
     el('edit-status').value = u.status;
+    const statusLocked = !!u.elsewhere && !(currentUser && currentUser.role === 'superuser');
+    el('edit-status').disabled = statusLocked;
+    el('edit-status-note').classList.toggle('hidden', !statusLocked);
     el('edit-user-status').classList.add('hidden');
     el('edit-user-submit-btn').disabled = false;
     renderApprovalPin(u);
@@ -42250,7 +42256,12 @@
 
   function renderApprovalPin(u) {
     const box = el('edit-approval');
-    const canApprove = u && APPROVER_ROLES.includes(u.role);
+    // The code approves Bargain Lane dock work (set-approval-pin is gated to Bargain Lane), so it is
+    // offered only when the editor reaches Bargain Lane and the person holds it there. A list from
+    // before grants (no `u.grants`) keeps the old role-only answer.
+    const blEditor = !!currentUser && (currentUser.role === 'superuser' || userBusinesses(currentUser).some(b => b.id === 'bl'));
+    const blPerson = !!u && (!Array.isArray(u.grants) || u.role === 'superuser' || u.grants.some(g => g.business_id === 'bl'));
+    const canApprove = u && APPROVER_ROLES.includes(u.role) && blEditor && blPerson;
     box.classList.toggle('hidden', !canApprove);
     el('edit-approval-msg').classList.add('hidden');
     el('edit-approval-pin').value = '';
@@ -42338,12 +42349,17 @@
     try {
       // Status still goes through update-user; access goes through the grant
       // endpoint. Two models, two handlers — deliberately not merged.
-      const r1 = await fetch(`${WORKER_BASE}?action=update-user`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        credentials: 'include', body: JSON.stringify({ id, status }),
-      });
-      const d1 = await r1.json();
-      if (!d1.ok) throw new Error(d1.error || 'Failed');
+      // Only when it CHANGED: suspending is a power over the whole account, and editing someone's
+      // stores in your business must not need it (update-user refuses an admin someone who also
+      // works elsewhere — Brian, 2026-11-19).
+      if (!u || u.status !== status) {
+        const r1 = await fetch(`${WORKER_BASE}?action=update-user`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          credentials: 'include', body: JSON.stringify({ id, status }),
+        });
+        const d1 = await r1.json();
+        if (!d1.ok) throw new Error(d1.error || 'Failed');
+      }
 
       if (!isSu) {
         const r2 = await fetch(`${WORKER_BASE}?action=set-user-grants`, {
