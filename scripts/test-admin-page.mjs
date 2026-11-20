@@ -12,7 +12,8 @@
 //   7. Users and Associates moved in as People (every id they read, once), the dialogs outside
 //      every tool, admins let in for People, and the announcement push carries its audience;
 //   8. the doors: Admin is out of the Bargain Lane sidebar, the superuser's gear on Landing opens it,
-//      and Users stays for admins.
+//      and Users stays for admins;
+//   9. Users shows in every business, and the Edit dialog never asks for a power the admin lacks.
 import fs from 'node:fs'; import path from 'node:path';
 const html = fs.readFileSync(path.join(process.argv[2] || '.', 'index.html'), 'utf8');
 
@@ -108,6 +109,14 @@ ok(/el\('lp-admin'\)\.classList\.toggle\('hidden', !isSuperuser\);/.test(html), 
 ok(/<div id="nav-users"[^>]*onclick="navigateToPage\('users'\)"/.test(html) && /el\('nav-users'\)\.classList\.toggle\('hidden', !isAdmin\);/.test(html),
   'Users stays in the sidebar for admins (and the superuser), and opens Admin › People');
 ok(/<h1 class="[^"]*">Admin<\/h1>/.test(page), 'the page is called Admin');
+
+// 9. People from any business (2026-11-19)
+ok(/'nav-users': null,/.test(html), 'Users is hub-level: it shows inside every business, for that business\'s admins');
+ok(/id="edit-status-note"/.test(page) && /const statusLocked = !!u\.elsewhere && !\(currentUser && currentUser\.role === 'superuser'\);/.test(html),
+  "the Edit dialog locks the status of someone with access elsewhere, and says why");
+ok(/if \(!u \|\| u\.status !== status\) \{\n\s+const r1 = await fetch\(`\$\{WORKER_BASE\}\?action=update-user`/.test(html),
+  'Save sends the status only when it changed');
+ok(!/ROLE_DOT/.test(html), 'the unused Role-column colour map is gone');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

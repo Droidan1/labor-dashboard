@@ -5505,6 +5505,8 @@ function resolveCors(request, env) {
   //   user-grants     self-filters the response (added when this was found leaking).
   //   set-user-grants validates every element against grantOptionsFor per business.
 //   list-users      self-filters rows and grants to grantOptionsFor (listUsersFor).
+//   invite-user     validates every business it grants against grantOptionsFor.
+//   update-user     status only for a non-superuser, and only on someone userReach().manages.
   //   push-subscribe / update-notif-prefs
   //                   these enrol a device in the BL summary, but gating them would
   //                   lock a future E-Commerce-only user out of push entirely. The
@@ -5522,6 +5524,10 @@ const BUSINESS_AGNOSTIC_ACTIONS = new Set([
   // the businesses the caller may grant (grantOptionsFor). Was ["list-users","bl"], which
   // locked out an admin of any other business and showed a Bargain Lane admin everyone.
   "list-users",
+  // Off the Bargain Lane gate too (2026-11-19), so an admin of any business can manage their own
+  // people. invite-user checks every business it grants against grantOptionsFor; update-user
+  // reaches only people userReach says the caller manages, and only the superuser changes a role.
+  "invite-user", "update-user",
   // Both self-gate ABOVE the auth gate (there is no session yet — signing in is
   // the point) and return before reaching this one. Listed so the completeness
   // test stays satisfied, same as ebay-handler-ingest below.
@@ -5669,7 +5675,6 @@ const ACTION_BUSINESS = new Map([
   ["hourly", "bl"],
   ["ingest", "bl"],
   ["inventory-items", "bl"],
-  ["invite-user", "bl"],
   ["item-costs", "bl"],
   ["item-l2-totals", "bl"],
   ["item-overrides", "bl"],
@@ -5747,7 +5752,6 @@ const ACTION_BUSINESS = new Map([
   ["whatnot-products", "bl"],
   ["whatnot-sync", "bl"],
   ["update-clover-item", "bl"],
-  ["update-user", "bl"],
   ["video", "bl"],
   ["video-poster", "bl"],
   ["video-upload-abort", "bl"],
@@ -16380,6 +16384,27 @@ async function grantOptionsFor(env, caller) {
 //   - never a superuser.
 // `stores` and `pages` are Bargain Lane fields (the legacy store list, an associate's pages),
 // so they are blanked for a caller who cannot see Bargain Lane.
+// How far `caller` reaches one user (Brian, 2026-11-19).
+//   sees    — list-users would show them (the same rule as listUsersFor);
+//   manages — every grant they hold is in a business the caller may grant, so suspending them
+//             (which signs them out of EVERY business) takes nothing from a business the caller
+//             does not run. Someone with no grant yet is managed by any admin.
+// The superuser sees and manages everyone; nobody else sees or manages a superuser. Associates
+// exist only in Bargain Lane, so they need it.
+async function userReach(env, caller, targetId) {
+  const target = await env.DB.prepare(
+    'SELECT id, role, status, (pin_hash IS NOT NULL) AS associate FROM users WHERE id = ?'
+  ).bind(String(targetId || '')).first();
+  if (!target) return null;
+  if (caller && caller.role === 'superuser') return { target, sees: true, manages: true };
+  if (target.role === 'superuser') return { target, sees: false, manages: false };
+  const visible = new Set((await grantOptionsFor(env, caller)).businesses.map(b => b.id));
+  const held = (await loadGrants(env, target.id)).map(g => g.business_id);
+  const all = held.every(id => visible.has(id));
+  if (target.associate) return { target, sees: visible.has('bl'), manages: visible.has('bl') && all };
+  return { target, sees: !held.length || held.some(id => visible.has(id)), manages: all };
+}
+
 async function listUsersFor(env, caller, rows) {
   const isSu = caller && caller.role === 'superuser';
   const byUser = new Map();
@@ -16408,8 +16433,12 @@ async function listUsersFor(env, caller, rows) {
     const gs = byUser.get(u.id) || [];
     return !gs.length || gs.some(g => sees(g.business_id));
   }).map(u => {
-    const out = { ...u, grants: (byUser.get(u.id) || []).filter(g => sees(g.business_id)) };
+    const all = byUser.get(u.id) || [];
+    const out = { ...u, grants: all.filter(g => sees(g.business_id)) };
     if (!sees('bl')) { out.stores = null; out.pages = null; }
+    // Whether they hold access the caller cannot see — yes/no only, never which business. The
+    // Edit dialog locks their status with it, as update-user would refuse (userReach().manages).
+    if (!isSu) out.elsewhere = all.some(g => !sees(g.business_id));
     return out;
   });
 }
@@ -22678,7 +22707,10 @@ export default {
         const normalized = email.trim().toLowerCase();
         // An associate has no mailbox to resend an invite to — see auth-login.
         const user = await env.DB.prepare("SELECT id FROM users WHERE email = ? AND status = 'active' AND pin_hash IS NULL").bind(normalized).first();
-        if (!user) return new Response(JSON.stringify({ error: "User not found" }), { status: 404, headers: corsJson });
+        // Only someone list-users would show this caller (2026-11-19); anyone else reads as not
+        // found, so the door cannot be used to mail, or confirm, an address in another business.
+        const reach = user ? await userReach(env, currentUser, user.id) : null;
+        if (!user || !reach || !reach.sees) return new Response(JSON.stringify({ error: "User not found" }), { status: 404, headers: corsJson });
         const token = randomHex(32);
         const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
         await env.DB.prepare("INSERT INTO magic_links (token, email, expires_at) VALUES (?, ?, ?)")
@@ -22938,15 +22970,14 @@ export default {
       }
       try {
         const { id, role, stores, status } = await request.json();
+        const reach = await userReach(env, currentUser, id);
+        if (!reach) return new Response(JSON.stringify({ error: "No such user" }), { status: 404, headers: corsJson });
 
         // An associate's name, code, stores and pages are set together on the
         // Associates panel. Reaching one here would write a role or a store list
         // that panel then contradicts — and `role` here can only ever be a value
         // an associate must not hold.
-        const assocTarget = await env.DB.prepare(
-          "SELECT 1 AS a FROM users WHERE id = ? AND pin_hash IS NOT NULL"
-        ).bind(id).first();
-        if (assocTarget) {
+        if (reach.target.associate) {
           return new Response(JSON.stringify({
             error: "Manage associates from the Associates panel", code: "IS_ASSOCIATE",
           }), { status: 400, headers: corsJson });
@@ -22963,27 +22994,41 @@ export default {
         // 'superuser' is not assignable through this endpoint by ANYONE — it is
         // the flag the whole grant model special-cases, and it should be set
         // deliberately, not through the Users screen.
+        //
+        // 🛑 role and stores are the SUPERUSER's (2026-11-19). They write the Bargain Lane grant
+        // (upsertBargainLaneGrant below), so an admin sending them could add someone to Bargain
+        // Lane — which set-user-grants refuses anyone but the superuser ("Only a superuser can add
+        // someone to …"). No page sends them; access is edited per business through set-user-grants.
+        if ((role !== undefined || stores !== undefined) && currentUser.role !== 'superuser') {
+          return new Response(JSON.stringify({ error: "Only a superuser can change a role or stores here — access is set per business", code: "USE_GRANTS" }),
+            { status: 403, headers: corsJson });
+        }
         if (role !== undefined) {
-          const assignable = currentUser.role === 'superuser'
-            ? ['admin', 'executive', 'manager', 'staff']
-            : ['manager'];
+          const assignable = ['admin', 'executive', 'manager', 'staff'];
           if (!assignable.includes(role)) {
             return new Response(JSON.stringify({ error: "You cannot assign that role" }),
               { status: 403, headers: corsJson });
           }
         }
+        if (status !== undefined && status !== 'active' && status !== 'suspended') {
+          return new Response(JSON.stringify({ error: "Invalid status" }), { status: 400, headers: corsJson });
+        }
 
         // A non-superuser must not be able to edit a superuser at all — not the
         // role, not the stores, not the status. Otherwise an admin could
-        // suspend the owner out of their own account.
-        if (currentUser.role !== 'superuser') {
-          const { results: target } = await env.DB.prepare(
-            'SELECT role FROM users WHERE id = ?'
-          ).bind(id).all();
-          if (target && target.length && target[0].role === 'superuser') {
-            return new Response(JSON.stringify({ error: "Forbidden" }),
-              { status: 403, headers: corsJson });
-          }
+        // suspend the owner out of their own account. Nor anyone who also holds
+        // access to a business the caller does not run: suspending signs them out
+        // of that one too (Brian, 2026-11-19). userReach decides both.
+        //
+        // 🔑 Only a CHANGE of status needs `manages`. A page from before 2026-11-19 sends the
+        // status on every Save, unchanged, alongside a grants edit; refusing that would block
+        // editing someone's stores in your own business until the new page loads.
+        if (!reach.sees) {
+          return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+        }
+        if (!reach.manages && status !== undefined && status !== reach.target.status) {
+          return new Response(JSON.stringify({ error: "Only a superuser can suspend someone who also has access to a business you don't run", code: "NOT_ALL_YOURS" }),
+            { status: 403, headers: corsJson });
         }
 
         const parts = [], values = [];

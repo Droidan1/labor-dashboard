@@ -120,6 +120,8 @@ function installFetch(cfg) {
     if (q.action === 'repair-health') return J(cfg.health);
     if (q.action === 'list-users') return J({ ok: true, users: cfg.people.users });
     if (q.action === 'grant-options') return J(cfg.people.options);
+    if (q.action === 'user-grants') return J({ grants: (cfg.people.users.find(u => u.id === q.id) || { grants: [] }).grants });
+    if (q.action === 'update-user' || q.action === 'set-user-grants') { log.posts.push({ [q.action]: JSON.parse(o.body) }); return J({ ok: true }); }
     if (q.action === 'announcement') return J({ ok: true, announcement: cfg.announcement });
     if (q.action === 'announcement-set') {
       const body = JSON.parse(o.body);
@@ -137,27 +139,27 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}${JSON.
 
 const b = await chromium.launch({ executablePath: CHROME });
 
-async function open({ theme = 'light', width = 1400, height = 900, mobile = false, businesses = BUSINESSES, role = 'superuser', landing = false } = {}) {
+async function open({ theme = 'light', width = 1400, height = 900, mobile = false, businesses = BUSINESSES, role = 'superuser', landing = false, people = null, biz = 'bl' } = {}) {
   const ctx = await b.newContext({ timezoneId: TZ, viewport: { width, height }, ...(mobile ? { isMobile: true, hasTouch: true, deviceScaleFactor: 2 } : {}) });
   const page = await ctx.newPage();
   const errs = [], escaped = [];
   page.on('pageerror', e => errs.push(e.message));
   page.on('dialog', d => d.dismiss().catch(() => {}));
   await ctx.route(/retjghub\.com/, r => { escaped.push(r.request().url()); r.abort(); });
-  await page.addInitScript(({ theme, landing }) => {
+  await page.addInitScript(({ theme, landing, biz }) => {
     try {
       localStorage.setItem('darkMode', String(theme !== 'light'));
       localStorage.setItem('darkFlavor', theme === 'light' ? 'dark' : theme);
-      if (!landing) sessionStorage.setItem('retjg.activeBusiness', 'bl');
+      if (!landing) sessionStorage.setItem('retjg.activeBusiness', biz);
       localStorage.setItem('bioPromptDismissed', '1');
       localStorage.setItem('dashWhatsNewDismissed', '1');   // the mocked announcement is already dismissed
     } catch (e) {}
-  }, { theme, landing });
-  await page.addInitScript(mockScript({ role, businesses, health: HEALTH, people: PEOPLE[role] || PEOPLE.superuser, announcement: ANNOUNCEMENT }));
+  }, { theme, landing, biz });
+  await page.addInitScript(mockScript({ role, businesses, health: HEALTH, people: people || PEOPLE[role] || PEOPLE.superuser, announcement: ANNOUNCEMENT }));
   await page.goto(URL_, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => !document.getElementById('app')?.classList.contains('hidden'), { timeout: 15000 }).catch(() => {});
   await page.waitForTimeout(400);
-  if (!landing) {
+  if (!landing && biz === 'bl') {
     await page.evaluate(() => navigateToPage('admin-settings'));
     await page.waitForTimeout(300);
   }
@@ -395,6 +397,55 @@ for (const [role, theme, mobile] of [['superuser', 'light', false], ['superuser'
   } else {
     ok(!(await shown(page, '#lp-admin')), "an admin's Landing has no gear");
   }
+  eq(errs, [], 'no page errors');
+  await ctx.close();
+}
+
+// ── 13. People from any business: a Live Sales-only admin ──────────────────
+{
+  console.log('\n[People, a Live Sales-only admin, inside Live Sales]');
+  // What listUsersFor answers them: Live Sales people with only their Live Sales grant, people with
+  // no grant yet, and `elsewhere` on anyone who also holds access they cannot see.
+  const LIVE_PEOPLE = {
+    users: [
+      U('u-lv', 'live.lead@example.com', 'admin', [{ business_id: 'live', role: 'admin', units: null }], { elsewhere: false }),
+      U('u-col', 'coliseum.manager@example.com', 'manager', [{ business_id: 'live', role: 'manager', units: ['BL1'] }], { elsewhere: true }),
+      U('u-host', 'show.host@example.com', 'manager', [{ business_id: 'live', role: 'manager', units: ['BL2'] }], { elsewhere: false }),
+      U('u-new', 'new.hire@example.com', 'manager', [], { last_login: null, elsewhere: false }),
+    ],
+    options: { businesses: [OPT.live], roles: ['manager'] },
+  };
+  const { ctx, page, errs } = await open({ role: 'admin', biz: 'live', people: LIVE_PEOPLE,
+    businesses: [{ id: 'live', name: 'Live Sales', unitNoun: 'store', unitCount: 4, connected: true }] });
+  await page.waitForTimeout(300);
+  ok(await shown(page, '#nav-users'), "🔑 inside Live Sales, an admin's sidebar has Users (it was Bargain Lane's only)");
+  await page.click('#nav-users');
+  await page.waitForTimeout(250);
+  eq([await page.evaluate(() => currentPage), await visibleTools(page)], ['admin-settings', ['users']], '…and it opens Admin › Users');
+  eq(await page.$$eval('#ad-rail .ad-item', bs => bs.filter(b => b.getClientRects().length).map(b => b.dataset.tool)), ['users'],
+    'Associates is not offered: they exist only in Bargain Lane');
+  await page.waitForFunction(() => !/Loading/.test(document.getElementById('users-tbody').textContent));
+  eq(await page.$eval('#users-scope', n => n.textContent), 'Live Sales', 'the scope says Live Sales');
+
+  const openEdit = async (email) => {
+    await page.evaluate((e) => { const u = usersData.find(x => x.email === e); openEditUserModal(u.id); }, email);
+    await page.waitForTimeout(250);
+  };
+  await openEdit('coliseum.manager@example.com');
+  eq(await page.evaluate(() => [document.getElementById('edit-status').disabled, !document.getElementById('edit-status-note').classList.contains('hidden')]),
+    [true, true], "someone who also works where they don't has their status locked, with the reason shown");
+  ok(!(await shown(page, '#edit-approval')), 'the Bargain Lane approval code is not offered to a Live Sales admin');
+  await page.evaluate(() => window.__adMock.posts.length = 0);
+  await page.click('#edit-user-submit-btn'); await page.waitForTimeout(250);
+  eq(await page.evaluate(() => window.__adMock.posts.map(p => Object.keys(p)[0])), ['set-user-grants'],
+    'saving their access posts the grants only — no status change is asked for');
+  await openEdit('show.host@example.com');
+  eq(await page.evaluate(() => document.getElementById('edit-status').disabled), false, 'someone wholly in Live Sales can be suspended');
+  await page.evaluate(() => window.__adMock.posts.length = 0);
+  await page.selectOption('#edit-status', 'suspended');
+  await page.click('#edit-user-submit-btn'); await page.waitForTimeout(250);
+  eq(await page.evaluate(() => window.__adMock.posts), [{ 'update-user': { id: 'u-host', status: 'suspended' } }, { 'set-user-grants': { id: 'u-host', grants: [{ business_id: 'live', role: 'manager', units: ['BL2'] }] } }],
+    '…and a changed status is sent, then their grants');
   eq(errs, [], 'no page errors');
   await ctx.close();
 }
