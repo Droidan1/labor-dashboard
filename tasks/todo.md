@@ -1,3 +1,31 @@
+# Year-safe dashboard weeks + history range from today (2026-11-19) — branch `claude/year-safe-weeks`
+
+**Ask:** fix the hard-coded `to=2026-12-31` on the dashboard history load (`index.html:10501`). While reading it,
+found the bigger year-end break: fiscal week numbers restart at 1 on Sun 2026-12-27 (FY26 wk1 = 2025-12-28..2026-01-03,
+confirmed via `get_trailing_weeks`), and the page groups rows by the bare number (`r.week === selectedWeek`, ~26 sites),
+so FY27 wk1 would sum with FY26 wk1. Brian chose the full fix.
+
+- [x] Browser check `scripts/browser-year-safe-weeks.mjs` (real Chrome; mock honours from/to like the worker; clock in
+      FY27 wk1, FY27 wk2 and today; FY26/FY27 budgets distinct). **origin/main 22/8** — week budget $441,315 for $441
+      (FY26 wk1 merged in), Jan 5 still "Week 1", "last week" empty at wk1, `to` hard-coded. **Branch 30/0.**
+- [x] `loadStoreFromD1`: `to` = Dec 31 of next Eastern year; row `week` = the week's Saturday as YYYYMMDD (same grouping
+      as the worker's T13 fix), Sheet number kept in `weekNumberOfKey` for `weekLabel()`. Chose the Saturday key over
+      FY*100+week: it needs no rule for which fiscal year a week belongs to.
+- [x] `weekLabel()` on all 16 "Week N" sites incl. the store-detail week picker; no other place shows or sends the key.
+- [x] `CACHE_NAME` v320 → v321.
+- [x] Rebased onto origin/main first (Desktop `main` was 15 behind; the plan was written on it).
+
+## Review
+- Browser checks on the branch vs origin/main: year-safe-weeks 30/0 (main 22/8); holland-budget 29/1 both (its
+  "All Stores Total" footer regex vs the page's "All stores total" — pre-existing); today-eastern 24/26 both, failure
+  lists byte-identical (pre-existing Daily-tab checks); channel-matrix 100/0, export-dates 13/0, live-sales-label 40/0,
+  landing-range 29/0.
+- Label-only text change, no colour or layout change, so no contrast pass needed.
+- `npm test`: 13,139 assertions across 147 suites, all passed. Two slicing tests now include the real
+  `weekKeyOf`/`weekLabel` (`test-daily-auction-column`, `test-today-eastern`, which also asserts the key AND the
+  label); the `shell-cache` fixture was re-pinned to v321 with its documented command.
+- PR #407 opened (a9a865f). Frontend only: Pages deploys it on merge, no worker deploy or migration.
+
 # Admin layout: its own sidebar, Users only from Landing, admins start on Landing (2026-11-19) — branch `claude/admin-own-sidebar`
 
 **Ask (Brian):** "when a super user goes to the admin tools, the sidebar should not be the bargain Lane business. It
