@@ -1,3 +1,38 @@
+# Sale scheduler: no stuck prices, per-store items (2026-11-20) — branch `claude/sale-scheduler-fix`
+
+**Ask:** fix the scheduler found stranding 17 BL1 items at 30% off after the 2026-10-14 flash sale (restored
+2026-11-19). Causes in `processSaleSchedules`: up to 50 rows fired in parallel, so Clover answered 429; any
+error was terminal (`status='error'`, no retry, no alert); a 503 that Clover applied anyway left no original
+price on record. A multi-store sale also sent BL1's item IDs to every store (404s). Brian chose: match each
+store's item by **code + name**, and skip items with no single match, showing that before scheduling.
+
+- [x] `scripts/test-sale-scheduler.mjs` (harness, real `worker.scheduled` / `worker.fetch`, fake Clover): burst, revert
+      retried, 503-but-applied, overlapping ticks, drift alert (deduped), window missed, cancel during outage,
+      cross-store resolve, dryRun, old payload refused, catalogue unreadable. **origin/main 8/29** (40-item burst
+      ended "active:12,error:28" like the real sale; overlapping ticks priced a $100 lamp at $49). **Branch 37/0.**
+- [x] Scheduler: reverts first, one row at a time, 40 s budget, stops after 3 temporary failures in a row; plan
+      recorded once by a conditional UPDATE; each write decided from Clover's current price; temporary errors
+      leave the row with "Retrying (…)" in error_msg; superuser push at most hourly (KV `sale-scheduler-alert`).
+      Clover GET/POST item errors now carry `status`. No migration (status has no CHECK; no new columns).
+- [x] Cancel: ends running rows now and puts them back through the same revert, one at a time.
+- [x] `schedule-sale`: `sourceStore`, item `code`, `dryRun`; reads the store's whole catalogue (null → 502, nothing
+      scheduled); source store by id, other stores by code + name among visible items; ids validated.
+- [x] Inventory page: checkbox carries the code; submit dry-runs every ticked store, lists skips in a `uiConfirm`
+      ("Schedule the rest"), then schedules only stores with matches. CACHE_NAME v321 → v322, fixture re-pinned.
+- [x] `scripts/browser-sale-schedule-stores.mjs`: **origin/main 8/30, branch 42/0**, both themes; dialog text
+      5.48:1 light, 8.10:1 dark.
+
+## Review
+- `npm test`: 13,177 assertions across 148 suites, all passed.
+- Inventory browser checks match origin/main: inventory-delete 9 and inventory-receiver 2 failures on both (same
+  checks; only a timeout length and the first CORS URL differ), inventory-nav crashes on both,
+  inventory-receiver-read 83/0.
+- **Deploy order: worker FIRST, then merge.** The worker accepts the live page's payload (no sourceStore: ids
+  checked against the store's own catalogue). The new page against the OLD worker would schedule on its dry
+  run (the old worker ignores `dryRun`), then schedule again.
+- Not changed: the 2026-10-14 rows still read `error` in D1 (prices were restored by hand on 2026-11-19).
+
+
 # Year-safe dashboard weeks + history range from today (2026-11-19) — branch `claude/year-safe-weeks`
 
 **Ask:** fix the hard-coded `to=2026-12-31` on the dashboard history load (`index.html:10501`). While reading it,
