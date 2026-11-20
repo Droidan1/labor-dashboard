@@ -37008,7 +37008,7 @@
           ? '<span class="invdim">\u2014</span>'
           : `<b style="color:${m >= 50 ? 'var(--inv-good)' : m >= 30 ? 'var(--inv-warn)' : 'var(--inv-bad)'}">${m.toFixed(0)}%</b>`;
         return `<tr class="${cls}" data-item-name="${nm}" data-price-cents="${item.price}">
-          <td class="ck stick"><input type="checkbox" data-item-id="${id}" data-item-name="${nm}" data-price-cents="${item.price}" ${isChecked ? 'checked' : ''} onchange="toggleRowSelect(this)" aria-label="Select ${nm}"></td>
+          <td class="ck stick"><input type="checkbox" data-item-id="${id}" data-item-name="${nm}" data-item-code="${invEsc(item.code || item.sku || '')}" data-price-cents="${item.price}" ${isChecked ? 'checked' : ''} onchange="toggleRowSelect(this)" aria-label="Select ${nm}"></td>
           <td class="stick" style="left:34px"><span class="invname" title="${nm}">${nm}</span></td>
           <td>${escapeHtml(item.code) || '<span class="invdim">\u2014</span>'}${isDup ? ' <span class="invbdg a">dup</span>' : ''}</td>
           <td class="invdim" style="max-width:210px;overflow:hidden;text-overflow:ellipsis" title="${invEsc(item.category)}">${escapeHtml(item.category) || '\u2014'}${extraCats}</td>
@@ -37523,7 +37523,7 @@
   }
 
   // ── Inventory row selection ────────────────────────────────────────────
-  // invSelectedItems: Map<itemId, {id, name, priceCents}>
+  // invSelectedItems: Map<itemId, {id, name, priceCents, code}> — ids are invViewStore's own
   const invSelectedItems = new Map();
 
   function updateSelectionUI() {
@@ -37543,8 +37543,9 @@
     const itemId = cb.dataset.itemId;
     const name = cb.dataset.itemName || '';
     const priceCents = Number(cb.dataset.priceCents || 0);
+    const code = cb.dataset.itemCode || '';
     if (cb.checked) {
-      invSelectedItems.set(itemId, { id: itemId, name, priceCents });
+      invSelectedItems.set(itemId, { id: itemId, name, priceCents, code });
     } else {
       invSelectedItems.delete(itemId);
     }
@@ -37777,30 +37778,60 @@
     const endsAt = etLocalToDate(endStr);
     if (endsAt <= startsAt) return setSaleModalStatus('End must be after start.', 'error');
     if (startsAt <= new Date()) return setSaleModalStatus('Start time must be in the future.', 'error');
-    const items = [...invSelectedItems.values()].map(i => ({ id: i.id, name: i.name }));
+    const items = [...invSelectedItems.values()].map(i => ({ id: i.id, name: i.name, code: i.code || '' }));
     const discount = { kind, value: kind === 'percent' ? val : Math.round(val * 100) };
     const saleLabel = (el('inv-sale-label').value || '').trim() || undefined;
+    // 🔑 The ids are invViewStore's own: Clover item ids differ at every store, and sending BL1's
+    // to the other five is how the 2026-10-14 sale 404'd everywhere but BL1. The worker finds each
+    // other store's item by the same code AND name. It is asked first (dryRun), so anything it
+    // would skip is shown BEFORE a price change is scheduled.
+    const sourceStore = invViewStore;
+    const post = (store, dryRun) => fetch(`${WORKER_BASE}?action=schedule-sale`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ store, sourceStore, items, discount, saleLabel, dryRun,
+                             startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString() }),
+      credentials: 'include',
+    }).then(r => r.json().catch(() => ({ ok: false, error: `HTTP ${r.status}` })))
+      .then(j => ({ store, ...j }));
     submitBtn.disabled = true;
-    setSaleModalStatus(`Scheduling across ${stores.length} store${stores.length > 1 ? 's' : ''}…`, 'info');
+    setSaleModalStatus(`Checking ${stores.length} store${stores.length > 1 ? 's' : ''}…`, 'info');
     try {
-      const results = await Promise.all(stores.map(store =>
-        fetch(`${WORKER_BASE}?action=schedule-sale`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ store, items, discount, saleLabel, startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString() }),
-          credentials: 'include',
-        }).then(r => r.json())
-      ));
+      const plans = await Promise.all(stores.map(store => post(store, true)));
+      const notes = [];
+      for (const p of plans) {
+        if (!p.ok) { notes.push(`${p.store}: ${p.error || 'could not be checked'}`); continue; }
+        const sk = p.skipped || [];
+        if (sk.length) {
+          notes.push(`${p.store}: ${sk.length} of ${items.length} skipped — `
+            + sk.slice(0, 3).map(x => `${x.name}${x.code ? ' ' + x.code : ''} (${x.reason})`).join('; ')
+            + (sk.length > 3 ? `; and ${sk.length - 3} more` : ''));
+        }
+      }
+      const go = plans.filter(p => p.ok && p.count > 0);
+      if (!go.length) {
+        setSaleModalStatus('Nothing could be scheduled. ' + escapeHtml(notes.join(' · ')), 'error');
+        submitBtn.disabled = false;
+        return;
+      }
+      if (notes.length) {
+        const n = go.reduce((t, p) => t + p.count, 0);
+        const yes = await uiConfirm(`${notes.join('\n')}\n\nSchedule the ${n} price change${n === 1 ? '' : 's'} that did match?`,
+          { title: 'Not every item is at every store', okText: 'Schedule the rest' });
+        if (!yes) { setSaleModalStatus('Nothing was scheduled.', 'info'); submitBtn.disabled = false; return; }
+      }
+      setSaleModalStatus(`Scheduling across ${go.length} store${go.length > 1 ? 's' : ''}…`, 'info');
+      const results = await Promise.all(go.map(p => post(p.store, false)));
       const errors = results.filter(r => !r.ok);
       if (errors.length === results.length) {
-        setSaleModalStatus('Error: ' + (errors[0].error || 'unknown'), 'error');
+        setSaleModalStatus('Error: ' + escapeHtml(errors[0].error || 'unknown'), 'error');
         submitBtn.disabled = false;
         return;
       }
       const ok = results.filter(r => r.ok);
       const totalItems = ok.reduce((s, r) => s + r.count, 0);
       const msg = ok.length === 1
-        ? `Scheduled ${totalItems} item${totalItems === 1 ? '' : 's'} for ${stores[0]} (group ${ok[0].scheduleGroup}).`
+        ? `Scheduled ${totalItems} item${totalItems === 1 ? '' : 's'} for ${escapeHtml(ok[0].store)} (group ${escapeHtml(ok[0].scheduleGroup)}).`
         : `Scheduled ${totalItems} items across ${ok.length} stores.` + (errors.length ? ` ${errors.length} store(s) failed.` : '');
       setSaleModalStatus(msg, errors.length ? 'info' : 'ok');
       clearInvSelection();

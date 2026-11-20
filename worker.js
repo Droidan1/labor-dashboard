@@ -1541,7 +1541,7 @@ async function getCloverItem(env, store, itemId) {
     `https://api.clover.com/v3/merchants/${mId}/items/${itemId}`,
     { headers: { Authorization: `Bearer ${tok}` } }
   );
-  if (!r.ok) throw new Error(`Clover GET item ${itemId} ${r.status}`);
+  if (!r.ok) throw Object.assign(new Error(`Clover GET item ${itemId} ${r.status}`), { status: r.status });
   const j = await r.json();
   return { price: j.price || 0, name: j.name || "" };
 }
@@ -1567,7 +1567,7 @@ async function setCloverItemFields(env, store, itemId, fields) {
   );
   if (!r.ok) {
     const txt = await r.text().catch(() => "");
-    throw new Error(`Clover POST item ${itemId} ${r.status} ${txt.slice(0, 200)}`);
+    throw Object.assign(new Error(`Clover POST item ${itemId} ${r.status} ${txt.slice(0, 200)}`), { status: r.status });
   }
   return r;
 }
@@ -1601,8 +1601,160 @@ function computeSalePrice(originalCents, kind, value) {
   return Math.max(1, originalCents - Math.round(value));
 }
 
-// Every-minute cron worker: flip prices at starts_at, revert at ends_at.
-// Per-tick cap keeps us under CPU budget; next tick drains any backlog.
+// ─── Sale scheduler: every minute, put prices on sale at starts_at and back at ends_at ──
+//
+// 🛑 THE 2026-10-14 FURNITURE SALE LEFT 17 BL1 ITEMS AT 30% OFF FOR 36 DAYS (put back by hand
+// 2026-11-19). Up to 50 rows went to Clover at once, so Clover answered 429, and every error was
+// final: status 'error', no retry, no alert. A revert that failed left the markdown on the
+// register for good, and nothing said so. One write Clover APPLIED but answered 503 to left no
+// original price on record at all. scripts/test-sale-scheduler.mjs reproduces each of these.
+//
+// 🔑 SO EVERY STEP IS SAFE TO REPEAT, which is what makes retrying safe:
+//   • the plan (original price, original name, sale price) is recorded ONCE, before the write,
+//     by a conditional UPDATE. A retry, or a second tick running at the same time, reads that
+//     plan and never works it out again from a price that may already be discounted. Working it
+//     out again is how two overlapping ticks would turn a $100 lamp into $49.
+//   • each write is decided from what Clover shows NOW: at the sale price means already on sale,
+//     at the original price means write it, anything else means someone changed it by hand, so
+//     leave it and tell a superuser.
+//   • a temporary failure (429, 5xx, no answer) leaves the row as it is, with the reason in
+//     error_msg, and the next minute tries again. A revert keeps trying until it lands.
+// Reverts go first (a markdown left on costs money; a late start does not), one row at a time,
+// inside a time budget, so a big sale spreads over a few minutes instead of bursting into 429s.
+const SALE_TICK_BUDGET_MS = 40000;
+const SALE_TICK_MAX_ROWS = 200;
+const SALE_ALERT_KEY = "sale-scheduler-alert";        // KV marker: at most one alert an hour
+const SALE_REVERT_ALERT_AFTER_MS = 10 * 60000;        // a revert still failing this long after its end is alerted
+
+// 429, 5xx or no answer at all: try again next minute. Any other 4xx (404 = not at this store)
+// will not get better by waiting.
+function saleIsTransient(err) {
+  const s = err && err.status;
+  return !s || s === 429 || s >= 500;
+}
+const saleStop = (message) => Object.assign(new Error(message), { status: 400 });
+const saleDollars = (cents) => `$${(Number(cents) / 100).toFixed(2)}`;
+const saleWhere = (row) => `${row.store} ${row.item_name || row.item_id} (${row.item_id})`;
+
+// One alert an hour at most, whatever the number of problems. ⚠️ Never throws.
+async function saleAlert(env, problems) {
+  if (!problems.length) return false;
+  const detail = problems.slice(0, 3).join(" · ") + (problems.length > 3 ? ` · +${problems.length - 3} more` : "");
+  try {
+    if (env.SALES_SNAPSHOTS) {
+      if (await env.SALES_SNAPSHOTS.get(SALE_ALERT_KEY)) {
+        console.error(JSON.stringify({ sale_scheduler_problem: problems.length, detail: detail.slice(0, 500) }));
+        return false;
+      }
+      await env.SALES_SNAPSHOTS.put(SALE_ALERT_KEY, new Date().toISOString(), { expirationTtl: 3600 });
+    }
+    console.error(JSON.stringify({ sale_scheduler_alert: problems.length, detail: detail.slice(0, 500) }));
+    await pushSuperusers(env, { title: "⚠️ Sale scheduler needs a look", body: detail.slice(0, 160), tag: "sale-scheduler" });
+  } catch (e) {
+    console.error("Sale scheduler alert failed:", e && e.message);
+  }
+  return true;
+}
+
+// A row's step failed. Temporary: leave it for the next minute. Otherwise: mark it 'error'.
+async function saleRowFailed(env, row, err, step, nowMs, problems, result) {
+  const msg = String((err && err.message) || err).slice(0, 400);
+  if (saleIsTransient(err)) {
+    await env.DB.prepare("UPDATE sale_schedules SET error_msg=? WHERE id=?")
+      .bind(`Retrying (${step}): ${msg}`, row.id).run().catch(() => {});
+    result.retrying++;
+    const late = nowMs - Date.parse(row.ends_at);
+    if (step === "end" && late >= SALE_REVERT_ALERT_AFTER_MS) {
+      problems.push(`${saleWhere(row)} is still on sale ${Math.round(late / 60000)} min after it ended (${msg.slice(0, 80)})`);
+    }
+    return "retrying";
+  }
+  await env.DB.prepare("UPDATE sale_schedules SET status='error', error_msg=? WHERE id=?")
+    .bind(msg, row.id).run().catch(() => {});
+  result.errors.push(`${step} ${row.store}/${row.item_id}: ${msg}`);
+  if (step === "end") problems.push(`${saleWhere(row)} could not be put back (${msg.slice(0, 80)})`);
+  return "error";
+}
+
+// Put one item back. Used by the cron and by cancel-sale-schedule (which ends a sale now).
+async function saleRevertRow(env, row, nowMs, problems, result, doneNote = null) {
+  try {
+    const item = await getCloverItem(env, row.store, row.item_id);
+    const saleName = row.original_price != null && row.original_name
+      ? buildSaleName(row.original_name, row.original_price, row.sale_label) : null;
+    let fields = null;
+    if (item.price === row.sale_price) {
+      fields = { price: row.original_price };
+      if (row.original_name) fields.name = row.original_name;
+    } else if (item.price === row.original_price) {
+      // Already back at its price: a write Clover applied but answered with an error, or someone
+      // put it back by hand. Only the name can still say SALE, and only ours is changed.
+      if (saleName && item.name === saleName) fields = { name: row.original_name };
+    } else {
+      const msg = `Price changed during the sale: expected ${saleDollars(row.sale_price)}, found ${saleDollars(item.price)}. Left as it is.`;
+      await env.DB.prepare("UPDATE sale_schedules SET status='error', error_msg=? WHERE id=? AND status='active'")
+        .bind(msg, row.id).run();
+      result.errors.push(`end ${row.store}/${row.item_id}: ${msg}`);
+      problems.push(`${saleWhere(row)}: price changed during the sale to ${saleDollars(item.price)}, so it was left as it is`);
+      return "error";
+    }
+    if (fields) await setCloverItemFields(env, row.store, row.item_id, fields);
+    await env.DB.prepare("UPDATE sale_schedules SET status='completed', reverted_at=?, error_msg=? WHERE id=? AND status='active'")
+      .bind(new Date(nowMs).toISOString(), doneNote, row.id).run();
+    result.reverted++;
+    return "reverted";
+  } catch (err) {
+    return saleRowFailed(env, row, err, "end", nowMs, problems, result);
+  }
+}
+
+// Put one item on sale.
+async function saleActivateRow(env, row, nowMs, problems, result) {
+  const ENDED = "The sale window ended before it could start; nothing was changed.";
+  const fail = async (msg) => {
+    await env.DB.prepare("UPDATE sale_schedules SET status='error', error_msg=? WHERE id=? AND status='pending'")
+      .bind(msg, row.id).run();
+    result.errors.push(`start ${row.store}/${row.item_id}: ${msg}`);
+    return "error";
+  };
+  try {
+    const ended = nowMs >= Date.parse(row.ends_at);
+    if (ended && row.original_price == null) return fail(ENDED);   // never attempted: nothing to look at
+    const item = await getCloverItem(env, row.store, row.item_id);
+    let plan = row;
+    if (plan.original_price == null) {
+      const saleCents = computeSalePrice(item.price, row.discount_kind, row.discount_value);
+      if (!(saleCents < item.price)) throw saleStop(`Computed sale price ${saleCents} is not below the current ${item.price}; not started`);
+      await env.DB.prepare(
+        "UPDATE sale_schedules SET original_price=?, sale_price=?, original_name=? WHERE id=? AND original_price IS NULL"
+      ).bind(item.price, saleCents, item.name, row.id).run();
+      plan = await env.DB.prepare("SELECT * FROM sale_schedules WHERE id=?").bind(row.id).first();
+      if (!plan || plan.status !== "pending") return "skipped";    // another tick moved it on
+    }
+    const markActive = () => env.DB.prepare(
+      "UPDATE sale_schedules SET status='active', activated_at=?, error_msg=NULL WHERE id=? AND status='pending'"
+    ).bind(new Date(nowMs).toISOString(), row.id).run();
+    if (item.price === plan.sale_price) {             // already on sale: an applied 503, or another tick
+      await markActive();
+      result.activated++;
+      return "activated";
+    }
+    if (ended) return fail(ENDED);
+    if (item.price !== plan.original_price) {
+      return fail(`Price changed before the sale started: expected ${saleDollars(plan.original_price)}, found ${saleDollars(item.price)}. Not started.`);
+    }
+    await setCloverItemFields(env, row.store, row.item_id, {
+      price: plan.sale_price,
+      name: buildSaleName(plan.original_name || item.name, plan.original_price, row.sale_label),
+    });
+    await markActive();
+    result.activated++;
+    return "activated";
+  } catch (err) {
+    return saleRowFailed(env, row, err, "start", nowMs, problems, result);
+  }
+}
+
 async function processSaleSchedules(env, now) {
   // Live Clover PRICE MUTATION — must never run on staging (staging shares real
   // Clover credentials). Gate on API_ORIGIN; env.name is undefined at runtime, so
@@ -1611,81 +1763,87 @@ async function processSaleSchedules(env, now) {
     console.log('[cron] processSaleSchedules skipped on staging');
     return { skipped: 'staging' };
   }
-  const nowIso = now.toISOString();
-  const PER_TICK = 50;
-  const result = { activated: 0, reverted: 0, errors: [] };
+  const result = { activated: 0, reverted: 0, retrying: 0, errors: [] };
   if (!env.DB) return result;
+  const nowIso = now.toISOString(), nowMs = now.getTime(), started = Date.now();
+  const problems = [];
+  // Three temporary failures in a row means Clover is struggling: stop and let it breathe.
+  let failingRun = 0;
+  const stop = () => Date.now() - started > SALE_TICK_BUDGET_MS || failingRun >= 3;
+  const step = (outcome) => { failingRun = outcome === "retrying" ? failingRun + 1 : 0; };
 
-  // 1. Activate pending schedules whose start time has arrived.
-  const pending = await env.DB
-    .prepare(
-      "SELECT * FROM sale_schedules WHERE status='pending' AND starts_at <= ? ORDER BY starts_at ASC LIMIT ?"
-    )
-    .bind(nowIso, PER_TICK)
-    .all();
-  await Promise.allSettled((pending.results || []).map(async row => {
-    try {
-      const item = await getCloverItem(env, row.store, row.item_id);
-      const currentCents = item.price;
-      const saleCents = computeSalePrice(currentCents, row.discount_kind, row.discount_value);
-      if (saleCents >= currentCents) {
-        throw new Error(`Computed sale price ${saleCents} >= current ${currentCents}; aborting`);
-      }
-      const saleName = buildSaleName(item.name, currentCents, row.sale_label);
-      await setCloverItemFields(env, row.store, row.item_id, { price: saleCents, name: saleName });
-      await env.DB
-        .prepare(
-          "UPDATE sale_schedules SET original_price=?, sale_price=?, original_name=?, status='active', activated_at=? WHERE id=?"
-        )
-        .bind(currentCents, saleCents, item.name, nowIso, row.id)
-        .run();
-      result.activated++;
-    } catch (err) {
-      result.errors.push(`activate ${row.store}/${row.item_id}: ${err.message}`);
-      await env.DB
-        .prepare("UPDATE sale_schedules SET status='error', error_msg=? WHERE id=?")
-        .bind(String(err.message).slice(0, 500), row.id)
-        .run()
-        .catch(() => {});
-    }
-  }));
-
-  // 2. Revert active schedules whose end time has arrived.
-  const active = await env.DB
-    .prepare(
-      "SELECT * FROM sale_schedules WHERE status='active' AND ends_at <= ? ORDER BY ends_at ASC LIMIT ?"
-    )
-    .bind(nowIso, PER_TICK)
-    .all();
-  await Promise.allSettled((active.results || []).map(async row => {
-    try {
-      // Drift guard — don't overwrite if someone manually edited the price
-      // while the sale was running. Flag for admin review instead.
-      const item = await getCloverItem(env, row.store, row.item_id);
-      if (item.price !== row.sale_price) {
-        throw new Error(`Price drifted: expected ${row.sale_price}, found ${item.price}. Manual review needed.`);
-      }
-      const revertFields = { price: row.original_price };
-      if (row.original_name) revertFields.name = row.original_name;
-      await setCloverItemFields(env, row.store, row.item_id, revertFields);
-      await env.DB
-        .prepare(
-          "UPDATE sale_schedules SET status='completed', reverted_at=? WHERE id=?"
-        )
-        .bind(nowIso, row.id)
-        .run();
-      result.reverted++;
-    } catch (err) {
-      result.errors.push(`revert ${row.store}/${row.item_id}: ${err.message}`);
-      await env.DB
-        .prepare("UPDATE sale_schedules SET status='error', error_msg=? WHERE id=?")
-        .bind(String(err.message).slice(0, 500), row.id)
-        .run()
-        .catch(() => {});
-    }
-  }));
-
+  const due = await env.DB.prepare(
+    "SELECT * FROM sale_schedules WHERE status='active' AND ends_at <= ? ORDER BY ends_at ASC LIMIT ?"
+  ).bind(nowIso, SALE_TICK_MAX_ROWS).all();
+  for (const row of (due.results || [])) {
+    if (stop()) break;
+    step(await saleRevertRow(env, row, nowMs, problems, result));
+  }
+  const starting = await env.DB.prepare(
+    "SELECT * FROM sale_schedules WHERE status='pending' AND starts_at <= ? ORDER BY starts_at ASC LIMIT ?"
+  ).bind(nowIso, SALE_TICK_MAX_ROWS).all();
+  for (const row of (starting.results || [])) {
+    if (stop()) break;
+    step(await saleActivateRow(env, row, nowMs, problems, result));
+  }
+  await saleAlert(env, problems);
   return result;
+}
+
+// A store's whole Clover catalogue, for matching a sale's items to that store's own ids.
+// 🛑 null — never [] — when it could not be read in full: a short read would look like
+// "this store has none of these items" and quietly schedule nothing, or the wrong thing.
+async function saleStoreCatalogue(env, store) {
+  const mId = env[`${store}_MERCHANT_ID`], tok = env[`${store}_API_TOKEN`];
+  if (!mId || !tok) return null;
+  const out = [];
+  try {
+    for (let offset = 0; offset < 10000; offset += 1000) {
+      const r = await cloverFetch(`https://api.clover.com/v3/merchants/${mId}/items?limit=1000&offset=${offset}`,
+        { headers: { Authorization: `Bearer ${tok}` } });
+      if (!r || !r.ok) return null;
+      const rows = (await r.json())?.elements || [];
+      for (const it of rows) {
+        if (!it || !isCloverId(it.id)) continue;
+        out.push({ id: it.id, name: String(it.name || ""), hidden: !!it.hidden,
+                   code: String(it.code || "").trim().toUpperCase(), sku: String(it.sku || "").trim().toUpperCase() });
+      }
+      if (rows.length < 1000) return out;
+    }
+    return null;   // over 10,000 items: refuse rather than guess
+  } catch (_) {
+    return null;
+  }
+}
+
+// Which of a sale's items this store has, and as which of ITS ids. Clover item ids are per
+// merchant, so an id picked from BL1's inventory means nothing at BL2 (the 2026-10-14 sale
+// sent BL1's ids to every store and the other five 404'd). At the store the items were picked
+// from, the id must be in its catalogue. At any other store the item is found by the same code
+// AND the same name (Brian, 2026-11-20): codes repeat inside a store (BL1's BL-50251-30 is on
+// two buttons), names repeat everywhere, the pair does not. Hidden items are not candidates.
+// Anything with no single match is skipped, with the reason, never guessed.
+function saleResolveItems(items, store, sourceStore, catalogue) {
+  const norm = (s) => String(s || "").trim().replace(/\s+/g, " ").toLowerCase();
+  const byId = new Map(catalogue.map(it => [it.id, it]));
+  const matched = [], skipped = [];
+  for (const item of items) {
+    const code = String(item.code || "").trim().toUpperCase();
+    const base = { sourceId: item.id, name: String(item.name || ""), code: code || null };
+    if (!sourceStore || sourceStore === store) {
+      const own = byId.get(item.id);
+      if (own) matched.push({ ...base, id: own.id, name: own.name });
+      else skipped.push({ ...base, reason: `Not in ${store}'s catalogue; pick the items from ${store}'s inventory` });
+      continue;
+    }
+    if (!code) { skipped.push({ ...base, reason: "Has no code to find it by at another store" }); continue; }
+    const want = norm(item.name);
+    const hits = catalogue.filter(it => !it.hidden && (it.code === code || it.sku === code) && norm(it.name) === want);
+    if (hits.length === 1) matched.push({ ...base, id: hits[0].id, name: hits[0].name });
+    else if (!hits.length) skipped.push({ ...base, reason: `No item at ${store} with code ${code} and this name` });
+    else skipped.push({ ...base, reason: `${hits.length} items at ${store} have code ${code} and this name` });
+  }
+  return { matched, skipped };
 }
 
 // ─── Fetch item → category mapping from Clover inventory (cached 24h) ──
@@ -34286,15 +34444,23 @@ export default {
 
   // ── Admin: Schedule a sale ──────────────────────────────────────────────
   //    POST ?action=schedule-sale
-  //    body: { store, items:[{id,name,priceCents}], discount:{kind,value}, startsAt, endsAt }
+  //    body: { store, sourceStore?, items:[{id,name,code?}], discount:{kind,value}, saleLabel?, startsAt, endsAt, dryRun? }
+  //    `sourceStore` is the store whose inventory the items were picked from. Each item is resolved
+  //    to THIS store's own Clover item (saleResolveItems): the same id at the source store, the same
+  //    code + name anywhere else. dryRun:true answers { matched, skipped } and schedules nothing.
+  //    Without sourceStore (the page before 2026-11-20) the ids must be in this store's catalogue.
   if (request.method === "POST" && url.searchParams.get("action") === "schedule-sale") {
     const unauth = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
     if (unauth) return unauth;
     const body = await request.json().catch(() => null);
     if (!body) return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400, headers: corsJson });
     const { store, items, discount, saleLabel, startsAt, endsAt } = body;
+    const sourceStore = body.sourceStore == null ? null : String(body.sourceStore);
     if (!ALL_STORES.includes(store)) return new Response(JSON.stringify({ error: "Invalid store" }), { status: 400, headers: corsJson });
+    if (sourceStore !== null && !ALL_STORES.includes(sourceStore)) return new Response(JSON.stringify({ error: "Invalid sourceStore" }), { status: 400, headers: corsJson });
     if (!Array.isArray(items) || items.length === 0) return new Response(JSON.stringify({ error: "items must be a non-empty array" }), { status: 400, headers: corsJson });
+    if (items.length > 500) return new Response(JSON.stringify({ error: "At most 500 items per sale" }), { status: 400, headers: corsJson });
+    if (!items.every(i => i && isCloverId(i.id))) return new Response(JSON.stringify({ error: "Every item needs a Clover item id" }), { status: 400, headers: corsJson });
     if (!discount?.kind || !["percent", "amount"].includes(discount.kind)) return new Response(JSON.stringify({ error: "discount.kind must be 'percent' or 'amount'" }), { status: 400, headers: corsJson });
     if (typeof discount.value !== "number" || discount.value <= 0) return new Response(JSON.stringify({ error: "discount.value must be a positive number" }), { status: 400, headers: corsJson });
     if (discount.kind === "percent" && discount.value >= 100) return new Response(JSON.stringify({ error: "Percent discount must be < 100" }), { status: 400, headers: corsJson });
@@ -34302,8 +34468,21 @@ export default {
     if (isNaN(sAt) || isNaN(eAt)) return new Response(JSON.stringify({ error: "Invalid startsAt or endsAt" }), { status: 400, headers: corsJson });
     if (eAt <= sAt) return new Response(JSON.stringify({ error: "endsAt must be after startsAt" }), { status: 400, headers: corsJson });
     if (sAt < new Date()) return new Response(JSON.stringify({ error: "startsAt must be in the future" }), { status: 400, headers: corsJson });
-    // Check for overlapping schedules
-    const ids = items.map(i => `'${String(i.id).replace(/'/g,"")}'`).join(",");
+    // Resolve the items to this store's own Clover items before anything is written.
+    const catalogue = await saleStoreCatalogue(env, store);
+    if (!catalogue) {
+      return new Response(JSON.stringify({ ok: false, store, error: `Could not read ${store}'s Clover catalogue, so nothing was scheduled there. Try again.` }), { status: 502, headers: corsJson });
+    }
+    const { matched, skipped } = saleResolveItems(items, store, sourceStore, catalogue);
+    if (body.dryRun === true) {
+      return new Response(JSON.stringify({ ok: true, dryRun: true, store, count: matched.length, matched, skipped }), { headers: corsJson });
+    }
+    if (!matched.length) {
+      return new Response(JSON.stringify({ ok: false, store, error: `None of the ${items.length} item(s) could be found at ${store}`, matched, skipped }), { status: 409, headers: corsJson });
+    }
+    // Check for overlapping schedules. The ids are Clover's own (isCloverId), so they are safe to inline,
+    // and inlining keeps a big sale under D1's 100 bound parameters.
+    const ids = matched.map(m => `'${m.id}'`).join(",");
     const overlap = await env.DB.prepare(
       `SELECT item_id FROM sale_schedules
        WHERE store=? AND item_id IN (${ids})
@@ -34320,11 +34499,11 @@ export default {
        VALUES (?,?,?,?,?,?,?,?,?,'pending',?)`
     );
     const label = typeof saleLabel === "string" ? saleLabel.trim().slice(0, 30) || null : null;
-    const stmts = items.map(item =>
-      stmt.bind(scheduleGroup, store, item.id, item.name || "", discount.kind, discount.value, label, sAt.toISOString(), eAt.toISOString(), now)
+    const stmts = matched.map(m =>
+      stmt.bind(scheduleGroup, store, m.id, m.name || "", discount.kind, discount.value, label, sAt.toISOString(), eAt.toISOString(), now)
     );
     await env.DB.batch(stmts);
-    return new Response(JSON.stringify({ ok: true, scheduleGroup, count: items.length }), { headers: corsJson });
+    return new Response(JSON.stringify({ ok: true, scheduleGroup, store, count: matched.length, matched, skipped }), { headers: corsJson });
   }
 
   // ── Admin: List sale schedules ──────────────────────────────────────────
@@ -34372,32 +34551,27 @@ export default {
     const pending = (rows.results || []).filter(r => r.status === "pending");
     const active  = (rows.results || []).filter(r => r.status === "active");
     const now = new Date().toISOString();
-    const errors = [];
     // Cancel pending rows immediately
     if (pending.length) {
       await env.DB.prepare(
         `UPDATE sale_schedules SET status='cancelled' WHERE schedule_group=? AND status='pending'`
       ).bind(scheduleGroup).run();
     }
-    // Force-revert active rows (restore both price and name)
-    await Promise.allSettled(active.map(async row => {
-      try {
-        const store = row.store;
-        const item = await getCloverItem(env, store, row.item_id);
-        const revertFields = { price: item.price === row.sale_price ? row.original_price : item.price };
-        if (row.original_name) revertFields.name = row.original_name;
-        await setCloverItemFields(env, store, row.item_id, revertFields);
-        await env.DB.prepare(
-          "UPDATE sale_schedules SET status='completed', reverted_at=?, error_msg=? WHERE id=?"
-        ).bind(now, "Cancelled by admin", row.id).run();
-      } catch (err) {
-        errors.push(`${row.item_id}: ${err.message}`);
-        await env.DB.prepare(
-          "UPDATE sale_schedules SET status='error', error_msg=? WHERE id=?"
-        ).bind(String(err.message).slice(0, 500), row.id).run().catch(() => {});
-      }
-    }));
-    return new Response(JSON.stringify({ ok: true, cancelled: pending.length, reverted: active.length - errors.length, errors }), { headers: corsJson });
+    // Running rows END NOW, through the scheduler's own revert, one at a time. It used to fire them
+    // at Clover all at once and mark any failure 'error' for good, leaving the markdown on the
+    // register. One that cannot reach Clover now stays active with its end in the past, so the
+    // every-minute scheduler finishes the cancel. scripts/test-sale-scheduler.mjs
+    if (active.length) {
+      await env.DB.prepare("UPDATE sale_schedules SET ends_at=? WHERE schedule_group=? AND status='active' AND ends_at > ?")
+        .bind(now, scheduleGroup, now).run();
+    }
+    const result = { activated: 0, reverted: 0, retrying: 0, errors: [] };
+    const problems = [];
+    for (const row of active) {
+      await saleRevertRow(env, { ...row, ends_at: row.ends_at > now ? now : row.ends_at }, Date.now(), problems, result, "Cancelled by admin");
+    }
+    await saleAlert(env, problems);
+    return new Response(JSON.stringify({ ok: true, cancelled: pending.length, reverted: result.reverted, retrying: result.retrying, errors: result.errors }), { headers: corsJson });
   }
 
   // ── Admin: Delete (remove) a finished sale schedule from the log ─────
