@@ -24,8 +24,12 @@ admin of any business can manage their own people. Asked and answered: an admin 
       E-Commerce and Live Sales Menus gain Admin › Users (166/6, the same 6 associate failures as main);
       `browser-approval-pin` 36/0 (auth-me mock → real object shape); edit-grants-bl 40/0, invite 92/0,
       associate-reveal 42/0, ecom-overview 72/0. `npm test` 13,105 / 147. Worker dry run 1368.11 KiB.
-- [ ] Brian: deploy the worker (backward-compatible both ways: today's page still saves; the new page with
-      today's worker only meets a 403 if an admin outside Bargain Lane invites), then merge.
+- [x] Worker deployed by Brian 2026-11-20 00:13 UTC: version d86ac617, 1368.11 KiB. Verified with 3 consecutive
+      clean passes: 100% rollout on d86ac617, live `content/v2` byte-identical to the dry-run bundle of 8e7bf84
+      (1,400,948 bytes, sha 466e1e63…), api.retjghub.com `auth-me` 200. For the first ~minute the Cloudflare API
+      flip-flopped (rollout empty, then the old version at 100%; content/v2 once served the old script) — which
+      is why it takes three in a row.
+- [ ] Brian: merge.
 
 # Admin, phase 3: the doors — Landing gear (superuser), Users for admins, Admin Settings out of the sidebar (2026-11-19) — branch `claude/admin-landing`
 
