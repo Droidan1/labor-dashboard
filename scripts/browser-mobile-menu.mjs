@@ -61,12 +61,13 @@ const EXPECT = {
   superuser: { role: 'superuser', businesses: [BL, ECOM], biz: 'bl',
     bar: ['Dashboard', 'Retail', 'Content', 'Flow', 'Menu'],
     menu: [['Store', STORE], ['Marketing', MARKETING], ['Merchandising', MERCH], ['Inventory', INVENTORY],
-           // Admin Settings left the sidebar for the Landing gear (2026-11-19); Users opens Admin › People.
-           ['Admin', ['users']], ['Account', ['@switch', 'settings', '@signout']]] },
+           // Admin and Users are reached from Landing's header button only (2026-11-19), never a business sidebar.
+           ['Account', ['@switch', 'settings', '@signout']]] },
   admin: { role: 'admin', businesses: [BL], biz: 'bl',
     bar: ['Dashboard', 'Retail', 'Content', 'Flow', 'Menu'],
     menu: [['Store', STORE], ['Marketing', MARKETING], ['Merchandising', MERCH], ['Inventory', INVENTORY],
-           ['Admin', ['users']], ['Account', ['settings', '@signout']]] },
+           // An admin reaches Landing (and its Users button) from Hub since 2026-11-19, even with one business.
+           ['Account', ['@switch', 'settings', '@signout']]] },
   // Price Scan left this bar for the Menu (Brian, 2026-09-22). Comments is NOT here: it is
   // admin-only in the router, and was a dead sidebar item for every manager until now.
   manager: { role: 'manager', businesses: [BL], biz: 'bl',
@@ -96,13 +97,12 @@ const EXPECT = {
   // E-Commerce (2026-11-18): Overview is the front door and eBay Cases its own page.
   ecom: { role: 'superuser', businesses: [BL, ECOM], biz: 'ecom',
     bar: ['Overview', 'eBay Cases', 'Menu'],
-    menu: [['E-Commerce', ['ecom-overview', 'ebay-cases']], ['Admin', ['users']], ['Account', ['@switch', 'settings', '@signout']]] },
-  // Users is hub-level since 2026-11-19, so the superuser finds it in every business (Admin › People).
+    menu: [['E-Commerce', ['ecom-overview', 'ebay-cases']], ['Account', ['@switch', 'settings', '@signout']]] },
   // Live Sales (migration-085): four tabs + Menu. The Show Calendar took Auction's tab (2026-11-03), so
   // Online Auction and Promotion are reached from the Menu.
   live: { role: 'superuser', businesses: [BL, ECOM, LIVE], biz: 'live',
     bar: ['Overview', 'Shows', 'Calendar', 'Money', 'Menu'],
-    menu: [['Live Sales', ['live-overview', 'live-shows', 'live-calendar', 'live-auction', 'live-promotion', 'live-money']], ['Admin', ['users']], ['Account', ['@switch', 'settings', '@signout']]] },
+    menu: [['Live Sales', ['live-overview', 'live-shows', 'live-calendar', 'live-auction', 'live-promotion', 'live-money']], ['Account', ['@switch', 'settings', '@signout']]] },
 };
 
 const results = [];
@@ -288,7 +288,8 @@ for (const key of Object.keys(EXPECT)) {
   eq(await visiblePages(page), ['page-merch-velocity'], 'Enter opens the first page left');
   await page.evaluate(() => navigateToPage('menu'));
   eq(await page.$eval('#menu-search', e => e.value), '', 'coming back to the Menu starts with an empty search');
-  eq((await menuState(page)).length, 6, '...and every section showing');
+  // Five since 2026-11-19: Store, Marketing, Merchandising, Inventory, Account (Admin left for Landing).
+  eq((await menuState(page)).length, 5, '...and every section showing');
   // The six pages the phone never had, and the Desktop tag on the five wide tables.
   const hints = await page.$$eval('#menu-list .menu-row[data-page]', rs => rs
     .filter(r => r.querySelectorAll('span').length > 2).map(r => r.dataset.page));

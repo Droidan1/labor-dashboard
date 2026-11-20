@@ -1,3 +1,32 @@
+# Admin layout: its own sidebar, Users only from Landing, admins start on Landing (2026-11-19) — branch `claude/admin-own-sidebar`
+
+**Ask (Brian):** "when a super user goes to the admin tools, the sidebar should not be the bargain Lane business. It
+should be a separate sidebar only for the admin tools" and "I still see the user page when I'm in the bargain Lane
+business. That should be completely removed and only accessible on the landing page … if it's admin, that gear
+button now becomes a user button". Then: make the businesses collapsible — and People and Hub too. Asked and
+answered: admins with one business **start on Landing** (it holds their only door to Users). Frontend only.
+
+- [x] Admin's own sidebar: `#ad-side` (outside `#sidebar nav`, so the phone Menu never lists it), drawn from the
+      rail by `adRenderSide()`, shown by `#sidebar.ad-mode` on admin-settings only (business items and Switch
+      business hidden). Back to Hub, then People / Hub / each business as collapsible headings (the Inventory
+      dropdown pattern) — an accordion, so one is open and it fits a 900px laptop (598 ≤ 598 shut or open). The
+      page's own rail steps aside on a desktop; its legend moves to the top of the pane.
+- [x] Phone: Admin has no business bottom bar; "‹ Hub" in its app bar.
+- [x] `nav-users` removed from every business sidebar (and its NAV_BUSINESS entry, applyRoleUI toggle, nav light).
+      `#lp-admin`: gear → Admin for the superuser, Users → Admin › People for an admin (`data-go`).
+- [x] `landingReachable(user)`: 2+ businesses, or any admin. landingPageFor and the Landing guard use it; Switch
+      business shows for it and reads "Hub" with one business.
+- [x] Lit sidebar item in light: `#166534` (was `#22c55e`, 2.44:1 — every business, found by the new sidebar audit).
+      Cache v320.
+- [x] Tests: `test-admin-page` 39/0; `browser-admin-page` 164/0 (sidebar groups + accordion + fit, the Landing
+      button for both roles, a one-business admin on Landing, Hub/‹ Hub, contrast ≥ 4.80 incl. the sidebar);
+      `browser-mobile-menu` no Admin section, admins get Hub, 5 sections (166/6, the 6 known);
+      `browser-channel-matrix` 100/0, `browser-no-pace-bell` 16/0, `browser-halloween-theme` 49/3 (= main) — the
+      three now sign in INSIDE Bargain Lane (real business objects + active business; Halloween also dismisses the
+      passkey prompt a real dashboard boot shows); holland-budget and today-eastern fail the same as main.
+      `npm test` 13,116 / 147.
+- [ ] Brian: merge (Pages deploys it; no worker change).
+
 # Admin › People from any business: invite/update-user off the Bargain Lane gate, suspend scoping (2026-11-19) — branch `claude/admin-people-any-business`
 
 **Ask (Brian):** "Let's fix all of this" — the Bargain Lane gate on invite-user and the other user actions, so an
