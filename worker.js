@@ -5715,6 +5715,11 @@ const ACTION_BUSINESS = new Map([
   // whatnot-* actions below stay on bl until the phase-2 cutover moves the money.
   ["live-sales", "live"],
   ["live-calendar", "live"],
+  // Bin Preview + store settings for the website pilot (migration-093). Store-scoped and
+  // reviewer-gated inside handleSitePilotAction.
+  ["bin-preview-save", "bl"], ["bin-preview-submit", "bl"], ["bin-previews", "bl"],
+  ["bin-preview-review", "bl"], ["bin-preview-pull", "bl"],
+  ["store-settings", "bl"], ["store-settings-save", "bl"], ["store-override-save", "bl"],
   ["afternoon-briefing", "bl"],
   ["associate-save", "bl"],
   ["associate-reveal-pin", "bl"],
@@ -9120,6 +9125,719 @@ async function servePublicPhoto(request, env, url) {
   };
   if (obj.size != null) headers["Content-Length"] = String(obj.size);
   return new Response(request.method === "HEAD" ? null : obj.body, { headers });
+}
+
+// ── Bin Preview + the public store feed (website pilot, migration-093) ────────
+// Plan: docs/plans/bargainlane-website.md §4. A store's manager submits the next sale day's
+// bin photos (bin-preview-save / -submit); an admin approves them with a window
+// (bin-preview-review) or pulls them (bin-preview-pull). The website reads ONE public route,
+// GET /public/v1/stores/<code>: the store's hours, the bin price in effect right now in the
+// store's own time zone, and an approved preview only while starts_at <= now < ends_at.
+//
+// 🛑 /public/v1/* is answered ABOVE every auth gate (like /p/), so it builds its body from an
+// explicit allowlist and never from a row. Its images go through /public/v1/img/, which
+// re-checks the preview on every request, so a pull or an expiry stops the photos as well.
+// The /p/ links stay as they are for Buffer; they are public from upload, not approval.
+//
+// Social drafts go through env.SOCIAL_DRAFT_ADAPTER. Only a test or the local demo can supply
+// one (a Cloudflare binding is never a JS object with a createDraft method), so a deployed
+// worker queues nothing on approval and makes no Buffer call of any kind.
+const SITE_WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+const SITE_HM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const SITE_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const SITE_STORE_PATH = /^\/public\/v1\/stores\/(BL\d{1,2})$/;
+const SITE_IMG_PATH = /^\/public\/v1\/img\/([1-9][0-9]{0,9})\/([1-9][0-9]{0,9})-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.([a-z0-9]{2,5})$/;
+const SITE_MAX_AGE = 60;
+// A hand-off older than this with no answer is treated as unknown: needs_check, never re-sent.
+const SITE_HANDING_STALE_MS = 10 * 60 * 1000;
+// Which social channels an approved preview is drafted to. Dupont shares the Fort Wayne
+// Facebook page with Coliseum (facebook_page_targets, migration-020). Pilot: Dupont only.
+// Phase 2 adds the other stores together with the bins auto-draft skip, so no store ever
+// gets a draft from both paths.
+const BIN_PREVIEW_CHANNELS = { BL4: ["facebook:fortwayne", "google:dupont"] };
+
+function siteValidDate(s) {
+  if (typeof s !== "string" || !SITE_DATE.test(s)) return false;
+  const d = new Date(s + "T00:00:00Z");
+  return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+function siteAddDays(date, n) { return new Date(Date.parse(date + "T00:00:00Z") + n * 864e5).toISOString().slice(0, 10); }
+function siteWeekday(date) { return SITE_WEEKDAYS[new Date(date + "T00:00:00Z").getUTCDay()]; }
+function siteJson(text, fallback) {
+  try { const v = JSON.parse(text); return v && typeof v === "object" ? v : fallback; } catch (_) { return fallback; }
+}
+function siteIds(text) { const v = siteJson(text, []); return Array.isArray(v) ? v.filter(Number.isInteger) : []; }
+function siteValidTz(tz) {
+  if (typeof tz !== "string" || !tz || tz.length > 64) return false;
+  try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); return true; } catch (_) { return false; }
+}
+// The store-local date, weekday and HH:MM at instant ms.
+function siteLocal(ms, tz) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(new Date(ms)).map(x => [x.type, x.value]));
+  const date = `${p.year}-${p.month}-${p.day}`;
+  return { date, weekday: siteWeekday(date), hm: `${p.hour}:${p.minute}` };
+}
+// A store-local wall time as a UTC Date, or null when that time does not exist there
+// (spring-forward's skipped hour). etWallClockToUtc would quietly move it an hour; a
+// reviewer's window must not move, so it is refused instead.
+function siteLocalToUtc(date, hm, tz) {
+  const d = etWallClockToUtc(`${date}T${hm}`, tz);
+  if (!d) return null;
+  const back = siteLocal(d.getTime(), tz);
+  return back.date === date && back.hm === hm ? d : null;
+}
+function siteMaxAge(nowMs, boundaries) {
+  const next = Math.min(...boundaries.filter(t => Number.isFinite(t) && t > nowMs), nowMs + SITE_MAX_AGE * 1000);
+  return Math.max(0, Math.min(SITE_MAX_AGE, Math.floor((next - nowMs) / 1000)));
+}
+
+// ── Validators: each returns { value } or { error }. Unknown keys are refused, never dropped.
+function siteOnlyKeys(obj, keys) {
+  const extra = Object.keys(obj).filter(k => !keys.includes(k));
+  return extra.length ? `Unsupported field: ${extra.join(", ")}` : null;
+}
+function siteTiers(v, label) {
+  if (!Array.isArray(v) || v.length > 6) return { error: `${label} must be a list of up to 6 price tiers` };
+  const out = [];
+  for (const t of v) {
+    if (!t || typeof t !== "object" || siteOnlyKeys(t, ["from", "price"])) return { error: `${label}: each tier is {from, price}` };
+    if (!SITE_HM.test(t.from || "")) return { error: `${label}: from must be HH:MM` };
+    if (typeof t.price !== "number" || !Number.isFinite(t.price) || t.price < 0 || t.price > 1000) return { error: `${label}: price must be a number from 0 to 1000` };
+    if (out.length && t.from <= out[out.length - 1].from) return { error: `${label}: tiers must be in time order` };
+    out.push({ from: t.from, price: Math.round(t.price * 100) / 100 });
+  }
+  // 🔑 A day's first tier starts at midnight, so there is never a time with no price.
+  if (out.length && out[0].from !== "00:00") return { error: `${label}: the first tier must start at 00:00` };
+  return { value: out };
+}
+function siteHours(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return { error: "hours must be an object of weekdays" };
+  const bad = siteOnlyKeys(v, SITE_WEEKDAYS); if (bad) return { error: bad };
+  const out = {};
+  for (const d of SITE_WEEKDAYS) {
+    if (!(d in v) || v[d] === null) continue;                      // missing / null = closed that day
+    const h = v[d];
+    if (!h || typeof h !== "object" || siteOnlyKeys(h, ["open", "close"])) return { error: `hours.${d} is {open, close} or null` };
+    if (!SITE_HM.test(h.open || "") || !SITE_HM.test(h.close || "") || h.close <= h.open) return { error: `hours.${d}: open and close are HH:MM, close after open` };
+    out[d] = { open: h.open, close: h.close };
+  }
+  return { value: out };
+}
+function siteBinPrices(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return { error: "binPrices must be an object of weekdays" };
+  const bad = siteOnlyKeys(v, SITE_WEEKDAYS); if (bad) return { error: bad };
+  const out = {};
+  for (const d of SITE_WEEKDAYS) {
+    if (!(d in v)) continue;
+    const t = siteTiers(v[d], `binPrices.${d}`); if (t.error) return t;
+    out[d] = t.value;
+  }
+  return { value: out };
+}
+function siteText(v, max) { return v === undefined || v === null ? null : typeof v === "string" && v.trim().length <= max ? v.trim() : undefined; }
+function siteProfile(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return { error: "profile must be an object" };
+  const bad = siteOnlyKeys(v, ["displayName", "address", "phone", "mapsUrl"]); if (bad) return { error: bad };
+  const out = { displayName: siteText(v.displayName, 80), address: null, phone: siteText(v.phone, 30), mapsUrl: siteText(v.mapsUrl, 500) };
+  if (out.displayName === undefined) return { error: "profile.displayName: up to 80 characters" };
+  if (out.phone === undefined || (out.phone && !/^[0-9()+\-. ]+$/.test(out.phone))) return { error: "profile.phone: digits and ( ) + - . only" };
+  if (out.mapsUrl === undefined || (out.mapsUrl && !/^https:\/\/[^\s"'<>]+$/.test(out.mapsUrl))) return { error: "profile.mapsUrl must be an https link" };
+  if (v.address != null) {
+    const a = v.address;
+    if (typeof a !== "object" || Array.isArray(a) || siteOnlyKeys(a, ["street", "city", "state", "zip"])) return { error: "profile.address is {street, city, state, zip}" };
+    out.address = { street: siteText(a.street, 120), city: siteText(a.city, 60), state: siteText(a.state, 2), zip: siteText(a.zip, 10) };
+    if (Object.values(out.address).includes(undefined)) return { error: "profile.address: a field is too long or not text" };
+    if (out.address.zip && !/^\d{5}(-\d{4})?$/.test(out.address.zip)) return { error: "profile.address.zip must be a ZIP code" };
+  }
+  return { value: out };
+}
+function sitePreviewDefaults(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return { error: "previewDefaults must be an object" };
+  const bad = siteOnlyKeys(v, ["startDaysBefore", "startTime"]); if (bad) return { error: bad };
+  const out = {};
+  if (v.startDaysBefore !== undefined) {
+    if (!Number.isInteger(v.startDaysBefore) || v.startDaysBefore < 0 || v.startDaysBefore > 3) return { error: "previewDefaults.startDaysBefore is 0 to 3" };
+    out.startDaysBefore = v.startDaysBefore;
+  }
+  if (v.startTime !== undefined) {
+    if (!SITE_HM.test(v.startTime || "")) return { error: "previewDefaults.startTime is HH:MM" };
+    out.startTime = v.startTime;
+  }
+  return { value: out };
+}
+
+// ── Reading settings ─────────────────────────────────────────────────────────
+async function siteSettings(env, store) {
+  const row = await env.DB.prepare("SELECT * FROM store_settings WHERE store = ?").bind(store).first();
+  if (!row) return null;
+  return {
+    store, tz: siteValidTz(row.tz) ? row.tz : "America/New_York",
+    profile: siteJson(row.profile_json, {}), hours: siteJson(row.hours_json, {}),
+    binPrices: siteJson(row.bin_prices_json, {}), previewDefaults: siteJson(row.preview_defaults_json, {}),
+    public: row.public === 1, revision: row.revision, updatedBy: row.updated_by, updatedAt: row.updated_at,
+  };
+}
+function siteDefaultSettings(store) {
+  return { store, tz: "America/New_York", profile: {}, hours: {}, binPrices: {}, previewDefaults: {}, public: false, revision: 0, updatedBy: null, updatedAt: null };
+}
+async function siteOverrides(env, store, from, to) {
+  const { results } = await env.DB.prepare(
+    "SELECT * FROM store_day_overrides WHERE store = ? AND date >= ? AND date <= ? ORDER BY date"
+  ).bind(store, from, to).all();
+  return new Map((results || []).map(r => [r.date, r]));
+}
+// One store-local date with its override applied: hours and the bin price tiers.
+function siteDay(settings, override, date) {
+  const weekday = siteWeekday(date);
+  const h = settings.hours[weekday];
+  let closed = !h, open = h ? h.open : null, close = h ? h.close : null;
+  let binPrices = Array.isArray(settings.binPrices[weekday]) ? settings.binPrices[weekday] : [];
+  let note = null;
+  if (override) {
+    note = override.note || null;
+    if (override.closed) { closed = true; open = null; close = null; binPrices = []; }
+    else {
+      if (override.open && override.close) { closed = false; open = override.open; close = override.close; }
+      if (override.bin_prices_json != null) { const t = siteJson(override.bin_prices_json, []); binPrices = Array.isArray(t) ? t : []; }
+    }
+  }
+  return { date, weekday, closed, open, close, note, binPrices };
+}
+function sitePriceAt(tiers, hm) {
+  let i = -1;
+  for (let k = 0; k < tiers.length; k++) if (tiers[k].from <= hm) i = k;
+  if (i < 0) return null;
+  const nx = tiers[i + 1] || null;
+  return { price: tiers[i].price, until: nx ? nx.from : null, next: nx ? nx.price : null };
+}
+
+// ── The public feed ──────────────────────────────────────────────────────────
+async function servePublicSite(request, env, url) {
+  const base = { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "X-Content-Type-Options": "nosniff" };
+  // A 404 is not cached: a preview that starts a second later must not stay hidden for a minute.
+  const notFound = () => new Response(JSON.stringify({ error: "not_found" }), { status: 404, headers: { ...base, "Cache-Control": "no-store" } });
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return new Response("Method not allowed", { status: 405, headers: { Allow: "GET, HEAD", "Access-Control-Allow-Origin": "*" } });
+  }
+  if (!env.DB) return notFound();
+  try {
+    const img = url.pathname.match(SITE_IMG_PATH);
+    if (img) return await servePublicPreviewImage(request, env, img, notFound);
+    const m = url.pathname.match(SITE_STORE_PATH);
+    if (!m) return notFound();
+    const store = m[1];
+    const settings = await siteSettings(env, store);
+    if (!settings || !settings.public) return notFound();
+
+    const now = Date.now();
+    const nowIso = new Date(now).toISOString();
+    const local = siteLocal(now, settings.tz);
+    const overrides = await siteOverrides(env, store, local.date, siteAddDays(local.date, 6));
+    const week = [];
+    for (let i = 0; i < 7; i++) { const d = siteAddDays(local.date, i); week.push(siteDay(settings, overrides.get(d), d)); }
+    const today = week[0];
+    const binPrice = today.closed ? null : sitePriceAt(today.binPrices, local.hm);
+
+    const { results } = await env.DB.prepare(
+      "SELECT id, sale_date, caption, photo_ids, starts_at, ends_at FROM bin_previews WHERE store = ? AND status = 'approved' AND ends_at > ? ORDER BY sale_date, id"
+    ).bind(store, nowIso).all();
+    const rows = results || [];
+    const active = rows.filter(p => p.starts_at <= nowIso);
+    const ids = [...new Set(active.flatMap(p => siteIds(p.photo_ids)))];
+    const photos = new Map();
+    if (ids.length) {
+      const { results: ph } = await env.DB.prepare(
+        "SELECT id, store, r2_key, content_type, photo_type, status FROM marketing_photos WHERE id IN (SELECT value FROM json_each(?))"
+      ).bind(JSON.stringify(ids)).all();
+      for (const p of ph || []) photos.set(p.id, p);
+    }
+    const imageUrl = (previewId, photoId) => {
+      const p = photos.get(photoId);
+      if (!p || p.store !== store || p.photo_type !== "bins" || p.status === "rejected") return null;
+      if (!SAFE_IMAGE_TYPE.test(String(p.content_type || ""))) return null;
+      const file = String(p.r2_key).split("/").pop();
+      if (!String(p.r2_key).startsWith(`marketing/${store}/`) || !/^[0-9a-f-]{36}\.[a-z0-9]{2,5}$/.test(file)) return null;
+      return `${url.origin}/public/v1/img/${previewId}/${photoId}-${file}`;
+    };
+
+    // 🔑 Built field by field. Nothing from a row reaches the body unless it is named here.
+    const pr = settings.profile || {};
+    const ad = pr.address && typeof pr.address === "object" ? pr.address : null;
+    const dayOut = (d) => ({ date: d.date, weekday: d.weekday, closed: d.closed, open: d.open, close: d.close, note: d.note });
+    const body = {
+      version: 1,
+      store,
+      generatedAt: nowIso,
+      timezone: settings.tz,
+      profile: {
+        displayName: pr.displayName || null,
+        address: ad ? { street: ad.street || null, city: ad.city || null, state: ad.state || null, zip: ad.zip || null } : null,
+        phone: pr.phone || null,
+        mapsUrl: pr.mapsUrl || null,
+      },
+      today: dayOut(today),
+      binPrice,
+      week: week.map(d => ({ ...dayOut(d), binPrices: d.binPrices.map(t => ({ from: t.from, price: t.price })) })),
+      binPreviews: active.map(p => ({
+        id: p.id, saleDate: p.sale_date, caption: p.caption || null, startsAt: p.starts_at, endsAt: p.ends_at,
+        images: siteIds(p.photo_ids).map(pid => imageUrl(p.id, pid)).filter(Boolean),
+      })),
+    };
+
+    // The cache never outlives what it shows: the next preview start or end, price change, or midnight.
+    const bounds = rows.map(p => Date.parse(p.starts_at > nowIso ? p.starts_at : p.ends_at));
+    if (binPrice && binPrice.until) bounds.push(siteLocalToUtc(local.date, binPrice.until, settings.tz)?.getTime());
+    bounds.push(etWallClockToUtc(`${siteAddDays(local.date, 1)}T00:00`, settings.tz)?.getTime());
+    const text = JSON.stringify(body);
+    return new Response(request.method === "HEAD" ? null : text, {
+      headers: { ...base, "Cache-Control": `public, max-age=${siteMaxAge(now, bounds)}` },
+    });
+  } catch (e) {
+    // The site shows a neutral fallback on any failure, never stale prices.
+    console.error(JSON.stringify({ public_site_error: String(e && e.message || e).slice(0, 200), path: url.pathname }));
+    return new Response(JSON.stringify({ error: "unavailable" }), { status: 503, headers: { ...base, "Cache-Control": "no-store" } });
+  }
+}
+
+async function servePublicPreviewImage(request, env, m, notFound) {
+  const [, previewId, photoId, uuid, ext] = m;
+  const p = await env.DB.prepare("SELECT store, status, photo_ids, starts_at, ends_at FROM bin_previews WHERE id = ?").bind(Number(previewId)).first();
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString();
+  if (!p || p.status !== "approved" || !(p.starts_at <= nowIso && nowIso < p.ends_at)) return notFound();
+  if (!siteIds(p.photo_ids).includes(Number(photoId))) return notFound();
+  const settings = await siteSettings(env, p.store);
+  if (!settings || !settings.public) return notFound();
+  const row = await env.DB.prepare("SELECT store, r2_key, content_type, photo_type, status FROM marketing_photos WHERE id = ?").bind(Number(photoId)).first();
+  if (!row || row.store !== p.store || row.photo_type !== "bins" || row.status === "rejected") return notFound();
+  const key = String(row.r2_key);
+  if (!key.startsWith(`marketing/${p.store}/`) || !key.endsWith(`/${uuid}.${ext}`)) return notFound();
+  const ct = String(row.content_type || "").toLowerCase();
+  if (!SAFE_IMAGE_TYPE.test(ct)) return notFound();
+  const obj = await (request.method === "HEAD" && env.MEDIA.head ? env.MEDIA.head(key) : env.MEDIA.get(key)).catch(() => null);
+  if (!obj) return notFound();
+  const headers = {
+    "Content-Type": ct,
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "default-src 'none'; sandbox",
+    "Access-Control-Allow-Origin": "*",
+    "Cache-Control": `public, max-age=${siteMaxAge(now, [Date.parse(p.ends_at)])}`,
+  };
+  if (obj.size != null) headers["Content-Length"] = String(obj.size);
+  return new Response(request.method === "HEAD" ? null : obj.body, { headers });
+}
+
+// ── Audit + social drafts ────────────────────────────────────────────────────
+// An audit row that is written only if the statement before it in the same batch changed
+// exactly one row. D1 runs a batch as one transaction on one connection, so the change and
+// its record land together or not at all, and a guarded UPDATE that lost a race records nothing.
+function siteAuditStmt(env, entity, entityId, action, user, detail) {
+  return env.DB.prepare(
+    `INSERT INTO content_audit (entity, entity_id, action, actor_id, actor_email, at, detail_json)
+     SELECT ?, ${entityId === null ? "CAST(last_insert_rowid() AS TEXT)" : "?"}, ?, ?, ?, ?, ? WHERE changes() = 1`
+  ).bind(...[entity, ...(entityId === null ? [] : [String(entityId)]), action, user.id, user.email,
+    new Date(Date.now()).toISOString(), detail ? JSON.stringify(detail) : null]);
+}
+
+async function listSocialDrafts(env, previewId) {
+  const { results } = await env.DB.prepare(
+    "SELECT channel_key, status, remote_id, updated_at FROM social_drafts WHERE preview_id = ? ORDER BY channel_key"
+  ).bind(previewId).all();
+  return (results || []).map(r => ({ channel: r.channel_key, status: r.status, remoteId: r.remote_id, updatedAt: r.updated_at }));
+}
+
+// At most one draft per channel, whatever the retries: the request that inserts the
+// 'handing' row is the only one that calls the adapter. An exception means the draft may
+// exist (a lost response), so it becomes needs_check, and so does a hand-off left 'handing'
+// for 10 minutes by a request that died. Neither is ever sent again automatically.
+async function queueBinPreviewSocialDrafts(env, preview) {
+  const adapter = env.SOCIAL_DRAFT_ADAPTER;
+  if (adapter && typeof adapter.createDraft === "function") {
+    const photoIds = siteIds(preview.photo_ids);
+    const text = preview.caption || `Fresh bins for ${preview.sale_date}`;
+    for (const channel of BIN_PREVIEW_CHANNELS[preview.store] || []) {
+      const nowIso = new Date(Date.now()).toISOString();
+      await env.DB.prepare(
+        "UPDATE social_drafts SET status = 'needs_check', updated_at = ? WHERE preview_id = ? AND channel_key = ? AND status = 'handing' AND updated_at <= ?"
+      ).bind(nowIso, preview.id, channel, new Date(Date.now() - SITE_HANDING_STALE_MS).toISOString()).run();
+      const payload = { previewId: preview.id, store: preview.store, channel, saleDate: preview.sale_date, text, photoIds,
+        idempotencyKey: `bin-preview:${preview.id}:${channel}` };
+      const won = await env.DB.prepare(
+        `INSERT INTO social_drafts (preview_id, channel_key, status, payload_hash, attempts, created_at, updated_at)
+         VALUES (?, ?, 'handing', ?, 1, ?, ?) ON CONFLICT (preview_id, channel_key) DO NOTHING`
+      ).bind(preview.id, channel, await sha256Hex(JSON.stringify(payload)), nowIso, nowIso).run();
+      if (!won.meta || won.meta.changes !== 1) continue;
+      let remoteId = null;
+      try {
+        const r = await adapter.createDraft(payload);
+        remoteId = r && typeof r.remoteId === "string" && r.remoteId ? r.remoteId.slice(0, 200) : null;
+      } catch (e) {
+        console.log(JSON.stringify({ social_draft_unknown: preview.id, channel, error: String(e && e.message || e).slice(0, 200) }));
+      }
+      await env.DB.prepare(
+        "UPDATE social_drafts SET status = ?, remote_id = ?, updated_at = ? WHERE preview_id = ? AND channel_key = ? AND status = 'handing'"
+      ).bind(remoteId ? "drafted" : "needs_check", remoteId, new Date(Date.now()).toISOString(), preview.id, channel).run();
+    }
+  }
+  return listSocialDrafts(env, preview.id);
+}
+
+// ── Staff actions ────────────────────────────────────────────────────────────
+function binPreviewView(r, nowIso) {
+  const phase = r.status !== "approved" ? r.status
+    : nowIso < r.starts_at ? "scheduled" : nowIso < r.ends_at ? "live" : "expired";
+  return {
+    id: r.id, store: r.store, saleDate: r.sale_date, photoIds: siteIds(r.photo_ids), caption: r.caption,
+    status: r.status, phase, startsAt: r.starts_at, endsAt: r.ends_at, revision: r.revision,
+    createdBy: r.created_by, createdAt: r.created_at, updatedAt: r.updated_at,
+    submittedBy: r.submitted_by, submittedAt: r.submitted_at,
+    reviewedBy: r.reviewed_by, reviewedAt: r.reviewed_at, reviewNote: r.review_note,
+    pulledBy: r.pulled_by, pulledAt: r.pulled_at, pullReason: r.pull_reason,
+  };
+}
+
+// A reviewer approves, rejects, reschedules and pulls, and edits store settings: a superuser,
+// or an admin whose Bargain Lane grant is admin. Managers never review, not even their own store.
+function isSiteReviewer(user) {
+  if (!user) return false;
+  if (user.role === "superuser") return true;
+  return user.role === "admin" && grantFor(user, "bl")?.role === "admin";
+}
+
+// The window from the reviewer's store-local "YYYY-MM-DDTHH:MM" pair, or the store default:
+// startTime on the day startDaysBefore the sale (noon the day before), to close on the sale day.
+function binPreviewWindow(settings, overrides, saleDate, startsAt, endsAt) {
+  if ((startsAt === undefined) !== (endsAt === undefined)) return { error: "Give both startsAt and endsAt, or neither" };
+  let s, e;
+  if (startsAt !== undefined) {
+    const parse = (w) => {
+      const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/.exec(typeof w === "string" ? w : "");
+      if (!m || !siteValidDate(m[1]) || !SITE_HM.test(m[2])) return { bad: "format" };
+      const d = siteLocalToUtc(m[1], m[2], settings.tz);
+      return d ? { d } : { bad: "nonexistent" };
+    };
+    const ps = parse(startsAt), pe = parse(endsAt);
+    if (ps.bad === "format" || pe.bad === "format") return { error: "startsAt and endsAt are store-local YYYY-MM-DDTHH:MM" };
+    if (ps.bad || pe.bad) return { error: "That time does not exist in the store's time zone (the clocks skip it)", code: "NONEXISTENT_LOCAL_TIME" };
+    s = ps.d; e = pe.d;
+  } else {
+    const d = settings.previewDefaults || {};
+    const before = Number.isInteger(d.startDaysBefore) ? d.startDaysBefore : 1;
+    const startTime = SITE_HM.test(d.startTime || "") ? d.startTime : "12:00";
+    const day = siteDay(settings, overrides.get(saleDate), saleDate);
+    const startDate = siteAddDays(saleDate, -before);
+    s = siteLocalToUtc(startDate, startTime, settings.tz) || etWallClockToUtc(`${startDate}T${startTime}`, settings.tz);
+    e = etWallClockToUtc(`${saleDate}T${!day.closed && day.close ? day.close : "23:59"}`, settings.tz);
+  }
+  if (!s || !e || e <= s) return { error: "The window must end after it starts" };
+  if (e - s > 14 * 864e5) return { error: "A preview window is at most 14 days" };
+  return { startsAt: s.toISOString(), endsAt: e.toISOString() };
+}
+
+async function handleSitePilotAction(request, env, url, currentUser, corsJson) {
+  const action = url.searchParams.get("action");
+  const send = (status, body) => new Response(JSON.stringify(body), { status, headers: corsJson });
+  // 🛑 A signed-in person only. The X-Snapshot-Secret bypass arrives with no user, and that
+  // secret is public, so it reaches none of this.
+  if (!currentUser) return send(403, { error: "Forbidden", code: "SESSION_ONLY" });
+  const isRead = action === "bin-previews" || action === "store-settings";
+  if (request.method !== (isRead ? "GET" : "POST")) return send(405, { error: "Method not allowed" });
+  if (!env.DB) return send(503, { error: "Database unavailable" });
+  let b = {};
+  if (!isRead) {
+    try { b = await request.json(); } catch (_) { return send(400, { error: "Body must be JSON" }); }
+    if (!b || typeof b !== "object" || Array.isArray(b)) return send(400, { error: "Body must be a JSON object" });
+  }
+  const reviewer = isSiteReviewer(currentUser);
+  const nowIso = new Date(Date.now()).toISOString();
+  const loadPreview = async (id) => Number.isInteger(id) && id > 0
+    ? env.DB.prepare("SELECT * FROM bin_previews WHERE id = ?").bind(id).first() : null;
+  const respond = async (id, extra = {}) => send(200, { ok: true, ...extra, preview: binPreviewView(await loadPreview(id), nowIso) });
+  const storeOk = (s) => typeof s === "string" && ALL_STORES.includes(s);
+
+  if (action === "bin-preview-save") {
+    const bad = siteOnlyKeys(b, ["id", "store", "saleDate", "photoIds", "caption", "expectedRevision"]);
+    if (bad) return send(400, { error: bad });
+    let row = null, store;
+    if (b.id !== undefined) {
+      row = await loadPreview(b.id);
+      if (!row) return send(404, { error: "No such preview" });
+      // 🔑 The row's store decides, never the body's.
+      if (!canAccessStore(currentUser, row.store)) return send(403, { error: "Forbidden", code: "STORE" });
+      if (b.store !== undefined && b.store !== row.store) return send(400, { error: "A preview cannot move to another store" });
+      store = row.store;
+    } else {
+      if (!storeOk(b.store)) return send(400, { error: "Unknown store" });
+      if (!canAccessStore(currentUser, b.store)) return send(403, { error: "Forbidden", code: "STORE" });
+      store = b.store;
+    }
+    if (!siteValidDate(b.saleDate)) return send(400, { error: "saleDate must be a real YYYY-MM-DD date" });
+    const ids = b.photoIds;
+    if (!Array.isArray(ids) || !ids.length || ids.length > 10 || !ids.every(i => Number.isInteger(i) && i > 0) || new Set(ids).size !== ids.length) {
+      return send(400, { error: "photoIds: 1 to 10 different photo ids" });
+    }
+    const caption = siteText(b.caption, 500);
+    if (caption === undefined) return send(400, { error: "caption: text up to 500 characters" });
+    const n = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM marketing_photos WHERE id IN (SELECT value FROM json_each(?)) AND store = ? AND photo_type = 'bins' AND status != 'rejected'"
+    ).bind(JSON.stringify(ids), store).first();
+    if (!n || n.n !== ids.length) return send(400, { error: `Every photo must be one of this store's bin photos`, code: "BAD_PHOTOS" });
+    const detail = { saleDate: b.saleDate, photoIds: ids, caption };
+    if (!row) {
+      const res = await env.DB.batch([
+        env.DB.prepare(
+          `INSERT INTO bin_previews (store, sale_date, photo_ids, caption, status, revision, created_by, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'draft', 1, ?, ?, ?)`
+        ).bind(store, b.saleDate, JSON.stringify(ids), caption, currentUser.email, nowIso, nowIso),
+        siteAuditStmt(env, "bin_preview", null, "save", currentUser, detail),
+      ]);
+      return respond(res[0].meta.last_row_id);
+    }
+    if (!["draft", "submitted", "rejected"].includes(row.status)) return send(409, { error: `A ${row.status} preview cannot be edited`, code: "NOT_EDITABLE" });
+    if (!Number.isInteger(b.expectedRevision)) return send(400, { error: "expectedRevision is required to edit" });
+    // Any edit returns it to draft: what a reviewer approves is what they saw submitted.
+    const res = await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE bin_previews SET sale_date = ?, photo_ids = ?, caption = ?, status = 'draft', submitted_by = NULL, submitted_at = NULL,
+           revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND status IN ('draft','submitted','rejected')`
+      ).bind(b.saleDate, JSON.stringify(ids), caption, nowIso, row.id, b.expectedRevision),
+      siteAuditStmt(env, "bin_preview", row.id, "save", currentUser, detail),
+    ]);
+    if (res[0].meta.changes !== 1) return send(409, { error: "Someone changed this preview first. Reload and try again.", code: "STALE" });
+    return respond(row.id);
+  }
+
+  if (action === "bin-preview-submit") {
+    const bad = siteOnlyKeys(b, ["id", "expectedRevision"]); if (bad) return send(400, { error: bad });
+    const row = await loadPreview(b.id);
+    if (!row) return send(404, { error: "No such preview" });
+    if (!canAccessStore(currentUser, row.store)) return send(403, { error: "Forbidden", code: "STORE" });
+    if (!Number.isInteger(b.expectedRevision)) return send(400, { error: "expectedRevision is required" });
+    const res = await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE bin_previews SET status = 'submitted', submitted_by = ?, submitted_at = ?, revision = revision + 1, updated_at = ?
+         WHERE id = ? AND revision = ? AND status = 'draft'`
+      ).bind(currentUser.email, nowIso, nowIso, row.id, b.expectedRevision),
+      siteAuditStmt(env, "bin_preview", row.id, "submit", currentUser, null),
+    ]);
+    if (res[0].meta.changes !== 1) return send(409, { error: "Only an unchanged draft can be submitted. Reload and try again.", code: "STALE" });
+    return respond(row.id);
+  }
+
+  if (action === "bin-previews") {
+    const store = url.searchParams.get("store");
+    let stores;
+    if (store) {
+      if (!storeOk(store)) return send(400, { error: "Unknown store" });
+      if (!canAccessStore(currentUser, store)) return send(403, { error: "Forbidden", code: "STORE" });
+      stores = [store];
+    } else {
+      const allowed = allowedStores(currentUser);
+      stores = allowed === null ? ALL_STORES : allowed;
+    }
+    const status = url.searchParams.get("status");
+    if (status && !["draft", "submitted", "approved", "rejected", "pulled"].includes(status)) return send(400, { error: "Unknown status" });
+    const { results } = await env.DB.prepare(
+      `SELECT * FROM bin_previews WHERE store IN (SELECT value FROM json_each(?)) ${status ? "AND status = ?" : ""}
+       ORDER BY sale_date DESC, id DESC LIMIT 200`
+    ).bind(...[JSON.stringify(stores), ...(status ? [status] : [])]).all();
+    return send(200, { ok: true, previews: (results || []).map(r => binPreviewView(r, nowIso)) });
+  }
+
+  if (action === "bin-preview-review") {
+    if (!reviewer) return send(403, { error: "Forbidden", code: "REVIEWER_ONLY" });
+    const bad = siteOnlyKeys(b, ["id", "decision", "startsAt", "endsAt", "note", "expectedRevision"]); if (bad) return send(400, { error: bad });
+    const row = await loadPreview(b.id);
+    if (!row) return send(404, { error: "No such preview" });
+    if (!["approve", "reject", "reschedule"].includes(b.decision)) return send(400, { error: "decision is approve, reject or reschedule" });
+    if (b.expectedRevision !== undefined && b.expectedRevision !== row.revision && row.status !== "approved") {
+      return send(409, { error: "This preview changed since you opened it. Reload and try again.", code: "STALE" });
+    }
+    const note = siteText(b.note, 500);
+    if (note === undefined) return send(400, { error: "note: text up to 500 characters" });
+
+    if (b.decision === "reject") {
+      if (!note) return send(400, { error: "Say why it was rejected, so the store can fix it" });
+      if (row.status !== "submitted") return send(409, { error: `A ${row.status} preview cannot be rejected`, code: "NOT_SUBMITTED" });
+      const res = await env.DB.batch([
+        env.DB.prepare(
+          `UPDATE bin_previews SET status = 'rejected', reviewed_by = ?, reviewed_at = ?, review_note = ?, revision = revision + 1, updated_at = ?
+           WHERE id = ? AND status = 'submitted'`
+        ).bind(currentUser.email, nowIso, note, nowIso, row.id),
+        siteAuditStmt(env, "bin_preview", row.id, "reject", currentUser, { note }),
+      ]);
+      if (res[0].meta.changes !== 1) return send(409, { error: "This preview changed first. Reload and try again.", code: "STALE" });
+      return respond(row.id);
+    }
+
+    const settings = (await siteSettings(env, row.store)) || siteDefaultSettings(row.store);
+    if (b.decision === "reschedule") {
+      if (row.status !== "approved") return send(409, { error: "Only an approved preview can be rescheduled", code: "NOT_APPROVED" });
+      if (b.startsAt === undefined) return send(400, { error: "Give the new startsAt and endsAt" });
+      const w = binPreviewWindow(settings, new Map(), row.sale_date, b.startsAt, b.endsAt);
+      if (w.error) return send(400, { error: w.error, code: w.code });
+      const res = await env.DB.batch([
+        env.DB.prepare(
+          "UPDATE bin_previews SET starts_at = ?, ends_at = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND status = 'approved'"
+        ).bind(w.startsAt, w.endsAt, nowIso, row.id),
+        siteAuditStmt(env, "bin_preview", row.id, "reschedule", currentUser,
+          { from: { startsAt: row.starts_at, endsAt: row.ends_at }, to: w }),
+      ]);
+      if (res[0].meta.changes !== 1) return send(409, { error: "This preview changed first. Reload and try again.", code: "STALE" });
+      return respond(row.id);
+    }
+
+    // approve
+    if (row.status === "approved") return respond(row.id, { alreadyApproved: true, socialDrafts: await queueBinPreviewSocialDrafts(env, row) });
+    if (row.status !== "submitted") return send(409, { error: `A ${row.status} preview cannot be approved`, code: "NOT_SUBMITTED" });
+    const overrides = await siteOverrides(env, row.store, row.sale_date, row.sale_date);
+    const w = binPreviewWindow(settings, overrides, row.sale_date, b.startsAt, b.endsAt);
+    if (w.error) return send(400, { error: w.error, code: w.code });
+    const live = await env.DB.prepare(
+      "SELECT id FROM bin_previews WHERE store = ? AND sale_date = ? AND status = 'approved' AND id != ?"
+    ).bind(row.store, row.sale_date, row.id).first();
+    if (live) return send(409, { error: `Preview #${live.id} is already approved for this day. Pull it first.`, code: "ALREADY_APPROVED_FOR_DAY" });
+    let res;
+    try {
+      res = await env.DB.batch([
+        env.DB.prepare(
+          `UPDATE bin_previews SET status = 'approved', starts_at = ?, ends_at = ?, reviewed_by = ?, reviewed_at = ?, review_note = ?,
+             revision = revision + 1, updated_at = ? WHERE id = ? AND status = 'submitted'`
+        ).bind(w.startsAt, w.endsAt, currentUser.email, nowIso, note, nowIso, row.id),
+        siteAuditStmt(env, "bin_preview", row.id, "approve", currentUser, w),
+      ]);
+    } catch (e) {
+      // The unique index: another preview for this day was approved between the check and here.
+      if (/UNIQUE/i.test(String(e && e.message))) return send(409, { error: "Another preview is already approved for this day", code: "ALREADY_APPROVED_FOR_DAY" });
+      throw e;
+    }
+    const fresh = await loadPreview(row.id);
+    if (res[0].meta.changes !== 1) {
+      // Lost a race with another approval: same outcome, so answer as a repeat.
+      if (fresh && fresh.status === "approved") return respond(row.id, { alreadyApproved: true, socialDrafts: await queueBinPreviewSocialDrafts(env, fresh) });
+      return send(409, { error: "This preview changed first. Reload and try again.", code: "STALE" });
+    }
+    return respond(row.id, { socialDrafts: await queueBinPreviewSocialDrafts(env, fresh) });
+  }
+
+  if (action === "bin-preview-pull") {
+    if (!reviewer) return send(403, { error: "Forbidden", code: "REVIEWER_ONLY" });
+    const bad = siteOnlyKeys(b, ["id", "reason"]); if (bad) return send(400, { error: bad });
+    const reason = siteText(b.reason, 500);
+    if (!reason) return send(400, { error: "Say why it is being pulled" });
+    const row = await loadPreview(b.id);
+    if (!row) return send(404, { error: "No such preview" });
+    if (row.status === "pulled") return respond(row.id, { alreadyPulled: true, socialDrafts: await listSocialDrafts(env, row.id) });
+    if (row.status !== "approved") return send(409, { error: `A ${row.status} preview is not on the site`, code: "NOT_APPROVED" });
+    const res = await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE bin_previews SET status = 'pulled', pulled_by = ?, pulled_at = ?, pull_reason = ?, revision = revision + 1, updated_at = ?
+         WHERE id = ? AND status = 'approved'`
+      ).bind(currentUser.email, nowIso, reason, nowIso, row.id),
+      siteAuditStmt(env, "bin_preview", row.id, "pull", currentUser, { reason }),
+    ]);
+    const fresh = await loadPreview(row.id);
+    if (res[0].meta.changes !== 1 && fresh?.status !== "pulled") return send(409, { error: "This preview changed first. Reload and try again.", code: "STALE" });
+    // Social drafts already made stay in Buffer: listed so the reviewer can delete them there.
+    return respond(row.id, { ...(res[0].meta.changes !== 1 && { alreadyPulled: true }), socialDrafts: await listSocialDrafts(env, row.id) });
+  }
+
+  if (action === "store-settings") {
+    const store = url.searchParams.get("store");
+    if (!storeOk(store)) return send(400, { error: "Unknown store" });
+    if (!canAccessStore(currentUser, store)) return send(403, { error: "Forbidden", code: "STORE" });
+    const settings = await siteSettings(env, store);
+    const today = siteLocal(Date.now(), settings ? settings.tz : "America/New_York").date;
+    const overrides = await siteOverrides(env, store, today, siteAddDays(today, 120));
+    return send(200, {
+      ok: true, settings,
+      overrides: [...overrides.values()].map(o => ({ date: o.date, closed: !!o.closed, open: o.open, close: o.close,
+        binPrices: o.bin_prices_json == null ? null : siteJson(o.bin_prices_json, []), note: o.note, createdBy: o.created_by, createdAt: o.created_at })),
+    });
+  }
+
+  if (action === "store-settings-save") {
+    if (!reviewer) return send(403, { error: "Forbidden", code: "REVIEWER_ONLY" });
+    const bad = siteOnlyKeys(b, ["store", "tz", "profile", "hours", "binPrices", "previewDefaults", "public", "expectedRevision"]);
+    if (bad) return send(400, { error: bad });
+    if (!storeOk(b.store)) return send(400, { error: "Unknown store" });
+    if (!Number.isInteger(b.expectedRevision) || b.expectedRevision < 0) return send(400, { error: "expectedRevision is required (0 for a new store)" });
+    const set = {};
+    if (b.tz !== undefined) { if (!siteValidTz(b.tz)) return send(400, { error: "Unknown time zone" }); set.tz = b.tz; }
+    for (const [field, column, check] of [["profile", "profile_json", siteProfile], ["hours", "hours_json", siteHours],
+      ["binPrices", "bin_prices_json", siteBinPrices], ["previewDefaults", "preview_defaults_json", sitePreviewDefaults]]) {
+      if (b[field] === undefined) continue;
+      const r = check(b[field]); if (r.error) return send(400, { error: r.error });
+      set[column] = JSON.stringify(r.value);
+    }
+    if (b.public !== undefined) { if (typeof b.public !== "boolean") return send(400, { error: "public is true or false" }); set.public = b.public ? 1 : 0; }
+    if (!Object.keys(set).length) return send(400, { error: "Nothing to change" });
+    const audit = siteAuditStmt(env, "store_settings", b.store, "save", currentUser, { changed: Object.keys(set), ...b, expectedRevision: undefined });
+    let res;
+    if (b.expectedRevision === 0) {
+      const cols = ["tz", "profile_json", "hours_json", "bin_prices_json", "preview_defaults_json", "public"];
+      const vals = cols.map(c => set[c] !== undefined ? set[c] : c === "tz" ? "America/New_York" : c === "public" ? 0 : "{}");
+      res = await env.DB.batch([
+        env.DB.prepare(
+          `INSERT INTO store_settings (store, ${cols.join(", ")}, revision, updated_by, updated_at)
+           VALUES (?, ${cols.map(() => "?").join(", ")}, 1, ?, ?) ON CONFLICT (store) DO NOTHING`
+        ).bind(b.store, ...vals, currentUser.email, nowIso),
+        audit,
+      ]);
+    } else {
+      // Column names come from the fixed list above, never from the body.
+      const cols = Object.keys(set);
+      res = await env.DB.batch([
+        env.DB.prepare(
+          `UPDATE store_settings SET ${cols.map(c => `${c} = ?`).join(", ")}, revision = revision + 1, updated_by = ?, updated_at = ?
+           WHERE store = ? AND revision = ?`
+        ).bind(...cols.map(c => set[c]), currentUser.email, nowIso, b.store, b.expectedRevision),
+        audit,
+      ]);
+    }
+    if (res[0].meta.changes !== 1) return send(409, { error: "These settings changed since you opened them. Reload and try again.", code: "STALE" });
+    return send(200, { ok: true, settings: await siteSettings(env, b.store) });
+  }
+
+  if (action === "store-override-save") {
+    if (!reviewer) return send(403, { error: "Forbidden", code: "REVIEWER_ONLY" });
+    const bad = siteOnlyKeys(b, ["store", "date", "closed", "open", "close", "binPrices", "note", "remove"]); if (bad) return send(400, { error: bad });
+    if (!storeOk(b.store)) return send(400, { error: "Unknown store" });
+    if (!siteValidDate(b.date)) return send(400, { error: "date must be a real YYYY-MM-DD date" });
+    const id = `${b.store}:${b.date}`;
+    if (b.remove === true) {
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM store_day_overrides WHERE store = ? AND date = ?").bind(b.store, b.date),
+        siteAuditStmt(env, "store_override", id, "remove", currentUser, null),
+      ]);
+      return send(200, { ok: true, removed: true });
+    }
+    if (b.closed !== undefined && typeof b.closed !== "boolean") return send(400, { error: "closed is true or false" });
+    if ((b.open === undefined) !== (b.close === undefined)) return send(400, { error: "Give both open and close, or neither" });
+    if (b.open !== undefined && (!SITE_HM.test(b.open || "") || !SITE_HM.test(b.close || "") || b.close <= b.open)) {
+      return send(400, { error: "open and close are HH:MM, close after open" });
+    }
+    if (b.closed && (b.open !== undefined || b.binPrices !== undefined)) return send(400, { error: "A closed day has no hours or prices" });
+    let tiers = null;
+    if (b.binPrices !== undefined && b.binPrices !== null) { const t = siteTiers(b.binPrices, "binPrices"); if (t.error) return send(400, { error: t.error }); tiers = t.value; }
+    const note = siteText(b.note, 120);
+    if (note === undefined) return send(400, { error: "note: text up to 120 characters" });
+    if (!b.closed && b.open === undefined && tiers === null && !note) return send(400, { error: "Nothing to change" });
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO store_day_overrides (store, date, closed, open, close, bin_prices_json, note, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (store, date) DO UPDATE SET closed = excluded.closed, open = excluded.open, close = excluded.close,
+           bin_prices_json = excluded.bin_prices_json, note = excluded.note, created_by = excluded.created_by, created_at = excluded.created_at`
+      ).bind(b.store, b.date, b.closed ? 1 : 0, b.open ?? null, b.close ?? null, tiers ? JSON.stringify(tiers) : null, note, currentUser.email, nowIso),
+      siteAuditStmt(env, "store_override", id, "save", currentUser, { closed: !!b.closed, open: b.open ?? null, close: b.close ?? null, binPrices: tiers, note }),
+    ]);
+    return send(200, { ok: true });
+  }
+
+  return send(404, { error: "Unknown action" });
 }
 
 // "bytes=a-b" against an object of `size` bytes → { offset, length }, null for no
@@ -19483,6 +20201,8 @@ export default {
     if (url.pathname.startsWith("/p/") || url.pathname.startsWith("/t/")) return servePublicPhoto(request, env, url);
     // …and finished store videos at /v/, with Range support (servePublicVideo).
     if (url.pathname.startsWith("/v/")) return servePublicVideo(request, env, url);
+    // …and the website's store feed + its approval-checked preview images (servePublicSite).
+    if (url.pathname.startsWith("/public/v1/")) return servePublicSite(request, env, url);
 
     // ── Reporting API (external, static-key auth) ─────────────────
     // A small family of read-only endpoints for the external Chief of Staff
@@ -20548,6 +21268,15 @@ export default {
           }), { status: 403, headers: corsJson });
         }
       }
+    }
+
+    // ── Bin Preview + store settings (website pilot, migration-093) ────────
+    // Session only: handleSitePilotAction refuses the X-Snapshot-Secret bypass.
+    if (url.searchParams.get("action") === "bin-preview-save" || url.searchParams.get("action") === "bin-preview-submit"
+      || url.searchParams.get("action") === "bin-previews" || url.searchParams.get("action") === "bin-preview-review"
+      || url.searchParams.get("action") === "bin-preview-pull" || url.searchParams.get("action") === "store-settings"
+      || url.searchParams.get("action") === "store-settings-save" || url.searchParams.get("action") === "store-override-save") {
+      return handleSitePilotAction(request, env, url, currentUser, corsJson);
     }
 
     // ── Sellercloud probe (E-Commerce, 2026-11-18) ─────────────────

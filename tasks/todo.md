@@ -1,3 +1,33 @@
+# Bargain Lane website pilot, Phase 1a: Bin Preview server + public feed (2026-11-23) — branch `claude/bin-preview-1a`
+
+**Ask:** Brian: "Yes, start 1a" on [docs/plans/bargainlane-website.md](../docs/plans/bargainlane-website.md) with its
+defaults (backend in the Hub, site in its own repo; reviewers = admin/superuser; window = noon the day before
+the sale to close on the sale day). Server, data and tests only. No deploy, no migration applied, no Buffer call.
+
+- [x] `scripts/test-bin-preview.mjs` written first (harness, real `worker.fetch`, pinned `Date.now`, mock
+      social-draft adapter): E1 start/expiry, E2 wrong-store denial, E3 draft privacy + public-key allowlist,
+      E4 emergency pull + audit, E5 Friday 13:59/14:00 tiers, holiday override, both sides of the 2027-03-14
+      clock change, E6 no duplicate draft (repeat, concurrent, lost response, stuck hand-off), E7 gate,
+      leaked secret, revisions. **origin/main: crashes on the first call. Branch: 165/0.**
+- [x] Mutation check: 9 deliberate breaks (feed ignores start / status, image ignores window, no insert guard,
+      secret allowed, skipped hour accepted, anyone reviews, edit ignores the row's store, fixed −5 offset)
+      each turn the suite red; the unchanged control stays 165/0.
+- [x] `migration-093.sql`: `store_settings`, `store_day_overrides`, `bin_previews` (partial unique index: one
+      approved per store + sale day), `content_audit`, `social_drafts` (UNIQUE preview + channel). Additive,
+      no FKs, re-runnable (the test runs it twice). **Not applied anywhere.**
+- [x] worker.js: 8 actions (`bin-preview-save|submit|review|pull`, `bin-previews`, `store-settings`,
+      `store-settings-save`, `store-override-save`), all `"bl"` in `ACTION_BUSINESS`, all refusing the
+      X-Snapshot-Secret. `GET|HEAD /public/v1/stores/<code>` and `/public/v1/img/<preview>/<photo>-<uuid>.<ext>`
+      above the auth gate; cache max-age capped by the next window edge / price change / midnight.
+- [x] Social drafts only through `env.SOCIAL_DRAFT_ADAPTER`, which no deployed binding can provide, so prod
+      approval queues nothing.
+- [x] `.gitignore`: `.dev.vars`, `.env` (+ variants).
+
+## Review
+- `npm test`: 13,374 assertions across 150 suites, all passed.
+- Deploy order when Brian wants it: migration-093 (staging first) → worker. Backward compatible: nothing
+  calls the new actions until Phase 1b's screens exist; `/public/v1/` 404s until a store_settings row is public.
+
 # Products subtitle: no Manifest Scorer (2026-11-24) — branch `claude/products-subtitle`
 
 **Ask:** the Products page subtitle still said "The Price Scan screen and the Manifest Scorer both read these rows";
