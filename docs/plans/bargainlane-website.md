@@ -127,7 +127,7 @@ The repo is public either way. That's fine for site code, which has no secrets.
   - the week's schedule;
   - the active preview: only `approved` and `starts_at ≤ now < ends_at`.
 - **It never returns** drafts, names, emails, R2 keys or internal notes. Fields come from an explicit allowlist.
-- `GET /public/v1/img/<previewId>/<photoId>-<uuid>.<ext>` checks again that the preview is active, so a pull or expiry stops the images too.
+- `GET /public/v1/img/<previewId>/<photoId>.<ext>` checks again that the preview is active, so a pull or expiry stops the images too. 🛑 It never carries the photo's R2 UUID: that UUID is the permanent `/p/` link.
 - Headers: `Cache-Control: public, max-age=60` and `Access-Control-Allow-Origin: *` without credentials.
 - `/p/` stays as it is for Buffer.
 

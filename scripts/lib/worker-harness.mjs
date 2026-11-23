@@ -47,10 +47,25 @@ function d1(db) {
       };
       // In a batch D1 answers a read with its rows, as .all() does, and a write with its meta.
       st.inBatch = () => (/^\s*(WITH|SELECT)\b/i.test(sql) ? st.all() : st.run());
+      // The same, synchronously, so batch() can hold a transaction with no await inside it.
+      st.inBatchSync = () => {
+        if (/^\s*(WITH|SELECT)\b/i.test(sql)) return { results: db.prepare(sql).all(...params), success: true };
+        const r = db.prepare(sql).run(...params);
+        return { success: true, meta: { changes: Number(r.changes), last_row_id: Number(r.lastInsertRowid) } };
+      };
       return st; };
       return mk([]);
     },
-    batch: async (stmts) => Promise.all(stmts.map(s => (s.inBatch ? s.inBatch() : s.run()))),
+    // 🔑 D1 runs a batch as ONE transaction: in order, and rolled back whole if a statement fails.
+    // This was Promise.all over independent runs, so a failing UPDATE still let the next statement
+    // (e.g. its audit row) commit, and nothing could test that a change and its record land together.
+    // Synchronous inside, so another in-flight request cannot interleave mid-transaction.
+    batch: async (stmts) => {
+      if (!stmts.every(s => s && s.inBatchSync)) return Promise.all(stmts.map(s => (s.inBatch ? s.inBatch() : s.run())));
+      db.exec('BEGIN');
+      try { const out = stmts.map(s => s.inBatchSync()); db.exec('COMMIT'); return out; }
+      catch (e) { db.exec('ROLLBACK'); throw e; }
+    },
   };
 }
 

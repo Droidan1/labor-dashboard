@@ -69,6 +69,8 @@ async function pub(p, method = 'GET') {
 }
 const feed = async () => (await pub('/public/v1/stores/BL4')).body;
 const previewIds = (f) => (f?.binPreviews || []).map(p => p.id);
+// The revision a reviewer has on screen: what they send with a decision.
+const rev = (id) => db.prepare('SELECT revision FROM bin_previews WHERE id = ?').get(id)?.revision;
 
 // ── Photos, inserted the way photo-upload does ──────────────────────────────
 const uuid = n => `${String(n).repeat(8)}-${String(n).repeat(4)}-4${String(n).repeat(3)}-a${String(n).repeat(3)}-${String(n).repeat(12)}`;
@@ -134,7 +136,7 @@ let main;
   const sub = await call('bin-preview-submit', { user: 'u-mgr2', body: { id: main.id, expectedRevision: main.revision } });
   eq(sub.status, 200, 'and submits it');
   eq(sub.body?.preview?.status, 'submitted', '  status submitted');
-  const ap = await call('bin-preview-review', { user: 'u-admin', body: { id: main.id, decision: 'approve' } });
+  const ap = await call('bin-preview-review', { user: 'u-admin', body: { id: main.id, decision: 'approve', expectedRevision: rev(main.id) } });
   eq(ap.status, 200, 'an admin approves it');
   main = ap.body?.preview;
   // Default window: noon Eastern the day before the sale, to close on the sale day.
@@ -205,8 +207,8 @@ let main;
   await call('bin-preview-submit', { user: 'u-mgr2', body: { id: submitted.id, expectedRevision: submitted.revision } });
   const rejected = await save('2026-12-10', [P.e]);
   await call('bin-preview-submit', { user: 'u-mgr2', body: { id: rejected.id, expectedRevision: rejected.revision } });
-  eq((await call('bin-preview-review', { user: 'u-admin', body: { id: rejected.id, decision: 'reject' } })).status, 400, 'E3 a rejection needs a note');
-  eq((await call('bin-preview-review', { user: 'u-admin', body: { id: rejected.id, decision: 'reject', note: 'blurry' } })).status, 200, 'E3 a reviewer rejects with a note');
+  eq((await call('bin-preview-review', { user: 'u-admin', body: { id: rejected.id, decision: 'reject', expectedRevision: rev(rejected.id) } })).status, 400, 'E3 a rejection needs a note');
+  eq((await call('bin-preview-review', { user: 'u-admin', body: { id: rejected.id, decision: 'reject', expectedRevision: rev(rejected.id), note: 'blurry' } })).status, 200, 'E3 a reviewer rejects with a note');
   // Give all three a window covering NOW: status alone must keep them private.
   db.prepare("UPDATE bin_previews SET starts_at='2026-12-01T00:00:00.000Z', ends_at='2026-12-31T00:00:00.000Z' WHERE id IN (?,?,?)").run(draft.id, submitted.id, rejected.id);
   const f = await pub('/public/v1/stores/BL4');
@@ -214,14 +216,14 @@ let main;
   eq(previewIds(f.body), [], 'E3 🛑 draft, submitted and rejected previews never appear, even inside a window');
   ok(!/SECRET-/.test(f.text), 'E3   nor does any of their text');
   for (const [p, id] of [[draft, P.c], [submitted, P.d], [rejected, P.e]]) {
-    const u = uuid(Object.values(P).indexOf(id) + 1);
-    eq((await pub(`/public/v1/img/${p.id}/${id}-${u}.jpeg`)).status, 404, `E3 the ${p.status} preview's photo is not served`);
+    eq((await pub(`/public/v1/img/${p.id}/${id}.jpeg`)).status, 404, `E3 the ${p.status} preview's photo is not served`);
   }
   // The approved one's photo through ANOTHER preview's id, and a photo not in the preview.
   at('2026-12-04T12:00:00Z');
-  eq((await pub(`/public/v1/img/${main.id}/${P.c}-${uuid(3)}.jpeg`)).status, 404, 'E3 🛑 a live preview cannot be used to reach a photo that is not in it');
-  eq((await pub(`/public/v1/img/${main.id}/${P.a}-${uuid(2)}.jpeg`)).status, 404, 'E3 🛑 one photo\'s id with another photo\'s UUID');
-  eq((await pub(`/public/v1/img/${main.id}/${P.a}-${uuid(1)}.png`)).status, 404, 'E3 the wrong extension');
+  eq((await pub(`/public/v1/img/${main.id}/${P.c}.jpeg`)).status, 404, 'E3 🛑 a live preview cannot be used to reach a photo that is not in it');
+  eq((await pub(`/public/v1/img/${main.id}/${P.a}.png`)).status, 404, 'E3 the wrong extension');
+  eq((await pub(`/public/v1/img/${main.id}/${P.a}-${uuid(1)}.jpeg`)).status, 404, 'E3 the /p/-style UUID form is not a public image path');
+  eq((await pub(`/public/v1/img/${main.id}/0${P.a}.jpeg`)).status, 404, 'E3 a zero-padded id');
   // Allowlist: every key in the public body is one the site is meant to have.
   const live = await pub('/public/v1/stores/BL4');
   const ALLOWED = new Set(['version', 'store', 'generatedAt', 'timezone', 'profile', 'displayName', 'address', 'street', 'city', 'state', 'zip',
@@ -233,7 +235,12 @@ let main;
   const extra = [...keys].filter(k => !ALLOWED.has(k));
   eq(extra, [], 'E3 🛑 the public body has only allowlisted keys');
   ok(!/@/.test(live.text), 'E3 🛑 no email address anywhere');
-  ok(!/marketing\//.test(live.text), 'E3 🛑 no R2 key anywhere');
+  ok(!/marketing\//.test(live.text), 'E3 🛑 no R2 key path anywhere');
+  // 🛑 The UUID in a photo's R2 key IS its /p/ link (public from upload, never expiring). If the
+  // feed showed it, a pull could never take the photo down: anyone who saw it keeps it.
+  ok(!/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/.test(live.text), 'E3 🛑 no photo UUID anywhere (it is the permanent /p/ capability)');
+  eq(live.body?.binPreviews?.[0]?.images, [`https://api.retjghub.com/public/v1/img/${main.id}/${P.a}.jpeg`, `https://api.retjghub.com/public/v1/img/${main.id}/${P.b}.jpeg`],
+     'E3 image links are preview id + photo id only');
   ok(!/u-mgr2|u-admin|alyson|bgeorges/.test(live.text), 'E3 🛑 no user ids or names');
   eq(live.headers.get('access-control-allow-origin'), '*', 'E3 open CORS, so the site can read it');
   ok(!live.headers.get('access-control-allow-credentials'), 'E3   and never with credentials');
@@ -244,12 +251,12 @@ let main;
   eq((await pub('/public/v1/stores/BL4', 'POST')).status, 405, 'E3 POST is refused');
   eq((await pub('/public/v1/stores/BL4', 'HEAD')).status, 200, 'E3 HEAD answers');
   // Unpublishing the store page hides it whole.
-  const rev = (await call('store-settings', { user: 'u-admin', qs: '&store=BL4' })).body.settings.revision;
-  eq((await call('store-settings-save', { user: 'u-admin', body: { store: 'BL4', public: false, expectedRevision: rev } })).status, 200, 'E3 an admin unpublishes the page');
+  const srev = (await call('store-settings', { user: 'u-admin', qs: '&store=BL4' })).body.settings.revision;
+  eq((await call('store-settings-save', { user: 'u-admin', body: { store: 'BL4', public: false, expectedRevision: srev } })).status, 200, 'E3 an admin unpublishes the page');
   eq((await pub('/public/v1/stores/BL4')).status, 404, 'E3   and the feed is gone');
-  eq((await pub(`/public/v1/img/${main.id}/${P.a}-${uuid(1)}.jpeg`)).status, 404, 'E3   with its images');
-  await call('store-settings-save', { user: 'u-admin', body: { store: 'BL4', public: true, expectedRevision: rev + 1 } });
-  eq((await pub(`/public/v1/img/${main.id}/${P.a}-${uuid(1)}.jpeg`)).status, 200, 'E3 and back when republished');
+  eq((await pub(`/public/v1/img/${main.id}/${P.a}.jpeg`)).status, 404, 'E3   with its images');
+  await call('store-settings-save', { user: 'u-admin', body: { store: 'BL4', public: true, expectedRevision: srev + 1 } });
+  eq((await pub(`/public/v1/img/${main.id}/${P.a}.jpeg`)).status, 200, 'E3 and back when republished');
 }
 
 // ── E6: no duplicate social draft (before E4 pulls the main preview) ─────────
@@ -268,8 +275,8 @@ let main;
   const p2 = (await call('bin-preview-save', { user: 'u-mgr2', body: { store: 'BL4', saleDate: '2026-12-05', photoIds: [P.f] } })).body.preview;
   await call('bin-preview-submit', { user: 'u-mgr2', body: { id: p2.id, expectedRevision: p2.revision } });
   const [x, y] = await Promise.all([
-    call('bin-preview-review', { user: 'u-admin', body: { id: p2.id, decision: 'approve' } }),
-    call('bin-preview-review', { user: 'u-su', body: { id: p2.id, decision: 'approve' } }),
+    call('bin-preview-review', { user: 'u-admin', body: { id: p2.id, decision: 'approve', expectedRevision: rev(p2.id) } }),
+    call('bin-preview-review', { user: 'u-su', body: { id: p2.id, decision: 'approve', expectedRevision: rev(p2.id) } }),
   ]);
   eq([x.status, y.status], [200, 200], 'E6 two concurrent approvals both answer');
   eq([x.body?.alreadyApproved, y.body?.alreadyApproved].filter(Boolean).length, 1, 'E6   exactly one of them did the approving');
@@ -282,14 +289,14 @@ let main;
   const p3 = (await call('bin-preview-save', { user: 'u-mgr2', body: { store: 'BL4', saleDate: '2026-12-06', photoIds: [p3photo] } })).body.preview;
   await call('bin-preview-submit', { user: 'u-mgr2', body: { id: p3.id, expectedRevision: p3.revision } });
   adapterMode = 'lose';
-  const lost = await call('bin-preview-review', { user: 'u-admin', body: { id: p3.id, decision: 'approve' } });
+  const lost = await call('bin-preview-review', { user: 'u-admin', body: { id: p3.id, decision: 'approve', expectedRevision: rev(p3.id) } });
   adapterMode = 'ok';
   eq(lost.status, 200, 'E6 an approval whose draft response is lost still approves');
   eq(lost.body?.socialDrafts?.map(d => d.status), ['needs_check', 'needs_check'], 'E6   and marks both channels needs_check');
   eq(callsFor(p3.id).length, 2, 'E6   after one call each');
-  await call('bin-preview-review', { user: 'u-admin', body: { id: p3.id, decision: 'approve' } });
+  await call('bin-preview-review', { user: 'u-admin', body: { id: p3.id, decision: 'approve', expectedRevision: rev(p3.id) } });
   at('2026-12-03T16:00:00Z');
-  await call('bin-preview-review', { user: 'u-admin', body: { id: p3.id, decision: 'approve' } });
+  await call('bin-preview-review', { user: 'u-admin', body: { id: p3.id, decision: 'approve', expectedRevision: rev(p3.id) } });
   eq(callsFor(p3.id).length, 2, 'E6 🛑 a retry never re-sends a needs_check draft');
 
   // A request that died mid-hand-off: one row stuck in 'handing'.
@@ -299,7 +306,7 @@ let main;
   await call('bin-preview-submit', { user: 'u-mgr2', body: { id: p4.id, expectedRevision: p4.revision } });
   db.prepare(`INSERT INTO social_drafts (preview_id, channel_key, status, attempts, created_at, updated_at)
     VALUES (?, 'facebook:fortwayne', 'handing', 1, '2026-12-03T14:49:00.000Z', '2026-12-03T14:49:00.000Z')`).run(p4.id);
-  const st = await call('bin-preview-review', { user: 'u-admin', body: { id: p4.id, decision: 'approve' } });
+  const st = await call('bin-preview-review', { user: 'u-admin', body: { id: p4.id, decision: 'approve', expectedRevision: rev(p4.id) } });
   const byCh = Object.fromEntries((st.body?.socialDrafts || []).map(d => [d.channel, d.status]));
   eq(byCh, { 'facebook:fortwayne': 'needs_check', 'google:dupont': 'drafted' }, 'E6 a hand-off stuck over 10 minutes becomes needs_check; the other channel drafts');
   eq(callsFor(p4.id).map(c => c.channel), ['google:dupont'], 'E6 🛑 and the stuck channel is never re-sent');
@@ -310,7 +317,7 @@ let main;
   await call('bin-preview-submit', { user: 'u-mgr2', body: { id: p5.id, expectedRevision: p5.revision } });
   db.prepare(`INSERT INTO social_drafts (preview_id, channel_key, status, attempts, created_at, updated_at)
     VALUES (?, 'google:dupont', 'handing', 1, '2026-12-03T14:55:00.000Z', '2026-12-03T14:55:00.000Z')`).run(p5.id);
-  const fl = await call('bin-preview-review', { user: 'u-admin', body: { id: p5.id, decision: 'approve' } });
+  const fl = await call('bin-preview-review', { user: 'u-admin', body: { id: p5.id, decision: 'approve', expectedRevision: rev(p5.id) } });
   eq(Object.fromEntries((fl.body?.socialDrafts || []).map(d => [d.channel, d.status]))['google:dupont'], 'handing', 'E6 a hand-off under 10 minutes old stays handing');
   eq(callsFor(p5.id).map(c => c.channel), ['facebook:fortwayne'], 'E6   and is not sent a second time');
 
@@ -319,7 +326,7 @@ let main;
   const p6photo = await photo(14);
   const p6 = (await call('bin-preview-save', { user: 'u-mgr2', body: { store: 'BL4', saleDate: '2026-12-13', photoIds: [p6photo] } })).body.preview;
   await call('bin-preview-submit', { user: 'u-mgr2', body: { id: p6.id, expectedRevision: p6.revision } });
-  const na = await call('bin-preview-review', { user: 'u-admin', body: { id: p6.id, decision: 'approve' } });
+  const na = await call('bin-preview-review', { user: 'u-admin', body: { id: p6.id, decision: 'approve', expectedRevision: rev(p6.id) } });
   eq(na.status, 200, 'E6 with no adapter configured, approval still works');
   eq(na.body?.socialDrafts, [], 'E6   and queues nothing');
   eq(db.prepare('SELECT COUNT(*) n FROM social_drafts WHERE preview_id = ?').get(p6.id).n, 0, 'E6   not even a row');
@@ -329,15 +336,67 @@ let main;
   const dupPhoto = await photo(15);
   const dup = (await call('bin-preview-save', { user: 'u-mgr2', body: { store: 'BL4', saleDate: '2026-12-04', photoIds: [dupPhoto] } })).body.preview;
   await call('bin-preview-submit', { user: 'u-mgr2', body: { id: dup.id, expectedRevision: dup.revision } });
-  const d2 = await call('bin-preview-review', { user: 'u-admin', body: { id: dup.id, decision: 'approve' } });
+  const d2 = await call('bin-preview-review', { user: 'u-admin', body: { id: dup.id, decision: 'approve', expectedRevision: rev(dup.id) } });
   eq(d2.status, 409, 'E6 a second approved preview for the same store and sale day is refused');
   eq(callsFor(dup.id).length, 0, 'E6   and makes no draft');
+}
+
+// ── Races the guarded UPDATEs exist for (found by review, 2026-11-23) ──────────
+{
+  at('2026-12-03T15:00:00Z');
+  const sub = async (saleDate, n) => {
+    const p = (await call('bin-preview-save', { user: 'u-mgr2', body: { store: 'BL4', saleDate, photoIds: [await photo(n)] } })).body.preview;
+    await call('bin-preview-submit', { user: 'u-mgr2', body: { id: p.id, expectedRevision: p.revision } });
+    return p.id;
+  };
+  // Runs `fn` against the database just before the next statement matching `re` is prepared,
+  // i.e. after the handler has read the row and before its write: the window a real race uses.
+  const realPrepare = env.DB.prepare;
+  const beforeWrite = (re, fn) => {
+    env.DB.prepare = (sql) => { if (re.test(sql)) { env.DB.prepare = realPrepare; fn(); } return realPrepare(sql); };
+  };
+  const approves = (id) => db.prepare("SELECT COUNT(*) n FROM content_audit WHERE entity='bin_preview' AND entity_id=? AND action='approve'").get(String(id)).n;
+
+  const r1 = await sub('2026-12-15', 20);
+  eq((await call('bin-preview-review', { user: 'u-admin', body: { id: r1, decision: 'approve' } })).status, 400,
+     '🛑 an approval must name the revision the reviewer saw');
+  eq((await call('bin-preview-review', { user: 'u-admin', body: { id: r1, decision: 'reject', note: 'x' } })).status, 400, '  so must a rejection');
+  // The manager resubmits different photos while the reviewer's approval is in flight.
+  const seen = rev(r1);
+  const swapped = await photo(21);
+  beforeWrite(/SET status = 'approved'/, () =>
+    db.prepare("UPDATE bin_previews SET photo_ids = ?, revision = revision + 2 WHERE id = ?").run(JSON.stringify([swapped]), r1));
+  const raced = await call('bin-preview-review', { user: 'u-admin', body: { id: r1, decision: 'approve', expectedRevision: seen } });
+  eq(raced.status, 409, '🛑 a resubmission landing mid-approval is not approved unseen');
+  eq(db.prepare('SELECT status FROM bin_previews WHERE id = ?').get(r1).status, 'submitted', '  it stays submitted');
+  eq([approves(r1), callsFor(r1).length], [0, 0], '  with no approval recorded and no draft made');
+
+  // Two previews for one day approved at once: the unique index refuses the second, and the
+  // batch rolls back whole, so its audit row is not written either.
+  const q1 = await sub('2026-12-16', 22), q2 = await sub('2026-12-16', 23);
+  beforeWrite(/SET status = 'approved'/, () => db.prepare("UPDATE bin_previews SET status = 'approved' WHERE id = ?").run(q1));
+  const dupRace = await call('bin-preview-review', { user: 'u-admin', body: { id: q2, decision: 'approve', expectedRevision: rev(q2) } });
+  eq([dupRace.status, dupRace.body?.code], [409, 'ALREADY_APPROVED_FOR_DAY'], 'the unique index catches a same-day approval that slips past the check');
+  eq([db.prepare('SELECT status FROM bin_previews WHERE id = ?').get(q2).status, approves(q2), callsFor(q2).length], ['submitted', 0, 0],
+     '🛑   and the whole batch rolls back: still submitted, no audit row, no draft');
+
+  // A pull that lands while the first channel's draft is being made stops the second channel.
+  const r3 = await sub('2026-12-17', 24);
+  const realCreate = mockAdapter.createDraft;
+  mockAdapter.createDraft = async (pl) => {
+    mockAdapter.createDraft = realCreate;
+    await call('bin-preview-pull', { user: 'u-su', body: { id: r3, reason: 'Pulled mid-approval' } });
+    return realCreate(pl);
+  };
+  const ap3 = await call('bin-preview-review', { user: 'u-admin', body: { id: r3, decision: 'approve', expectedRevision: rev(r3) } });
+  eq(ap3.status, 200, 'an approval interrupted by a pull still answers');
+  eq(callsFor(r3).length, 1, '🛑 and no channel is drafted after the pull');
 }
 
 // ── E4: emergency pull ──────────────────────────────────────────────────────
 {
   at('2026-12-04T12:00:00Z');
-  const imgPath = `/public/v1/img/${main.id}/${P.a}-${uuid(1)}.jpeg`;
+  const imgPath = `/public/v1/img/${main.id}/${P.a}.jpeg`;
   ok(previewIds(await feed()).includes(main.id), 'E4 the preview is live before the pull');
   eq((await call('bin-preview-pull', { user: 'u-admin', body: { id: main.id } })).status, 400, 'E4 a pull needs a reason');
   const pl = await call('bin-preview-pull', { user: 'u-admin', body: { id: main.id, reason: 'Wrong store in photo' } });
@@ -354,7 +413,7 @@ let main;
   eq(audit.find(a => a.action === 'approve')?.actor_id, 'u-admin', 'E4   and who approved it');
   const again = await call('bin-preview-pull', { user: 'u-admin', body: { id: main.id, reason: 'again' } });
   eq(again.body?.alreadyPulled, true, 'E4 pulling twice is harmless');
-  eq((await call('bin-preview-review', { user: 'u-admin', body: { id: main.id, decision: 'approve' } })).status, 409, 'E4 🛑 a pulled preview cannot be re-approved');
+  eq((await call('bin-preview-review', { user: 'u-admin', body: { id: main.id, decision: 'approve', expectedRevision: rev(main.id) } })).status, 409, 'E4 🛑 a pulled preview cannot be re-approved');
   eq((await call('bin-preview-save', { user: 'u-mgr2', body: { id: main.id, store: 'BL4', saleDate: '2026-12-04', photoIds: [P.a], expectedRevision: pl.body.preview.revision } })).status, 409,
      'E4   nor edited back into a draft');
 }
@@ -398,14 +457,14 @@ let main;
   const dp = await photo(16);
   const d = (await call('bin-preview-save', { user: 'u-mgr2', body: { store: 'BL4', saleDate: '2027-03-15', photoIds: [dp] } })).body.preview;
   await call('bin-preview-submit', { user: 'u-mgr2', body: { id: d.id, expectedRevision: d.revision } });
-  const bad = await call('bin-preview-review', { user: 'u-admin', body: { id: d.id, decision: 'approve', startsAt: '2027-03-14T02:30', endsAt: '2027-03-15T21:00' } });
+  const bad = await call('bin-preview-review', { user: 'u-admin', body: { id: d.id, decision: 'approve', expectedRevision: rev(d.id), startsAt: '2027-03-14T02:30', endsAt: '2027-03-15T21:00' } });
   eq(bad.status, 400, 'E5 🛑 a start time that does not exist (2:30 AM on spring-forward day) is refused, not shifted');
-  eq((await call('bin-preview-review', { user: 'u-admin', body: { id: d.id, decision: 'approve', startsAt: '2027-03-15T10:00', endsAt: '2027-03-15T09:00' } })).status, 400,
+  eq((await call('bin-preview-review', { user: 'u-admin', body: { id: d.id, decision: 'approve', expectedRevision: rev(d.id), startsAt: '2027-03-15T10:00', endsAt: '2027-03-15T09:00' } })).status, 400,
      'E5 an end before the start is refused');
-  const good = await call('bin-preview-review', { user: 'u-admin', body: { id: d.id, decision: 'approve' } });
+  const good = await call('bin-preview-review', { user: 'u-admin', body: { id: d.id, decision: 'approve', expectedRevision: rev(d.id) } });
   eq(good.body?.preview?.startsAt, '2027-03-14T16:00:00.000Z', 'E5 default start: noon Sunday Mar 14 is EDT (16:00Z)');
   eq(good.body?.preview?.endsAt, '2027-03-16T01:00:00.000Z', 'E5 default end: 9 PM Monday EDT (01:00Z)');
-  const rs = await call('bin-preview-review', { user: 'u-admin', body: { id: d.id, decision: 'reschedule', startsAt: '2027-03-15T08:00', endsAt: '2027-03-15T20:00' } });
+  const rs = await call('bin-preview-review', { user: 'u-admin', body: { id: d.id, decision: 'reschedule', expectedRevision: rev(d.id), startsAt: '2027-03-15T08:00', endsAt: '2027-03-15T20:00' } });
   eq([rs.status, rs.body?.preview?.startsAt, rs.body?.preview?.endsAt], [200, '2027-03-15T12:00:00.000Z', '2027-03-16T00:00:00.000Z'], 'E5 a reviewer reschedules it in store-local time');
   eq(db.prepare("SELECT COUNT(*) n FROM content_audit WHERE entity='bin_preview' AND entity_id=? AND action='reschedule'").get(String(d.id)).n, 1, 'E5   audited');
 }
@@ -420,7 +479,7 @@ let main;
     ok(r.body?.code !== 'UNCLASSIFIED_ACTION', `E7 ${a} is classified for the business gate`);
     eq((await call(a, {})).status, 401, `E7 ${a} needs a session`);
     const s = await call(a, { secret: env.SNAPSHOT_SECRET, qs: '&store=BL4', body: { id: 1, store: 'BL4', decision: 'approve', reason: 'x' } });
-    eq(s.status, 403, `E7 🛑 ${a} refuses the leaked X-Snapshot-Secret`);
+    eq([s.status, s.body?.code], [403, 'SESSION_ONLY'], `E7 🛑 ${a} refuses the leaked X-Snapshot-Secret`);
   }
   // A user with no Bargain Lane grant at all.
   db.prepare("DELETE FROM user_grants WHERE user_id='u-sb'").run();
@@ -430,8 +489,12 @@ let main;
   const p = (await call('bin-preview-save', { user: 'u-mgr2', body: { store: 'BL4', saleDate: '2026-12-14', photoIds: [P.a] } })).body.preview;
   const e1 = await call('bin-preview-save', { user: 'u-mgr2', body: { id: p.id, store: 'BL4', saleDate: '2026-12-14', photoIds: [P.a, P.b], expectedRevision: p.revision } });
   eq(e1.status, 200, 'E7 an edit with the current revision saves');
+  const audits = () => db.prepare("SELECT COUNT(*) n FROM content_audit WHERE entity='bin_preview' AND entity_id=?").get(String(p.id)).n;
+  const before = audits();
   const e2 = await call('bin-preview-save', { user: 'u-mgr2', body: { id: p.id, store: 'BL4', saleDate: '2026-12-14', photoIds: [P.a], expectedRevision: p.revision } });
   eq(e2.status, 409, 'E7 an edit with a stale revision is a conflict, not an overwrite');
+  eq(audits(), before, 'E7   and records nothing in the audit');
+  eq(rev(p.id), p.revision + 1, '  and leaves the row at the revision the first edit made');
   eq((await call('bin-preview-submit', { user: 'u-mgr2', body: { id: p.id, expectedRevision: p.revision } })).status, 409, 'E7 so is a stale submit');
   eq((await call('bin-preview-save', { user: 'u-mgr2', body: { store: 'BL4', saleDate: '2026-02-30', photoIds: [P.a] } })).status, 400, 'E7 an impossible sale date is refused');
   eq((await call('bin-preview-save', { user: 'u-mgr2', body: { store: 'BL4', saleDate: '2026-12-14', photoIds: [] } })).status, 400, 'E7 a preview needs a photo');

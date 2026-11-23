@@ -8,7 +8,7 @@ the sale to close on the sale day). Server, data and tests only. No deploy, no m
       social-draft adapter): E1 start/expiry, E2 wrong-store denial, E3 draft privacy + public-key allowlist,
       E4 emergency pull + audit, E5 Friday 13:59/14:00 tiers, holiday override, both sides of the 2027-03-14
       clock change, E6 no duplicate draft (repeat, concurrent, lost response, stuck hand-off), E7 gate,
-      leaked secret, revisions. **origin/main: crashes on the first call. Branch: 165/0.**
+      leaked secret, revisions. **origin/main: crashes on the first call. Branch: 179/0.**
 - [x] Mutation check: 9 deliberate breaks (feed ignores start / status, image ignores window, no insert guard,
       secret allowed, skipped hour accepted, anyone reviews, edit ignores the row's store, fixed −5 offset)
       each turn the suite red; the unchanged control stays 165/0.
@@ -23,8 +23,21 @@ the sale to close on the sale day). Server, data and tests only. No deploy, no m
       approval queues nothing.
 - [x] `.gitignore`: `.dev.vars`, `.env` (+ variants).
 
+- [x] Fresh-eyes review (subagent, read-only) found, and this branch fixed:
+      - 🛑 the feed's image links carried each photo's R2 UUID, which IS its `/p/` link (public from upload,
+        never expiring), so a pull could not take photos down. Links are now `/public/v1/img/<preview>/<photo>.<ext>`
+        and the test fails on any UUID in the feed.
+      - approve / reject / reschedule now require `expectedRevision` and check it in the UPDATE, so a resubmission
+        landing mid-approval is a 409, not approved unseen (race reproduced in the test).
+      - a pull landing mid-drafting stops the remaining channels (insert only while still approved).
+      - harness `batch` is now one transaction like D1's (the old Promise.all let a failed write's audit commit).
+        The suite passes on either harness, so this is fidelity, not a proven catch.
+      - D1 allows `changes()` / `last_insert_rowid()` / `json_each` (workerd `ALLOWED_SQLITE_FUNCTIONS`), but no
+        test runs on workerd: confirm one save on staging before prod.
+      New tests fail on the first commit (169/10) and on each fix's mutant.
+
 ## Review
-- `npm test`: 13,374 assertions across 150 suites, all passed.
+- `npm test`: 13,388 assertions across 150 suites, all passed (`test-bin-preview.mjs` 179/0).
 - Deploy order when Brian wants it: migration-093 (staging first) → worker. Backward compatible: nothing
   calls the new actions until Phase 1b's screens exist; `/public/v1/` 404s until a store_settings row is public.
 

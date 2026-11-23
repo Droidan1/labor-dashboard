@@ -9146,7 +9146,11 @@ const SITE_WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 const SITE_HM = /^([01]\d|2[0-3]):[0-5]\d$/;
 const SITE_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const SITE_STORE_PATH = /^\/public\/v1\/stores\/(BL\d{1,2})$/;
-const SITE_IMG_PATH = /^\/public\/v1\/img\/([1-9][0-9]{0,9})\/([1-9][0-9]{0,9})-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.([a-z0-9]{2,5})$/;
+// /public/v1/img/<previewId>/<photoId>.<ext>. 🛑 Deliberately NOT the photo's R2 UUID: that UUID
+// is the /p/ capability, public from upload and never expiring, so putting it in a page would
+// let anyone who saw a preview keep its photos after a pull. Ids are guessable on purpose and
+// harmless: the route serves only a photo of a preview that is live right now.
+const SITE_IMG_PATH = /^\/public\/v1\/img\/([1-9][0-9]{0,9})\/([1-9][0-9]{0,9})\.([a-z0-9]{2,5})$/;
 const SITE_MAX_AGE = 60;
 // A hand-off older than this with no answer is treated as unknown: needs_check, never re-sent.
 const SITE_HANDING_STALE_MS = 10 * 60 * 1000;
@@ -9357,9 +9361,9 @@ async function servePublicSite(request, env, url) {
       const p = photos.get(photoId);
       if (!p || p.store !== store || p.photo_type !== "bins" || p.status === "rejected") return null;
       if (!SAFE_IMAGE_TYPE.test(String(p.content_type || ""))) return null;
-      const file = String(p.r2_key).split("/").pop();
-      if (!String(p.r2_key).startsWith(`marketing/${store}/`) || !/^[0-9a-f-]{36}\.[a-z0-9]{2,5}$/.test(file)) return null;
-      return `${url.origin}/public/v1/img/${previewId}/${photoId}-${file}`;
+      const ext = /\.([a-z0-9]{2,5})$/.exec(String(p.r2_key));
+      if (!String(p.r2_key).startsWith(`marketing/${store}/`) || !ext) return null;
+      return `${url.origin}/public/v1/img/${previewId}/${photoId}.${ext[1]}`;
     };
 
     // 🔑 Built field by field. Nothing from a row reaches the body unless it is named here.
@@ -9402,7 +9406,7 @@ async function servePublicSite(request, env, url) {
 }
 
 async function servePublicPreviewImage(request, env, m, notFound) {
-  const [, previewId, photoId, uuid, ext] = m;
+  const [, previewId, photoId, ext] = m;
   const p = await env.DB.prepare("SELECT store, status, photo_ids, starts_at, ends_at FROM bin_previews WHERE id = ?").bind(Number(previewId)).first();
   const now = Date.now();
   const nowIso = new Date(now).toISOString();
@@ -9413,7 +9417,7 @@ async function servePublicPreviewImage(request, env, m, notFound) {
   const row = await env.DB.prepare("SELECT store, r2_key, content_type, photo_type, status FROM marketing_photos WHERE id = ?").bind(Number(photoId)).first();
   if (!row || row.store !== p.store || row.photo_type !== "bins" || row.status === "rejected") return notFound();
   const key = String(row.r2_key);
-  if (!key.startsWith(`marketing/${p.store}/`) || !key.endsWith(`/${uuid}.${ext}`)) return notFound();
+  if (!key.startsWith(`marketing/${p.store}/`) || !key.endsWith(`.${ext}`)) return notFound();
   const ct = String(row.content_type || "").toLowerCase();
   if (!SAFE_IMAGE_TYPE.test(ct)) return notFound();
   const obj = await (request.method === "HEAD" && env.MEDIA.head ? env.MEDIA.head(key) : env.MEDIA.get(key)).catch(() => null);
@@ -9464,10 +9468,13 @@ async function queueBinPreviewSocialDrafts(env, preview) {
       ).bind(nowIso, preview.id, channel, new Date(Date.now() - SITE_HANDING_STALE_MS).toISOString()).run();
       const payload = { previewId: preview.id, store: preview.store, channel, saleDate: preview.sale_date, text, photoIds,
         idempotencyKey: `bin-preview:${preview.id}:${channel}` };
+      // Inserted only while the preview is still approved, so a pull that lands between two
+      // channels stops the rest.
       const won = await env.DB.prepare(
         `INSERT INTO social_drafts (preview_id, channel_key, status, payload_hash, attempts, created_at, updated_at)
-         VALUES (?, ?, 'handing', ?, 1, ?, ?) ON CONFLICT (preview_id, channel_key) DO NOTHING`
-      ).bind(preview.id, channel, await sha256Hex(JSON.stringify(payload)), nowIso, nowIso).run();
+         SELECT ?, ?, 'handing', ?, 1, ?, ? WHERE EXISTS (SELECT 1 FROM bin_previews WHERE id = ? AND status = 'approved')
+         ON CONFLICT (preview_id, channel_key) DO NOTHING`
+      ).bind(preview.id, channel, await sha256Hex(JSON.stringify(payload)), nowIso, nowIso, preview.id).run();
       if (!won.meta || won.meta.changes !== 1) continue;
       let remoteId = null;
       try {
@@ -9652,8 +9659,11 @@ async function handleSitePilotAction(request, env, url, currentUser, corsJson) {
     const row = await loadPreview(b.id);
     if (!row) return send(404, { error: "No such preview" });
     if (!["approve", "reject", "reschedule"].includes(b.decision)) return send(400, { error: "decision is approve, reject or reschedule" });
-    if (b.expectedRevision !== undefined && b.expectedRevision !== row.revision && row.status !== "approved") {
-      return send(409, { error: "This preview changed since you opened it. Reload and try again.", code: "STALE" });
+    // 🔑 What is approved is exactly the revision the reviewer looked at. Required, and checked
+    // again in each UPDATE, so a resubmission that lands mid-request is never approved unseen.
+    // (A repeat approval of an already-approved preview changes nothing, so it needs none.)
+    if (!(b.decision === "approve" && row.status === "approved") && !Number.isInteger(b.expectedRevision)) {
+      return send(400, { error: "expectedRevision is required: the revision you reviewed" });
     }
     const note = siteText(b.note, 500);
     if (note === undefined) return send(400, { error: "note: text up to 500 characters" });
@@ -9664,8 +9674,8 @@ async function handleSitePilotAction(request, env, url, currentUser, corsJson) {
       const res = await env.DB.batch([
         env.DB.prepare(
           `UPDATE bin_previews SET status = 'rejected', reviewed_by = ?, reviewed_at = ?, review_note = ?, revision = revision + 1, updated_at = ?
-           WHERE id = ? AND status = 'submitted'`
-        ).bind(currentUser.email, nowIso, note, nowIso, row.id),
+           WHERE id = ? AND status = 'submitted' AND revision = ?`
+        ).bind(currentUser.email, nowIso, note, nowIso, row.id, b.expectedRevision),
         siteAuditStmt(env, "bin_preview", row.id, "reject", currentUser, { note }),
       ]);
       if (res[0].meta.changes !== 1) return send(409, { error: "This preview changed first. Reload and try again.", code: "STALE" });
@@ -9680,8 +9690,8 @@ async function handleSitePilotAction(request, env, url, currentUser, corsJson) {
       if (w.error) return send(400, { error: w.error, code: w.code });
       const res = await env.DB.batch([
         env.DB.prepare(
-          "UPDATE bin_previews SET starts_at = ?, ends_at = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND status = 'approved'"
-        ).bind(w.startsAt, w.endsAt, nowIso, row.id),
+          "UPDATE bin_previews SET starts_at = ?, ends_at = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND status = 'approved' AND revision = ?"
+        ).bind(w.startsAt, w.endsAt, nowIso, row.id, b.expectedRevision),
         siteAuditStmt(env, "bin_preview", row.id, "reschedule", currentUser,
           { from: { startsAt: row.starts_at, endsAt: row.ends_at }, to: w }),
       ]);
@@ -9704,8 +9714,8 @@ async function handleSitePilotAction(request, env, url, currentUser, corsJson) {
       res = await env.DB.batch([
         env.DB.prepare(
           `UPDATE bin_previews SET status = 'approved', starts_at = ?, ends_at = ?, reviewed_by = ?, reviewed_at = ?, review_note = ?,
-             revision = revision + 1, updated_at = ? WHERE id = ? AND status = 'submitted'`
-        ).bind(w.startsAt, w.endsAt, currentUser.email, nowIso, note, nowIso, row.id),
+             revision = revision + 1, updated_at = ? WHERE id = ? AND status = 'submitted' AND revision = ?`
+        ).bind(w.startsAt, w.endsAt, currentUser.email, nowIso, note, nowIso, row.id, b.expectedRevision),
         siteAuditStmt(env, "bin_preview", row.id, "approve", currentUser, w),
       ]);
     } catch (e) {
