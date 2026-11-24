@@ -1,3 +1,20 @@
+# Associates: Submit Photos off the bottom bar (2026-11-24) — branch `claude/associate-bar-no-submit`
+
+**Ask:** fix the 6 pre-existing failures in `scripts/browser-mobile-menu.mjs`. Cause: b3dfe9b (2026-10-13) opened
+Submit Photos to every associate (`ASSOCIATE_OPEN_PAGES`), and the bar's Submit gate (`mgrBar` = any non-admin)
+put the button on their bar too. Two failures were stale Menu expectations; four were real: a Price Scan
+associate's bar had 7 tabs, the narrowest 46.7px (< 48px). Brian chose **Menu only** for associates.
+
+- [x] `index.html` `syncBottomNav`: `bn-submit-photos` also needs `seesDash` (the bar's existing associate signal).
+- [x] `browser-mobile-menu.mjs`: associates' Menu now lists Marketing › Submit Photos; bars unchanged.
+- [x] `sw.js` v323 → v324 + shell-cache fixture.
+
+## Review
+- `browser-mobile-menu.mjs`: **172/0** on the branch; against main's page the updated check fails the 4 bar
+  assertions (Submit on both associate bars, uneven widths, 46.7px).
+- `npm test`: 13,056 assertions across 147 suites, all passed.
+- Deploy: Pages on merge. No worker change.
+
 # Remove Coverage, Velocity and Shelf Count worker endpoints (2026-11-24) — branch `claude/remove-merch-endpoints`
 
 **Ask:** Brian, after #410 removed the pages: remove the worker endpoints for Coverage, Velocity and Shelf

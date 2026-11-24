@@ -41931,7 +41931,11 @@
       // mirror is the source of truth for every other tab; this one alone read
       // the role without it, so a non-admin inside E-Commerce got a centred
       // Submit Photos button belonging to Bargain Lane.
-      gate('bn-submit-photos', mgrBar && vis('nav-submit-photos'), 'flex');
+      // `seesDash` keeps it off an ASSOCIATE's bar (Brian, 2026-11-24): their bar is their
+      // granted pages + Menu, and a Price Scan associate's had grown to 7 tabs, the
+      // narrowest 46.7px, under the 48px touch minimum. Associates still open Submit
+      // Photos without a grant (ASSOCIATE_OPEN_PAGES, 2026-10-13) — from Menu › Marketing.
+      gate('bn-submit-photos', mgrBar && seesDash && vis('nav-submit-photos'), 'flex');
       // Active tab — DERIVED, never listed. A page with a visible tab of its own
       // lights that tab; the two detail pages belong to Dashboard; everything else
       // is reached from the Menu page, so Menu lights. This replaced `morePages`, a
