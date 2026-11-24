@@ -1,3 +1,13 @@
+# Products subtitle: no Manifest Scorer (2026-11-24) — branch `claude/products-subtitle`
+
+**Ask:** the Products page subtitle still said "The Price Scan screen and the Manifest Scorer both read these rows";
+that page was removed in #410. item_cache's readers today are Price Scan (`merch-scan`) and the manifests uploaded
+on Opportunity Buys (`manifest-upload` / `manifest-retail`), so it now names those. `sw.js` v325 → v326.
+
+## Review
+- `npm test`: 13,056 assertions across 147 suites, all passed.
+- Rendered at 393px: wraps to 3 lines, no overflow, no page errors; contrast 5.29:1 light / 6.18:1 dark.
+
 # index.html comments: table model is Retail Summary › Categories (2026-11-24) — branch `claude/table-model-comments`
 
 **Ask:** follow-up to #415 — the Inventory stylesheet and Products style comments still named Buy Criteria (and the
