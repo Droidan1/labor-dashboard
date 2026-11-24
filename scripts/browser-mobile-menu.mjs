@@ -82,10 +82,12 @@ const EXPECT = {
     menu: [['Store', ['dashboard', 'weekly-summary', 'discounts', 'labor']], ['Marketing', ['submit-photos']], ['Merchandising', ['merch-scan']],
            ['Inventory', ['bin-dump', 'inventory-receiver', 'mos', 'opportunity-buys']], ['Account', ['settings', '@signout']]] },
   // Receiver is granted but has no bar tab of its own, so it lives on the Menu.
+  // Submit Photos is open to every associate with no grant (2026-10-13) — on the Menu under
+  // Marketing, never on the bar (Brian, 2026-11-24: the bar is granted pages + Menu).
   associate: { role: 'associate', associate: true, businesses: [BL], biz: 'bl',
     pages: { 'bin-dump': 'edit', 'mos': 'edit', 'inventory-receiver': 'view' },
     bar: ['Bin Dump', 'MOS', 'Menu'],
-    menu: [['Inventory', ['bin-dump', 'inventory-receiver', 'mos']], ['Account', ['@signout']]] },
+    menu: [['Marketing', ['submit-photos']], ['Inventory', ['bin-dump', 'inventory-receiver', 'mos']], ['Account', ['@signout']]] },
   // An associate holding Price Scan gets it as a bar tab, like Bin Dump and MOS (Brian,
   // 2026-09-30) — while the associate above, without it, keeps a three-tab bar.
   associateScan: { role: 'associate', associate: true, businesses: [BL], biz: 'bl',
@@ -94,7 +96,7 @@ const EXPECT = {
     // also listed on the Menu under Merchandising.
     // Buy (2026-10-01): Price Scan's Buy sheet, for an associate who can print.
     bar: ['Bin Dump', 'MOS', 'Price Scan', 'Buy', 'Sign Studio', 'Menu'],
-    menu: [['Merchandising', ['merch-scan', 'merch-signs']], ['Inventory', ['bin-dump', 'mos']], ['Account', ['@signout']]] },
+    menu: [['Marketing', ['submit-photos']], ['Merchandising', ['merch-scan', 'merch-signs']], ['Inventory', ['bin-dump', 'mos']], ['Account', ['@signout']]] },
   // E-Commerce (2026-11-18): Overview is the front door and eBay Cases its own page.
   ecom: { role: 'superuser', businesses: [BL, ECOM], biz: 'ecom',
     bar: ['Overview', 'eBay Cases', 'Menu'],
