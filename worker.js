@@ -5783,8 +5783,6 @@ const ACTION_BUSINESS = new Map([
   ["merch-criteria-publish", "bl"],
   ["merch-criteria-discard", "bl"],
   ["merch-criteria-log", "bl"],
-  ["merch-coverage", "bl"],
-  ["merch-velocity", "bl"],
   ["model-bench", "bl"],
   ["furniture-identify", "bl"],
   ["furniture-save", "bl"],
@@ -5818,8 +5816,6 @@ const ACTION_BUSINESS = new Map([
   ["manifest-retail", "bl"],
   ["manifest-decide", "bl"],
   ["manifest-costs", "bl"],
-  ["shelf-counts", "bl"],
-  ["shelf-count-save", "bl"],
   ["draft-save", "bl"],
   ["draft-schedule", "bl"],
   ["draft-unschedule", "bl"],
@@ -9470,7 +9466,7 @@ function palletTagTruckHint(fields) {
 
 // Store gate for any per-store floor action: a real store, one this user holds, and one
 // that still trades. A closed store cannot receive a pallet or lose one to shrink, so a
-// row against one is meaningless data — the same reasoning shelf-count-save uses.
+// row against one is meaningless data.
 //
 // 🔑 NAMED FOR THE RIGHT IT CHECKS, NOT FOR ITS FIRST CALLER. It was binDumpStoreGuard
 // while Bin Dump was the only page asking; Mark Out of Stock asks exactly the same
@@ -14029,68 +14025,6 @@ async function manifestClassify(env, lines) {
   return { classified, skipped: lines.length - classified, rows: updates };
 }
 
-// What the floor is currently doing with each category: starved / balanced / dead, keyed
-// by BOTH the category and its parent L2 so a manifest line can look up either.
-//
-// Returns {} when nothing is published or nobody has counted — an empty map means "we
-// do not know", and every caller must treat a missing key as unknown rather than fine.
-async function merchShelfStates(env, aspByL3) {
-  const universe = await merchCoreCategories(env);
-  if (!universe.length) return {};
-  const { results } = await env.DB.prepare(
-    `SELECT store, week_ending, category, bays, id FROM shelf_counts ORDER BY id DESC`).all();
-  if (!results?.length) return {};
-
-  const latest = {}, bays = {};
-  for (const r of results) {
-    if (!latest[r.store]) latest[r.store] = r.week_ending;
-    if (r.week_ending !== latest[r.store]) continue;
-    const seen = `${r.store}|${r.category}`;
-    if (bays[seen] !== undefined) continue;
-    bays[seen] = r.bays;
-  }
-  const shelf = {};
-  for (const [k, v] of Object.entries(bays)) {
-    const cat = k.slice(k.indexOf("|") + 1);
-    shelf[cat] = (shelf[cat] || 0) + (Number(v) || 0);
-  }
-
-  // Bucket the per-L3 unit counts into the same universe the shelf was counted against.
-  const named = new Set(universe.filter(c => c.level === "l3").map(c => c.key));
-  const wholeL2 = new Set(universe.filter(c => c.level === "l2").map(c => c.key));
-  const remainder = new Map(universe.filter(c => c.level === "other")
-    .map(c => [merchOtherParent(c.key), c.key]));
-  const sales = {};
-  for (const [l3, stats] of Object.entries(aspByL3 || {})) {
-    const units = Number(stats?.units) || 0;
-    const l2 = L3_TO_L2[l3];
-    const key = named.has(l3) ? l3
-      : wholeL2.has(l2) ? l2
-      : remainder.get(l2) || MERCH_NON_CORE;
-    sales[key] = (sales[key] || 0) + units;
-  }
-
-  const salesTotal = Object.values(sales).reduce((a, b) => a + b, 0);
-  const shelfTotal = Object.values(shelf).reduce((a, b) => a + b, 0);
-  if (!salesTotal || !shelfTotal) return {};
-
-  const out = {};
-  for (const c of universe) {
-    const sp = ((sales[c.key] || 0) / salesTotal) * 100;
-    const hp = ((shelf[c.key] || 0) / shelfTotal) * 100;
-    if (!hp) { out[c.key] = "none"; continue; }
-    const ratio = sp / hp;
-    out[c.key] = ratio >= MERCH_RATIO.starved ? "starved" : ratio <= MERCH_RATIO.dead ? "dead" : "balanced";
-    // A line classified to an L3 that has no row of its own still wants an answer, so
-    // mirror the state onto its parent L2 when the L2 is not itself a row.
-    if (c.level === "l3") {
-      const parent = merchParentOf(c.key);
-      if (parent && out[parent] === undefined) out[parent] = out[c.key];
-    }
-  }
-  return out;
-}
-
 // Continue any retail lookup somebody started, one small batch per minute.
 //
 // 🔑 CONSENT FIRST. It only ever touches a manifest whose auto_retail flag is set, which
@@ -14323,13 +14257,7 @@ async function manifestBuild(env, m) {
              flags };
   });
 
-  // What the floor is doing with these categories right now, so a rollup row can
-  // say "and this category is already dead on the shelf".
-  // Reuses the per-L3 units already fetched for ASP rather than re-reading every
-  // snapshot; a shelf-now column is not worth doubling this endpoint's KV reads.
-  const shelfState = await merchShelfStates(env, av);
-
-  const score = manifestScore(lines, resolved, { storeCount: merchStores().length, shelfState });
+  const score = manifestScore(lines, resolved, { storeCount: merchStores().length });
   return {
     lines, score,
     criteriaVersion: live?.version ?? null,
@@ -14789,13 +14717,12 @@ const MERCH_NON_CATEGORY_L2 = new Set([
   "Custom Sales", "Gift Cards", "Refund", "Bin Products", "Sku Book Items",
 ]);
 
-// A shelf-count row for "everything else in this L2". Only appears when an L2 is core
-// AND some of its L3s carry their own core flag — then those L3s are counted
-// individually and this catches the remainder, so the L2's share still adds up.
+// "Everything else in this L2" and "everything not core" — row keys the Coverage
+// scorecard and Shelf Count produced. Both were removed 2026-11-24; merchLabel still
+// names these keys, so they stay until that branch is cleaned up.
 const MERCH_OTHER_PREFIX = "__other__:";
 // The floor's denominator — everything on the floor that is not core.
 const MERCH_NON_CORE = "__non_core__";
-const merchOtherBucket = (l2) => MERCH_OTHER_PREFIX + l2;
 const merchOtherParent = (key) =>
   String(key).startsWith(MERCH_OTHER_PREFIX) ? String(key).slice(MERCH_OTHER_PREFIX.length) : null;
 
@@ -15810,13 +15737,6 @@ function merchLevelOf(key) {
   return null;
 }
 
-function merchWeekEnding(dateStr) {
-  const d = new Date(dateStr + "T12:00:00Z");
-  if (isNaN(d)) return null;
-  d.setUTCDate(d.getUTCDate() + (7 - d.getUTCDay()) % 7);
-  return d.toISOString().slice(0, 10);
-}
-
 // { live, draft } — live is the newest PUBLISHED version (what the scorer reads),
 // draft is the open unpublished one if there is one. Either may be null.
 async function merchVersions(env) {
@@ -15861,235 +15781,6 @@ async function merchEnsureDraft(env, who) {
       stmt.bind(next, f, v, who || null, now)));
   }
   return next;
-}
-
-// What the shelf-count form asks a manager to count.
-//
-// The list FOLLOWS the core flag wherever it was set, which is the whole point of the
-// three-level table: flag `Consumable Food` and a manager counts one number for food;
-// flag `Coffee & Tea` under it and they count that separately. When both are flagged the
-// L3s are counted individually and an "Other food" row catches the remainder, so the
-// L2's share still adds up instead of double-counting.
-//
-// Read from the LIVE version, never a draft — nobody should be counting against a
-// definition nobody has published. Before v1 this is empty on purpose: "count the core"
-// is not a question you can ask before someone has said what core is.
-async function merchCoreCategories(env) {
-  const { live } = await merchVersions(env);
-  if (!live) return [];
-  const resolved = await merchResolve(env, live.version);
-  const rows = [];
-  for (const l2 of resolved.categories) {
-    // 🔑 Its OWN core flag, not an inherited one. An L3 row often exists for some
-    // unrelated reason — a different price cap — and it inherits `core` from its parent
-    // like every other field. If that counted, adding a price cap to Coffee & Tea would
-    // silently split it out of the food count and stop the L2 being counted whole.
-    // Counting a category separately has to be something someone chose.
-    const coreKids = l2.children.filter(c => c.fields.core.inherited === false && c.fields.core.value === "1");
-    if (coreKids.length) {
-      for (const c of coreKids) rows.push({ key: c.key, level: "l3", parent: l2.key, label: c.label });
-      // The parent is core too, so what is left of it after the named children still
-      // counts toward the floor and needs a number of its own.
-      if (l2.core) {
-        const key = merchOtherBucket(l2.key);
-        rows.push({ key, level: "other", parent: l2.key, label: merchLabel(key) });
-      }
-    } else if (l2.core) {
-      rows.push({ key: l2.key, level: "l2", parent: null, label: l2.label });
-    }
-  }
-  // 🔑 "60% of the floor must be core" is a SHARE, so the floor needs a denominator.
-  // Counting only core categories can never produce one — you would be measuring core
-  // as a share of itself. One store-level bucket for everything not named above is what
-  // makes the floor computable at all, and it has to be collected from the start:
-  // adding it later means every week of counts before it is useless for the floor.
-  if (rows.length) rows.push({ key: MERCH_NON_CORE, level: "rest", parent: null, label: "Everything else" });
-  return rows;
-}
-
-// Ryan's floor, and the ratio bands from the PRD. Constants for now — the PRD wants
-// them admin-editable, which means criteria fields; that is a later pass and until then
-// changing them is a code change, deliberately visible in the diff.
-const MERCH_FLOOR_PCT = 60;
-const MERCH_RATIO = { starved: 1.25, dead: 0.75 };
-
-// Turn raw units and bays into the shares, ratios and this-week actions the page draws.
-//
-// Shares are of the WHOLE measured floor — core rows plus the non-core remainder — so
-// "core is 54% of this store" means the same thing on both the shelf and the sales side,
-// and the ratio between them is dimensionless.
-function merchCoverageMath(universe, stores) {
-  const coreKeys = universe.filter(c => c.level !== "rest").map(c => c.key);
-  const allKeys = universe.map(c => c.key);
-  const pct = (n, d) => (d > 0 ? (n / d) * 100 : null);
-  const sum = (obj, keys) => keys.reduce((t, k) => t + (Number(obj?.[k]) || 0), 0);
-
-  const state = (ratio, bays) => {
-    if (bays === 0) return "none";              // on the list, not on the shelf
-    if (ratio === null) return "unknown";
-    if (ratio >= MERCH_RATIO.starved) return "starved";
-    if (ratio <= MERCH_RATIO.dead) return "dead";
-    return "balanced";
-  };
-
-  const out = stores.map(st => {
-    const salesTotal = sum(st.sales, allKeys);
-    const hasShelf = !!st.shelf;
-    const shelfTotal = hasShelf ? sum(st.shelf, allKeys) : 0;
-    const cells = {};
-    for (const c of universe) {
-      const units = Number(st.sales?.[c.key]) || 0;
-      const salesPct = pct(units, salesTotal);
-      // A store that has not counted gets null bays — NEVER zero. Zero is a real
-      // reading ("this category has no shelf"), and showing it for a missing count is
-      // how a scorecard tells you to cut a category nobody has measured yet.
-      const bays = hasShelf ? (Number(st.shelf[c.key]) || 0) : null;
-      const shelfPct = hasShelf ? pct(bays, shelfTotal) : null;
-      const ratio = (salesPct !== null && shelfPct) ? +(salesPct / shelfPct).toFixed(2) : null;
-      cells[c.key] = { units, salesPct, bays, shelfPct, ratio, state: state(ratio, bays) };
-    }
-    const coreSalesPct = pct(sum(st.sales, coreKeys), salesTotal);
-    const coreShelfPct = hasShelf ? pct(sum(st.shelf, coreKeys), shelfTotal) : null;
-    return {
-      store: st.store, label: st.label, daysWithData: st.daysWithData,
-      shelfWeek: st.shelfWeek, hasShelf, cells,
-      coreSalesPct, coreShelfPct,
-      underFloor: coreShelfPct !== null && coreShelfPct < MERCH_FLOOR_PCT,
-      reporting: st.daysWithData > 0,
-    };
-  });
-
-  // Chain totals are summed from raw units and bays, not averaged from the store
-  // percentages — a six-store mean would weight the smallest store equally with BL1.
-  const chainSales = {}, chainShelf = {};
-  let anyShelf = false;
-  for (const st of stores) {
-    for (const k of allKeys) {
-      chainSales[k] = (chainSales[k] || 0) + (Number(st.sales?.[k]) || 0);
-      if (st.shelf) { anyShelf = true; chainShelf[k] = (chainShelf[k] || 0) + (Number(st.shelf[k]) || 0); }
-    }
-  }
-  const chainSalesTotal = sum(chainSales, allKeys);
-  const chainShelfTotal = anyShelf ? sum(chainShelf, allKeys) : 0;
-  const chainCells = {};
-  for (const c of universe) {
-    const salesPct = pct(chainSales[c.key], chainSalesTotal);
-    const shelfPct = anyShelf ? pct(chainShelf[c.key], chainShelfTotal) : null;
-    const ratio = (salesPct !== null && shelfPct) ? +(salesPct / shelfPct).toFixed(2) : null;
-    chainCells[c.key] = {
-      units: chainSales[c.key] || 0, salesPct,
-      bays: anyShelf ? (chainShelf[c.key] || 0) : null, shelfPct, ratio,
-      state: state(ratio, anyShelf ? (chainShelf[c.key] || 0) : null),
-    };
-  }
-  const chain = {
-    cells: chainCells,
-    coreSalesPct: pct(sum(chainSales, coreKeys), chainSalesTotal),
-    coreShelfPct: anyShelf ? pct(sum(chainShelf, coreKeys), chainShelfTotal) : null,
-    hasShelf: anyShelf,
-    storesReporting: out.filter(s => s.reporting).length,
-    storesCounted: out.filter(s => s.hasShelf).length,
-    storesTotal: out.length,
-  };
-  chain.underFloor = chain.coreShelfPct !== null && chain.coreShelfPct < MERCH_FLOOR_PCT;
-
-  // "What to do this week" — BUY before FLOOR before CUT, six at most, because a list
-  // longer than the call has time for is the same as no list.
-  const label = k => universe.find(c => c.key === k)?.label ?? k;
-  const actions = [];
-  for (const c of universe) {
-    if (c.level === "rest") continue;
-    const cell = chainCells[c.key];
-    if (cell.state === "starved") {
-      actions.push({ kind: "BUY", category: c.key, label: label(c.key), ratio: cell.ratio,
-        why: `${cell.salesPct.toFixed(0)}% of units on ${cell.shelfPct.toFixed(0)}% of the shelf` });
-    }
-  }
-  for (const st of out) {
-    if (st.underFloor) {
-      actions.push({ kind: "FLOOR", store: st.store, label: st.label, pct: st.coreShelfPct,
-        why: `core is ${st.coreShelfPct.toFixed(0)}% of the floor, under the ${MERCH_FLOOR_PCT}% mark` });
-    }
-  }
-  for (const c of universe) {
-    if (c.level === "rest") continue;
-    const cell = chainCells[c.key];
-    if (cell.state === "dead") {
-      actions.push({ kind: "CUT", category: c.key, label: label(c.key), ratio: cell.ratio,
-        why: `${cell.shelfPct.toFixed(0)}% of the shelf for ${cell.salesPct.toFixed(0)}% of units` });
-    }
-  }
-  const order = { BUY: 0, FLOOR: 1, CUT: 2 };
-  actions.sort((a, b) => order[a.kind] - order[b.kind] || (b.ratio ?? 0) - (a.ratio ?? 0));
-  return { stores: out, chain, actions: actions.slice(0, 6), actionsTruncated: Math.max(0, actions.length - 6) };
-}
-
-// Bucket one store's merged snapshot into the coverage universe.
-//
-// Every unit sold lands somewhere: a named core L3 takes its own, the rest of a core
-// L2 goes to that L2's row (or its "other" remainder), and everything outside the core
-// definition falls to the non-core bucket. Fallback-resolved L3s — rows whose name is an
-// item name rather than a Clover category — have no row of their own and correctly land
-// in their L2's bucket.
-// Units sold and BASKET REACH for every merchandise category, from one merged bundle.
-//
-// Separate from merchBucketSales, which folds everything outside the CORE universe into a
-// single bucket — precisely the categories this view exists to interrogate. Here we want
-// the whole tree, core or not, because "which categories are not working" is the question.
-//
-// ⚠️ TWO KEY SPACES, and mixing them fails silently. `l3Rows` carries the RAW Clover L3
-// ("[Name match] SNACKS"); `l3Orders` is keyed by normalizeL3Key. Joining without
-// normalising first yields units with no baskets and baskets with no units — every ratio
-// wrong, nothing thrown. The aggregator documents the same trap where it builds l3Orders.
-function merchVelocityRows(merged) {
-  const tree = merchTree();
-  const l3Orders = merged.l3Orders || {};
-  const l2Orders = merged.l2Orders || {};
-  const rows = {};
-  const at = (k) => rows[k] || (rows[k] = { units: 0, baskets: 0 });
-
-  for (const cat of merged.categories || []) {
-    const l2 = cat.category;
-    if (!tree[l2]) continue;                  // Refund, Gift Cards, Bin Products, …
-    for (const row of cat.l3Rows || []) {
-      const l3 = normalizeL3Key(row.l3);
-      const qty = Number(row.qty) || 0;
-      at(l3).units += qty;
-      at(l2).units += qty;
-    }
-    for (const [l3, n] of Object.entries(l3Orders[l2] || {})) at(l3).baskets += Number(n) || 0;
-    // An L2's basket count is NOT the sum of its L3s': one basket touching three L3s in
-    // the same L2 is one basket for the L2 and three for the children. Summing would
-    // report penetration above 100%.
-    at(l2).baskets += Number(l2Orders[l2]) || 0;
-  }
-  return rows;
-}
-
-function merchBucketSales(merged, universe) {
-  const out = {};
-  for (const c of universe) out[c.key] = 0;
-  const named = new Set(universe.filter(c => c.level === "l3").map(c => c.key));
-  const wholeL2 = new Set(universe.filter(c => c.level === "l2").map(c => c.key));
-  const remainderOf = new Map(universe.filter(c => c.level === "other")
-    .map(c => [merchOtherParent(c.key), c.key]));
-
-  // mergeItemSnapshots returns categories as an ARRAY of {category, l3Rows:[{l3, qty}]} —
-  // not the keyed map it builds internally. Reading it as a map yields zero everywhere,
-  // which renders as a plausible "no sales yet" rather than as an error.
-  for (const cat of merged.categories || []) {
-    const l2 = cat.category;
-    for (const row of cat.l3Rows || []) {
-      const l3 = row.l3;
-      const qty = Number(row.qty) || 0;
-      if (named.has(l3)) { out[l3] += qty; continue; }
-      if (wholeL2.has(l2)) { out[l2] += qty; continue; }
-      const rest = remainderOf.get(l2);
-      if (rest) { out[rest] += qty; continue; }
-      out[MERCH_NON_CORE] += qty;
-    }
-  }
-  return out;
 }
 
 // Resolve one version into the table the page draws: the chain default row, then one
@@ -16825,8 +16516,7 @@ const ACTION_PAGE = new Map([
   //
   // 🛑 ABSENT on purpose, so no grant reaches them at any level: sticker-create-price-point
   // (new Clover items), sticker-template-set / sticker-mark-image (the label design),
-  // merch-manual-price, merch-categories, furniture-*, merch-products / merch-product-save,
-  // merch-velocity.
+  // merch-manual-price, merch-categories, furniture-*, merch-products / merch-product-save.
   ["merch-scan",       ["merch-scan", "view"]],
   ["sticker-template", ["merch-scan", "view"]],
   ["sticker-check",    ["merch-scan", "edit"]],
@@ -27796,16 +27486,6 @@ export default {
       }
     }
 
-    // ── Merchandising: the Coverage scorecard ─────────────────────────────────
-    // "Is core covered?" answered two ways — what the shelf gives a category, and what
-    // customers actually buy from it — with the gap between them as the buy/cut signal.
-    //
-    // GET ?action=merch-coverage[&window=7|28]
-    //
-    // Sales come from the nightly items:<store>:<date> snapshots, the same read path the
-    // Item Sales reconciliation uses; no Clover call is made here. Shelf comes from the
-    // latest week a store actually entered. A store with no count is NEVER treated as
-    // zero bays — it is excluded from the shelf side and says so.
     // POST ?action=model-bench { query, models?: [...] }
     //
     // Runs ONE real search and hands the identical candidate set to two models through the
@@ -28277,17 +27957,6 @@ export default {
       }
     }
 
-    // GET ?action=merch-velocity[&window=28] — units and basket reach per store per
-    // category, against the chain.
-    //
-    // Raw units cannot answer "wrong product or wrong customer": a store doing 400
-    // transactions a week and one doing 2,000 will always look different regardless of
-    // assortment. Three numbers separate them — units per 1,000 transactions, basket
-    // penetration, and each measured against the chain. One store low against the chain
-    // is an assortment problem at that store. The category weak EVERYWHERE, per shelf
-    // section, is a category that does not work for our customer.
-    //
-    // Same read path as coverage: nightly items:<store>:<date> snapshots, no Clover call.
     // POST ?action=merch-scan-save { identifier, retail_price?, suggested_price?, l3? }
     //
     // A person's correction, kept where no lookup can reach it. This is the mechanism that
@@ -29631,7 +29300,7 @@ export default {
     //
     // Gating: these actions are deliberately NOT in NON_FINANCIAL_ACTIONS, so the
     // financial gate above already admits exactly superuser/admin/executive/manager
-    // and refuses staff — the same way shelf-count-save is gated. Each handler then
+    // and refuses staff. Each handler then
     // re-checks the store. ('district_manager' was retired by migration-029.)
 
     if (url.searchParams.get("action") === "bin-dump-scan" && request.method === "POST") {
@@ -31546,278 +31215,6 @@ export default {
           from_photo: !!body?.image_b64,
           flags: [...new Set(missFlags)],
         }), { headers: corsJson });
-      } catch (e) {
-        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
-      }
-    }
-
-    if (url.searchParams.get("action") === "merch-velocity" && request.method === "GET") {
-      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
-      if (unauth) return unauth;
-      if (!env.DB || !env.SALES_SNAPSHOTS) {
-        return new Response(JSON.stringify({ error: "DB or KV not configured" }), { status: 500, headers: corsJson });
-      }
-      try {
-        const ALLOWED = [7, 28, 91, 364];
-        const asked = Number(url.searchParams.get("window"));
-        const win = ALLOWED.includes(asked) ? asked : 28;
-        const weeks = win / 7;
-
-        // Ends YESTERDAY: today's snapshot is not written until the nightly cron, and
-        // counting a partial day as a whole one understates every rate on the page.
-        const endD = getETYesterday();
-        const dates = [];
-        for (let i = 0; i < win; i++) dates.push(addDaysYmd(endD, -i));
-        const start = dates[dates.length - 1], end = dates[0];
-
-        // Latest entered week per store. A store that has never counted is NOT zero bays —
-        // it has no shelf figure, and every per-section rate for it must read as unknown
-        // rather than as infinity.
-        const { results: shelfRows } = await env.DB.prepare(
-          `SELECT store, week_ending, category, bays, id FROM shelf_counts ORDER BY id DESC`).all();
-        const latestWeek = {}, shelfByStore = {};
-        for (const r of shelfRows || []) {
-          if (!latestWeek[r.store]) latestWeek[r.store] = r.week_ending;
-          if (r.week_ending !== latestWeek[r.store]) continue;
-          const b = shelfByStore[r.store] || (shelfByStore[r.store] = {});
-          if (b[r.category] === undefined) b[r.category] = r.bays;
-        }
-
-        const tree = merchTree();
-        const stores = [];
-        const chain = { orderCount: 0, rows: {} };
-        for (const store of merchStores()) {
-          const lc = store.toLowerCase();
-          const snaps = (await Promise.all(
-            dates.map(d => env.SALES_SNAPSHOTS.get(`items:${lc}:${d}`, "json")))).filter(Boolean);
-          const merged = mergeItemSnapshots(snaps);
-          const rows = merchVelocityRows(merged);
-          const orders = Number(merged.orderCount) || 0;
-          chain.orderCount += orders;
-          for (const [k, v] of Object.entries(rows)) {
-            const c = chain.rows[k] || (chain.rows[k] = { units: 0, baskets: 0 });
-            c.units += v.units; c.baskets += v.baskets;
-          }
-          stores.push({ store, label: STORE_LABELS[store] || store, daysWithData: snaps.length,
-                        orderCount: orders, shelfWeek: latestWeek[store] || null,
-                        rows, shelf: shelfByStore[store] || null });
-        }
-
-        // Rates are computed here rather than in the page so every surface that reads this
-        // endpoint divides the same way.
-        const rate = (v, orders, bays) => ({
-          units: Math.round(v.units),
-          baskets: Math.round(v.baskets),
-          per1000: orders > 0 ? +((v.units / orders) * 1000).toFixed(1) : null,
-          penetration: orders > 0 ? +((v.baskets / orders) * 100).toFixed(2) : null,
-          unitsPerBayWeek: bays > 0 ? +(v.units / bays / weeks).toFixed(1) : null,
-        });
-        const EMPTY = { units: 0, baskets: 0 };
-        const categories = [];
-        for (const l2 of Object.keys(tree)) {
-          const kids = tree[l2].filter(l3 => chain.rows[l3]);
-          categories.push({
-            key: l2, level: "l2", label: merchLabel(l2),
-            children: kids.map(l3 => ({ key: l3, level: "l3", label: merchLabel(l3) })),
-          });
-        }
-        const shaped = stores.map(st => ({
-          store: st.store, label: st.label, daysWithData: st.daysWithData,
-          orderCount: st.orderCount, shelfWeek: st.shelfWeek,
-          cells: Object.fromEntries(
-            [...categories, ...categories.flatMap(c => c.children)].map(c =>
-              [c.key, rate(st.rows[c.key] || EMPTY, st.orderCount, st.shelf ? st.shelf[c.key] : 0)])),
-        }));
-        const chainCells = Object.fromEntries(
-          [...categories, ...categories.flatMap(c => c.children)].map(c =>
-            [c.key, rate(chain.rows[c.key] || EMPTY, chain.orderCount, 0)]));
-
-        return new Response(JSON.stringify({
-          ok: true, window: win, weeks, start, end,
-          categories, stores: shaped,
-          chain: { orderCount: chain.orderCount, cells: chainCells },
-          note: chain.orderCount === 0
-            ? "No item snapshots in this window, so nothing can be measured yet."
-            : null,
-        }), { headers: corsJson });
-      } catch (e) {
-        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
-      }
-    }
-
-    if (url.searchParams.get("action") === "merch-coverage" && request.method === "GET") {
-      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
-      if (unauth) return unauth;
-      if (!env.DB || !env.SALES_SNAPSHOTS) {
-        return new Response(JSON.stringify({ error: "DB or KV not configured" }), { status: 500, headers: corsJson });
-      }
-      try {
-        const win = url.searchParams.get("window") === "28" ? 28 : 7;
-        const universe = await merchCoreCategories(env);
-        if (!universe.length) {
-          return new Response(JSON.stringify({
-            ok: true, window: win, categories: [], stores: [], chain: null, actions: [],
-            note: "No criteria published yet, so nothing is defined as core to measure.",
-          }), { headers: corsJson });
-        }
-
-        // The window ends YESTERDAY: today's snapshot is not written until the nightly
-        // cron runs, and counting a partial day as a real one is exactly the bug that
-        // made the repair console's first run report $19,233 of phantom recoverable.
-        const endD = getETYesterday();
-        const dates = [];
-        for (let i = 0; i < win; i++) dates.push(addDaysYmd(endD, -i));
-        const start = dates[dates.length - 1], end = dates[0];
-
-        // Latest entered week per store, read once for every store.
-        const { results: shelfRows } = await env.DB.prepare(
-          `SELECT store, week_ending, category, bays, id FROM shelf_counts ORDER BY id DESC`
-        ).all();
-        const latestWeek = {}, shelfByStore = {};
-        for (const r of shelfRows || []) {
-          if (!latestWeek[r.store]) latestWeek[r.store] = r.week_ending;
-          if (r.week_ending !== latestWeek[r.store]) continue;
-          const b = shelfByStore[r.store] || (shelfByStore[r.store] = {});
-          if (b[r.category] === undefined) b[r.category] = r.bays;   // newest row wins
-        }
-
-        const stores = [];
-        for (const store of merchStores()) {
-          const lc = store.toLowerCase();
-          const snaps = (await Promise.all(
-            dates.map(d => env.SALES_SNAPSHOTS.get(`items:${lc}:${d}`, "json"))
-          )).filter(Boolean);
-          const sales = merchBucketSales(mergeItemSnapshots(snaps), universe);
-          const shelf = shelfByStore[store] || null;
-          stores.push({
-            store, label: STORE_LABELS[store] || store,
-            daysWithData: snaps.length, shelfWeek: latestWeek[store] || null,
-            sales, shelf,
-          });
-        }
-
-        return new Response(JSON.stringify({
-          ok: true, window: win, start, end,
-          categories: universe,
-          floorPct: MERCH_FLOOR_PCT, thresholds: MERCH_RATIO,
-          ...merchCoverageMath(universe, stores),
-        }), { headers: corsJson });
-      } catch (e) {
-        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
-      }
-    }
-
-    // ── Merchandising: weekly shelf counts ────────────────────────────────────
-    // Bays of shelf per category per store, entered by the store manager. Guarded like
-    // supply-request-create: any authenticated user may submit, and a manager/DM is held
-    // to their own stores.
-    //
-    // GET ?action=shelf-counts&store=BL1[&week_ending=YYYY-MM-DD]
-    // Returns this week's entry and the previous week's, which the form prefills from.
-    if (url.searchParams.get("action") === "shelf-counts" && request.method === "GET") {
-      if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
-      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
-      const store = (url.searchParams.get("store") || "").toUpperCase();
-      if (!store) return new Response(JSON.stringify({ error: "store required" }), { status: 400, headers: corsJson });
-      if (!canAccessStore(currentUser, store)) {
-        return new Response(JSON.stringify({ error: "Store not permitted" }), { status: 403, headers: corsJson });
-      }
-      const asked = url.searchParams.get("week_ending");
-      if (asked && !/^\d{4}-\d{2}-\d{2}$/.test(asked)) {
-        return new Response(JSON.stringify({ error: "Invalid week_ending (use YYYY-MM-DD)" }), { status: 400, headers: corsJson });
-      }
-      const week = merchWeekEnding(asked || new Date().toISOString().slice(0, 10));
-      if (!week) return new Response(JSON.stringify({ error: "Invalid week_ending" }), { status: 400, headers: corsJson });
-      const prev = new Date(week + "T12:00:00Z");
-      prev.setUTCDate(prev.getUTCDate() - 7);
-      const prevWeek = prev.toISOString().slice(0, 10);
-      try {
-        // Append-only table: the newest row per (store, week, category) is the answer,
-        // so read by descending id and keep the first of each.
-        const { results } = await env.DB.prepare(
-          `SELECT week_ending, category, bays, entered_by, entered_at FROM shelf_counts
-            WHERE store = ? AND week_ending IN (?, ?) ORDER BY id DESC`
-        ).bind(store, week, prevWeek).all();
-        const pick = (w) => {
-          const out = {};
-          for (const r of results || []) {
-            if (r.week_ending !== w || out[r.category]) continue;
-            out[r.category] = { bays: r.bays, entered_by: r.entered_by, entered_at: r.entered_at };
-          }
-          return out;
-        };
-        const current = pick(week);
-        const categories = await merchCoreCategories(env);
-        return new Response(JSON.stringify({
-          ok: true, store, week_ending: week, previous_week_ending: prevWeek,
-          // The form's own question list. Sent with the answers so the page never needs
-          // the criteria endpoint, which a store manager is not allowed to read.
-          categories,
-          counts: current, previous: pick(prevWeek),
-          entered: Object.keys(current).length > 0,
-        }), { headers: corsJson });
-      } catch (e) {
-        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
-      }
-    }
-
-    // POST ?action=shelf-count-save
-    // Body: { store, week_ending, counts: [{ l3, bays }] }
-    if (url.searchParams.get("action") === "shelf-count-save" && request.method === "POST") {
-      if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
-      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
-      try {
-        const body = await request.json();
-        const store = (body?.store || "").toUpperCase();
-        const counts = Array.isArray(body?.counts) ? body.counts : null;
-        if (!store || !counts || !counts.length) {
-          return new Response(JSON.stringify({ error: "store and at least one count required" }), { status: 400, headers: corsJson });
-        }
-        if (!canAccessStore(currentUser, store)) {
-          return new Response(JSON.stringify({ error: "Store not permitted" }), { status: 403, headers: corsJson });
-        }
-        // canAccessStore answers "may this user touch it", never "does it still trade".
-        // A closed store has no shelves, so a count against one is meaningless data that
-        // would then skew every per-section rate that divides by it.
-        if (STORE_CLOSED_FROM[store]) {
-          return new Response(JSON.stringify({
-            error: `${STORE_LABELS[store] || store} closed on ${STORE_CLOSED_FROM[store]} — there are no shelves to count`,
-          }), { status: 409, headers: corsJson });
-        }
-        if (counts.length > 100) {
-          return new Response(JSON.stringify({ error: "Too many counts in one request (max 100)" }), { status: 400, headers: corsJson });
-        }
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(body?.week_ending || "")) {
-          return new Response(JSON.stringify({ error: "week_ending required (YYYY-MM-DD)" }), { status: 400, headers: corsJson });
-        }
-        const week = merchWeekEnding(body.week_ending);
-        if (week !== body.week_ending) {
-          return new Response(JSON.stringify({ error: `week_ending must be a Sunday — did you mean ${week}?` }), { status: 400, headers: corsJson });
-        }
-        // Validate against what the form actually ASKED for, not against the taxonomy at
-        // large: a count only means anything against the published core definition, and
-        // this refuses a stale form posting a category that is no longer core.
-        const asked = new Set((await merchCoreCategories(env)).map(c => c.key));
-        for (const c of counts) {
-          if (!asked.has(c?.category)) {
-            return new Response(JSON.stringify({
-              error: asked.size
-                ? `Not a core category in the live criteria: ${c?.category}`
-                : "No criteria published yet, so there is nothing to count",
-            }), { status: 400, headers: corsJson });
-          }
-          const n = Number(c?.bays);
-          if (!Number.isFinite(n) || n < 0 || n > 999) {
-            return new Response(JSON.stringify({ error: `Invalid bays for ${c?.category}: must be 0–999` }), { status: 400, headers: corsJson });
-          }
-        }
-        const now = new Date().toISOString();
-        const who = currentUser?.email || currentUser?.name || null;
-        const ins = env.DB.prepare(
-          `INSERT INTO shelf_counts (store, week_ending, category, bays, entered_by, entered_at)
-           VALUES (?, ?, ?, ?, ?, ?)`);
-        await env.DB.batch(counts.map(c => ins.bind(store, week, c.category, Number(c.bays), who, now)));
-        return new Response(JSON.stringify({ ok: true, store, week_ending: week, saved: counts.length }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }

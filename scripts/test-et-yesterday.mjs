@@ -108,29 +108,6 @@ for (const [at, want, why] of [
   const today = at => ET.format(new RealDate(at));
 
   try {
-    // merch-velocity: a 7- to 364-day window of item snapshots, ending yesterday.
-    for (const [at, win] of [['2026-03-09T04:30:00.000Z', 7], ['2026-03-14T04:30:00.000Z', 7],
-                             ['2026-11-16T04:30:00.000Z', 28], ['2026-09-28T04:30:00.000Z', 364]]) {
-      const { env, reads } = envAt(at);
-      const r = await call(env, `/?action=merch-velocity&window=${win}`, { user: 'u-su' });
-      const end = calendar(today(at), -1);
-      eq(`${r.status} ${r.body.start}…${r.body.end}`, `200 ${calendar(end, 1 - win)}…${end}`, `merch-velocity (${win} days) at ${at} ends yesterday`);
-      eq(snapshotDays(reads), window_(end, win), `🛑 merch-velocity (${win} days) at ${at} reads each of its ${win} days once, and no others`);
-    }
-
-    // merch-coverage: the same, once core categories exist to measure.
-    for (const [at, win] of [['2026-03-09T04:30:00.000Z', 7], ['2026-11-16T04:30:00.000Z', 28]]) {
-      const { env, reads } = envAt(at);
-      await call(env, '/?action=merch-criteria-draft', { user: 'u-su', method: 'POST',
-        body: { cells: [{ category: 'Consumable Food', field: 'core', value: '1' }] } });
-      await call(env, '/?action=merch-criteria-publish', { user: 'u-su', method: 'POST', body: { note: 'core' } });
-      reads.length = 0;
-      const r = await call(env, `/?action=merch-coverage&window=${win}`, { user: 'u-su' });
-      const end = calendar(today(at), -1);
-      eq(`${r.status} ${r.body.start}…${r.body.end}`, `200 ${calendar(end, 1 - win)}…${end}`, `merch-coverage (${win} days) at ${at} ends yesterday`);
-      eq(snapshotDays(reads), window_(end, win), `🛑 merch-coverage (${win} days) at ${at} reads each of its ${win} days once, and no others`);
-    }
-
     // The 28-day ASP-velocity table (read here by furniture-bands): its cache key and its days.
     for (const at of ['2026-03-09T04:30:00.000Z', '2026-11-16T04:30:00.000Z']) {
       const { env, reads } = envAt(at);

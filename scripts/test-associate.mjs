@@ -805,7 +805,7 @@ const cipherOf = (db, id) => db.prepare('SELECT pin_cipher c FROM users WHERE id
                         'merch-product-save']) {
     eq((await ask(sE, action, { body: {} })).status, 403, `🛑 ${action} stays closed to an associate at edit`);
   }
-  for (const action of ['merch-categories', 'furniture-bands', 'merch-products', 'merch-velocity']) {
+  for (const action of ['merch-categories', 'furniture-bands', 'merch-products']) {
     eq((await ask(sE, action, { method: 'GET' })).status, 403, `🛑 ${action} stays closed to an associate at edit`);
   }
 }

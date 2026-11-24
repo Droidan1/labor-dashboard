@@ -1,5 +1,4 @@
-// Merchandising: buy criteria + weekly shelf counts, driven through the REAL
-// endpoints via worker.fetch.
+// Merchandising: buy criteria, driven through the REAL endpoints via worker.fetch.
 //
 // The properties worth pinning here are the ones that make the criteria table
 // trustworthy as a record rather than just a settings screen:
@@ -10,8 +9,8 @@
 //   2. YOU CANNOT PUBLISH WITHOUT SAYING WHY (PRD G5 — no silent drift).
 //   3. INHERITANCE IS REAL. A blank category cell resolves to the chain default, and
 //      the response says which it was, so the UI can grey it.
-//   4. A MANAGER CANNOT COUNT SOMEONE ELSE'S SHELVES. Same scope rule as
-//      supply-request-create.
+//   4. SHELF COUNT, COVERAGE AND VELOCITY ARE GONE (Brian, 2026-11-24). Their endpoints
+//      no longer answer, and nothing can write a shelf count.
 //
 // ⚠️ `l3` here is the PRD's "L2" — see migration-041.sql for why.
 import fs from 'node:fs';
@@ -213,117 +212,23 @@ console.log('Merchandising — buy criteria + shelf counts');
   eq(s.status, 400, 'Sku Book Items is refused as a criteria row');
 }
 
-// ═══ Shelf counts ═══════════════════════════════════════════════════════════
-const SUN = '2026-08-23';   // a Sunday
-
-// Publish a core definition first — a count is meaningless before one exists, and the
-// save endpoint refuses categories the live criteria has not called core.
-await post('merch-criteria-draft', 'u-su', { cells: [{ category: FOOD, field: 'core', value: '1' }] });
-await post('merch-criteria-publish', 'u-su', { note: 'core = food, for the shelf-count tests' });
-
-// ── 🛑 A manager may only count their own stores ─────────────────────────────
+// ═══ Removed: Shelf Count, Coverage, Velocity (2026-11-24) ═══════════════
+// The pages went in #410 and their endpoints after them. The shelf_counts table and its
+// rows stay (nothing is dropped); what must not survive is any door that writes to it or
+// reads it out, for anyone. The business gate refuses an action it does not know: 403.
 {
-  const mine = await post('shelf-count-save', 'u-mgr1', { store: 'BL1', week_ending: SUN, counts: [{ category: FOOD, bays: 4 }] });
-  eq(mine.status, 200, 'a BL1 manager may count BL1');
-  const theirs = await post('shelf-count-save', 'u-mgr1', { store: 'BL4', week_ending: SUN, counts: [{ category: FOOD, bays: 4 }] });
-  eq(theirs.status, 403, '🛑 a BL1 manager may NOT count BL4');
-  const read = await get('shelf-counts', 'u-mgr1', '&store=BL4');
-  eq(read.status, 403, '...and may not read BL4 either');
-  const su = await post('shelf-count-save', 'u-su', { store: 'BL4', week_ending: SUN, counts: [{ category: FOOD, bays: 9 }] });
-  eq(su.status, 200, 'a superuser may count any store');
-}
-
-// ── week_ending must be the Sunday, and the error says which ─────────────────
-{
-  const r = await post('shelf-count-save', 'u-mgr1', { store: 'BL1', week_ending: '2026-08-19', counts: [{ category: FOOD, bays: 1 }] });
-  eq(r.status, 400, 'a mid-week date is refused');
-  ok(/2026-08-23/.test(r.body.error || ''), 'the error names the Sunday it should have been');
-}
-
-// ── Bays are validated; the other-food bucket is a legal category ────────────
-{
-  const neg = await post('shelf-count-save', 'u-mgr1', { store: 'BL1', week_ending: SUN, counts: [{ category: FOOD, bays: -1 }] });
-  eq(neg.status, 400, 'negative bays refused');
-  const nan = await post('shelf-count-save', 'u-mgr1', { store: 'BL1', week_ending: SUN, counts: [{ category: FOOD, bays: 'lots' }] });
-  eq(nan.status, 400, 'non-numeric bays refused');
-  const other = await post('shelf-count-save', 'u-mgr1', { store: 'BL1', week_ending: SUN, counts: [{ category: '__other__:' + FOOD, bays: 12 }] });
-  eq(other.status, 400, 'a remainder bucket with no core children to remain FROM is refused');
-  const bogus = await post('shelf-count-save', 'u-mgr1', { store: 'BL1', week_ending: SUN, counts: [{ category: 'MADE UP', bays: 1 }] });
-  eq(bogus.status, 400, 'an unknown category is refused');
-}
-
-// ── Append-only: a correction adds a row, and the newest wins ────────────────
-{
-  await post('shelf-count-save', 'u-mgr1', { store: 'BL1', week_ending: SUN, counts: [{ category: FOOD, bays: 7 }] });
-  const rows = db.prepare(`SELECT bays FROM shelf_counts WHERE store='BL1' AND week_ending=? AND category=? ORDER BY id`)
-                 .all(SUN, FOOD).map(r => r.bays);
-  ok(rows.length >= 2, `the original count survives the correction (${rows.length} rows)`);
-  const { body } = await get('shelf-counts', 'u-mgr1', `&store=BL1&week_ending=${SUN}`);
-  eq(body.counts[FOOD].bays, 7, 'the newest count is the one read back');
-  eq(body.entered, true, 'the week is marked as entered');
-}
-
-// ── The form prefills from last week ─────────────────────────────────────────
-{
-  const { body } = await get('shelf-counts', 'u-mgr1', '&store=BL1&week_ending=2026-08-30');
-  eq(body.week_ending, '2026-08-30', 'asked-for week echoed');
-  eq(body.previous_week_ending, SUN, 'the previous week is identified');
-  eq(body.previous[FOOD].bays, 7, "last week's value comes back to prefill the form");
-  eq(body.entered, false, 'the new week is not yet entered');
-  eq(Object.keys(body.counts).length, 0, 'and has no counts of its own');
-}
-
-// ── 🔑 The form's question list FOLLOWS the level core was set at ────────────
-// A store manager cannot read the criteria endpoint, so the list arrives with the
-// form's own data — and which rows it contains is the whole point of the three-level
-// table.
-{
-  // Only the L2 is core → the manager counts ONE number for food.
+  const SUN = '2026-08-23';   // a Sunday
   await post('merch-criteria-draft', 'u-su', { cells: [{ category: FOOD, field: 'core', value: '1' }] });
-  await post('merch-criteria-publish', 'u-su', { note: 'core = food' });
-  let cats = (await get('shelf-counts', 'u-mgr1', '&store=BL1')).body.categories || [];
-  eq(cats.length, 2, 'a core L2 with no core children, plus the non-core denominator');
-  eq(cats[0].key, FOOD, '...the L2 itself');
-  eq(cats[0].level, 'l2', '...counted at L2 level');
-  // Without this the floor has no denominator — you would be measuring core as a
-  // share of itself. It has to be collected from the first week, not bolted on later.
-  eq(cats[1].key, '__non_core__', '🔑 and a bucket for everything not core');
-
-  // Flag an L3 under it → that L3 is counted separately, and the remainder gets a row
-  // so the L2's share still adds up instead of being double-counted.
-  await post('merch-criteria-draft', 'u-su', { cells: [{ category: COFFEE, field: 'core', value: '1' }] });
-  await post('merch-criteria-publish', 'u-su', { note: 'coffee counted on its own' });
-  cats = (await get('shelf-counts', 'u-mgr1', '&store=BL1')).body.categories || [];
-  eq(cats.length, 3, 'the core L3, an "other" remainder, and the non-core bucket');
-  ok(cats.some(c => c.key === COFFEE && c.level === 'l3'), 'the core L3 is counted on its own');
-  const other = cats.find(c => c.level === 'other');
-  ok(other, 'the remainder of the L2 still gets a row');
-  eq(other.label, 'Other food', '...labelled plainly');
-  ok(!cats.some(c => c.key === FOOD), '...and the parent is NOT also counted whole');
-
-  // A DRAFT flag changes nothing — nobody counts against an unpublished definition.
-  await post('merch-criteria-draft', 'u-su', { cells: [{ category: HBA, field: 'core', value: '1' }] });
-  const after = (await get('shelf-counts', 'u-mgr1', '&store=BL1')).body.categories || [];
-  ok(!after.some(c => c.key === HBA), '🛑 a DRAFT core flag does not change what managers are asked to count');
-  await post('merch-criteria-discard', 'u-su', {});
-}
-
-// ── A count is refused unless the live criteria actually asked for it ────────
-{
-  const good = await post('shelf-count-save', 'u-mgr1', { store: 'BL1', week_ending: SUN, counts: [{ category: COFFEE, bays: 3 }] });
-  eq(good.status, 200, 'a category the form asked for is accepted');
-  const stale = await post('shelf-count-save', 'u-mgr1', { store: 'BL1', week_ending: SUN, counts: [{ category: ORAL, bays: 3 }] });
-  eq(stale.status, 400, '🛑 a category the live criteria does not call core is refused');
-  const other = await post('shelf-count-save', 'u-mgr1', { store: 'BL1', week_ending: SUN, counts: [{ category: '__other__:' + FOOD, bays: 9 }] });
-  eq(other.status, 200, 'the remainder bucket is accepted');
-}
-
-// ── An unauthenticated request gets nothing ──────────────────────────────────
-{
-  const r = await call('/?action=shelf-counts&store=BL1', {});
-  eq(r.status, 401, 'no session → 401');
-  const w = await call('/?action=shelf-count-save', { method: 'POST', body: { store: 'BL1', week_ending: SUN, counts: [{ category: FOOD, bays: 1 }] } });
-  eq(w.status, 401, 'no session → 401 on write too');
+  await post('merch-criteria-publish', 'u-su', { note: 'core = food, so a count would have been accepted' });
+  const before = db.prepare('SELECT COUNT(*) AS n FROM shelf_counts').get().n;
+  for (const user of ['u-su', 'u-mgr1']) {
+    const w = await post('shelf-count-save', user, { store: 'BL1', week_ending: SUN, counts: [{ category: FOOD, bays: 4 }] });
+    eq(w.status, 403, `🛑 shelf-count-save is gone for ${user}`);
+    for (const action of ['shelf-counts', 'merch-coverage', 'merch-velocity']) {
+      eq((await get(action, user, '&store=BL1')).status, 403, `🛑 ${action} is gone for ${user}`);
+    }
+  }
+  eq(db.prepare('SELECT COUNT(*) AS n FROM shelf_counts').get().n, before, '🛑 no shelf count was written');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
