@@ -22,12 +22,14 @@ concurrency:
   group: pages
   cancel-in-progress: false
 
+# Two jobs, GitHub's own Pages starter shape. 🛑 2026-11-24: four deploys in a row (#410,
+# #411) failed with deploy-pages "Found 0 artifact(s)" a second after the upload succeeded
+# in the SAME job, while the run's artifact list showed it (1.3 MB). Response: the v5 majors
+# (the v3/v4 pins were Node 20 builds the runner force-ran on Node 24), and the deploy in a
+# second job, so the upload is finalised before anything looks it up.
 jobs:
-  build-deploy:
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v5
 
@@ -45,12 +47,17 @@ jobs:
           # when this is set to something other than "main").
           CF_PAGES_BRANCH: main
 
-      # upload-pages-artifact / deploy-pages have no Node 24 major yet; the
-      # runner force-runs them on Node 24 and GitHub will bump these tags before
-      # Node 20 is removed (Sep 2026). Leave pinned until a Node 24 release ships.
-      - uses: actions/upload-pages-artifact@v3
+      # v4+ leaves dotfiles out of the artifact; dist/ has none (build.sh is an allowlist).
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
 
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
