@@ -20,3 +20,10 @@ _preview/
 
 # Playwright CLI scratch.
 .playwright-cli/
+
+# Local secrets for `wrangler dev` and scripts. This repo is PUBLIC (see wrangler.toml), so a
+# .dev.vars or .env holding a real token must never be one `git add -A` away from GitHub.
+.dev.vars
+.dev.vars.*
+.env
+.env.*

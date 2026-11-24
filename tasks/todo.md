@@ -1,3 +1,48 @@
+# Bargain Lane website pilot, Phase 1a: Bin Preview server + public feed (2026-11-23) — branch `claude/bin-preview-1a`
+
+**Ask:** Brian: "Yes, start 1a" on [docs/plans/bargainlane-website.md](../docs/plans/bargainlane-website.md) with its
+defaults (backend in the Hub, site in its own repo; reviewers = admin/superuser; window = noon the day before
+the sale to close on the sale day). Server, data and tests only. No deploy, no migration applied, no Buffer call.
+
+- [x] `scripts/test-bin-preview.mjs` written first (harness, real `worker.fetch`, pinned `Date.now`, mock
+      social-draft adapter): E1 start/expiry, E2 wrong-store denial, E3 draft privacy + public-key allowlist,
+      E4 emergency pull + audit, E5 Friday 13:59/14:00 tiers, holiday override, both sides of the 2027-03-14
+      clock change, E6 no duplicate draft (repeat, concurrent, lost response, stuck hand-off), E7 gate,
+      leaked secret, revisions. **origin/main: crashes on the first call. Branch: 179/0.**
+- [x] Mutation check: 9 deliberate breaks (feed ignores start / status, image ignores window, no insert guard,
+      secret allowed, skipped hour accepted, anyone reviews, edit ignores the row's store, fixed −5 offset)
+      each turn the suite red; the unchanged control stays 165/0.
+- [x] `migration-093.sql`: `store_settings`, `store_day_overrides`, `bin_previews` (partial unique index: one
+      approved per store + sale day), `content_audit`, `social_drafts` (UNIQUE preview + channel). Additive,
+      no FKs, re-runnable (the test runs it twice). **Not applied anywhere.**
+- [x] worker.js: 8 actions (`bin-preview-save|submit|review|pull`, `bin-previews`, `store-settings`,
+      `store-settings-save`, `store-override-save`), all `"bl"` in `ACTION_BUSINESS`, all refusing the
+      X-Snapshot-Secret. `GET|HEAD /public/v1/stores/<code>` and `/public/v1/img/<preview>/<photo>.<ext>` (no UUID: see review)
+      above the auth gate; cache max-age capped by the next window edge / price change / midnight.
+- [x] Social drafts only through `env.SOCIAL_DRAFT_ADAPTER`, which no deployed binding can provide, so prod
+      approval queues nothing.
+- [x] `.gitignore`: `.dev.vars`, `.env` (+ variants).
+- [x] Rebased on #417 (todo-log conflict only); `npm test` 13,235 / 148 suites green. Pushed with Brian's OK
+      (2026-11-24): [PR #418](https://github.com/Droidan1/labor-dashboard/pull/418). Not deployed; migration unapplied.
+
+- [x] Fresh-eyes review (subagent, read-only) found, and this branch fixed:
+      - 🛑 the feed's image links carried each photo's R2 UUID, which IS its `/p/` link (public from upload,
+        never expiring), so a pull could not take photos down. Links are now `/public/v1/img/<preview>/<photo>.<ext>`
+        and the test fails on any UUID in the feed.
+      - approve / reject / reschedule now require `expectedRevision` and check it in the UPDATE, so a resubmission
+        landing mid-approval is a 409, not approved unseen (race reproduced in the test).
+      - a pull landing mid-drafting stops the remaining channels (insert only while still approved).
+      - harness `batch` is now one transaction like D1's (the old Promise.all let a failed write's audit commit).
+        The suite passes on either harness, so this is fidelity, not a proven catch.
+      - D1 allows `changes()` / `last_insert_rowid()` / `json_each` (workerd `ALLOWED_SQLITE_FUNCTIONS`), but no
+        test runs on workerd: confirm one save on staging before prod.
+      New tests fail on the first commit (169/10) and on each fix's mutant.
+
+## Review
+- `npm test`: 13,388 assertions across 150 suites, all passed (`test-bin-preview.mjs` 179/0).
+- Deploy order when Brian wants it: migration-093 (staging first) → worker. Backward compatible: nothing
+  calls the new actions until Phase 1b's screens exist; `/public/v1/` 404s until a store_settings row is public.
+
 # Products subtitle: no Manifest Scorer (2026-11-24) — branch `claude/products-subtitle`
 
 **Ask:** the Products page subtitle still said "The Price Scan screen and the Manifest Scorer both read these rows";
