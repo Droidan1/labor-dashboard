@@ -1,3 +1,25 @@
+# Remove Coverage, Velocity and Shelf Count worker endpoints (2026-11-24) — branch `claude/remove-merch-endpoints`
+
+**Ask:** Brian, after #410 removed the pages: remove the worker endpoints for Coverage, Velocity and Shelf
+Count; keep `merch-criteria*` and the manifest endpoints, which Price Scan needs. Asked separately: the
+manifest scorer also read shelf counts (a margin-under-floor line in a category "dead on the shelf" was the
+ONE hard fail, §5.3). Brian chose **stop using them**, so frozen counts cannot skew buys as they age.
+
+- [x] `worker.js` (−610): `merch-coverage`, `merch-velocity`, `shelf-counts`, `shelf-count-save` handlers, their
+      business-map rows and orphaned doc comments; `merchShelfStates` and its call in manifest scoring;
+      `merchCoreCategories`, `MERCH_FLOOR_PCT`, `MERCH_RATIO`, `merchCoverageMath`, `merchVelocityRows`,
+      `merchBucketSales`, `merchOtherBucket`, `merchWeekEnding` — every one left with no caller.
+- [x] Kept: `manifestAspVelocity` (manifests, Price Scan, furniture bands), `merchTree`, `merchLabel`, the
+      `shelf_counts` table and its rows (no migration, nothing dropped).
+- [x] Tests: deleted `test-merch-coverage.mjs` / `test-merch-velocity.mjs`; dropped the two window cases from
+      `test-et-yesterday.mjs` and `merch-velocity` from `test-associate.mjs`'s refused list. The shelf-count
+      section of `test-merch-criteria.mjs` now pins that all four actions answer 403 for a superuser and a
+      manager and that no row is written: 73/0 on the branch, **7 FAIL against main's worker**.
+
+## Review
+- `npm test`: 13,052 assertions across 147 suites, all passed.
+- Deploy: worker only, AFTER #410's page is live (the old page still calls these). No migration.
+
 # Remove five Merchandising pages (2026-11-24) — branch `claude/remove-merch-pages`
 
 **Ask:** Brian: remove Coverage, Velocity, Manifests, Buy Criteria and Shelf Count from the Bargain Lane
