@@ -57,10 +57,12 @@ these three headings, in this order. Write "None" under an empty heading.
 
 Read [DESIGN.md](DESIGN.md) before building or restyling a surface, and extend what is
 there rather than deriving a new look. In particular, **any dense/tabular Merchandising
-surface follows §4.8** (panel + bar + legend, the three cell states, the level badges) —
-the Coverage heatmap and the Manifest Scorer's tables are meant to look like Buy Criteria,
-not like six different tables. §4.8 also lists the six rendering traps this repo has
-already shipped broken once; check them before saying a table is done.
+surface follows §4.8** (panel + bar + legend, the three cell states, the level badges).
+The live reference is Retail Summary › Categories (`#ct-panel`), with Discounts & Returns'
+planned/manual editor for the three cell states. Make the next table look like those, not
+like a new one; Buy Criteria, which §4.8 was first built for, was removed on 2026-11-24.
+§4.8 also lists the eight rendering traps this repo has already shipped broken once; check
+them before saying a table is done.
 
 Verify a colour change in BOTH themes by computing contrast against the real background
 (≥ 4.5:1), never by looking at a screenshot — and never against the local `tailwind.css`,
