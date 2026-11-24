@@ -525,11 +525,17 @@ to no-op (card no longer has a click handler).
 
 ### 4.8 Dense editable data table (Merchandising)
 
-Built for Buy Criteria (`#page-merch-criteria`) and reused by the Coverage
-scorecard (`#page-merch-coverage`); the pattern is meant to carry the rest of
-Merchandising too — the Manifest Scorer's line table and its rollup. **Follow it rather than
-re-deriving one.** The shape came out of a preview Brian approved, and the
-point of writing it down is that the next table looks like this one.
+**The live reference is Retail Summary › Categories** (`#ct-panel`, its Table
+view): panel + bar + legend, the L2/L3 level badges with indented children, a
+sticky first column, colour stated on the panel for both themes. It has no
+editable cells, so for **the three cell states** the reference is **Discounts &
+Returns' planned/manual editor** (`#page-discounts`: `.dr-sw-inherit` /
+`.dr-sw-own` / `.dr-sw-dirty`). The pattern was first built for Buy Criteria and
+reused by the Coverage scorecard and the Manifest Scorer; all three pages were
+removed on 2026-11-24 (#410), so where they appear below it is history, not a
+page to open. **Follow it rather than re-deriving one.** The shape came out of a
+preview Brian approved, and the point of writing it down is that the next table
+looks like this one.
 
 **The anatomy**
 
@@ -538,14 +544,14 @@ One PANEL owns the whole thing — controls, table, and legend — rather than a
 bare table with controls floating over the page:
 
 ```
-┌─ #mc-panel ────────────────────────────────────┐
-│ #mc-bar     label · control · control    right │  ← panelHi, bottom border
-│ status line                                    │  ← one sentence, inkDim
-│ ┌ #mc-scroll (overflow-x:auto) ──────────────┐ │
+┌─ #ct-panel ────────────────────────────────────┐
+│ #ct-bar     label · control · control    right │  ← panelHi, bottom border
+│ #ct-status  status line                        │  ← one sentence, inkDim
+│ ┌ #ct-tblwrap (overflow-x:auto) ─────────────┐ │
 │ │ sticky header row (panelHi)               │ │
 │ │ sticky first column (panel bg)            │ │
 │ └───────────────────────────────────────────┘ │
-│ legend: what the cell states mean              │  ← top border
+│ #ct-legend2  what each state/mark means        │  ← top border
 └────────────────────────────────────────────────┘
 ```
 
@@ -611,8 +617,8 @@ Every one of these shipped broken first. Check them on the next table.
 5. **`inkDimmer` fails AA on `opl-bg`** (2.71:1). Use `inkDim` (5.29:1) for
    muted-but-readable text; keep `inkDimmer` for borders and badges.
 6. **Measure, don't eyeball.** Compute contrast against the real background in
-   both themes and require ≥ 4.5:1. Buy Criteria runs 5.21–18.85; Coverage
-   5.74–18.85.
+   both themes and require ≥ 4.5:1. Retail Summary › Categories runs
+   5.29–15.9 (Buy Criteria ran 5.21–18.85 and Coverage 5.74–18.85).
 7. **A container you replace wholesale must not hold anything else.** Coverage's
    status line lived inside the div its render function overwrites, so it
    vanished on first paint and every later refresh threw on it — the 7/28-day
@@ -623,7 +629,7 @@ Every one of these shipped broken first. Check them on the next table.
 
 **Scorecard variant (Coverage)**
 
-Same panel, different payload — a hero, an action list and a heatmap instead of
+No live example: the Coverage page was removed on 2026-11-24. Same panel, different payload — a hero, an action list and a heatmap instead of
 editable cells:
 
 - **Hero**: two or three big tabular numbers with small sentence-case captions, then

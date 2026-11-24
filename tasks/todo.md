@@ -1,3 +1,17 @@
+# §4.8 table reference: Retail Summary › Categories (2026-11-24) — branch `claude/table-reference-docs`
+
+**Ask:** CLAUDE.md and DESIGN.md §4.8 named Buy Criteria (removed in #410) as the table-page reference; pick a
+page that still exists. No surviving page shows all of §4.8: **Retail Summary › Categories** (`#ct-panel`) has the
+panel + bar + legend, L2/L3 `.mc-lvl` badges, sticky first column and both-theme colours but no editable cells;
+**Discounts & Returns' planned/manual editor** is the only one with the three cell states (`.dr-sw-inherit/own/dirty`).
+
+- [x] DESIGN.md §4.8: intro names both; anatomy diagram uses the real `#ct-*` IDs; trap 6 quotes Categories'
+      5.29–15.9; the Coverage scorecard variant says there is no live example. Incident history kept.
+- [x] CLAUDE.md "UI work": same references; "six rendering traps" → eight (§4.8 lists 8).
+
+## Review
+- Docs only. `npm test`: 13,056 assertions across 147 suites, all passed.
+
 # Associates: Submit Photos off the bottom bar (2026-11-24) — branch `claude/associate-bar-no-submit`
 
 **Ask:** fix the 6 pre-existing failures in `scripts/browser-mobile-menu.mjs`. Cause: b3dfe9b (2026-10-13) opened
