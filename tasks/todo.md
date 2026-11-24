@@ -23,7 +23,11 @@ the sale to close on the sale day). Server, data and tests only. No deploy, no m
       approval queues nothing.
 - [x] `.gitignore`: `.dev.vars`, `.env` (+ variants).
 - [x] Rebased on #417 (todo-log conflict only); `npm test` 13,235 / 148 suites green. Pushed with Brian's OK
-      (2026-11-24): [PR #418](https://github.com/Droidan1/labor-dashboard/pull/418). Not deployed; migration unapplied.
+      (2026-11-24): [PR #418](https://github.com/Droidan1/labor-dashboard/pull/418), merged as 4e561ed.
+- [x] **LIVE 2026-11-24** (Brian ran each step): migration-093 on staging, then prod (8 commands each; 5 tables +
+      3 indexes, 0 rows, verified read-only). Worker: staging b07a45ec, prod 54884cc4 (main 4e561ed, 1396.08 KiB,
+      guard ok); 3/3 passes each (`/public/v1/stores/BL4` = 404 `not_found`, no-store; signed-out `bin-previews` = 401).
+      Real-D1 save on staging: BL4 save → 1 audit row; identical repeat → 409 `STALE`, still 1. No store public yet.
 
 - [x] Fresh-eyes review (subagent, read-only) found, and this branch fixed:
       - 🛑 the feed's image links carried each photo's R2 UUID, which IS its `/p/` link (public from upload,
