@@ -54,7 +54,8 @@ const BL = { id: 'bl', name: 'Bargain Lane' }, ECOM = { id: 'ecom', name: 'E-Com
 // Discounts & Returns (2026-11-12) sits after the Retail Summary for everyone who may see money.
 const STORE = ['dashboard', 'weekly-summary', 'discounts', 'labor', 'supply-request'];
 const MARKETING = ['marketing', 'flow-calendar', 'comments', 'content', 'submit-photos'];
-const MERCH = ['merch-scan', 'merch-signs', 'merch-coverage', 'merch-products', 'merch-velocity', 'merch-manifests', 'merch-criteria', 'merch-shelf-count'];
+// Coverage, Velocity, Manifests, Buy Criteria and Shelf Count were removed 2026-11-24.
+const MERCH = ['merch-scan', 'merch-signs', 'merch-products'];
 const INVENTORY = ['inventory-add', 'inventory-viewer', 'inventory-sale', 'bin-dump', 'inventory-receiver', 'mos', 'opportunity-buys'];
 // Each role's phone, written down. '@switch' / '@signout' are the two action rows.
 const EXPECT = {
@@ -72,9 +73,9 @@ const EXPECT = {
   // admin-only in the router, and was a dead sidebar item for every manager until now.
   manager: { role: 'manager', businesses: [BL], biz: 'bl',
     bar: ['Dashboard', 'Retail', 'Submit', 'Supply', 'Menu'],
-    menu: [['Store', STORE], ['Marketing', ['submit-photos']], ['Merchandising', ['merch-scan', 'merch-signs', 'merch-shelf-count']],
+    menu: [['Store', STORE], ['Marketing', ['submit-photos']], ['Merchandising', ['merch-scan', 'merch-signs']],
            ['Inventory', ['bin-dump', 'inventory-receiver', 'mos', 'opportunity-buys']], ['Account', ['settings', '@signout']]] },
-  // The router admits an executive to Price Scan but not Shelf Count or Sign Studio; the
+  // The router admits an executive to Price Scan but not Sign Studio; the
   // Merchandising header used to hide both from them. No Supply, so four tabs, not five.
   executive: { role: 'executive', businesses: [BL], biz: 'bl',
     bar: ['Dashboard', 'Retail', 'Submit', 'Menu'],
@@ -282,19 +283,19 @@ for (const key of Object.keys(EXPECT)) {
   await page.waitForTimeout(150);
   eq(await visiblePages(page), ['page-merch-signs'], '🛑 …and Enter opens Sign Studio, not Sign out');
   await page.evaluate(() => navigateToPage('menu'));
-  await page.fill('#menu-search', 'velo');
+  await page.fill('#menu-search', 'prod');
   await page.press('#menu-search', 'Enter');
   await page.waitForTimeout(150);
-  eq(await visiblePages(page), ['page-merch-velocity'], 'Enter opens the first page left');
+  eq(await visiblePages(page), ['page-merch-products'], 'Enter opens the first page left');
   await page.evaluate(() => navigateToPage('menu'));
   eq(await page.$eval('#menu-search', e => e.value), '', 'coming back to the Menu starts with an empty search');
   // Five since 2026-11-19: Store, Marketing, Merchandising, Inventory, Account (Admin left for Landing).
   eq((await menuState(page)).length, 5, '...and every section showing');
-  // The six pages the phone never had, and the Desktop tag on the five wide tables.
+  // The pages the phone never had, and the Desktop tag on the one wide table left.
   const hints = await page.$$eval('#menu-list .menu-row[data-page]', rs => rs
     .filter(r => r.querySelectorAll('span').length > 2).map(r => r.dataset.page));
-  eq(hints, ['merch-coverage', 'merch-products', 'merch-velocity', 'merch-manifests', 'merch-criteria'],
-     'the five Merchandising tables carry the Desktop tag');
+  eq(hints, ['merch-products'],
+     'the Merchandising table carries the Desktop tag');
   // Dark mode from the account card.
   const before = await page.evaluate(() => document.documentElement.classList.contains('dark'));
   await page.click('#menu-dark');
