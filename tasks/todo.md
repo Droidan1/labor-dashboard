@@ -17,11 +17,13 @@ the sale to close on the sale day). Server, data and tests only. No deploy, no m
       no FKs, re-runnable (the test runs it twice). **Not applied anywhere.**
 - [x] worker.js: 8 actions (`bin-preview-save|submit|review|pull`, `bin-previews`, `store-settings`,
       `store-settings-save`, `store-override-save`), all `"bl"` in `ACTION_BUSINESS`, all refusing the
-      X-Snapshot-Secret. `GET|HEAD /public/v1/stores/<code>` and `/public/v1/img/<preview>/<photo>-<uuid>.<ext>`
+      X-Snapshot-Secret. `GET|HEAD /public/v1/stores/<code>` and `/public/v1/img/<preview>/<photo>.<ext>` (no UUID: see review)
       above the auth gate; cache max-age capped by the next window edge / price change / midnight.
 - [x] Social drafts only through `env.SOCIAL_DRAFT_ADAPTER`, which no deployed binding can provide, so prod
       approval queues nothing.
 - [x] `.gitignore`: `.dev.vars`, `.env` (+ variants).
+- [x] Rebased on #417 (todo-log conflict only); `npm test` 13,235 / 148 suites green. Pushed with Brian's OK
+      (2026-11-24): [PR #418](https://github.com/Droidan1/labor-dashboard/pull/418). Not deployed; migration unapplied.
 
 - [x] Fresh-eyes review (subagent, read-only) found, and this branch fixed:
       - 🛑 the feed's image links carried each photo's R2 UUID, which IS its `/p/` link (public from upload,
