@@ -1,3 +1,13 @@
+# index.html comments: table model is Retail Summary › Categories (2026-11-24) — branch `claude/table-model-comments`
+
+**Ask:** follow-up to #415 — the Inventory stylesheet and Products style comments still named Buy Criteria (and the
+Scorer) as the table model. Both now point at Retail Summary › Categories (`#ct-panel`); the Products note's
+`#vl-panel` is marked as Velocity's, removed. Comments only; `sw.js` v324 → v325 because the shell-cache test pins
+index.html's hash.
+
+## Review
+- `npm test`: 13,056 assertions across 147 suites, all passed. Pages on merge; no visible change.
+
 # §4.8 table reference: Retail Summary › Categories (2026-11-24) — branch `claude/table-reference-docs`
 
 **Ask:** CLAUDE.md and DESIGN.md §4.8 named Buy Criteria (removed in #410) as the table-page reference; pick a

@@ -2507,8 +2507,9 @@
     </div><!-- end #page-discounts -->
 
     <!-- ══ Inventory (Add Item · Inventory Viewer · Schedule Sale) ═══════════
-         One stylesheet for all three pages. It follows Buy Criteria's pattern
-         (DESIGN.md §4.8): light values are stated as literals, dark overrides go
+         One stylesheet for all three pages. It follows the DESIGN.md §4.8
+         pattern, whose live reference is Retail Summary › Categories (#ct-panel):
+         light values are stated as literals, dark overrides go
          through `.dark` and `rgb(var(--op-*))` so the pure-black theme retints for
          free. A <style> block cannot use the Tailwind token classes, so the opl-*
          literals are duplicated here on purpose.
@@ -5957,8 +5958,9 @@
          never on the table alone. -->
     <div id="page-merch-products" class="hidden">
       <style>
-        /* §4.8 — panel + bar, the same shell as Buy Criteria and the Scorer. */
-        /* 🛑 THE PANEL MUST SET ITS OWN TEXT COLOUR. Copied from #vl-panel, which does not
+        /* §4.8 — panel + bar, the same shell as Retail Summary › Categories (#ct-panel). */
+        /* 🛑 THE PANEL MUST SET ITS OWN TEXT COLOUR. Copied from Velocity's #vl-panel
+           (removed 2026-11-24), which did not
            — and the app's default ink is dark in BOTH themes, so every element here that
            did not name a colour (.pr-nm, .pr-px) rendered near-black on the dark navy
            panel. #ps-card next door has always set it; this is the pattern to copy. */
