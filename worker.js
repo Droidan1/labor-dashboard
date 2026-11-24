@@ -14717,15 +14717,6 @@ const MERCH_NON_CATEGORY_L2 = new Set([
   "Custom Sales", "Gift Cards", "Refund", "Bin Products", "Sku Book Items",
 ]);
 
-// "Everything else in this L2" and "everything not core" — row keys the Coverage
-// scorecard and Shelf Count produced. Both were removed 2026-11-24; merchLabel still
-// names these keys, so they stay until that branch is cleaned up.
-const MERCH_OTHER_PREFIX = "__other__:";
-// The floor's denominator — everything on the floor that is not core.
-const MERCH_NON_CORE = "__non_core__";
-const merchOtherParent = (key) =>
-  String(key).startsWith(MERCH_OTHER_PREFIX) ? String(key).slice(MERCH_OTHER_PREFIX.length) : null;
-
 // The taxonomy as a two-level tree: the 10 merchandise L2s, each with its L3s. Derived
 // from L3_TO_L2 rather than stored, so a new Clover category appears the moment the map
 // learns about it.
@@ -15721,9 +15712,6 @@ function merchParentOf(l3) { return merchIsL3(l3) ? L3_TO_L2[l3] : null; }
 // "Coffee & Tea"; the raw key stays on the payload so the UI can show it on hover and
 // nothing has to parse the label back into a key.
 function merchLabel(key) {
-  if (key === MERCH_NON_CORE) return "Everything else";
-  const other = merchOtherParent(key);
-  if (other) return "Other " + other.replace(/^Consumable /, "").toLowerCase();
   if (merchIsL2(key)) return key;
   const tail = String(key).split(" - ").pop();
   return tail.replace(/[A-Za-z0-9&']+/g, w => w[0].toUpperCase() + w.slice(1).toLowerCase());
