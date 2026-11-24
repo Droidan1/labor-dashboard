@@ -215,6 +215,24 @@ await page.evaluate(() => document.documentElement.classList.remove('dark'));
 await page.waitForTimeout(400);
 if (process.env.SHOTS) await page.locator('#ct-panel').screenshot({ path: path.join(process.env.SHOTS, 'categories-multi-light.png') });
 
+// 🛑 This tab's <style> (and the .mc-lvl badge's) lived inside Buy Criteria's page until that
+// page was removed on 2026-11-24; it now sits beside #page-weekly-summary. Losing it leaves
+// the panel unstyled with no error anywhere, so pin that it still applies.
+const panel = await page.evaluate(() => {
+  const s = getComputedStyle(document.getElementById('ct-panel'));
+  return { bg: s.backgroundColor, radius: s.borderTopLeftRadius };
+});
+eq(panel, { bg: 'rgb(255, 255, 255)', radius: '14px' }, 'the Categories panel is styled (its <style> still ships)');
+await page.locator('#ct-view button', { hasText: 'Table' }).click();
+const lvl = await page.evaluate(() => {
+  const b = document.querySelector('#ct-panel .mc-lvl');
+  if (!b) return null;
+  const s = getComputedStyle(b);
+  return { border: s.borderTopWidth, radius: s.borderTopLeftRadius };
+});
+eq(lvl, { border: '1px', radius: '4px' }, 'the L2/L3 level badge is styled');
+await page.locator('#ct-view button', { hasText: 'Vs' }).click();
+
 if (await showAll().count()) await showAll().click();
 eq(await card(), await expected(ALL_L2), 'Show all goes back to every category');
 eq(await pressed(), [], 'and unpresses every row');

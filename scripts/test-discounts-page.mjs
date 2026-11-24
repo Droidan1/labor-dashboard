@@ -52,7 +52,7 @@ ok('trap 7: the render targets hold nothing else', /<section id="dr-disc"><\/sec
 
 // ── Behaviour: the page's own code, run ──
 const start = html.indexOf('  // ══ Discounts & Returns (Brian, 2026-11-12) ═');
-const end = html.indexOf('  // ── Coverage scorecard ─');
+const end = html.indexOf('  // ── Bin Dump ─');
 ok("the page's code is in index.html", start > 0 && end > start);
 if (!(start > 0 && end > start)) {
   console.log(`\n${fail} FAILED`);

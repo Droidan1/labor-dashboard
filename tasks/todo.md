@@ -1,3 +1,27 @@
+# Remove five Merchandising pages (2026-11-24) — branch `claude/remove-merch-pages`
+
+**Ask:** Brian: remove Coverage, Velocity, Manifests, Buy Criteria and Shelf Count from the Bargain Lane
+app — "we will be going in a different direction". Frontend only: the worker's `merch-criteria*`,
+`merch-coverage`, `merch-velocity`, manifest and `shelf-count*` endpoints stay, because Price Scan, Products
+and Opportunity Buys read the published criteria and the manifests, and their tests exercise those endpoints.
+
+- [x] `index.html`: the five nav items, page markup, page JS (Manifest Scorer, Velocity, Coverage, Buy
+      Criteria, both halves of Shelf Count), the router's guards/inits and `applyRoleUI` toggles. −1,900 lines.
+      Every top-level name the removed code defined was checked against what is left: none is used.
+- [x] 🛑 Buy Criteria's page also carried the **Retail Summary › Categories** tab's `<style>` and the `.mc-lvl`
+      level badge. Moved beside `#page-weekly-summary`; `browser-categories-multi.mjs` now pins both
+      (mutation: delete the block → 2 FAIL, panel `rgba(0,0,0,0)`).
+- [x] `test-discounts-page.mjs` sliced its block up to the Coverage marker; now ends at Bin Dump.
+- [x] `browser-mobile-menu.mjs`: Merchandising rows and the Desktop tag updated.
+- [x] `sw.js` cache v322 → v323 + shell-cache fixture.
+
+## Review
+- `npm test`: 13,171 assertions across 149 suites, all passed.
+- `browser-mobile-menu.mjs`: 166 passed, 6 failed — the SAME 6 on unmodified main (associates now get a
+  Submit tab the check does not expect). Every merch assertion passes.
+- `browser-categories-multi.mjs`: 31/31, both themes (Show all 5.88:1 light, 5.74:1 dark).
+- Deploy: Pages on merge. No worker deploy, no migration, no data touched.
+
 # delete-user keeps supply requests (2026-11-20) — branch `claude/delete-user-keeps-supply`
 
 **Ask:** Brian: "Yes, fix it", about the cascade found while mapping the schema for Brandon's infrastructure
