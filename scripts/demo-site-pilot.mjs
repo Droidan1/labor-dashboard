@@ -78,7 +78,7 @@ const nowIso = () => new Date().toISOString();
 const PERSONAS = {
   super: { id: 'demo-super', email: 'brian.demo@example.invalid', role: 'superuser', stores: null, label: 'Brian, superuser', page: 'bin-preview' },
   admin: { id: 'demo-admin', email: 'alex.demo@example.invalid', role: 'admin', stores: null, grant: 'admin', label: 'Alex, Bargain Lane admin', page: 'bin-preview' },
-  mgr: { id: 'demo-mgr', email: 'dee.demo@example.invalid', role: 'manager', stores: '["BL4"]', grant: 'manager', label: 'Dee, Dupont manager', page: 'dashboard' },
+  mgr: { id: 'demo-mgr', email: 'dee.demo@example.invalid', role: 'manager', stores: '["BL4"]', grant: 'manager', label: 'Dee, Dupont manager', page: 'bin-preview' },
 };
 {
   const exp = new Date(Date.now() + 30 * 864e5).toISOString();
@@ -157,7 +157,7 @@ ol{padding-left:22px}li{margin:6px 0}code{background:#ebe7dc;border-radius:4px;p
 <body><main><h1>Bin Preview demo</h1>
 <p class="warn">Made-up data on this computer only. Nothing here reaches the real Hub, Clover, Buffer or bargainlane.com.</p>
 <h2>1. Sign in as</h2>
-${Object.entries(PERSONAS).map(([k, p]) => `<a class="p" href="/demo/login?as=${k}">${esc(p.label)}<span>${k === 'mgr' ? "Can't see Bin Preview yet: it is admins' only until the website exists." : 'Opens Marketing › Bin Preview.'}</span></a>`).join('')}
+${Object.entries(PERSONAS).map(([k, p]) => `<a class="p" href="/demo/login?as=${k}">${esc(p.label)}<span>${k === 'mgr' ? 'Makes and submits previews for Dupont. Reviewing is for admins.' : 'Opens Marketing › Bin Preview.'}</span></a>`).join('')}
 <h2>2. The website</h2>
 <a class="p site" href="${SITE}/stores/dupont" target="_blank" rel="noopener">Open the Dupont page →<span>${esc(SITE)}/stores/dupont</span></a>
 <h2>3. Try this</h2><ol>
@@ -165,7 +165,7 @@ ${Object.entries(PERSONAS).map(([k, p]) => `<a class="p" href="/demo/login?as=${
 <li>Reload the Dupont page: the sneak peek and its 3 photos are there.</li>
 <li>Back in the Hub, <b>Pull from site</b> with a reason. Reload the Dupont page: the photos are gone, and their links now answer 404.</li>
 <li>Change a bin price or add a holiday in <b>Store page settings</b>, save, and reload the Dupont page.</li>
-<li>Make a <b>New preview</b> (upload works: photos stay in this demo's memory).</li>
+<li>As Dee, make a <b>New preview</b> and submit it (upload works: photos stay in this demo's memory). Then approve it as Alex.</li>
 </ol><p>Stop the demo with Ctrl+C. Everything is forgotten when it stops.</p></main>
 <script>try{localStorage.setItem('bioPromptDismissed','1');localStorage.setItem('coachTipsDisabled','1')}catch(e){}</script></body></html>`;
 
@@ -326,10 +326,20 @@ async function selfCheck() {
     const img = await page.request.get(imgs[0]?.src || `${HUB}/public/v1/img/1/1.png`);
     check(img.status() === 404, `and its photo links answer 404 (${img.status()})`);
 
-    // The Dupont manager: no Bin Preview until the website exists (Brian, 2026-11-25).
+    // The Dupont manager (slice 1): makes and submits previews; no review or settings controls.
     await page.goto(`${HUB}/demo/login?as=mgr`);
-    await page.waitForTimeout(1500);
-    check(await page.evaluate(() => { const e = document.getElementById('nav-bin-preview'); return !e || e.classList.contains('hidden'); }), 'the Dupont manager has no Bin Preview item');
+    // The only preview was pulled above, so "Open" lists none: wait for the list to load, not for a row.
+    await page.waitForFunction(() => /waiting for review/.test(document.querySelector('#bp-list .bp-status')?.textContent || ''), null, { timeout: 15000 });
+    check(await page.evaluate(() => !document.getElementById('nav-bin-preview').classList.contains('hidden')), 'the Dupont manager has Bin Preview');
+    check(await page.evaluate(() => document.getElementById('bp-settings').classList.contains('hidden')), 'without the store page settings');
+    await page.click('#bp-list [data-act="new"]');
+    await page.waitForSelector('#bp-detail .bp-pick');
+    const picks = await page.evaluate(() => document.querySelectorAll('#bp-detail .bp-pick').length);
+    check(picks === 8, `and picks from Dupont's 8 bin photos (${picks})`);
+    await page.click('#bp-detail .bp-pick');
+    await page.click('#bp-detail [data-act="submit"]');
+    const sent = await page.waitForFunction(() => /Sent for review/.test(document.querySelector('#bp-detail .bp-msg')?.textContent || ''), null, { timeout: 10000 }).then(() => true, () => false);
+    check(sent, 'and submits a new preview for review');
     check(!errs.length, `no page errors ${JSON.stringify(errs.slice(0, 2))}`);
     check(![...refused.keys()].some(h => /buffer|anthropic|resend/i.test(h)), `no Buffer, Anthropic or Resend call was even attempted (${[...refused.keys()].join(', ') || 'none'})`);
   } catch (e) {

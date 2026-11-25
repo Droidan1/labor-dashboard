@@ -502,6 +502,25 @@ let main;
   eq((await call('bin-preview-save', { user: 'u-mgr2', method: 'GET' })).status, 405, 'E7 writes are POST only');
 }
 
+// ── Slice 1 (2026-11-25): the store's bin photos, for a manager's photo picker ─────────────
+// marketing-photos is admins' only. A Dupont manager building a preview needs Dupont's bin photos
+// (uploaded from Submit Photos), and nothing else: not another store's, not other types, not rejected.
+{
+  const r = await call('bin-preview-photos', { user: 'u-mgr2', qs: '&store=BL4' });
+  eq(r.status, 200, 'S1 a Dupont manager lists Dupont bin photos');
+  const ids = (r.body?.photos || []).map(x => x.id);
+  ok(ids.includes(P.a) && ids.includes(P.f), 'S1   their bin photos are there');
+  ok(!ids.includes(retailPhoto), 'S1   🛑 a retail photo is not');
+  ok(!ids.includes(rejectedPhoto), 'S1   🛑 a rejected photo is not');
+  ok(!ids.includes(bl1Photo), "S1   🛑 another store's photo is not");
+  eq(Object.keys(r.body?.photos?.[0] || {}).sort(), ['createdAt', 'id'], 'S1   only id and time leave the worker (no R2 key, no uploader)');
+  // The business gate refuses this one before the handler does (NO_BUSINESS_ACCESS): any 403 is right.
+  eq((await call('bin-preview-photos', { user: 'u-sb', qs: '&store=BL4' })).status, 403, "S1 🛑 a South Bend manager can't list Dupont's");
+  eq((await call('bin-preview-photos', { user: 'u-admin', qs: '&store=XX9' })).status, 400, 'S1 an unknown store is refused');
+  eq((await call('bin-preview-photos', { qs: '&store=BL4', secret: env.SNAPSHOT_SECRET })).body?.code, 'SESSION_ONLY', 'S1 🛑 the leaked secret gets nothing');
+  eq((await call('bin-preview-photos', { user: 'u-mgr2', method: 'POST', body: {}, qs: '&store=BL4' })).status, 405, 'S1 it is a read: GET only');
+}
+
 Date.now = realNow;
 console.log(`${assertions - failures} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
