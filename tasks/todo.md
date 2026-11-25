@@ -29,7 +29,10 @@ real Fri→Wed bin cycle. Brian enters Dupont's real details and switches the pa
   merged 4ee4b24 (tree identical to the reviewed 74bde84), redeployed 18:57Z: 9b9bf7a1, 19.91 KiB, SITE_STAGE=preview.
   3/3 clean at 100%: `x-robots-tag: noindex, nofollow` on `/`, `/stores/dupont` (404 + strip while off), an unknown
   slug and `/robots.txt`; our `Disallow: /` now replaces Cloudflare's account-level content-signals file.
-- Left: Brian enters Dupont's details and switches the page on (then re-check: 200, strip, noindex); one Fri→Wed cycle.
+- Dupont page switched on by Brian (~19:30Z): 200 + preview strip + noindex, 3/3 clean; the page matches the feed;
+  phone width, light and dark: no overflow, no console errors. Gaps: no phone number; "$9 from 2 PM" wraps between 2
+  and PM. Thanksgiving showed 9–8; Brian confirmed closed and added it as a one-off day: "Closed", 3/3 clean.
+- Left: one Fri→Wed cycle.
 
 # Bargain Lane website pilot, Phase 1b part 3: click-through demo (2026-11-25) — branch `claude/site-pilot-demo`
 
