@@ -44,7 +44,7 @@ const check = (c, m) => { results.push([!!c, m]); };
 
 // ── Fixtures: what the worker would answer (shapes from binPreviewView / siteSettings) ──
 const P = (id, saleDate, status, phase, extra = {}) => ({
-  id, store: 'BL4', saleDate, photoIds: [501, 502], caption: null, status, phase, startsAt: null, endsAt: null,
+  id, store: 'BL4', kind: 'bins', saleDate, photoIds: [501, 502], caption: null, status, phase, startsAt: null, endsAt: null,
   revision: 2, createdBy: 'dupont@bargainlane.com', createdAt: '2026-11-20T15:00:00.000Z', updatedAt: '2026-11-20T15:00:00.000Z',
   submittedBy: null, submittedAt: null, reviewedBy: null, reviewedAt: null, reviewNote: null,
   pulledBy: null, pulledAt: null, pullReason: null, ...extra });
@@ -66,7 +66,9 @@ const SETTINGS = {
 };
 const OVERRIDES = [{ date: '2026-12-25', closed: true, open: null, close: null, binPrices: null, note: 'Closed for Christmas', createdBy: 'brian@bargainlane.com', createdAt: '2026-11-24T18:00:00.000Z' }];
 const PHOTOS = [501, 502, 503, 504, 505, 506, 507, 508].map(id => ({ id, store: 'BL4', photo_type: 'bins', status: 'new', created_at: '2026-11-2' + (id % 9) + 'T12:00:00Z', url: `?action=photo&id=${id}` }))
-  .concat([{ id: 509, store: 'BL4', photo_type: 'bins', status: 'rejected', created_at: '2026-11-22T12:00:00Z', url: '?action=photo&id=509' }]);
+  .concat([{ id: 509, store: 'BL4', photo_type: 'bins', status: 'rejected', created_at: '2026-11-22T12:00:00Z', url: '?action=photo&id=509' }])
+  // Slice 1b: retail photos, which only a retail highlight may use.
+  .concat([601, 602].map(id => ({ id, store: 'BL4', photo_type: 'retail', status: 'new', created_at: '2026-11-23T12:00:00Z', url: `?action=photo&id=${id}` })));
 
 function mocks({ who, dark, PREVIEWS, SETTINGS, OVERRIDES, PHOTOS }) {
   try {
@@ -98,11 +100,11 @@ function mocks({ who, dark, PREVIEWS, SETTINGS, OVERRIDES, PHOTOS }) {
       case 'store-settings': return J({ ok: true, settings: url.searchParams.get('store') === 'BL4' ? st.settings : null, overrides: url.searchParams.get('store') === 'BL4' ? st.overrides : [] });
       case 'marketing-photos': return J({ ok: true, photos: st.photos.filter(p => p.store === url.searchParams.get('store') && p.photo_type === url.searchParams.get('type')) });
       // The worker's store-scoped list: bins only, rejected left out, id and time only.
-      case 'bin-preview-photos': return J({ ok: true, photos: st.photos.filter(p => p.store === url.searchParams.get('store') && p.photo_type === 'bins' && p.status !== 'rejected').map(p => ({ id: p.id, createdAt: p.created_at || null })) });
+      case 'bin-preview-photos': return J({ ok: true, photos: st.photos.filter(p => p.store === url.searchParams.get('store') && p.photo_type === (url.searchParams.get('type') || 'bins') && p.status !== 'rejected').map(p => ({ id: p.id, createdAt: p.created_at || null })) });
       case 'bin-preview-save': {
         let p;
         if (body.id) { p = find(body.id); Object.assign(p, { saleDate: body.saleDate, photoIds: body.photoIds, caption: body.caption || null, status: 'draft', phase: 'draft' }); p.revision++; }
-        else { p = { id: st.next++, store: body.store, saleDate: body.saleDate, photoIds: body.photoIds, caption: body.caption || null, status: 'draft', phase: 'draft', revision: 1, createdBy: who.email }; st.previews.unshift(p); }
+        else { p = { id: st.next++, store: body.store, kind: body.kind || 'bins', saleDate: body.saleDate, photoIds: body.photoIds, caption: body.caption || null, status: 'draft', phase: 'draft', revision: 1, createdBy: who.email }; st.previews.unshift(p); }
         return J({ ok: true, preview: p });
       }
       case 'bin-preview-submit': { const p = find(body.id); Object.assign(p, { status: 'submitted', phase: 'submitted', submittedBy: who.email }); p.revision++; return J({ ok: true, preview: p }); }
@@ -534,6 +536,74 @@ for (const [who, label] of [[SB_MANAGER, 'a South Bend manager'], [ASSOC, 'an as
     check(!(await shown(page, '#page-bin-preview')), `🛑 and the router refuses the page for ${label}`);
   });
 }
+
+// ── 9. Retail highlights (slice 1b, 2026-11-25): the same flow with retail photos ──
+// The worker keeps the kinds apart (test-bin-preview.mjs R1–R7). Here: the page offers the choice only
+// on a new preview, starts the picks over on a switch, lists that kind's photos, and sends `kind`.
+const storeToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+for (const dark of [true, false]) {
+  const t = dark ? 'dark' : 'light';
+  await section(`9 retail, manager (${t})`, async () => {
+    const { page, errs } = await open(MANAGER, { dark, width: 390, height: 844, mobile: true });
+    await openBP(page);
+    await page.click('#bp-list [data-act="new"]'); await settle(page);
+    const kinds = () => page.evaluate(() => [...document.querySelectorAll('#bp-detail [data-kind]')].map(b => b.dataset.kind + (b.classList.contains('on') ? '*' : '')));
+    check(JSON.stringify(await kinds()) === '["bins*","retail"]', `[${t}] a new preview offers Bins or Retail, Bins first (${JSON.stringify(await kinds())})`);
+    await page.click('#bp-detail .bp-pick[data-photo="501"]'); await settle(page);
+    await page.click('#bp-detail [data-kind="retail"]'); await settle(page);
+    check(JSON.stringify(await kinds()) === '["bins","retail*"]', `[${t}] Retail is now chosen`);
+    check(!(await page.evaluate(() => document.querySelector('#bp-detail .bp-pick.on'))), `[${t}] 🛑 switching starts the picks over (a bin photo can't ride along)`);
+    const grid = await page.evaluate(() => [...document.querySelectorAll('#bp-detail .bp-pick')].map(x => +x.dataset.photo));
+    check(JSON.stringify(grid) === '[601,602]', `[${t}] 🛑 the picker lists retail photos only (${JSON.stringify(grid)})`);
+    check(await page.evaluate(() => window.__calls.includes('bin-preview-photos')), `[${t}] from the store-scoped list`);
+    const sd = await page.evaluate(() => document.getElementById('bp-sale').value);
+    check(sd === storeToday(), `[${t}] it shows from today, in the store's calendar (${sd})`);
+    check(/Show from/.test(await text(page, '#bp-detail .bp-dmain')) && /Upload retail photos/.test(await text(page, '#bp-detail .bp-dmain')), `[${t}] the form says "Show from" and uploads retail photos`);
+    await page.click('#bp-detail .bp-pick[data-photo="602"]'); await page.click('#bp-detail .bp-pick[data-photo="601"]'); await settle(page);
+    await page.fill('#bp-caption', 'New: kitchen and home');
+    check(/New on the shelves/.test(await text(page, '#bp-detail .bp-phonewrap')), `[${t}] the phone card shows it as "New on the shelves"`);
+    await readable(page, '#bp-detail', `retail ${t}`);
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), `[${t}] no sideways scroll at 390 px`);
+    await shot(page, `bp-retail-new-${t}`);
+    await page.click('#bp-detail [data-act="submit"]'); await settle(page); await settle(page);
+    const sv = (await posts(page, 'bin-preview-save'))[0];
+    check(sv && sv.kind === 'retail' && sv.saleDate === sd && JSON.stringify(sv.photoIds) === '[602,601]' && !('id' in sv),
+      `[${t}] 🛑 save sends kind retail and the retail photos in order (${JSON.stringify(sv)})`);
+    check(/Retail/.test(await row(page, 90)) && /Waiting for review/.test(await row(page, 90)), `[${t}] the list row says Retail, waiting for review`);
+    check(/Bins/.test(await row(page, 41)), `[${t}] and the bin previews say Bins`);
+    check(errs.length === 0, `[${t}] retail: no page errors ${JSON.stringify(errs.slice(0, 2))}`);
+  });
+}
+await section('9 retail, admin review + retail line', async () => {
+  const { page, errs } = await open(ADMIN, { dark: true });
+  await openBP(page);
+  // A submitted retail highlight showing from Fri Dec 4 (Dupont opens 9 AM Fridays; Thu Dec 10 has no hours here).
+  await page.evaluate(() => {
+    window.__st.previews.unshift({ id: 77, store: 'BL4', kind: 'retail', saleDate: '2026-12-04', photoIds: [601], caption: 'Kitchen drop', status: 'submitted',
+      phase: 'submitted', startsAt: null, endsAt: null, revision: 5, createdBy: 'dupont@bargainlane.com', submittedBy: 'dupont@bargainlane.com' });
+    document.getElementById('bp-store').dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.waitForTimeout(600);
+  check(/Retail/.test(await row(page, 77)), 'the list shows the retail highlight as Retail');
+  await page.click('#bp-list tr[data-id="77"] .bp-open'); await settle(page);
+  check(/^Retail highlight · Fri, Dec 4/.test(await text(page, '#bp-detail .bp-lbl')), `the detail is titled as a retail highlight (${await text(page, '#bp-detail .bp-lbl')})`);
+  check(/six days later/.test(await text(page, '#bp-detail .bp-review')), 'the review states the retail default: a week');
+  const w = await page.evaluate(() => [document.getElementById('bp-start').value, document.getElementById('bp-end').value]);
+  check(JSON.stringify(w) === '["2026-12-04T09:00","2026-12-10T23:59"]', `the custom times start from the worker's default (${JSON.stringify(w)})`);
+  await page.click('#bp-detail [data-act="approve"]'); await settle(page); await settle(page);
+  const ap = (await posts(page, 'bin-preview-review'))[0];
+  check(ap && ap.id === 77 && ap.decision === 'approve' && ap.expectedRevision === 5, `approve sends the revision shown (${JSON.stringify(ap)})`);
+  check(/only go on the store page/.test(await text(page, '#bp-detail')), 'and says retail posts nothing to social');
+  // The standing line, in Store page settings.
+  const line = 'Name-brand home goods and more, new every week';
+  await page.fill('#bp-settings [data-path="profile.retailLine"]', line);
+  await page.click('#bp-settings [data-act="save-settings"]'); await settle(page); await settle(page);
+  const ss = (await posts(page, 'store-settings-save')).pop();
+  check(ss && ss.profile && ss.profile.retailLine === line && ss.profile.displayName === 'Bargain Lane Dupont' && !('hours' in ss),
+    `the retail line saves with the profile, nothing else (${JSON.stringify(ss && ss.profile)})`);
+  await readable(page, '#bp-settings', 'retail line');
+  check(errs.length === 0, `admin retail: no page errors ${JSON.stringify(errs.slice(0, 2))}`);
+});
 
 await b.close(); srv.close();
 const failed = results.filter(r => !r[0]);

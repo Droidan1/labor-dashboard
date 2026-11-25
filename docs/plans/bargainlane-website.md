@@ -222,7 +222,7 @@ submit; admins review); the site goes to its workers.dev test address with SITE_
 Brian enters Dupont's real details and switches its page on; then one real Fri→Wed cycle. Slices 2–4: social posts,
 Flash Sales, the rest of the site. **Live 2026-11-25:** Dupont's page is on at the test address (Thanksgiving closed).
 
-**Phase 2, slice 1b (planned 2026-11-25): retail on the store page.** Brian: "make sure retail is also highlighted if
+**Phase 2, slice 1b (built 2026-11-25, not deployed): retail on the store page.** Brian: "make sure retail is also highlighted if
 that's a store main page". Today the page is all bins. Dupont already uploads retail photos (216 in all, 34 in the last
 30 days, latest Nov 13; 88 bin photos in the same 30 days), so retail goes through the **same review flow** as bins.
 

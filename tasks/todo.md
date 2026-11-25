@@ -1,17 +1,37 @@
 # Bargain Lane website pilot, Phase 2 slice 1b: retail on the store page (2026-11-25) — branch `claude/retail-highlights`
 
-**Ask:** Brian: "make sure retail is also highlighted if that's a store main page", then "Yes, plan it". Plan:
-`docs/plans/bargainlane-website.md` §7, slice 1b. Waiting on Brian's OK to the defaults below before building.
+**Ask:** Brian: "make sure retail is also highlighted if that's a store main page", then "Yes, plan it", then
+"Yes, build it" (on the defaults below). Plan: `docs/plans/bargainlane-website.md` §7, slice 1b.
 
-- [ ] migration-094: `bin_previews.kind` ('bins' default | 'retail'), approved-per-day index per kind. Staging, then prod (Brian).
-- [ ] worker: `kind` on save, photo type matched to kind in save / feed / image route; `bin-preview-photos&type=`;
-      7-day default retail window; no social draft for retail; `profile.retailLine` (kept when omitted).
-- [ ] feed: `binPreviews` bins only; `retailHighlights`; `profile.retailLine`. Still version 1.
-- [ ] site: "New on the shelves" card under Bins today / Today; newest highlight, else the line, else nothing.
-- [ ] Hub page: Bins/Retail choice, kind-filtered picker, list chip, retail line in settings; `sw.js` bump.
-- [ ] tests that fail on main (worker, site, both browser checks, demo `--check`); fresh-eyes review.
+- [x] migration-094: `bin_previews.kind` ('bins' default | 'retail'), approved-per-day index per kind. Staging, then prod (Brian).
+- [x] worker: `kind` on save (fixed once made), photo type matched to kind in save / feed / image route;
+      `bin-preview-photos&type=`; 7-day default retail window; no social draft for retail; `profile.retailLine`
+      (kept when a profile arrives without it).
+- [x] feed: `binPreviews` bins only; `retailHighlights` (newest first); `profile.retailLine`. Still version 1.
+- [x] site (`bargainlane-site`, branch `retail-highlights`, c383daf; built by a subagent, checked here): "New on
+      the shelves" card under Bins today / Today; newest highlight, else the line, else nothing.
+- [x] Hub page: Bins/Retail choice on a new preview, kind-filtered picker and upload, "What" column, retail
+      default window in review, retail line in settings; `sw.js` v328 → v329.
+- [x] tests that fail on main; fresh-eyes review.
 - Defaults (Brian may change): placement under the top cards; newest highlight only; 7-day window; no social drafts
   for retail yet; nav keeps the name "Bin Preview".
+
+## Review
+- `test-bin-preview.mjs` 240 / 0 (new R0–R7: kinds never mix in save, feed or image route; bins + retail share a
+  day, two retail don't; 7-day window; no social draft; retail line incl. an older page's save). Against main's
+  worker the R block fails.
+- `browser-bin-preview.mjs` 186 / 0 (new section 9, both themes at 390 px: choice, picks cleared on switch, retail
+  picker, `kind` sent, list "What", review window, retail line save; AA 5.21:1 worst). Against main's page: 10 fail.
+- `demo-site-pilot.mjs --check` 22 / 0 (the line before approval, the retail photos after, never as bins).
+- `npm test` 13,310 assertions across 148 suites, all passed.
+- Site: `npm test` 58 / 0 (12 new, all fail with `src/` reverted), `browser-check` 160 / 0 (re-run here), retail
+  card text 13.4:1 light / 13.7:1 dark, no sideways scroll at 390 / 1440.
+- Fresh-eyes review (read-only agent): no high or medium defects. Fixed: a comment claiming the worker runs ahead
+  of the migration (it doesn't: it 503s every store page), and migration-093's "safe to run twice" header (not
+  after 094). Left: a stale cached page prefills the bins window when an admin reviews retail with custom times
+  (the v329 bump clears it); on a worker rollback only the site's empty-image filter keeps retail off the bin card.
+- Deploy order: migration-094 (staging, prod) → worker (check `PRAGMA table_info(bin_previews)` lists `kind`
+  first) → site → merge the page.
 
 # Bargain Lane website pilot, Phase 2 slice 1: making the Dupont pilot real (2026-11-25) — branch `claude/bin-preview-managers`
 
