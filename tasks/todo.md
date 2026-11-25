@@ -3,6 +3,8 @@
 **Ask:** Brian: "Start with the Hub page" (1b split: Hub page first, then the site repo + demo). Who sees it until the
 website exists: **admins and superusers only** (Brian, 2026-11-25). Managers get it later by widening one gate.
 Frontend only: the server side (#418) is live in prod as worker 54884cc4, so merging this makes the page live.
+Pushed with Brian's OK (2026-11-25): [PR #419](https://github.com/Droidan1/labor-dashboard/pull/419). GitHub 500'd the create
+request 5 times (GraphQL and REST, even with a one-line body) and took it on a retry a minute later.
 
 - [x] `scripts/browser-bin-preview.mjs` first (stubbed API, real `index.html`): fails on main.
 - [x] `#page-bin-preview`: new preview (store, sale date, the store's bin photos + upload, caption) → Save / Submit.
