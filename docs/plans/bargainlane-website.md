@@ -187,7 +187,7 @@ The run-through:
 2. Open it and **Approve**. Open the Dupont page: the sneak peek and its 3 photos are there.
 3. Back in the Hub, **Pull from site** with a reason. Reload the Dupont page: the photos are gone and their links 404.
 4. Change a bin price or add a holiday in **Store page settings**, save, reload the Dupont page.
-5. Sign in as **Dee, Dupont manager**: no Bin Preview (admins only until the website exists).
+5. Sign in as **Dee, Dupont manager**: she makes and submits previews for Dupont, with no review or settings controls.
 
 ---
 
@@ -216,6 +216,11 @@ The run-through:
 - Real Buffer adapter, tested in a designated test channel **after separate approval**.
 - Staging rollout. 🛑 Staging is not a sandbox: it holds live Clover/Buffer/Meta credentials and runs the every-minute cron. Review it before any deploy there.
 - Pilot one full Fri→Wed bin cycle and one flash sale at Dupont.
+
+**Phase 2, slice 1 (started 2026-11-25): making the Dupont pilot real.** Dupont managers get Bin Preview (they make and
+submit; admins review); the site goes to its workers.dev test address with SITE_STAGE=preview (noindex everywhere);
+Brian enters Dupont's real details and switches its page on; then one real Fri→Wed cycle. Slices 2–4: social posts,
+Flash Sales, the rest of the site.
 
 **Phase 3**
 - Inventory the 17 WordPress URLs plus QR destinations, then redirects and the sitemap.

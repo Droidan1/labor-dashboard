@@ -5717,7 +5717,7 @@ const ACTION_BUSINESS = new Map([
   ["live-calendar", "live"],
   // Bin Preview + store settings for the website pilot (migration-093). Store-scoped and
   // reviewer-gated inside handleSitePilotAction.
-  ["bin-preview-save", "bl"], ["bin-preview-submit", "bl"], ["bin-previews", "bl"],
+  ["bin-preview-save", "bl"], ["bin-preview-submit", "bl"], ["bin-previews", "bl"], ["bin-preview-photos", "bl"],
   ["bin-preview-review", "bl"], ["bin-preview-pull", "bl"],
   ["store-settings", "bl"], ["store-settings-save", "bl"], ["store-override-save", "bl"],
   ["afternoon-briefing", "bl"],
@@ -9549,7 +9549,7 @@ async function handleSitePilotAction(request, env, url, currentUser, corsJson) {
   // 🛑 A signed-in person only. The X-Snapshot-Secret bypass arrives with no user, and that
   // secret is public, so it reaches none of this.
   if (!currentUser) return send(403, { error: "Forbidden", code: "SESSION_ONLY" });
-  const isRead = action === "bin-previews" || action === "store-settings";
+  const isRead = action === "bin-previews" || action === "store-settings" || action === "bin-preview-photos";
   if (request.method !== (isRead ? "GET" : "POST")) return send(405, { error: "Method not allowed" });
   if (!env.DB) return send(503, { error: "Database unavailable" });
   let b = {};
@@ -9631,6 +9631,19 @@ async function handleSitePilotAction(request, env, url, currentUser, corsJson) {
     ]);
     if (res[0].meta.changes !== 1) return send(409, { error: "Only an unchanged draft can be submitted. Reload and try again.", code: "STALE" });
     return respond(row.id);
+  }
+
+  // A store's bin photos, for the Bin Preview photo picker. marketing-photos is admins' only; a
+  // manager needs their own store's bin photos (from Submit Photos) and nothing else. Only the id
+  // and time leave the worker: the picker shows each through ?action=photo, which checks the store.
+  if (action === "bin-preview-photos") {
+    const store = url.searchParams.get("store");
+    if (!storeOk(store)) return send(400, { error: "Unknown store" });
+    if (!canAccessStore(currentUser, store)) return send(403, { error: "Forbidden", code: "STORE" });
+    const { results } = await env.DB.prepare(
+      "SELECT id, created_at FROM marketing_photos WHERE store = ? AND photo_type = 'bins' AND status != 'rejected' ORDER BY created_at DESC, id DESC LIMIT 200"
+    ).bind(store).all();
+    return send(200, { ok: true, photos: (results || []).map(r => ({ id: r.id, createdAt: r.created_at })) });
   }
 
   if (action === "bin-previews") {
@@ -21285,7 +21298,8 @@ export default {
     if (url.searchParams.get("action") === "bin-preview-save" || url.searchParams.get("action") === "bin-preview-submit"
       || url.searchParams.get("action") === "bin-previews" || url.searchParams.get("action") === "bin-preview-review"
       || url.searchParams.get("action") === "bin-preview-pull" || url.searchParams.get("action") === "store-settings"
-      || url.searchParams.get("action") === "store-settings-save" || url.searchParams.get("action") === "store-override-save") {
+      || url.searchParams.get("action") === "store-settings-save" || url.searchParams.get("action") === "store-override-save"
+      || url.searchParams.get("action") === "bin-preview-photos") {
       return handleSitePilotAction(request, env, url, currentUser, corsJson);
     }
 

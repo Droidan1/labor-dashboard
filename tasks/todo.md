@@ -1,3 +1,30 @@
+# Bargain Lane website pilot, Phase 2 slice 1: making the Dupont pilot real (2026-11-25) — branch `claude/bin-preview-managers`
+
+**Ask:** Brian: "Start slice 1". Open Bin Preview to Dupont's managers, put the site at a test address, then run one
+real Fri→Wed bin cycle. Brian enters Dupont's real details and switches the page on; the deploys are his to run.
+
+- [x] worker.js: `bin-preview-photos` (GET, `store`): a store's bin photos, id + time only, for anyone who can access
+      that store. A manager's picker needs them; `marketing-photos` is admins' only. Read-only, backward-compatible.
+- [x] index.html: `bpCanOpen()` = admins, superusers, and managers of a pilot store (`BIN_PREVIEW_PILOT_STORES =
+      ['BL4']`); the sidebar and the router both ask it. A manager sees only their pilot stores and no review or
+      settings controls. The picker uses `bin-preview-photos` for everyone. `sw.js` v327 → v328.
+- [x] Site repo, branch `preview-address`: `SITE_STAGE=preview` = noindex on every response, robots.txt
+      Disallow, a preview strip; `workers_dev = true`. Launch = remove SITE_STAGE.
+- [x] Demo: Dee (Dupont manager) now makes and submits previews.
+
+## Review
+- `test-bin-preview.mjs` 189 / 0 (new S1 block: Dupont manager lists Dupont bins only; not retail, rejected or another
+  store's; id + time only; South Bend manager 403; unknown store 400; leaked secret SESSION_ONLY; GET only).
+- `browser-bin-preview.mjs` 147 / 0; against main the Dupont-manager section fails. `browser-mobile-menu.mjs` 172 / 0.
+- `demo-site-pilot.mjs --check` 16 / 0. `npm test` 13,259 assertions across 148 suites, all passed.
+- Site: `npm test` 46 / 0, `browser-check.mjs` 60 / 0, dry run 19.91 KiB.
+- Fresh-eyes review (read-only agent): no security defects (associates, other-business admins, wrong-store managers
+  and the leaked secret are all refused; `?action=photo` checks the photo's own store). Fixed: the list was capped at
+  120 (now 200, as marketing-photos was), and a manager had no way to take a submitted preview back (Edit now shows
+  for them; `browser-bin-preview.mjs` 149 / 0 pins it).
+- Deploy order: worker first (the page calls `bin-preview-photos`; on the old worker the picker would say the server
+  half is missing), then merge.
+
 # Bargain Lane website pilot, Phase 1b part 3: click-through demo (2026-11-25) — branch `claude/site-pilot-demo`
 
 **Ask:** Brian: "build the click-through demo next" (plan §5 "Demo (1b)", item 8). One command runs the Hub app

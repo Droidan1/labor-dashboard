@@ -13904,7 +13904,9 @@
         && !(page === 'supply-request' && pageLevel('supply-request') >= 1)) return;
 
     // Guard admin-only pages
-    const adminOnly = ['inventory-add', 'inventory-viewer', 'inventory-sale', 'marketing', 'flow-calendar', 'content', 'comments', 'merch-products', 'bin-preview'];
+    const adminOnly = ['inventory-add', 'inventory-viewer', 'inventory-sale', 'marketing', 'flow-calendar', 'content', 'comments', 'merch-products'];
+    // Bin Preview: the sidebar's rule exactly (admins, superusers, managers of a pilot store).
+    if (page === 'bin-preview' && !bpCanOpen(currentUser)) return;
     // Price Scan is the one Merchandising page a MANAGER uses — they price items on the
     // floor. Everything else there is a buying surface and stays admin-only.
     const managerPages = ['merch-scan'];
@@ -20465,9 +20467,20 @@
   // web page, pulled if they are wrong; plus the store settings that page is built from.
   // The worker (handleSitePilotAction) decides who may do what and checks every revision;
   // this page only draws it and sends back the revision it showed.
-  // 🔑 Admins and superusers only until the website exists (Brian, 2026-11-25). The sidebar
-  // item (applyRoleUI) and navigateToPage's adminOnly list hold that line together; opening it
-  // to managers means changing both, and section 7 of scripts/browser-bin-preview.mjs.
+  // 🔑 Who opens it: admins and superusers, and managers of a PILOT store (Brian, 2026-11-25:
+  // Dupont first). bpCanOpen() is the one rule: the sidebar item (applyRoleUI) and the router
+  // (navigateToPage) both ask it. A manager sees only their pilot stores, makes and submits
+  // previews, and gets no review or settings controls; the worker refuses those anyway.
+  // Adding a store to the pilot is BIN_PREVIEW_PILOT_STORES, and section 7 of browser-bin-preview.mjs.
+  const BIN_PREVIEW_PILOT_STORES = ['BL4'];
+  function bpManagerStores(user) {
+    let held = user && user.stores;
+    if (typeof held === 'string') { try { held = JSON.parse(held); } catch (e) { held = []; } }
+    return user && user.role === 'manager' && Array.isArray(held) ? BIN_PREVIEW_PILOT_STORES.filter(c => held.includes(c)) : [];
+  }
+  function bpCanOpen(user) {
+    return !!user && (user.role === 'superuser' || user.role === 'admin' || bpManagerStores(user).length > 0);
+  }
   const BP_DAYS = [['sun', 'Sun'], ['mon', 'Mon'], ['tue', 'Tue'], ['wed', 'Wed'], ['thu', 'Thu'], ['fri', 'Fri'], ['sat', 'Sat']];
   // Keyed by the worker's derived phase: scheduled / live / expired are never stored.
   const BP_PHASE = {
@@ -20548,7 +20561,8 @@
   function initBinPreview() {
     const page = el('page-bin-preview');
     if (!bp.wired && page) { bp.wired = true; bpWire(page); }
-    const codes = spStores();
+    // A manager works on their pilot stores only; an admin can pick any store.
+    const codes = bpIsReviewer() ? spStores() : bpManagerStores(currentUser);
     if (!bp.store || !codes.includes(bp.store)) bp.store = codes.includes('BL4') ? 'BL4' : codes[0];
     const sel = el('bp-store');
     sel.innerHTML = codes.map(c => `<option value="${c}">${bpEsc(bpStoreName(c))} (${c})</option>`).join('');
@@ -20562,17 +20576,18 @@
     Object.assign(bp, { previews: null, listErr: null, sel: null, editing: false, form: null, msg: null, social: null,
       photos: null, photosErr: null, settings: null, overrides: [], setForm: null, setOrig: null, setErr: null, setMsg: null, ov: bpOvBlank() });
     bpRender();
-    // marketing-photos is admins' only. Managers, when the page opens to them, pick from what they upload.
+    // The store's bin photos for the picker: bin-preview-photos is store-scoped, so it serves a
+    // pilot store's manager as well as an admin (marketing-photos is admins' only).
     const [l, s, ph] = await Promise.all([
       bpApi('bin-previews', { store }),
       bpApi('store-settings', { store }),
-      bpIsReviewer() ? bpApi('marketing-photos', { store, type: 'bins', status: 'all' }) : Promise.resolve({ j: { photos: [] } }),
+      bpApi('bin-preview-photos', { store }),
     ]);
     if (seq !== bp.seq) return;   // a later store pick won
     if (l.err) bp.listErr = l.err; else bp.previews = bpSorted(l.j.previews);
     if (s.err) bp.setErr = s.err;
     else { bp.settings = s.j.settings || bpDefaultSettings(store); bp.overrides = s.j.overrides || []; bpResetSetForm(); }
-    if (ph.err) bp.photosErr = ph.err; else bp.photos = (ph.j.photos || []).filter(p => p.status !== 'rejected');
+    if (ph.err) bp.photosErr = ph.err; else bp.photos = ph.j.photos || [];   // the worker leaves out rejected ones
     bpRender();
   }
   async function bpReloadList() {
@@ -20765,7 +20780,10 @@
     if (editing) left += bpFormHtml(p);
     else {
       left += `<p class="bp-dim">Sale day <span class="bp-ink">${bpEsc(bpDay(p.saleDate))}</span> · ${p.photoIds.length} photo${p.photoIds.length === 1 ? '' : 's'}</p>`;
-      if (p.status === 'submitted') left += bpIsReviewer() ? bpReviewHtml(p) : '<p class="bp-dim">Waiting for a Bargain Lane admin to review it.</p>';
+      // A manager can take a submitted preview back to fix it (the worker returns it to draft); reviewing is an admin's.
+      if (p.status === 'submitted') left += bpIsReviewer() ? bpReviewHtml(p)
+        : '<p class="bp-dim">Waiting for a Bargain Lane admin to review it. Editing it takes it back to draft.</p>'
+          + '<div class="bp-actions"><button type="button" class="bp-btn" data-act="edit">Edit</button></div>';
       if (p.status === 'approved') left += bpApprovedHtml(p);
     }
     left += `<p class="bp-msg${bp.msg && bp.msg[1] ? ' bp-msg-' + bp.msg[1] : ''}" role="status">${bp.msg ? bpEsc(bp.msg[0]) : ''}</p>`;
@@ -40629,9 +40647,9 @@
     // never gated here, so every manager had a Comments item that did nothing.
     el('nav-comments').classList.toggle('hidden', !isAdmin);
     el('nav-content').classList.toggle('hidden', !isAdmin);          // Content (composer): admin/superuser
-    // Bin Preview: admins and superusers until the website exists (Brian, 2026-11-25). The router's
-    // adminOnly list holds the same line; the worker lets a manager save and submit for their stores.
-    el('nav-bin-preview').classList.toggle('hidden', !isAdmin);
+    // Bin Preview: admins, superusers and managers of a pilot store (bpCanOpen, the same rule the
+    // router asks).
+    el('nav-bin-preview').classList.toggle('hidden', !bpCanOpen(user));
     el('nav-submit-photos').classList.remove('hidden');              // Submit Photos: all users
     // Flow Calendar admin editor: only admins/superusers see the Edit toggle.
     fcCanEdit = isAdmin;

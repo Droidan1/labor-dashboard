@@ -97,6 +97,8 @@ function mocks({ who, dark, PREVIEWS, SETTINGS, OVERRIDES, PHOTOS }) {
       case 'bin-previews': return J({ ok: true, previews: st.previews.filter(p => p.store === url.searchParams.get('store')) });
       case 'store-settings': return J({ ok: true, settings: url.searchParams.get('store') === 'BL4' ? st.settings : null, overrides: url.searchParams.get('store') === 'BL4' ? st.overrides : [] });
       case 'marketing-photos': return J({ ok: true, photos: st.photos.filter(p => p.store === url.searchParams.get('store') && p.photo_type === url.searchParams.get('type')) });
+      // The worker's store-scoped list: bins only, rejected left out, id and time only.
+      case 'bin-preview-photos': return J({ ok: true, photos: st.photos.filter(p => p.store === url.searchParams.get('store') && p.photo_type === 'bins' && p.status !== 'rejected').map(p => ({ id: p.id, createdAt: p.created_at || null })) });
       case 'bin-preview-save': {
         let p;
         if (body.id) { p = find(body.id); Object.assign(p, { saleDate: body.saleDate, photoIds: body.photoIds, caption: body.caption || null, status: 'draft', phase: 'draft' }); p.revision++; }
@@ -490,8 +492,41 @@ await section('8g upload focus', async () => {
   check(o !== 'none', `the upload button shows keyboard focus (${o})`);
 });
 
-// ── 7. Who sees it (Brian, 2026-11-25: admins and superusers only for now) ────
-for (const [who, label] of [[MANAGER, 'a Dupont manager'], [ASSOC, 'an associate']]) {
+// ── 7. Who sees it: admins, superusers, and managers of a pilot store (Dupont) ──
+// Slice 1 (Brian, 2026-11-25): a Dupont manager makes and submits previews; reviewing and the store's
+// settings stay with admins. Everyone else still has no Bin Preview.
+await section('7 Dupont manager', async () => {
+  const { page, errs } = await open(MANAGER, { dark: true, width: 390, height: 844, mobile: true });
+  check(await page.evaluate(() => { const e = document.getElementById('nav-bin-preview'); return !!e && !e.classList.contains('hidden'); }), 'a Dupont manager has Bin Preview');
+  await openBP(page);
+  check(await shown(page, '#page-bin-preview'), 'and the router opens it');
+  check(JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('#bp-store option')].map(o => o.value))) === '["BL4"]', 'the store picker offers only Dupont');
+  check(!(await shown(page, '#bp-settings')), '🛑 no store page settings for a manager');
+  await page.click('#bp-list tr[data-id="41"] .bp-open'); await settle(page);
+  check(!(await page.evaluate(() => document.querySelector('#bp-detail [data-act="approve"], #bp-detail [data-act="reject"]'))), '🛑 no Approve or Send back for a manager');
+  check(/Waiting for a Bargain Lane admin/.test(await text(page, '#bp-detail')), 'it says an admin reviews it');
+  // Review finding (2026-11-25): a manager who submitted a mistake can take it back to fix it.
+  await page.click('#bp-detail [data-act="edit"]'); await settle(page);
+  check(await shown(page, '#bp-caption'), 'a manager can take a submitted preview back to edit it');
+  await page.fill('#bp-caption', 'Fixed caption');
+  await page.click('#bp-detail [data-act="save"]'); await settle(page);
+  const ed = (await posts(page, 'bin-preview-save'))[0];
+  check(ed && ed.id === 41 && ed.expectedRevision === 2 && ed.caption === 'Fixed caption', `and saves it with the revision shown (${JSON.stringify(ed)})`);
+  await page.evaluate(() => { window.__posts.length = 0; });
+  await page.click('#bp-detail [data-act="close"]'); await settle(page);
+  await page.click('#bp-list [data-act="new"]'); await settle(page);
+  check((await page.evaluate(() => document.querySelectorAll('#bp-detail .bp-pick').length)) === 8, "the picker lists Dupont's bin photos (from bin-preview-photos)");
+  check(await page.evaluate(() => window.__calls.includes('bin-preview-photos') && !window.__calls.includes('marketing-photos')), 'through the store-scoped list, not the admin one');
+  await page.click('#bp-detail .bp-pick[data-photo="502"]');
+  await page.click('#bp-detail [data-act="submit"]'); await settle(page); await settle(page);
+  const sv = (await posts(page, 'bin-preview-save'))[0], sb = (await posts(page, 'bin-preview-submit'))[0];
+  check(sv && sv.store === 'BL4' && JSON.stringify(sv.photoIds) === '[502]' && sb && sb.expectedRevision === 1, `a manager's preview is saved and submitted (${JSON.stringify(sv)})`);
+  await readable(page, '#bp-list', 'manager');
+  await readable(page, '#bp-detail', 'manager');
+  check(errs.length === 0, `manager: no page errors ${JSON.stringify(errs.slice(0, 2))}`);
+});
+const SB_MANAGER = { ...MANAGER, email: 'sb@bargainlane.com', stores: ['BL2'] };
+for (const [who, label] of [[SB_MANAGER, 'a South Bend manager'], [ASSOC, 'an associate']]) {
   await section(`7 ${label}`, async () => {
     const { page } = await open(who, { dark: true });
     check(await page.evaluate(() => { const e = document.getElementById('nav-bin-preview'); return !e || e.classList.contains('hidden'); }), `🛑 ${label} has no Bin Preview item`);
