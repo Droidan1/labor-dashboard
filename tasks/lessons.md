@@ -111,7 +111,17 @@ them 5 times. The XSS had not gone: it had moved one page along, and it now pers
    a quote injection. Use the module's quote-safe escaper (`invEsc`, `irEsc`, `fcEsc`,
    `laborEsc`). Before calling a module clean, grep `="\${escapeHtml(` — 11 sites remain
    outside Inventory.
+4. **A NEW page's escaper is quote-safe from its first line.** Write
+   `xEsc = s => escapeHtml(s).replace(/"/g,'&quot;').replace(/'/g,'&#39;')` before the first
+   template, and plant a value with `"` in the page's browser check.
 </rules>
+
+### Recurred (2026-11-25, Hub Bin Preview page): I wrote the bug this lesson names
+I listed this file's headings and never opened this one. The new page's `bpEsc` was plain
+`escapeHtml`, and it went into `value="…"` for a store name an admin can save. A store name of
+`x" style="animation:…" onanimationstart="…"` would have run script for every admin who opened
+the settings. The fresh-eyes review caught it before the PR. `browser-bin-preview.mjs` 8a now
+plants the quote. `="${escapeHtml(` count on main: **28**, up from 11.
 
 ## Two mutation runners shared `dist/`, and one quietly un-mutated the other (2026-09-23)
 

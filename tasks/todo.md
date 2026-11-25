@@ -1,3 +1,46 @@
+# Bargain Lane website pilot, Phase 1b part 1: Hub Bin Preview page (2026-11-25) — branch `claude/bin-preview-hub`
+
+**Ask:** Brian: "Start with the Hub page" (1b split: Hub page first, then the site repo + demo). Who sees it until the
+website exists: **admins and superusers only** (Brian, 2026-11-25). Managers get it later by widening one gate.
+Frontend only: the server side (#418) is live in prod as worker 54884cc4, so merging this makes the page live.
+Pushed with Brian's OK (2026-11-25): [PR #419](https://github.com/Droidan1/labor-dashboard/pull/419). GitHub 500'd the create
+request 5 times (GraphQL and REST, even with a one-line body) and took it on a retry a minute later.
+
+- [x] `scripts/browser-bin-preview.mjs` first (stubbed API, real `index.html`): fails on main.
+- [x] `#page-bin-preview`: new preview (store, sale date, the store's bin photos + upload, caption) → Save / Submit.
+- [x] Previews panel per DESIGN.md §4.8: status + derived phase (scheduled / live / expired), window in store time.
+- [x] Reviewer actions: Approve (default window shown, can change), Reject (note required), Reschedule, Pull
+      (reason required). Every write sends `expectedRevision`; a 409 reloads and says why.
+- [x] Phone-sized card showing how the preview will look on the site.
+- [x] Store settings panel: profile, hours, bin price tiers, preview defaults, public switch (asks first),
+      holiday overrides add / remove.
+- [x] Nav: sidebar item, gated to superuser + Bargain Lane admin, router gate equal to the sidebar's.
+- [x] `sw.js` CACHE_NAME bump.
+- [x] Verify: 390 / 1440 px, light + dark, measured contrast ≥ 4.5:1, second render; `npm test`; fresh-eyes review.
+
+- [x] Fresh-eyes review (subagent, read-only) found, and this branch fixed:
+      - 🛑 `bpEsc` was plain `escapeHtml` inside `value="…"`: a saved store name with `"` could run script
+        for every admin opening the settings (lessons.md: the escaping lesson, recurred).
+      - an upload batch read the store per photo, so a store switch mid-batch sent the rest to the new store;
+      - settings save had no busy guard (double click → 409 "changed") and no store check;
+      - clearing a day's first price moved the next price change to midnight with no error;
+      - re-renders wiped a half-typed holiday entry and a reviewer's note;
+      - "Add day" silently replaced an existing day; every 409 was called "changed";
+      - the chosen-times prefill ignored holidays; the upload button showed no keyboard focus.
+      Not fixed: a global admin whose Bargain Lane grant is not admin would see actions the worker
+      refuses. Prod has none (8 admins, all with the bl admin grant); a fix needs auth-me to say so.
+
+## Review
+- `scripts/browser-bin-preview.mjs`: 135 / 0 on the branch. Against main: fails from the first section.
+  Against the page before the review fixes: 14 failures, one per fix. Its earlier version also caught
+  two of my own bugs before review: the custom-times fields showed while "hidden" (a page rule outranked
+  `.hidden`), and a phone cut the Friday price row's Remove button off at the panel edge.
+- Contrast measured in both themes: worst 4.83:1 (list), 5.21 (detail), 5.74 (settings).
+- `browser-mobile-menu.mjs` 172 / 0 (admins' Menu gains Bin Preview; managers' and associates' do not).
+- `npm test`: 13,249 assertions across 148 suites, all passed. `sw.js` v326 → v327.
+- Already failing on main, untouched here: `browser-submit-photo-targets.mjs` "Submit tab in their phone
+  bar" (#414 moved it to the Menu) and `browser-halloween-theme.mjs` "primary button keeps #3BB54A" ×3.
+
 # Bargain Lane website pilot, Phase 1a: Bin Preview server + public feed (2026-11-23) — branch `claude/bin-preview-1a`
 
 **Ask:** Brian: "Yes, start 1a" on [docs/plans/bargainlane-website.md](../docs/plans/bargainlane-website.md) with its

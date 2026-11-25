@@ -1170,6 +1170,10 @@
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg></span>
               <span class="nav-label">Content</span>
             </div>
+            <div id="nav-bin-preview" class="nav-item nav-subitem hidden" data-page="bin-preview" onclick="navigateToPage('bin-preview')">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 9h20"/><path d="M8 14h3"/><path d="M8 17h6"/></svg></span>
+              <span class="nav-label">Bin Preview</span>
+            </div>
             <div id="nav-submit-photos" class="nav-item nav-subitem" data-page="submit-photos" onclick="navigateToPage('submit-photos')">
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></span>
               <span class="nav-label">Submit Photos</span>
@@ -5003,6 +5007,193 @@
         <p id="sp-status" class="hidden text-sm text-center"></p>
       </div>
     </div><!-- end #page-submit-photos -->
+    <!-- Marketing › Bin Preview: the Hub half of the Bargain Lane website pilot
+         (docs/plans/bargainlane-website.md §4.6). Three render targets, each owned by one
+         function (DESIGN.md §4.8 trap 7): #bp-list, #bp-detail, #bp-settings. -->
+    <div id="page-bin-preview" class="hidden">
+      <style>
+        /* Page-scoped colours, the --dr-* way: light literals (each one a token, named in the
+           comment), dark through rgb(var(--op-*)) so pure black and Halloween follow. Set on the
+           page, so nothing in it inherits a colour (DESIGN.md §4.8 trap 3). */
+        #page-bin-preview{--bp-panel:#ffffff;--bp-panelHi:#fafaf6;--bp-ink:#14110a;--bp-dim:#6b6453;   /* opl-panel / panelHi / ink / inkDim */
+          --bp-hair:rgba(20,16,8,.10);--bp-border:rgba(20,16,8,.18);--bp-field:#ffffff;
+          --bp-brand:#166534;                                                                        /* green-800: accent text in light */
+          --bp-warn:#92400e;--bp-warnBg:rgba(245,158,11,.14);--bp-warnB:rgba(245,158,11,.55);         /* amber-800 on the amber wash */
+          --bp-bad:#c0392b;--bp-badBg:rgba(192,57,43,.08);--bp-badB:rgba(192,57,43,.45);
+          --bp-good:#166534;--bp-goodBg:rgba(34,197,94,.12);--bp-goodB:rgba(22,101,52,.35);
+          --bp-info:#1d4ed8;--bp-infoBg:rgba(59,130,246,.10);--bp-infoB:rgba(29,78,216,.35);
+          color:var(--bp-ink)}
+        .dark #page-bin-preview{--bp-panel:rgb(var(--op-panel));--bp-panelHi:rgb(var(--op-panelHi));--bp-ink:rgb(var(--op-ink));
+          --bp-dim:rgb(var(--op-inkDim));--bp-hair:rgba(255,255,255,.09);--bp-border:rgba(255,255,255,.16);
+          --bp-field:rgba(255,255,255,.04);--bp-brand:rgb(var(--accent-green));
+          --bp-warn:#f59e0b;--bp-warnBg:rgba(245,158,11,.16);--bp-warnB:rgba(245,158,11,.5);
+          --bp-bad:#f87171;--bp-badBg:rgba(239,68,68,.12);--bp-badB:rgba(248,113,113,.5);
+          --bp-good:#22c55e;--bp-goodBg:rgba(34,197,94,.14);--bp-goodB:rgba(34,197,94,.45);          /* op-good: never retints */
+          --bp-info:#93c5fd;--bp-infoBg:rgba(59,130,246,.16);--bp-infoB:rgba(147,197,253,.45)}
+        /* Native controls are UA-drawn and follow color-scheme, which the app never sets (trap 4). */
+        .dark #page-bin-preview select,.dark #page-bin-preview input,.dark #page-bin-preview textarea{color-scheme:dark}
+        /* Every rule here is (1,1,0) and outranks Tailwind's .hidden (0,1,0): .bp-times{display:flex}
+           kept the chosen-times fields on screen while they were "hidden". */
+        #page-bin-preview .hidden{display:none!important}
+        #page-bin-preview .bp-stack>*+*{margin-top:16px}
+        #page-bin-preview .bp-panel{background:var(--bp-panel);border:1px solid var(--bp-border);border-radius:14px;
+          overflow:hidden;color:var(--bp-ink);min-width:0}
+        #page-bin-preview .bp-bar{background:var(--bp-panelHi);border-bottom:1px solid var(--bp-hair);
+          padding:13px 18px;display:flex;align-items:center;gap:10px 14px;flex-wrap:wrap}
+        #page-bin-preview .bp-lbl{font-size:12px;font-weight:600;color:var(--bp-ink)}
+        #page-bin-preview .bp-grow{flex:1 1 0}
+        #page-bin-preview .bp-status{padding:10px 18px;font-size:12px;color:var(--bp-dim);border-bottom:1px solid var(--bp-hair)}
+        #page-bin-preview .bp-dim,#page-bin-preview .bp-dimc{color:var(--bp-dim)}
+        #page-bin-preview .bp-dim{font-size:12px;line-height:1.5}
+        #page-bin-preview .bp-ink{color:var(--bp-ink);font-weight:600}
+        #page-bin-preview .bp-h{font-size:13px;font-weight:600;color:var(--bp-ink);margin:0 0 8px}
+
+        /* Controls */
+        #page-bin-preview .bp-btn{appearance:none;font:inherit;font-size:12px;font-weight:600;display:inline-flex;align-items:center;
+          justify-content:center;gap:6px;min-height:36px;padding:0 12px;border-radius:9px;cursor:pointer;
+          border:1px solid var(--bp-border);background:var(--bp-panel);color:var(--bp-ink);transition:border-color .2s}
+        #page-bin-preview .bp-btn:hover{border-color:var(--bp-dim)}
+        #page-bin-preview .bp-btn:disabled{opacity:.5;cursor:not-allowed}
+        /* The fill is the brand accent; the label is #06210f, never white (DESIGN.md §4.8: 7.48:1). */
+        #page-bin-preview .bp-btn-pri{background:rgb(var(--accent-green));border-color:rgb(var(--accent-green));color:#06210f}
+        #page-bin-preview .bp-btn-pri:hover{border-color:#06210f}
+        #page-bin-preview .bp-btn-bad{border-color:var(--bp-badB);color:var(--bp-bad)}
+        #page-bin-preview .bp-btn-sm{min-height:30px;padding:0 9px}
+        #page-bin-preview .bp-seg{appearance:none;font:inherit;font-size:12px;font-weight:600;min-height:32px;padding:0 11px;cursor:pointer;
+          border:1px solid var(--bp-border);background:var(--bp-panel);color:var(--bp-dim)}
+        #page-bin-preview .bp-seg:first-child{border-radius:9px 0 0 9px}
+        #page-bin-preview .bp-seg+.bp-seg{border-left:0;border-radius:0 9px 9px 0}
+        #page-bin-preview .bp-seg.on{color:var(--bp-ink);background:var(--bp-panelHi);border-color:var(--bp-dim)}
+        /* type= is always written on these inputs: CSS can't see a type the input only defaults to (trap 1). */
+        #page-bin-preview .bp-in{font:inherit;font-size:14px;color:var(--bp-ink);background:var(--bp-field);
+          border:1px solid var(--bp-border);border-radius:9px;padding:7px 10px;min-height:36px;max-width:100%;box-sizing:border-box}
+        #page-bin-preview .bp-in:focus{outline:2px solid rgb(var(--accent-green) / .6);outline-offset:1px}
+        #page-bin-preview .bp-in:disabled{opacity:.55}
+        #page-bin-preview textarea.bp-in{width:100%;resize:vertical}
+        /* "Changed, not saved yet": the §4.8 dirty cell. */
+        #page-bin-preview .bp-in.bp-dirty{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.55)}
+        #page-bin-preview .bp-check.bp-dirty{background:rgba(245,158,11,.14);border-radius:8px;padding:2px 6px}
+        #page-bin-preview .bp-btn.bp-dirty{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.55)}
+        #page-bin-preview .bp-field{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:500;color:var(--bp-dim)}
+        #page-bin-preview .bp-check{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--bp-ink);cursor:pointer}
+        #page-bin-preview .bp-check input{width:16px;height:16px;accent-color:rgb(var(--accent-green))}
+        #page-bin-preview .bp-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+        #page-bin-preview .bp-msg{font-size:12px;min-height:18px;margin:0;color:var(--bp-dim)}
+        #page-bin-preview .bp-msg-good{color:var(--bp-good)}
+        #page-bin-preview .bp-msg-bad{color:var(--bp-bad)}
+
+        /* Status chips. The tint is background + border; the text colour is measured on the tint. */
+        #page-bin-preview .bp-chip{display:inline-flex;align-items:center;white-space:nowrap;font-size:11px;font-weight:600;
+          padding:2px 8px;border-radius:999px;border:1px solid var(--bp-border);color:var(--bp-ink)}
+        #page-bin-preview .bp-c-ended{color:var(--bp-dim)}
+        #page-bin-preview .bp-c-wait{background:var(--bp-warnBg);border-color:var(--bp-warnB);color:var(--bp-warn)}
+        #page-bin-preview .bp-c-sched{background:var(--bp-infoBg);border-color:var(--bp-infoB);color:var(--bp-info)}
+        #page-bin-preview .bp-c-live{background:var(--bp-goodBg);border-color:var(--bp-goodB);color:var(--bp-good)}
+        #page-bin-preview .bp-c-back{background:var(--bp-badBg);border-color:var(--bp-badB);color:var(--bp-bad)}
+        #page-bin-preview .bp-c-pulled{border-color:var(--bp-badB);color:var(--bp-bad)}
+
+        /* The previews table (§4.8: sticky header, sticky first column with its own background). */
+        #page-bin-preview .bp-tblwrap{overflow-x:auto}
+        #page-bin-preview .bp-tbl{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;color:var(--bp-ink)}
+        #page-bin-preview .bp-tbl th,#page-bin-preview .bp-tbl td{padding:0 10px;height:42px;white-space:nowrap;text-align:left;
+          border-bottom:1px solid var(--bp-hair);font-size:12px}
+        #page-bin-preview .bp-tbl thead th{height:34px;position:sticky;top:0;background:var(--bp-panelHi);font-size:11px;font-weight:600;color:var(--bp-dim);z-index:2}
+        #page-bin-preview .bp-tbl .num{text-align:right}
+        #page-bin-preview .bp-tbl .k{position:sticky;left:0;background:var(--bp-panel);z-index:1}
+        #page-bin-preview .bp-tbl thead .k{background:var(--bp-panelHi);z-index:3}
+        #page-bin-preview .bp-tbl tbody tr{cursor:pointer}
+        #page-bin-preview .bp-tbl tbody tr:hover td,#page-bin-preview .bp-tbl tbody tr.on td{background:var(--bp-panelHi)}
+        #page-bin-preview .bp-open{appearance:none;font:inherit;font-size:12px;font-weight:600;background:none;border:0;padding:0;
+          color:var(--bp-brand);cursor:pointer;min-height:36px}
+        #page-bin-preview .bp-open:hover{text-decoration:underline}
+        #page-bin-preview .bp-legend{border-top:1px solid var(--bp-hair);padding:12px 18px 14px;display:grid;
+          grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:8px 18px}
+        #page-bin-preview .bp-lgr{display:flex;align-items:flex-start;gap:9px;font-size:12px;color:var(--bp-dim);line-height:1.5}
+        #page-bin-preview .bp-lgr .bp-chip{flex:none}
+        #page-bin-preview .bp-empty,#page-bin-preview .bp-err{padding:18px;font-size:13px;color:var(--bp-dim)}
+        #page-bin-preview .bp-err{color:var(--bp-bad);display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+        #page-bin-preview .bp-skrow{height:42px;margin:8px 18px;border-radius:8px}
+
+        /* One preview: the form or the review on the left, the phone card on the right. */
+        #page-bin-preview .bp-dbody{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:20px;padding:16px 18px 18px}
+        #page-bin-preview .bp-dmain{min-width:0;display:flex;flex-direction:column;gap:14px}
+        #page-bin-preview .bp-facts{font-size:12px;color:var(--bp-dim);margin:0}
+        #page-bin-preview .bp-note{font-size:13px;line-height:1.5;padding:10px 12px;border-radius:10px;border:1px solid var(--bp-border);color:var(--bp-ink)}
+        #page-bin-preview .bp-note-bad{background:var(--bp-badBg);border-color:var(--bp-badB)}
+        #page-bin-preview .bp-review{display:flex;flex-direction:column;gap:10px;padding:14px;border-radius:12px;
+          border:1px solid var(--bp-border);background:var(--bp-panelHi)}
+        #page-bin-preview .bp-review p{margin:0;font-size:13px;line-height:1.5}
+        #page-bin-preview .bp-times{display:flex;flex-wrap:wrap;gap:10px}
+        #page-bin-preview .bp-times .bp-field{flex:1 1 190px}
+        #page-bin-preview .bp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px}
+        #page-bin-preview .bp-pick{appearance:none;position:relative;padding:0;border:2px solid transparent;border-radius:10px;
+          overflow:hidden;cursor:pointer;background:var(--bp-panelHi);aspect-ratio:1/1}
+        #page-bin-preview .bp-pick img{display:block;width:100%;height:100%;object-fit:cover}
+        #page-bin-preview .bp-pick.on{border-color:rgb(var(--accent-green))}
+        #page-bin-preview .bp-ord{position:absolute;top:5px;left:5px;min-width:22px;height:22px;padding:0 5px;border-radius:999px;
+          display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;
+          background:rgb(var(--accent-green));color:#06210f}
+        #page-bin-preview .bp-upload{position:relative;align-self:flex-start;margin-top:4px}
+        #page-bin-preview .bp-upload input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
+        #page-bin-preview .bp-upload:focus-within{outline:2px solid rgb(var(--accent-green) / .6);outline-offset:2px}
+
+        /* Phone card: how the preview reads on the store page. */
+        #page-bin-preview .bp-phone{width:100%;max-width:340px;border:1px solid var(--bp-border);border-radius:22px;
+          background:var(--bp-panelHi);padding:14px;box-sizing:border-box;color:var(--bp-ink)}
+        #page-bin-preview .bp-ph-name{font-size:15px;font-weight:600}
+        #page-bin-preview .bp-ph-sub{font-size:12px;color:var(--bp-dim);margin:2px 0 10px}
+        #page-bin-preview .bp-ph-hero{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:12px;background:var(--bp-panel)}
+        #page-bin-preview .bp-ph-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:6px}
+        #page-bin-preview .bp-ph-grid img{display:block;width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:8px;background:var(--bp-panel)}
+        #page-bin-preview .bp-ph-none{aspect-ratio:4/3;border-radius:12px;border:1px dashed var(--bp-border);display:flex;
+          align-items:center;justify-content:center;font-size:12px;color:var(--bp-dim)}
+        #page-bin-preview .bp-ph-cap{font-size:13px;line-height:1.5;margin:10px 0 0;color:var(--bp-ink);overflow-wrap:anywhere}
+        #page-bin-preview .bp-ph-note{font-size:12px;color:var(--bp-dim);margin:8px 2px 0;max-width:340px}
+
+        /* Store settings. */
+        #page-bin-preview .bp-sec{padding:16px 18px;border-bottom:1px solid var(--bp-hair)}
+        #page-bin-preview .bp-sec:last-child{border-bottom:0}
+        #page-bin-preview .bp-fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px 14px}
+        #page-bin-preview .bp-days{display:grid;grid-template-columns:44px minmax(0,1fr);gap:8px 12px;align-items:center}
+        #page-bin-preview .bp-day{font-size:12px;font-weight:600;color:var(--bp-ink)}
+        #page-bin-preview .bp-dayrow{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:12px;color:var(--bp-dim)}
+        #page-bin-preview .bp-tier{display:inline-flex;flex-wrap:wrap;align-items:center;gap:5px;font-size:12px;color:var(--bp-dim)}
+        #page-bin-preview .bp-tier input[data-k="price"]{width:72px}
+        #page-bin-preview input[type="time"].bp-in{width:118px}
+        #page-bin-preview .bp-ovlist{list-style:none;margin:0 0 12px;padding:0;display:flex;flex-direction:column;gap:6px}
+        #page-bin-preview .bp-ov{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:13px;color:var(--bp-ink)}
+        #page-bin-preview .bp-ovadd{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px 12px}
+
+        @media (max-width:1023px){
+          #page-bin-preview .bp-dbody{grid-template-columns:minmax(0,1fr)}
+        }
+        @media (max-width:640px){
+          #page-bin-preview .bp-bar,#page-bin-preview .bp-status,#page-bin-preview .bp-legend,#page-bin-preview .bp-sec,
+          #page-bin-preview .bp-empty,#page-bin-preview .bp-err{padding-left:12px;padding-right:12px}
+          #page-bin-preview .bp-dbody{padding:12px}
+          /* A day's prices need the full width on a phone: the day name goes above its row. */
+          #page-bin-preview .bp-days{grid-template-columns:minmax(0,1fr);gap:4px}
+          #page-bin-preview .bp-day{margin-top:6px}
+        }
+      </style>
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-6xl mx-auto flex flex-wrap items-end justify-between gap-3">
+          <div class="min-w-0">
+            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Bin Preview</h1>
+            <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Photos of the next bin drop, for the store's page on the new website. Nothing shows there until an admin approves it and the store's page is switched on.</p>
+          </div>
+          <label class="bp-field" for="bp-store">Store
+            <select id="bp-store" class="bp-in"></select>
+          </label>
+        </div>
+      </div>
+
+      <div class="max-w-6xl mx-auto px-4 sm:px-6 py-6 bp-stack">
+        <div id="bp-list" class="bp-panel"></div>
+        <div id="bp-detail" class="bp-panel hidden"></div>
+        <div id="bp-settings" class="bp-panel hidden"></div>
+      </div>
+    </div><!-- end #page-bin-preview -->
 
     <div id="page-content" class="hidden">
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
@@ -13713,7 +13904,7 @@
         && !(page === 'supply-request' && pageLevel('supply-request') >= 1)) return;
 
     // Guard admin-only pages
-    const adminOnly = ['inventory-add', 'inventory-viewer', 'inventory-sale', 'marketing', 'flow-calendar', 'content', 'comments', 'merch-products'];
+    const adminOnly = ['inventory-add', 'inventory-viewer', 'inventory-sale', 'marketing', 'flow-calendar', 'content', 'comments', 'merch-products', 'bin-preview'];
     // Price Scan is the one Merchandising page a MANAGER uses — they price items on the
     // floor. Everything else there is a buying surface and stays admin-only.
     const managerPages = ['merch-scan'];
@@ -13895,6 +14086,9 @@
     }
     if (page === 'submit-photos') {
       if (typeof initSubmitPhotos === 'function') initSubmitPhotos();
+    }
+    if (page === 'bin-preview') {
+      if (typeof initBinPreview === 'function') initBinPreview();
     }
     if (page === 'content') {
       if (typeof initContent === 'function') initContent();
@@ -20263,6 +20457,727 @@
     renderSpTypes();
     spLoadTargets();
     show(`✓ ${label} sent to marketing. Thank you!`, 'text-accent-green');
+  }
+
+  // ── Bin Preview (Marketing › Bin Preview) ─────────────────────────────────
+  // The Hub half of the Bargain Lane website pilot (docs/plans/bargainlane-website.md §4.6):
+  // a store's photos for one sale day, sent for review, approved into a window on the store's
+  // web page, pulled if they are wrong; plus the store settings that page is built from.
+  // The worker (handleSitePilotAction) decides who may do what and checks every revision;
+  // this page only draws it and sends back the revision it showed.
+  // 🔑 Admins and superusers only until the website exists (Brian, 2026-11-25). The sidebar
+  // item (applyRoleUI) and navigateToPage's adminOnly list hold that line together; opening it
+  // to managers means changing both, and section 7 of scripts/browser-bin-preview.mjs.
+  const BP_DAYS = [['sun', 'Sun'], ['mon', 'Mon'], ['tue', 'Tue'], ['wed', 'Wed'], ['thu', 'Thu'], ['fri', 'Fri'], ['sat', 'Sat']];
+  // Keyed by the worker's derived phase: scheduled / live / expired are never stored.
+  const BP_PHASE = {
+    draft:     ['Draft', 'bp-c-draft', 'Saved, not sent for review yet.'],
+    submitted: ['Waiting for review', 'bp-c-wait', 'Sent for review. Not on the site.'],
+    scheduled: ['Scheduled', 'bp-c-sched', 'Approved. Shows on the site when its window starts.'],
+    live:      ['On the site', 'bp-c-live', "Showing on the store's page now."],
+    expired:   ['Ended', 'bp-c-ended', 'Approved, and its window is over.'],
+    rejected:  ['Sent back', 'bp-c-back', 'Returned with a reason. Edit it and submit again.'],
+    pulled:    ['Pulled', 'bp-c-pulled', 'Taken off the site by an admin, photos included.'],
+  };
+  const BP_TZS = [['America/New_York', 'Eastern (New York)'], ['America/Detroit', 'Eastern (Detroit)'],
+                  ['America/Indiana/Indianapolis', 'Eastern (Indianapolis)'], ['America/Chicago', 'Central (Chicago)']];
+  const bp = {
+    store: null, filter: 'open', previews: null, listErr: null,
+    sel: null, editing: false, form: null, msg: null, busy: false, social: null,
+    photos: null, photosErr: null,
+    settings: null, overrides: [], setForm: null, setOrig: null, setErr: null, setMsg: null, setBusy: false,
+    ov: null,   // the half-typed holiday entry, kept so a re-render of the panel does not wipe it
+    seq: 0, wired: false,
+  };
+
+  // escapeHtml serialises a text node, which leaves " and ' alone. This page writes stored text into
+  // value="…" attributes, so quotes are escaped too: a store name with a " in it must not end the attribute.
+  const bpEsc = s => escapeHtml(s == null ? '' : s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  const bpIsReviewer = () => spIsAdmin();
+  function bpStoreName(code) {
+    const s = STORES.find(x => x.startsWith(code + '/'));
+    return s ? s.slice(s.indexOf(' ') + 1) : code;
+  }
+  const bpTz = () => (bp.settings && bp.settings.tz) || 'America/New_York';
+  // Wall-clock date and time in a zone. h23, so midnight is 00, never 24.
+  function bpParts(ms, tz) {
+    const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(ms)).map(x => [x.type, x.value]));
+    return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour}:${p.minute}` };
+  }
+  // A store-local YYYY-MM-DD read at noon UTC, so no zone can move it to the day before.
+  const bpDay = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' });
+  const bpWhen = iso => iso ? new Date(iso).toLocaleString('en-US', { timeZone: bpTz(), weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+  const bpWall = iso => { if (!iso) return ''; const p = bpParts(Date.parse(iso), bpTz()); return `${p.date}T${p.time}`; };
+  const bpClock = hm => new Date(`2000-01-01T${hm}:00Z`).toLocaleTimeString('en-US', { timeZone: 'UTC', hour: 'numeric', minute: '2-digit' });
+  const bpMoney = n => Number.isInteger(n) ? `$${n}` : `$${Number(n).toFixed(2)}`;
+  function bpAddDays(d, n) { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); }
+  // New bins go out on Friday: a new preview starts on the next one, in the store's own calendar.
+  function bpNextFriday() {
+    const today = bpParts(Date.now(), bpTz()).date;
+    const dow = new Date(today + 'T12:00:00Z').getUTCDay();
+    return bpAddDays(today, ((5 - dow + 7) % 7) || 7);
+  }
+
+  // One worker call. Never throws: { j } when the worker said ok, else { err, code, status }.
+  function bpErr(j, r) {
+    switch (j && j.code) {
+      case 'UNCLASSIFIED_ACTION': return "Bin Preview isn't switched on: the server half of this update is missing.";
+      case 'NO_SESSION':          return 'Your session has expired. Sign in again.';
+      case 'REVIEWER_ONLY':       return 'Only a Bargain Lane admin can do that.';
+      case 'STORE':               return "Your account can't work on this store.";
+    }
+    if (r.status === 401) return 'Your session has expired. Sign in again.';
+    if (r.ok) return "The server's answer was cut off.";
+    return (j && j.error) || `The server answered ${r.status}.`;
+  }
+  async function bpApi(action, query, body) {
+    const url = `${WORKER_BASE}?action=${action}` + (query ? '&' + new URLSearchParams(query) : '');
+    let r;
+    try {
+      r = await fetch(url, body ? { method: 'POST', credentials: 'include', cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : { credentials: 'include', cache: 'no-store' });
+    } catch (e) {
+      return { err: "Couldn't reach the server.", code: null, status: 0 };
+    }
+    const j = await r.json().catch(() => null);
+    if (r.ok && j && j.ok) return { j };
+    return { err: bpErr(j, r), code: (j && j.code) || null, status: r.status };
+  }
+
+  function initBinPreview() {
+    const page = el('page-bin-preview');
+    if (!bp.wired && page) { bp.wired = true; bpWire(page); }
+    const codes = spStores();
+    if (!bp.store || !codes.includes(bp.store)) bp.store = codes.includes('BL4') ? 'BL4' : codes[0];
+    const sel = el('bp-store');
+    sel.innerHTML = codes.map(c => `<option value="${c}">${bpEsc(bpStoreName(c))} (${c})</option>`).join('');
+    sel.value = bp.store;
+    bpLoad();
+  }
+  window.initBinPreview = initBinPreview;
+
+  async function bpLoad() {
+    const seq = ++bp.seq, store = bp.store;
+    Object.assign(bp, { previews: null, listErr: null, sel: null, editing: false, form: null, msg: null, social: null,
+      photos: null, photosErr: null, settings: null, overrides: [], setForm: null, setOrig: null, setErr: null, setMsg: null, ov: bpOvBlank() });
+    bpRender();
+    // marketing-photos is admins' only. Managers, when the page opens to them, pick from what they upload.
+    const [l, s, ph] = await Promise.all([
+      bpApi('bin-previews', { store }),
+      bpApi('store-settings', { store }),
+      bpIsReviewer() ? bpApi('marketing-photos', { store, type: 'bins', status: 'all' }) : Promise.resolve({ j: { photos: [] } }),
+    ]);
+    if (seq !== bp.seq) return;   // a later store pick won
+    if (l.err) bp.listErr = l.err; else bp.previews = bpSorted(l.j.previews);
+    if (s.err) bp.setErr = s.err;
+    else { bp.settings = s.j.settings || bpDefaultSettings(store); bp.overrides = s.j.overrides || []; bpResetSetForm(); }
+    if (ph.err) bp.photosErr = ph.err; else bp.photos = (ph.j.photos || []).filter(p => p.status !== 'rejected');
+    bpRender();
+  }
+  async function bpReloadList() {
+    const seq = bp.seq, r = await bpApi('bin-previews', { store: bp.store });
+    if (seq !== bp.seq) return;
+    if (r.err) bp.listErr = r.err; else { bp.listErr = null; bp.previews = bpSorted(r.j.previews); }
+    bpRenderList(); bpRenderDetail();
+  }
+  async function bpReloadOverrides() {
+    const seq = bp.seq, r = await bpApi('store-settings', { store: bp.store });
+    if (seq !== bp.seq) return;
+    if (!r.err) bp.overrides = r.j.overrides || [];
+    bpRenderSettings();
+  }
+  const bpOvBlank = () => ({ date: '', closed: false, open: '', close: '', price: '', note: '' });
+  // The worker's siteDefaultSettings: what a store with no row yet reads as.
+  function bpDefaultSettings(store) {
+    return { store, tz: 'America/New_York', profile: {}, hours: {}, binPrices: {}, previewDefaults: {}, public: false, revision: 0 };
+  }
+  function bpRender() { bpRenderList(); bpRenderDetail(); bpRenderSettings(); }
+  const bpFind = id => (bp.previews || []).find(p => p.id === id) || null;
+  // Latest sale day first, as the worker sends them; kept here too so an upsert lands in place.
+  const bpSorted = list => (list || []).slice().sort((a, b) => a.saleDate < b.saleDate ? 1 : a.saleDate > b.saleDate ? -1 : b.id - a.id);
+  function bpUpsert(p) {
+    if (!p) return;
+    const all = (bp.previews || []).filter(x => x.id !== p.id);
+    all.push(p);
+    bp.previews = bpSorted(all);
+  }
+  const bpChip = phase => { const c = BP_PHASE[phase] || [phase, 'bp-c-draft']; return `<span class="bp-chip ${c[1]}">${bpEsc(c[0])}</span>`; };
+  const bpWho = p => String(p.submittedBy || p.createdBy || '').split('@')[0];
+
+  // ── The list ──
+  function bpRenderList() {
+    const box = el('bp-list'); if (!box) return;
+    const name = bpStoreName(bp.store);
+    const seg = [['open', 'Open'], ['all', 'All']].map(([v, l]) =>
+      `<button type="button" class="bp-seg${bp.filter === v ? ' on' : ''}" data-filter="${v}" aria-pressed="${bp.filter === v}">${l}</button>`).join('');
+    let status = 'Loading…', body;
+    if (bp.listErr) {
+      status = "Couldn't load previews.";
+      body = `<div class="bp-err">${bpEsc(bp.listErr)} <button type="button" class="bp-btn" data-act="retry-list">Retry</button></div>`;
+    } else if (!bp.previews) {
+      body = '<div class="bp-skrow skel"></div><div class="bp-skrow skel"></div><div class="bp-skrow skel"></div>';
+    } else {
+      const wait = bp.previews.filter(p => p.phase === 'submitted').length, live = bp.previews.filter(p => p.phase === 'live').length;
+      status = `${wait} waiting for review · ${live} on the site now. Times are in ${bpEsc(name)}'s local time.`;
+      // Open = still in play. Pulled and ended previews are history, under All.
+      const rows = bp.filter === 'all' ? bp.previews : bp.previews.filter(p => p.phase !== 'pulled' && p.phase !== 'expired');
+      body = !rows.length
+        ? `<div class="bp-empty">No previews ${bp.filter === 'all' ? 'yet' : 'open'} for ${bpEsc(name)}. Start one with New preview.</div>`
+        : `<div class="bp-tblwrap"><table class="bp-tbl"><thead><tr><th class="k">Sale day</th><th>Status</th><th class="num">Photos</th>`
+          + `<th>On the site</th><th>By</th></tr></thead><tbody>`
+          + rows.map(p => `<tr data-id="${p.id}"${bp.sel === p.id ? ' class="on"' : ''}><td class="k"><button type="button" class="bp-open">${bpEsc(bpDay(p.saleDate))}</button></td>`
+            + `<td>${bpChip(p.phase)}</td><td class="num">${p.photoIds.length}</td>`
+            + `<td>${p.startsAt ? `${bpEsc(bpWhen(p.startsAt))} → ${bpEsc(bpWhen(p.endsAt))}` : '<span class="bp-dimc">—</span>'}</td>`
+            + `<td class="bp-dimc">${bpEsc(bpWho(p))}</td></tr>`).join('')
+          + '</tbody></table></div>';
+    }
+    const legend = Object.values(BP_PHASE).map(([l, c, d]) => `<div class="bp-lgr"><span class="bp-chip ${c}">${l}</span><span>${bpEsc(d)}</span></div>`).join('');
+    box.innerHTML = `<div class="bp-bar"><span class="bp-lbl">Previews · ${bpEsc(name)}</span><span>${seg}</span><span class="bp-grow"></span>`
+      + `<button type="button" class="bp-btn bp-btn-pri" data-act="new">New preview</button></div>`
+      + `<p class="bp-status">${status}</p>${body}<div class="bp-legend">${legend}</div>`;
+  }
+
+  // ── One preview ──
+  function bpOpen(id) {
+    const p = bpFind(id); if (!p) return;
+    bp.sel = id; bp.msg = null; bp.social = null;
+    bp.editing = p.status === 'draft' || p.status === 'rejected';
+    bp.form = { saleDate: p.saleDate, photoIds: [...p.photoIds], caption: p.caption || '' };
+    bpRenderList(); bpRenderDetail();
+    el('bp-detail').scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }
+  function bpNew() {
+    bp.sel = 'new'; bp.editing = true; bp.msg = null; bp.social = null;
+    bp.form = { saleDate: bpNextFriday(), photoIds: [], caption: '' };
+    bpRenderList(); bpRenderDetail();
+    el('bp-detail').scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }
+  function bpClose() { bp.sel = null; bp.form = null; bp.msg = null; bpRenderList(); bpRenderDetail(); }
+  function bpSay(text, tone) {
+    bp.msg = text ? [text, tone || ''] : null;
+    const m = document.querySelector('#bp-detail .bp-msg');
+    if (m) { m.textContent = text || ''; m.className = 'bp-msg' + (tone ? ' bp-msg-' + tone : ''); }
+  }
+  function bpPhoneHtml(ids, caption, saleDate) {
+    const prof = (bp.settings && bp.settings.profile) || {};
+    const title = prof.displayName || `Bargain Lane ${bpStoreName(bp.store)}`;
+    const src = (id, thumb) => `${WORKER_BASE}?action=photo&id=${id}${thumb ? '&size=thumb' : ''}`;
+    const pics = ids.length
+      ? `<img class="bp-ph-hero" src="${src(ids[0])}" alt="">`
+        + (ids.length > 1 ? `<div class="bp-ph-grid">${ids.slice(1).map(id => `<img src="${src(id, true)}" alt="" loading="lazy">`).join('')}</div>` : '')
+      : '<div class="bp-ph-none">No photos picked yet</div>';
+    return `<div class="bp-phone">`
+      + `<div class="bp-ph-name">${bpEsc(title)}</div><div class="bp-ph-sub">Bin preview · ${saleDate ? bpEsc(bpDay(saleDate)) : 'no day picked'}</div>`
+      + pics + (caption ? `<p class="bp-ph-cap">${bpEsc(caption)}</p>` : '') + '</div>'
+      + `<p class="bp-ph-note">How it will look on ${bpEsc(bpStoreName(bp.store))}'s web page. The website isn't live yet.</p>`;
+  }
+  function bpDefaultsText() {
+    const d = (bp.settings && bp.settings.previewDefaults) || {};
+    const n = Number.isInteger(d.startDaysBefore) ? d.startDaysBefore : 1, at = bpClock(d.startTime || '12:00');
+    return n === 0 ? `from ${at} on the sale day` : `from ${at}, ${n} day${n > 1 ? 's' : ''} before the sale`;
+  }
+  // Prefills only: the worker computes the real default window when no times are sent.
+  function bpDefaultWall(saleDate) {
+    const d = (bp.settings && bp.settings.previewDefaults) || {};
+    const n = Number.isInteger(d.startDaysBefore) ? d.startDaysBefore : 1;
+    const wd = BP_DAYS[new Date(saleDate + 'T12:00:00Z').getUTCDay()][0];
+    const h = bp.settings && bp.settings.hours && bp.settings.hours[wd];
+    const o = bp.overrides.find(x => x.date === saleDate);
+    const close = o ? (o.closed ? null : (o.close || (h && h.close))) : (h && h.close);
+    return { start: `${bpAddDays(saleDate, -n)}T${d.startTime || '12:00'}`, end: `${saleDate}T${close || '23:59'}` };
+  }
+  function bpPhotoGridHtml() {
+    if (bp.photosErr) return `<p class="bp-msg bp-msg-bad">Couldn't load this store's photos: ${bpEsc(bp.photosErr)}</p>`;
+    if (!bp.photos) return '<p class="bp-dim">Loading photos…</p>';
+    const sel = bp.form.photoIds, known = new Set(bp.photos.map(p => p.id));
+    // A picked photo older than the newest 200 still shows, first.
+    const ids = sel.filter(id => !known.has(id)).concat(bp.photos.map(p => p.id));
+    if (!ids.length) return `<p class="bp-dim">No bin photos for ${bpEsc(bpStoreName(bp.store))} yet. Upload some here or from Submit Photos.</p>`;
+    return '<div class="bp-grid">' + ids.map(id => {
+      const at = sel.indexOf(id);
+      return `<button type="button" class="bp-pick${at >= 0 ? ' on' : ''}" data-photo="${id}" aria-pressed="${at >= 0}" aria-label="Photo ${id}${at >= 0 ? `, number ${at + 1}` : ''}">`
+        + `<img src="${WORKER_BASE}?action=photo&id=${id}&size=thumb" alt="" loading="lazy">${at >= 0 ? `<span class="bp-ord">${at + 1}</span>` : ''}</button>`;
+    }).join('') + '</div>';
+  }
+  function bpFormHtml(p) {
+    const f = bp.form;
+    return `<label class="bp-field">Sale day<input type="date" id="bp-sale" class="bp-in" value="${bpEsc(f.saleDate)}"></label>`
+      + `<div class="bp-field"><span>Photos · pick up to 10, in the order they should show</span>${bpPhotoGridHtml()}`
+      + `<label class="bp-btn bp-upload">Upload bin photos<input type="file" id="bp-files" accept="image/*" multiple></label>`
+      + `<span class="bp-dim">Uploads here are ${bpEsc(bpStoreName(bp.store))} bin photos, the same as from Submit Photos.</span></div>`
+      + `<label class="bp-field">Caption (optional, shown under the photos)<textarea id="bp-caption" class="bp-in" rows="2" maxlength="500">${bpEsc(f.caption)}</textarea></label>`
+      + (p && p.status === 'submitted' ? '<p class="bp-dim">Saving sends it back to draft until it is submitted again.</p>' : '')
+      + `<div class="bp-actions"><button type="button" class="bp-btn bp-btn-pri" data-act="submit">Submit for review</button>`
+      + `<button type="button" class="bp-btn" data-act="save">Save draft</button>`
+      + (p && p.status === 'submitted' ? '<button type="button" class="bp-btn" data-act="cancel-edit">Cancel</button>' : '') + '</div>';
+  }
+  function bpReviewHtml(p) {
+    const w = bpDefaultWall(p.saleDate);
+    return `<div class="bp-review"><div class="bp-h">Review</div>`
+      + `<p class="bp-dim">Default window: ${bpEsc(bpDefaultsText())}, until closing time on the sale day.</p>`
+      + `<label class="bp-check"><input type="checkbox" id="bp-custom"> Choose the times instead</label>`
+      + `<div id="bp-custom-times" class="bp-times hidden">`
+      + `<label class="bp-field">Starts<input type="datetime-local" id="bp-start" class="bp-in" value="${w.start}"></label>`
+      + `<label class="bp-field">Ends<input type="datetime-local" id="bp-end" class="bp-in" value="${w.end}"></label></div>`
+      + `<label class="bp-field">Note to the store (needed to send it back)<textarea id="bp-note" class="bp-in" rows="2" maxlength="500"></textarea></label>`
+      + `<div class="bp-actions"><button type="button" class="bp-btn bp-btn-pri" data-act="approve">Approve</button>`
+      + `<button type="button" class="bp-btn bp-btn-bad" data-act="reject">Send back</button>`
+      + `<button type="button" class="bp-btn" data-act="edit">Edit</button></div></div>`;
+  }
+  function bpApprovedHtml(p) {
+    const from = bpEsc(bpWhen(p.startsAt)), until = bpEsc(bpWhen(p.endsAt));
+    const when = p.phase === 'live' ? `On the site from ${from} until ${until}.`
+      : p.phase === 'scheduled' ? `Shows on the site from ${from} until ${until}.` : `Was on the site from ${from} until ${until}.`;
+    const drafts = Array.isArray(bp.social) && bp.social.length
+      ? 'Social drafts: ' + bp.social.map(d => `${bpEsc(d.channel)} (${bpEsc(d.status)})`).join(', ') + '.'
+      : "Social posts: none. Buffer isn't connected to Bin Preview yet, so approving posts nothing.";
+    let html = `<div class="bp-review"><p>${when} Times are in ${bpEsc(bpStoreName(p.store))}'s local time.</p><p class="bp-dim">${drafts}</p>`;
+    if (bpIsReviewer() && p.phase !== 'expired') {
+      html += `<div class="bp-h">Change the window</div><div class="bp-times">`
+        + `<label class="bp-field">Starts<input type="datetime-local" id="bp-rs-start" class="bp-in" value="${bpWall(p.startsAt)}"></label>`
+        + `<label class="bp-field">Ends<input type="datetime-local" id="bp-rs-end" class="bp-in" value="${bpWall(p.endsAt)}"></label></div>`
+        + `<div class="bp-actions"><button type="button" class="bp-btn" data-act="reschedule">Save new times</button></div>`
+        + `<div class="bp-h">Take it down</div>`
+        + `<label class="bp-field">Reason for pulling (kept in the log)<input type="text" id="bp-reason" class="bp-in" maxlength="500"></label>`
+        + `<div class="bp-actions"><button type="button" class="bp-btn bp-btn-bad" data-act="pull">Pull from site</button></div>`;
+    }
+    return html + '</div>';
+  }
+  function bpRenderDetail() {
+    const box = el('bp-detail'); if (!box) return;
+    const p = bp.sel === 'new' ? null : bpFind(bp.sel);
+    if (bp.sel == null || (bp.sel !== 'new' && !p)) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+    box.classList.remove('hidden');
+    const editing = !p || (bp.editing && ['draft', 'submitted', 'rejected'].includes(p.status));
+    const ids = editing ? bp.form.photoIds : p.photoIds;
+    const caption = editing ? bp.form.caption : (p.caption || '');
+    const sale = editing ? bp.form.saleDate : p.saleDate;
+    let left = '';
+    if (p) {
+      const facts = [`Started by ${bpEsc(p.createdBy || 'unknown')}`];
+      if (p.submittedBy) facts.push(`submitted by ${bpEsc(p.submittedBy)}`);
+      if (p.status === 'approved' && p.reviewedBy) facts.push(`approved by ${bpEsc(p.reviewedBy)}`);
+      left += `<p class="bp-facts">${facts.join(' · ')}</p>`;
+      if (p.status === 'rejected') left += `<div class="bp-note bp-note-bad">Sent back${p.reviewedBy ? ` by ${bpEsc(p.reviewedBy)}` : ''}: ${bpEsc(p.reviewNote || '')}</div>`;
+      if (p.status === 'pulled') left += `<div class="bp-note bp-note-bad">Pulled${p.pulledBy ? ` by ${bpEsc(p.pulledBy)}` : ''}${p.pulledAt ? ` on ${bpEsc(bpWhen(p.pulledAt))}` : ''}: ${bpEsc(p.pullReason || '')}. Its photos are off the site too.</div>`;
+    }
+    if (editing) left += bpFormHtml(p);
+    else {
+      left += `<p class="bp-dim">Sale day <span class="bp-ink">${bpEsc(bpDay(p.saleDate))}</span> · ${p.photoIds.length} photo${p.photoIds.length === 1 ? '' : 's'}</p>`;
+      if (p.status === 'submitted') left += bpIsReviewer() ? bpReviewHtml(p) : '<p class="bp-dim">Waiting for a Bargain Lane admin to review it.</p>';
+      if (p.status === 'approved') left += bpApprovedHtml(p);
+    }
+    left += `<p class="bp-msg${bp.msg && bp.msg[1] ? ' bp-msg-' + bp.msg[1] : ''}" role="status">${bp.msg ? bpEsc(bp.msg[0]) : ''}</p>`;
+    box.innerHTML = `<div class="bp-bar"><span class="bp-lbl">${p ? 'Preview · ' + bpEsc(bpDay(p.saleDate)) : 'New preview'}</span>${p ? bpChip(p.phase) : ''}`
+      + `<span class="bp-grow"></span><button type="button" class="bp-btn" data-act="close">Close</button></div>`
+      + `<div class="bp-dbody"><div class="bp-dmain">${left}</div><div class="bp-phonewrap">${bpPhoneHtml(ids, caption, sale)}</div></div>`;
+    if (bp.busy) box.querySelectorAll('button, input, textarea, select').forEach(x => { x.disabled = true; });
+  }
+  // The phone card alone, from whichever the detail is showing: the form being edited, or the saved preview.
+  function bpRefreshPhone() {
+    const w = document.querySelector('#bp-detail .bp-phonewrap'); if (!w) return;
+    const p = bp.sel === 'new' ? null : bpFind(bp.sel);
+    const editing = !p || (bp.editing && ['draft', 'submitted', 'rejected'].includes(p.status));
+    if (editing && bp.form) w.innerHTML = bpPhoneHtml(bp.form.photoIds, bp.form.caption, bp.form.saleDate);
+    else if (p) w.innerHTML = bpPhoneHtml(p.photoIds, p.caption || '', p.saleDate);
+  }
+
+  // Every write goes through here. A 409 means someone else changed it first: say so,
+  // reload, and show the new version rather than retrying blind.
+  async function bpWrite(action, body, okText) {
+    if (bp.busy) return null;
+    bp.busy = true;
+    const seq = bp.seq;
+    document.querySelectorAll('#bp-detail button, #bp-detail input, #bp-detail textarea').forEach(x => { x.disabled = true; });
+    const r = await bpApi(action, null, body);
+    bp.busy = false;
+    if (seq !== bp.seq) return null;   // the store changed while this was in flight: it landed, but not on this list
+    if (r.err) {
+      // Only STALE means "someone changed it first". ALREADY_APPROVED_FOR_DAY, NOT_EDITABLE and
+      // NOT_SUBMITTED are refusals with their own sentence, said in place without losing the typing.
+      if (r.status === 409 && r.code === 'STALE') {
+        await uiAlert(r.err, { title: 'This preview changed' });
+        bp.editing = false; bp.msg = null;
+        await bpReloadList();
+        return null;
+      }
+      // Not a re-render: the reviewer's note and chosen times are typed, not kept in state.
+      document.querySelectorAll('#bp-detail button, #bp-detail input, #bp-detail textarea').forEach(x => { x.disabled = false; });
+      bpSay(r.err, 'bad');
+      return null;
+    }
+    bpUpsert(r.j.preview);
+    if (Array.isArray(r.j.socialDrafts)) bp.social = r.j.socialDrafts;
+    bp.msg = okText ? [okText, 'good'] : null;
+    return r.j.preview;
+  }
+  function bpFormChanged(p) {
+    const f = bp.form;
+    return !p || f.saleDate !== p.saleDate || JSON.stringify(f.photoIds) !== JSON.stringify(p.photoIds) || (f.caption.trim() || null) !== (p.caption || null);
+  }
+  async function bpSave(submit) {
+    const f = bp.form, p = bp.sel === 'new' ? null : bpFind(bp.sel);
+    if (!f.saleDate) return bpSay('Pick the sale day.', 'bad');
+    if (!f.photoIds.length) return bpSay('Pick at least one photo.', 'bad');
+    let cur = p;
+    if (bpFormChanged(p) || !submit || (p && p.status !== 'draft')) {
+      const body = { saleDate: f.saleDate, photoIds: f.photoIds, caption: f.caption.trim() || null };
+      if (p) { body.id = p.id; body.expectedRevision = p.revision; } else body.store = bp.store;
+      cur = await bpWrite('bin-preview-save', body, submit ? null : 'Saved as a draft.');
+      if (!cur) return;
+      bp.sel = cur.id;
+    }
+    if (submit) {
+      const s = await bpWrite('bin-preview-submit', { id: cur.id, expectedRevision: cur.revision }, 'Sent for review.');
+      if (!s) { bpRenderList(); return; }
+      bp.editing = false;
+    }
+    bpRenderList(); bpRenderDetail();
+  }
+  async function bpReview(decision) {
+    const p = bpFind(bp.sel); if (!p) return;
+    const note = (el('bp-note') && el('bp-note').value.trim()) || '';
+    const body = { id: p.id, decision, expectedRevision: p.revision };
+    if (decision === 'reject') {
+      if (!note) return bpSay('Say why it is being sent back, so the store can fix it.', 'bad');
+      body.note = note;
+    } else {
+      if (note) body.note = note;
+      if (el('bp-custom') && el('bp-custom').checked) {
+        const s = el('bp-start').value, e = el('bp-end').value;
+        if (!s || !e) return bpSay('Give both a start and an end, or untick "Choose the times instead".', 'bad');
+        body.startsAt = s; body.endsAt = e;
+      }
+    }
+    if (await bpWrite('bin-preview-review', body, decision === 'reject' ? 'Sent back to the store.' : 'Approved.')) { bpRenderList(); bpRenderDetail(); }
+  }
+  async function bpReschedule() {
+    const p = bpFind(bp.sel); if (!p) return;
+    const s = el('bp-rs-start').value, e = el('bp-rs-end').value;
+    if (!s || !e) return bpSay('Give both a start and an end.', 'bad');
+    if (await bpWrite('bin-preview-review', { id: p.id, decision: 'reschedule', startsAt: s, endsAt: e, expectedRevision: p.revision }, 'New times saved.')) {
+      bpRenderList(); bpRenderDetail();
+    }
+  }
+  async function bpPull() {
+    const p = bpFind(bp.sel); if (!p) return;
+    const reason = el('bp-reason').value.trim();
+    if (!reason) return bpSay('Say why it is being pulled. The reason is kept in the log.', 'bad');
+    const ok = await uiConfirm(`Take the ${bpDay(p.saleDate)} preview off ${bpStoreName(p.store)}'s page now? Its photos come down with it. To show it again, start a new preview.`,
+      { title: 'Pull from the site?', okText: 'Pull from site', danger: true, defaultCancel: true });
+    if (!ok) return;
+    if (await bpWrite('bin-preview-pull', { id: p.id, reason }, 'Pulled from the site.')) { bpRenderList(); bpRenderDetail(); }
+  }
+  function bpTogglePhoto(id) {
+    const ids = bp.form.photoIds, at = ids.indexOf(id);
+    if (at >= 0) ids.splice(at, 1);
+    else if (ids.length >= 10) return bpSay('A preview holds up to 10 photos.', 'bad');
+    else ids.push(id);
+    bp.msg = null; bpRenderDetail();
+  }
+  // Submit Photos' upload (spSubmit), photo by photo, for this store's bins.
+  async function bpUpload(input) {
+    const files = [...(input.files || [])]; input.value = '';
+    if (!files.length) return;
+    // 🔑 Fixed now: the store picker can change while a batch is uploading, and every photo of
+    // this batch still belongs to the store it was picked for.
+    const store = bp.store, seq = bp.seq;
+    let ok = 0, fail = 0;
+    for (const file of files) {
+      if (seq === bp.seq) bpSay(`Uploading ${ok + fail + 1} of ${files.length}…`);
+      try {
+        const full = await spDownscale(file, SP_UPLOAD_MAX, 0.85);
+        const thumb = await spDownscale(file, SP_PREVIEW_MAX, 0.72);
+        const fd = new FormData();
+        fd.append('photo', full || file, full && full !== file ? String(file.name || 'photo').replace(/\.[^.]+$/, '') + '.jpg' : (file.name || 'photo'));
+        if (thumb && thumb.type === 'image/jpeg') fd.append('thumb', thumb, 'thumb.jpg');
+        fd.append('store', store);
+        fd.append('photo_type', 'bins');
+        const r = await fetch(`${WORKER_BASE}?action=photo-upload`, { method: 'POST', credentials: 'include', body: fd });
+        const d = await r.json().catch(() => ({}));
+        if (r.ok && d.ok && Number.isInteger(d.id)) {
+          ok++;
+          if (seq === bp.seq) {
+            (bp.photos = bp.photos || []).unshift({ id: d.id, store, photo_type: 'bins', status: 'new' });
+            if (bp.form && bp.form.photoIds.length < 10) bp.form.photoIds.push(d.id);
+          }
+        } else fail++;
+      } catch (_) { fail++; }
+    }
+    if (seq !== bp.seq) return;
+    bp.msg = fail ? [`Uploaded ${ok}, but ${fail} failed. Try those again.`, 'bad'] : [`Uploaded ${ok} photo${ok === 1 ? '' : 's'} and picked ${ok === 1 ? 'it' : 'them'}.`, 'good'];
+    bpRenderDetail();
+  }
+
+  // ── Store settings (admins) ──
+  // The form keeps strings exactly as typed; bpSetPayload turns them into the worker's shapes.
+  function bpFormFromSettings(s) {
+    const p = s.profile || {}, a = p.address || {}, d = s.previewDefaults || {};
+    return {
+      tz: s.tz || 'America/New_York', public: !!s.public,
+      profile: { displayName: p.displayName || '', street: a.street || '', city: a.city || '', state: a.state || '', zip: a.zip || '', phone: p.phone || '', mapsUrl: p.mapsUrl || '' },
+      hours: Object.fromEntries(BP_DAYS.map(([k]) => { const h = (s.hours || {})[k]; return [k, h ? { open: h.open, close: h.close, closed: false } : { open: '', close: '', closed: true }]; })),
+      binPrices: Object.fromEntries(BP_DAYS.map(([k]) => [k, ((s.binPrices || {})[k] || []).map(t => ({ from: t.from, price: String(t.price) }))])),
+      days: String(Number.isInteger(d.startDaysBefore) ? d.startDaysBefore : 1), startTime: d.startTime || '12:00',
+    };
+  }
+  function bpResetSetForm() {
+    bp.setForm = bpFormFromSettings(bp.settings);
+    bp.setOrig = JSON.parse(JSON.stringify(bp.setForm));
+  }
+  function bpSetPayload(f) {
+    const v = x => String(x || '').trim() || null;
+    const a = { street: v(f.profile.street), city: v(f.profile.city), state: v(f.profile.state), zip: v(f.profile.zip) };
+    const hours = {}, binPrices = {};
+    for (const [k] of BP_DAYS) {
+      const h = f.hours[k];
+      if (!h.closed && h.open && h.close) hours[k] = { open: h.open, close: h.close };
+      const tiers = f.binPrices[k].filter(t => String(t.price).trim() !== '');
+      // A day's first price runs from midnight (the worker's siteTiers rule), so it has no time of its own here.
+      if (tiers.length) binPrices[k] = tiers.map((t, i) => ({ from: i === 0 ? '00:00' : t.from, price: Number(t.price) }));
+    }
+    return {
+      tz: f.tz, public: !!f.public,
+      profile: { displayName: v(f.profile.displayName), address: Object.values(a).some(Boolean) ? a : null, phone: v(f.profile.phone), mapsUrl: v(f.profile.mapsUrl) },
+      hours, binPrices, previewDefaults: { startDaysBefore: Number(f.days), startTime: f.startTime },
+    };
+  }
+  function bpSetProblem(f) {
+    for (const [k, l] of BP_DAYS) {
+      const h = f.hours[k];
+      if (!h.closed && (!h.open || !h.close)) return `Give ${l} both an opening and a closing time, or tick Closed.`;
+      const tiers = f.binPrices[k];
+      const priced = tiers.filter(t => String(t.price).trim() !== '').length;
+      for (let i = 0; i < tiers.length; i++) {
+        const t = tiers[i];
+        // Dropping an empty first price would move the next change to midnight without a word.
+        if (String(t.price).trim() === '') { if (priced) return `${l}: fill in or remove the empty price.`; continue; }
+        if (!/^\d{1,4}(\.\d{1,2})?$/.test(String(t.price).trim())) return `${l}: a bin price is a number, like 12 or 0.50.`;
+        if (i > 0 && !t.from) return `${l}: give each price change a time.`;
+      }
+    }
+    return null;
+  }
+  const bpGet = (o, path) => path.split('.').reduce((x, k) => (x == null ? x : x[k]), o);
+  function bpPut(o, path, val) { const ks = path.split('.'); const last = ks.pop(); ks.reduce((x, k) => x[k], o)[last] = val; }
+  const bpIsDirty = path => String(bpGet(bp.setForm, path) ?? '') !== String(bpGet(bp.setOrig, path) ?? '');
+  // One input of the settings form, marked as changed when it no longer matches what was loaded.
+  function bpIn(path, type, extra = '') {
+    const val = bpGet(bp.setForm, path);
+    const dirty = bpIsDirty(path) ? ' bp-dirty' : '';
+    return `<input type="${type}" class="bp-in${dirty}" data-path="${path}" value="${bpEsc(val)}" ${extra}>`;
+  }
+  function bpSetSay(text, tone) {
+    bp.setMsg = text ? [text, tone || ''] : null;
+    const m = document.querySelector('#bp-settings .bp-setmsg');
+    if (m) { m.textContent = text || ''; m.className = 'bp-msg bp-setmsg' + (tone ? ' bp-msg-' + tone : ''); }
+  }
+  function bpRenderSettings() {
+    const box = el('bp-settings'); if (!box) return;
+    if (!bpIsReviewer()) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+    box.classList.remove('hidden');
+    const name = bpStoreName(bp.store);
+    const head = `<div class="bp-bar"><span class="bp-lbl">Store page settings · ${bpEsc(name)}</span>`
+      + (bp.setForm ? `<span class="bp-chip ${bp.settings.public ? 'bp-c-live' : 'bp-c-draft'}">${bp.settings.public ? 'Page switched on' : 'Page switched off'}</span>` : '')
+      + `<span class="bp-grow"></span><button type="button" class="bp-btn bp-btn-pri" data-act="save-settings"${bp.setForm && !bp.setBusy ? '' : ' disabled'}>Save settings</button></div>`
+      + `<p class="bp-status">These build ${bpEsc(name)}'s page on the new website: hours, bin prices and when previews show. Saved changes reach the store feed at once; the page stays hidden until it is switched on.</p>`;
+    if (bp.setErr) { box.innerHTML = head + `<div class="bp-err">Couldn't load settings. ${bpEsc(bp.setErr)} <button type="button" class="bp-btn" data-act="retry-settings">Retry</button></div>`; return; }
+    if (!bp.setForm) { box.innerHTML = head + '<div class="bp-skrow skel"></div><div class="bp-skrow skel"></div>'; return; }
+    const f = bp.setForm;
+    const tzs = BP_TZS.some(([z]) => z === f.tz) ? BP_TZS : BP_TZS.concat([[f.tz, f.tz]]);
+    const pubDirty = bpIsDirty('public') ? ' bp-dirty' : '';
+    let html = `<div class="bp-sec"><div class="bp-fields">`
+      + `<label class="bp-check${pubDirty}"><input type="checkbox" id="bp-public" data-path="public"${f.public ? ' checked' : ''}> Show this store's page on the website</label>`
+      + `<label class="bp-field">Time zone<select class="bp-in${bpIsDirty('tz') ? ' bp-dirty' : ''}" data-path="tz">${tzs.map(([z, l]) => `<option value="${bpEsc(z)}"${z === f.tz ? ' selected' : ''}>${bpEsc(l)}</option>`).join('')}</select></label>`
+      + `</div></div>`;
+    html += `<div class="bp-sec"><div class="bp-h">Store details</div><div class="bp-fields">`
+      + [['displayName', 'Name on the page', 'text', 'maxlength="80"'], ['street', 'Street', 'text', 'maxlength="120"'], ['city', 'City', 'text', 'maxlength="60"'],
+         ['state', 'State', 'text', 'maxlength="2"'], ['zip', 'ZIP', 'text', 'maxlength="10" inputmode="numeric"'], ['phone', 'Phone', 'tel', 'maxlength="30"'],
+         ['mapsUrl', 'Directions link (https)', 'url', 'maxlength="500"']]
+        .map(([k, l, t, x]) => `<label class="bp-field">${l}${bpIn('profile.' + k, t, x)}</label>`).join('')
+      + '</div></div>';
+    html += `<div class="bp-sec"><div class="bp-h">Hours</div><div class="bp-days">`
+      + BP_DAYS.map(([k, l]) => {
+        const h = f.hours[k], dis = h.closed ? ' disabled' : '';
+        return `<span class="bp-day">${l}</span><span class="bp-dayrow">${bpIn(`hours.${k}.open`, 'time', `aria-label="${l} opens"${dis}`)} to `
+          + `${bpIn(`hours.${k}.close`, 'time', `aria-label="${l} closes"${dis}`)}`
+          + `<label class="bp-check${bpIsDirty(`hours.${k}.closed`) ? ' bp-dirty' : ''}"><input type="checkbox" data-path="hours.${k}.closed"${h.closed ? ' checked' : ''}> Closed</label></span>`;
+      }).join('') + '</div></div>';
+    html += `<div class="bp-sec"><div class="bp-h">Bin prices</div><p class="bp-dim">The first price runs from opening. Add a price change for each time it drops that day.</p><div class="bp-days">`
+      + BP_DAYS.map(([k, l]) => {
+        const tiers = f.binPrices[k];
+        const cells = tiers.map((t, i) => `<span class="bp-tier" data-tier="${k}:${i}">${i === 0 ? 'From open $' : `from ${bpIn(`binPrices.${k}.${i}.from`, 'time', `data-k="from" aria-label="${l} price change ${i} time"`)} $`}`
+          + `${bpIn(`binPrices.${k}.${i}.price`, 'text', `data-k="price" inputmode="decimal" aria-label="${l} price ${i + 1}"`)}`
+          + (i > 0 || tiers.length === 1 ? `<button type="button" class="bp-btn bp-btn-sm" data-act="del-tier" data-tier="${k}:${i}" aria-label="Remove this ${l} price">Remove</button>` : '') + '</span>').join('');
+        const changed = tiers.length !== bp.setOrig.binPrices[k].length;   // a price added or removed; edits mark their own input
+        return `<span class="bp-day">${l}</span><span class="bp-dayrow">${cells || '<span class="bp-dim">No bin price</span>'}`
+          + `<button type="button" class="bp-btn bp-btn-sm${changed ? ' bp-dirty' : ''}" data-act="add-tier" data-day="${k}">${tiers.length ? 'Add a price change' : 'Add a price'}</button></span>`;
+      }).join('') + '</div></div>';
+    html += `<div class="bp-sec"><div class="bp-h">When previews show</div><div class="bp-dayrow">By default, from ${bpIn('startTime', 'time', 'aria-label="Preview start time"')}`
+      + `<select class="bp-in${bpIsDirty('days') ? ' bp-dirty' : ''}" data-path="days" aria-label="Days before the sale">`
+      + [['0', 'on the sale day'], ['1', '1 day before'], ['2', '2 days before'], ['3', '3 days before']].map(([v, l]) => `<option value="${v}"${v === f.days ? ' selected' : ''}>${l}</option>`).join('')
+      + `</select> until closing time on the sale day.</div></div>`;
+    const ov = bp.ov || (bp.ov = bpOvBlank());
+    const ovs = bp.overrides.map(o => {
+      let d = o.closed ? 'Closed' : o.open ? `${bpClock(o.open)} – ${bpClock(o.close)}` : 'Usual hours';
+      if (o.binPrices && o.binPrices.length) d += ' · bins ' + o.binPrices.map(t => bpMoney(t.price) + (t.from !== '00:00' ? ` from ${bpClock(t.from)}` : '')).join(', ');
+      if (o.note) d += ` · “${o.note}”`;
+      return `<li class="bp-ov"><span class="bp-ink">${bpEsc(bpDay(o.date))}</span><span class="bp-dimc">${bpEsc(d)}</span>`
+        + `<button type="button" class="bp-btn bp-btn-sm" data-ov="${bpEsc(o.date)}">Remove</button></li>`;
+    }).join('');
+    html += `<div class="bp-sec"><div class="bp-h">Holidays and one-off days</div>`
+      + `<ul class="bp-ovlist">${ovs || '<li class="bp-dimc">None in the next 120 days.</li>'}</ul>`
+      + `<div class="bp-ovadd"><label class="bp-field">Date<input type="date" id="bp-ov-date" class="bp-in" value="${bpEsc(ov.date)}"></label>`
+      + `<label class="bp-check"><input type="checkbox" id="bp-ov-closed"${ov.closed ? ' checked' : ''}> Closed all day</label>`
+      + `<label class="bp-field">Opens<input type="time" id="bp-ov-open" class="bp-in" value="${bpEsc(ov.open)}"></label>`
+      + `<label class="bp-field">Closes<input type="time" id="bp-ov-close" class="bp-in" value="${bpEsc(ov.close)}"></label>`
+      + `<label class="bp-field">Bin price all day (optional)<input type="text" id="bp-ov-price" class="bp-in" inputmode="decimal" style="width:110px" value="${bpEsc(ov.price)}"></label>`
+      + `<label class="bp-field">Note on the page<input type="text" id="bp-ov-note" class="bp-in" maxlength="120" placeholder="Holiday hours" value="${bpEsc(ov.note)}"></label>`
+      + `<button type="button" class="bp-btn" data-act="add-override">Add day</button></div></div>`;
+    html += `<div class="bp-sec"><p class="bp-msg bp-setmsg${bp.setMsg && bp.setMsg[1] ? ' bp-msg-' + bp.setMsg[1] : ''}" role="status">${bp.setMsg ? bpEsc(bp.setMsg[0]) : ''}</p></div>`;
+    box.innerHTML = head + html;
+  }
+  async function bpPublicChanged(box) {
+    if (box.checked && !bp.setOrig.public) {
+      const name = bpStoreName(bp.store);
+      const ok = await uiConfirm(`Switch on ${name}'s public page? Its hours, bin prices and approved previews become readable on the public store feed once you save. The website itself isn't live yet.`,
+        { title: 'Make the store page public?', okText: 'Switch on' });
+      if (!ok) box.checked = false;
+    }
+    bp.setForm.public = box.checked;
+    box.closest('.bp-check').classList.toggle('bp-dirty', bpIsDirty('public'));
+  }
+  async function bpSaveSettings() {
+    if (bp.setBusy) return;
+    const problem = bpSetProblem(bp.setForm);
+    if (problem) return bpSetSay(problem, 'bad');
+    const now = bpSetPayload(bp.setForm), was = bpSetPayload(bp.setOrig);
+    const body = { store: bp.store, expectedRevision: bp.settings.revision };
+    for (const k of Object.keys(now)) if (JSON.stringify(now[k]) !== JSON.stringify(was[k])) body[k] = now[k];
+    if (Object.keys(body).length === 2) return bpSetSay('Nothing has changed.');
+    bpSetSay('Saving…');
+    const seq = bp.seq;
+    bp.setBusy = true;
+    const btn = document.querySelector('#bp-settings [data-act="save-settings"]'); if (btn) btn.disabled = true;
+    const r = await bpApi('store-settings-save', null, body);
+    bp.setBusy = false;
+    if (seq !== bp.seq) return;   // another store is on screen now; its own load is drawing it
+    if (r.err) {
+      if (btn) btn.disabled = false;
+      if (r.status === 409) {
+        await uiAlert(`${r.err} Your unsaved changes were not kept.`, { title: 'Settings changed' });
+        const s = await bpApi('store-settings', { store: bp.store });
+        if (!s.err) { bp.settings = s.j.settings || bpDefaultSettings(bp.store); bp.overrides = s.j.overrides || []; bpResetSetForm(); bp.setMsg = null; }
+        return bpRenderSettings();
+      }
+      return bpSetSay(r.err, 'bad');
+    }
+    bp.settings = r.j.settings; bpResetSetForm(); bp.setMsg = ['Saved.', 'good'];
+    bpRenderSettings();
+    // The open preview reads the time zone and the default window (a full redraw) and the store's name
+    // (its phone card only). Anything else leaves it alone, so a reviewer's half-typed note survives.
+    if (now.tz !== was.tz || JSON.stringify(now.previewDefaults) !== JSON.stringify(was.previewDefaults)) bpRenderDetail();
+    else if (now.profile.displayName !== was.profile.displayName) bpRefreshPhone();
+  }
+  async function bpAddOverride() {
+    const o = bp.ov, date = o.date.trim(), closed = o.closed, open = o.open.trim(), close = o.close.trim(), price = o.price.trim(), note = o.note.trim();
+    if (!date) return bpSetSay('Pick the date.', 'bad');
+    // The worker replaces the whole day: a price-only entry over a "Closed" one would reopen the store.
+    if (bp.overrides.some(x => x.date === date)) {
+      const ok = await uiConfirm(`${bpDay(date)} already has an entry. Replace it with this one?`, { title: 'Replace this day?', okText: 'Replace' });
+      if (!ok) return;
+    }
+    const body = { store: bp.store, date };
+    if (closed) body.closed = true;
+    else {
+      if (!!open !== !!close) return bpSetSay('Give both the opening and the closing time, or neither.', 'bad');
+      if (open) { body.open = open; body.close = close; }
+      if (price) {
+        if (!/^\d{1,4}(\.\d{1,2})?$/.test(price)) return bpSetSay('A bin price is a number, like 12 or 0.50.', 'bad');
+        body.binPrices = [{ from: '00:00', price: Number(price) }];
+      }
+    }
+    if (note) body.note = note;
+    const r = await bpApi('store-override-save', null, body);
+    if (r.err) return bpSetSay(r.err, 'bad');
+    bp.ov = bpOvBlank();
+    bp.setMsg = [`Added ${bpDay(date)}.`, 'good'];
+    await bpReloadOverrides();
+  }
+  async function bpRemoveOverride(date) {
+    const ok = await uiConfirm(`Remove the ${bpDay(date)} entry? That day goes back to ${bpStoreName(bp.store)}'s usual hours and prices.`,
+      { title: 'Remove this day?', okText: 'Remove' });
+    if (!ok) return;
+    const r = await bpApi('store-override-save', null, { store: bp.store, date, remove: true });
+    if (r.err) return bpSetSay(r.err, 'bad');
+    bp.setMsg = [`Removed ${bpDay(date)}.`, 'good'];
+    await bpReloadOverrides();
+  }
+
+  // One set of listeners for the whole page: every render target is replaced wholesale,
+  // so nothing inside one can hold a listener of its own.
+  function bpWire(page) {
+    page.addEventListener('click', e => {
+      const t = e.target;
+      const f = t.closest('[data-filter]');
+      if (f) { bp.filter = f.dataset.filter; return bpRenderList(); }
+      const pick = t.closest('.bp-pick');
+      if (pick) return bpTogglePhoto(+pick.dataset.photo);
+      const ov = t.closest('[data-ov]');
+      if (ov) return bpRemoveOverride(ov.dataset.ov);
+      const a = t.closest('[data-act]');
+      if (a && !a.disabled) {
+        switch (a.dataset.act) {
+          case 'new': return bpNew();
+          case 'close': return bpClose();
+          case 'save': return bpSave(false);
+          case 'submit': return bpSave(true);
+          case 'edit': { const p = bpFind(bp.sel); bp.editing = true; bp.msg = null; bp.form = { saleDate: p.saleDate, photoIds: [...p.photoIds], caption: p.caption || '' }; return bpRenderDetail(); }
+          case 'cancel-edit': bp.editing = false; bp.msg = null; return bpRenderDetail();
+          case 'approve': return bpReview('approve');
+          case 'reject': return bpReview('reject');
+          case 'reschedule': return bpReschedule();
+          case 'pull': return bpPull();
+          case 'retry-list': return bpReloadList();
+          case 'retry-settings': return bpLoad();
+          case 'save-settings': return bpSaveSettings();
+          case 'add-override': return bpAddOverride();
+          case 'add-tier': { const k = a.dataset.day, tiers = bp.setForm.binPrices[k];
+            if (tiers.length >= 6) return bpSetSay('A day holds up to 6 prices.', 'bad');
+            tiers.push({ from: tiers.length ? '' : '00:00', price: '' }); return bpRenderSettings(); }
+          case 'del-tier': { const [k, i] = a.dataset.tier.split(':'); bp.setForm.binPrices[k].splice(+i, 1); return bpRenderSettings(); }
+        }
+        return;
+      }
+      const tr = t.closest('#bp-list tr[data-id]');
+      if (tr) bpOpen(+tr.dataset.id);
+    });
+    page.addEventListener('input', e => {
+      const t = e.target;
+      if (t.id === 'bp-caption') { bp.form.caption = t.value; return bpRefreshPhone(); }
+      if (/^bp-ov-(date|open|close|price|note)$/.test(t.id)) { bp.ov[t.id.slice(6)] = t.value; return; }
+      if (t.dataset.path && t.type !== 'checkbox') {
+        bpPut(bp.setForm, t.dataset.path, t.value);
+        t.classList.toggle('bp-dirty', bpIsDirty(t.dataset.path));
+      }
+    });
+    page.addEventListener('change', e => {
+      const t = e.target;
+      if (t.id === 'bp-store') { bp.store = t.value; return bpLoad(); }
+      if (t.id === 'bp-sale') { bp.form.saleDate = t.value; return bpRefreshPhone(); }
+      if (t.id === 'bp-custom') return el('bp-custom-times').classList.toggle('hidden', !t.checked);
+      if (t.id === 'bp-files') return bpUpload(t);
+      if (t.id === 'bp-public') return bpPublicChanged(t);
+      if (t.id === 'bp-ov-closed') { bp.ov.closed = t.checked; return; }
+      if (/^bp-ov-(date|open|close)$/.test(t.id)) { bp.ov[t.id.slice(6)] = t.value; return; }
+      if (t.dataset.path && t.type === 'checkbox') {
+        bpPut(bp.setForm, t.dataset.path, t.checked);
+        if (/\.closed$/.test(t.dataset.path)) return bpRenderSettings();
+        t.closest('.bp-check').classList.toggle('bp-dirty', bpIsDirty(t.dataset.path));
+      }
+      if (t.dataset.path && t.tagName === 'SELECT') { bpPut(bp.setForm, t.dataset.path, t.value); t.classList.toggle('bp-dirty', bpIsDirty(t.dataset.path)); }
+    });
   }
 
   // ── Content (Slice 1b): thumbnails + bin-post composer (admin) ──────
@@ -39155,6 +40070,7 @@
     'nav-marketing-chev': 'bl',
     'nav-flow-calendar': 'bl',
     'nav-content': 'bl',
+    'nav-bin-preview': 'bl',
     'nav-submit-photos': 'bl',
     'nav-merch-group': 'bl',
     'nav-merch': 'bl',
@@ -39713,6 +40629,9 @@
     // never gated here, so every manager had a Comments item that did nothing.
     el('nav-comments').classList.toggle('hidden', !isAdmin);
     el('nav-content').classList.toggle('hidden', !isAdmin);          // Content (composer): admin/superuser
+    // Bin Preview: admins and superusers until the website exists (Brian, 2026-11-25). The router's
+    // adminOnly list holds the same line; the worker lets a manager save and submit for their stores.
+    el('nav-bin-preview').classList.toggle('hidden', !isAdmin);
     el('nav-submit-photos').classList.remove('hidden');              // Submit Photos: all users
     // Flow Calendar admin editor: only admins/superusers see the Edit toggle.
     fcCanEdit = isAdmin;
