@@ -53,7 +53,8 @@ const URL_ = 'http://127.0.0.1:8096/index.html';
 const BL = { id: 'bl', name: 'Bargain Lane' }, ECOM = { id: 'ecom', name: 'E-Commerce' }, LIVE = { id: 'live', name: 'Live Sales' };
 // Discounts & Returns (2026-11-12) sits after the Retail Summary for everyone who may see money.
 const STORE = ['dashboard', 'weekly-summary', 'discounts', 'labor', 'supply-request'];
-const MARKETING = ['marketing', 'flow-calendar', 'comments', 'content', 'submit-photos'];
+// Bin Preview (2026-11-25) is admins' and superusers' only until the website exists, so no manager list has it.
+const MARKETING = ['marketing', 'flow-calendar', 'comments', 'content', 'bin-preview', 'submit-photos'];
 // Coverage, Velocity, Manifests, Buy Criteria and Shelf Count were removed 2026-11-24.
 const MERCH = ['merch-scan', 'merch-signs', 'merch-products'];
 const INVENTORY = ['inventory-add', 'inventory-viewer', 'inventory-sale', 'bin-dump', 'inventory-receiver', 'mos', 'opportunity-buys'];
