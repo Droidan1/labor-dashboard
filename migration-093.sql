@@ -1,6 +1,7 @@
 -- migration-093: Bin Preview + store settings for the Bargain Lane website pilot (Phase 1a).
 -- Plan: docs/plans/bargainlane-website.md §4.1. Additive only (five new tables, no ALTER, no
--- foreign keys: a DROP of a parent cascades on D1 even with FKs off). Safe to run twice.
+-- foreign keys: a DROP of a parent cascades on D1 even with FKs off). Safe to run twice, but
+-- 🛑 NOT after migration-094: it would bring back the one-per-day index that 094 replaced.
 -- 🛑 NOT applied anywhere yet. Staging first, and only on Brian's say-so:
 --   npx wrangler d1 execute labor-dashboard-db-staging --remote --file=migration-093.sql
 --   npx wrangler d1 execute labor-dashboard-db --remote --file=migration-093.sql

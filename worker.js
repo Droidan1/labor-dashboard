@@ -9243,9 +9243,13 @@ function siteBinPrices(v) {
 function siteText(v, max) { return v === undefined || v === null ? null : typeof v === "string" && v.trim().length <= max ? v.trim() : undefined; }
 function siteProfile(v) {
   if (!v || typeof v !== "object" || Array.isArray(v)) return { error: "profile must be an object" };
-  const bad = siteOnlyKeys(v, ["displayName", "address", "phone", "mapsUrl"]); if (bad) return { error: bad };
-  const out = { displayName: siteText(v.displayName, 80), address: null, phone: siteText(v.phone, 30), mapsUrl: siteText(v.mapsUrl, 500) };
+  const bad = siteOnlyKeys(v, ["displayName", "address", "phone", "mapsUrl", "retailLine"]); if (bad) return { error: bad };
+  const out = { displayName: siteText(v.displayName, 80), address: null, phone: siteText(v.phone, 30), mapsUrl: siteText(v.mapsUrl, 500),
+    retailLine: siteText(v.retailLine, 160) };
   if (out.displayName === undefined) return { error: "profile.displayName: up to 80 characters" };
+  // Slice 1b: one line about the store's retail floor, shown on the site when no retail highlight is live.
+  if (out.retailLine === undefined) return { error: "profile.retailLine: text up to 160 characters" };
+  out.retailLine = out.retailLine || null;
   if (out.phone === undefined || (out.phone && !/^[0-9()+\-. ]+$/.test(out.phone))) return { error: "profile.phone: digits and ( ) + - . only" };
   if (out.mapsUrl === undefined || (out.mapsUrl && !/^https:\/\/[^\s"'<>]+$/.test(out.mapsUrl))) return { error: "profile.mapsUrl must be an https link" };
   if (v.address != null) {
@@ -9345,7 +9349,7 @@ async function servePublicSite(request, env, url) {
     const binPrice = today.closed ? null : sitePriceAt(today.binPrices, local.hm);
 
     const { results } = await env.DB.prepare(
-      "SELECT id, sale_date, caption, photo_ids, starts_at, ends_at FROM bin_previews WHERE store = ? AND status = 'approved' AND ends_at > ? ORDER BY sale_date, id"
+      "SELECT id, kind, sale_date, caption, photo_ids, starts_at, ends_at FROM bin_previews WHERE store = ? AND status = 'approved' AND ends_at > ? ORDER BY sale_date, id"
     ).bind(store, nowIso).all();
     const rows = results || [];
     const active = rows.filter(p => p.starts_at <= nowIso);
@@ -9357,9 +9361,10 @@ async function servePublicSite(request, env, url) {
       ).bind(JSON.stringify(ids)).all();
       for (const p of ph || []) photos.set(p.id, p);
     }
-    const imageUrl = (previewId, photoId) => {
+    // 🛑 A photo is shown only through a preview of its own kind: bin photos for bins, retail for retail.
+    const imageUrl = (previewId, photoId, kind) => {
       const p = photos.get(photoId);
-      if (!p || p.store !== store || p.photo_type !== "bins" || p.status === "rejected") return null;
+      if (!p || p.store !== store || p.photo_type !== kind || p.status === "rejected") return null;
       if (!SAFE_IMAGE_TYPE.test(String(p.content_type || ""))) return null;
       const ext = /\.([a-z0-9]{2,5})$/.exec(String(p.r2_key));
       if (!String(p.r2_key).startsWith(`marketing/${store}/`) || !ext) return null;
@@ -9380,14 +9385,22 @@ async function servePublicSite(request, env, url) {
         address: ad ? { street: ad.street || null, city: ad.city || null, state: ad.state || null, zip: ad.zip || null } : null,
         phone: pr.phone || null,
         mapsUrl: pr.mapsUrl || null,
+        retailLine: typeof pr.retailLine === "string" && pr.retailLine ? pr.retailLine : null,
       },
       today: dayOut(today),
       binPrice,
       week: week.map(d => ({ ...dayOut(d), binPrices: d.binPrices.map(t => ({ from: t.from, price: t.price })) })),
-      binPreviews: active.map(p => ({
+      // 🛑 Bins only: the site calls everything in this list "Sneak peek: bins".
+      binPreviews: active.filter(p => siteKind(p) === "bins").map(p => ({
         id: p.id, saleDate: p.sale_date, caption: p.caption || null, startsAt: p.starts_at, endsAt: p.ends_at,
-        images: siteIds(p.photo_ids).map(pid => imageUrl(p.id, pid)).filter(Boolean),
+        images: siteIds(p.photo_ids).map(pid => imageUrl(p.id, pid, "bins")).filter(Boolean),
       })),
+      // Slice 1b: live retail highlights, newest first.
+      retailHighlights: active.filter(p => siteKind(p) === "retail")
+        .sort((x, y) => (y.starts_at > x.starts_at) - (y.starts_at < x.starts_at) || y.id - x.id).map(p => ({
+          id: p.id, showFrom: p.sale_date, caption: p.caption || null, startsAt: p.starts_at, endsAt: p.ends_at,
+          images: siteIds(p.photo_ids).map(pid => imageUrl(p.id, pid, "retail")).filter(Boolean),
+        })),
     };
 
     // The cache never outlives what it shows: the next preview start or end, price change, or midnight.
@@ -9407,7 +9420,7 @@ async function servePublicSite(request, env, url) {
 
 async function servePublicPreviewImage(request, env, m, notFound) {
   const [, previewId, photoId, ext] = m;
-  const p = await env.DB.prepare("SELECT store, status, photo_ids, starts_at, ends_at FROM bin_previews WHERE id = ?").bind(Number(previewId)).first();
+  const p = await env.DB.prepare("SELECT store, kind, status, photo_ids, starts_at, ends_at FROM bin_previews WHERE id = ?").bind(Number(previewId)).first();
   const now = Date.now();
   const nowIso = new Date(now).toISOString();
   if (!p || p.status !== "approved" || !(p.starts_at <= nowIso && nowIso < p.ends_at)) return notFound();
@@ -9415,7 +9428,7 @@ async function servePublicPreviewImage(request, env, m, notFound) {
   const settings = await siteSettings(env, p.store);
   if (!settings || !settings.public) return notFound();
   const row = await env.DB.prepare("SELECT store, r2_key, content_type, photo_type, status FROM marketing_photos WHERE id = ?").bind(Number(photoId)).first();
-  if (!row || row.store !== p.store || row.photo_type !== "bins" || row.status === "rejected") return notFound();
+  if (!row || row.store !== p.store || row.photo_type !== siteKind(p) || row.status === "rejected") return notFound();
   const key = String(row.r2_key);
   if (!key.startsWith(`marketing/${p.store}/`) || !key.endsWith(`.${ext}`)) return notFound();
   const ct = String(row.content_type || "").toLowerCase();
@@ -9492,11 +9505,18 @@ async function queueBinPreviewSocialDrafts(env, preview) {
 }
 
 // ── Staff actions ────────────────────────────────────────────────────────────
+// Slice 1b (migration-094): a preview is of bin photos or retail photos; rows from before the
+// column are 'bins' (its DEFAULT). 🛑 This worker NEEDS migration-094: the feed, image route, save
+// and approve all name `kind`, so without the column every store page 503s. Check read-only first:
+// PRAGMA table_info(bin_previews) must list kind.
+const SITE_KINDS = ["bins", "retail"];
+function siteKind(r) { return r && r.kind === "retail" ? "retail" : "bins"; }
+
 function binPreviewView(r, nowIso) {
   const phase = r.status !== "approved" ? r.status
     : nowIso < r.starts_at ? "scheduled" : nowIso < r.ends_at ? "live" : "expired";
   return {
-    id: r.id, store: r.store, saleDate: r.sale_date, photoIds: siteIds(r.photo_ids), caption: r.caption,
+    id: r.id, store: r.store, kind: siteKind(r), saleDate: r.sale_date, photoIds: siteIds(r.photo_ids), caption: r.caption,
     status: r.status, phase, startsAt: r.starts_at, endsAt: r.ends_at, revision: r.revision,
     createdBy: r.created_by, createdAt: r.created_at, updatedAt: r.updated_at,
     submittedBy: r.submitted_by, submittedAt: r.submitted_at,
@@ -9515,7 +9535,7 @@ function isSiteReviewer(user) {
 
 // The window from the reviewer's store-local "YYYY-MM-DDTHH:MM" pair, or the store default:
 // startTime on the day startDaysBefore the sale (noon the day before), to close on the sale day.
-function binPreviewWindow(settings, overrides, saleDate, startsAt, endsAt) {
+function binPreviewWindow(settings, overrides, saleDate, startsAt, endsAt, kind = "bins") {
   if ((startsAt === undefined) !== (endsAt === undefined)) return { error: "Give both startsAt and endsAt, or neither" };
   let s, e;
   if (startsAt !== undefined) {
@@ -9529,6 +9549,13 @@ function binPreviewWindow(settings, overrides, saleDate, startsAt, endsAt) {
     if (ps.bad === "format" || pe.bad === "format") return { error: "startsAt and endsAt are store-local YYYY-MM-DDTHH:MM" };
     if (ps.bad || pe.bad) return { error: "That time does not exist in the store's time zone (the clocks skip it)", code: "NONEXISTENT_LOCAL_TIME" };
     s = ps.d; e = pe.d;
+  } else if (kind === "retail") {
+    // A retail highlight: opening on its show-from day to closing six days later (a week on the page).
+    const first = siteDay(settings, overrides.get(saleDate), saleDate);
+    const lastDate = siteAddDays(saleDate, 6);
+    const last = siteDay(settings, overrides.get(lastDate), lastDate);
+    s = etWallClockToUtc(`${saleDate}T${!first.closed && first.open ? first.open : "00:00"}`, settings.tz);
+    e = etWallClockToUtc(`${lastDate}T${!last.closed && last.close ? last.close : "23:59"}`, settings.tz);
   } else {
     const d = settings.previewDefaults || {};
     const before = Number.isInteger(d.startDaysBefore) ? d.startDaysBefore : 1;
@@ -9565,8 +9592,9 @@ async function handleSitePilotAction(request, env, url, currentUser, corsJson) {
   const storeOk = (s) => typeof s === "string" && ALL_STORES.includes(s);
 
   if (action === "bin-preview-save") {
-    const bad = siteOnlyKeys(b, ["id", "store", "saleDate", "photoIds", "caption", "expectedRevision"]);
+    const bad = siteOnlyKeys(b, ["id", "store", "kind", "saleDate", "photoIds", "caption", "expectedRevision"]);
     if (bad) return send(400, { error: bad });
+    if (b.kind !== undefined && !SITE_KINDS.includes(b.kind)) return send(400, { error: "kind is bins or retail" });
     let row = null, store;
     if (b.id !== undefined) {
       row = await loadPreview(b.id);
@@ -9580,6 +9608,9 @@ async function handleSitePilotAction(request, env, url, currentUser, corsJson) {
       if (!canAccessStore(currentUser, b.store)) return send(403, { error: "Forbidden", code: "STORE" });
       store = b.store;
     }
+    // Set when it is made, never changed: what was reviewed as retail stays retail.
+    const kind = row ? siteKind(row) : (b.kind || "bins");
+    if (row && b.kind !== undefined && b.kind !== kind) return send(400, { error: `This is a ${kind} preview; it cannot change kind` });
     if (!siteValidDate(b.saleDate)) return send(400, { error: "saleDate must be a real YYYY-MM-DD date" });
     const ids = b.photoIds;
     if (!Array.isArray(ids) || !ids.length || ids.length > 10 || !ids.every(i => Number.isInteger(i) && i > 0) || new Set(ids).size !== ids.length) {
@@ -9588,16 +9619,16 @@ async function handleSitePilotAction(request, env, url, currentUser, corsJson) {
     const caption = siteText(b.caption, 500);
     if (caption === undefined) return send(400, { error: "caption: text up to 500 characters" });
     const n = await env.DB.prepare(
-      "SELECT COUNT(*) AS n FROM marketing_photos WHERE id IN (SELECT value FROM json_each(?)) AND store = ? AND photo_type = 'bins' AND status != 'rejected'"
-    ).bind(JSON.stringify(ids), store).first();
-    if (!n || n.n !== ids.length) return send(400, { error: `Every photo must be one of this store's bin photos`, code: "BAD_PHOTOS" });
-    const detail = { saleDate: b.saleDate, photoIds: ids, caption };
+      "SELECT COUNT(*) AS n FROM marketing_photos WHERE id IN (SELECT value FROM json_each(?)) AND store = ? AND photo_type = ? AND status != 'rejected'"
+    ).bind(JSON.stringify(ids), store, kind).first();
+    if (!n || n.n !== ids.length) return send(400, { error: `Every photo must be one of this store's ${kind === "retail" ? "retail" : "bin"} photos`, code: "BAD_PHOTOS" });
+    const detail = { kind, saleDate: b.saleDate, photoIds: ids, caption };
     if (!row) {
       const res = await env.DB.batch([
         env.DB.prepare(
-          `INSERT INTO bin_previews (store, sale_date, photo_ids, caption, status, revision, created_by, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 'draft', 1, ?, ?, ?)`
-        ).bind(store, b.saleDate, JSON.stringify(ids), caption, currentUser.email, nowIso, nowIso),
+          `INSERT INTO bin_previews (store, kind, sale_date, photo_ids, caption, status, revision, created_by, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 'draft', 1, ?, ?, ?)`
+        ).bind(store, kind, b.saleDate, JSON.stringify(ids), caption, currentUser.email, nowIso, nowIso),
         siteAuditStmt(env, "bin_preview", null, "save", currentUser, detail),
       ]);
       return respond(res[0].meta.last_row_id);
@@ -9640,9 +9671,11 @@ async function handleSitePilotAction(request, env, url, currentUser, corsJson) {
     const store = url.searchParams.get("store");
     if (!storeOk(store)) return send(400, { error: "Unknown store" });
     if (!canAccessStore(currentUser, store)) return send(403, { error: "Forbidden", code: "STORE" });
+    const type = url.searchParams.get("type") || "bins"; // slice 1b; no type = bins, as before
+    if (!SITE_KINDS.includes(type)) return send(400, { error: "type is bins or retail" });
     const { results } = await env.DB.prepare(
-      "SELECT id, created_at FROM marketing_photos WHERE store = ? AND photo_type = 'bins' AND status != 'rejected' ORDER BY created_at DESC, id DESC LIMIT 200"
-    ).bind(store).all();
+      "SELECT id, created_at FROM marketing_photos WHERE store = ? AND photo_type = ? AND status != 'rejected' ORDER BY created_at DESC, id DESC LIMIT 200"
+    ).bind(store, type).all();
     return send(200, { ok: true, photos: (results || []).map(r => ({ id: r.id, createdAt: r.created_at })) });
   }
 
@@ -9713,14 +9746,17 @@ async function handleSitePilotAction(request, env, url, currentUser, corsJson) {
     }
 
     // approve
-    if (row.status === "approved") return respond(row.id, { alreadyApproved: true, socialDrafts: await queueBinPreviewSocialDrafts(env, row) });
+    // Retail highlights get no social drafts yet (social is slice 2).
+    const drafts = async (p) => siteKind(p) === "retail" ? [] : queueBinPreviewSocialDrafts(env, p);
+    if (row.status === "approved") return respond(row.id, { alreadyApproved: true, socialDrafts: await drafts(row) });
     if (row.status !== "submitted") return send(409, { error: `A ${row.status} preview cannot be approved`, code: "NOT_SUBMITTED" });
-    const overrides = await siteOverrides(env, row.store, row.sale_date, row.sale_date);
-    const w = binPreviewWindow(settings, overrides, row.sale_date, b.startsAt, b.endsAt);
+    const kind = siteKind(row);
+    const overrides = await siteOverrides(env, row.store, row.sale_date, kind === "retail" ? siteAddDays(row.sale_date, 6) : row.sale_date);
+    const w = binPreviewWindow(settings, overrides, row.sale_date, b.startsAt, b.endsAt, kind);
     if (w.error) return send(400, { error: w.error, code: w.code });
     const live = await env.DB.prepare(
-      "SELECT id FROM bin_previews WHERE store = ? AND sale_date = ? AND status = 'approved' AND id != ?"
-    ).bind(row.store, row.sale_date, row.id).first();
+      "SELECT id FROM bin_previews WHERE store = ? AND kind = ? AND sale_date = ? AND status = 'approved' AND id != ?"
+    ).bind(row.store, kind, row.sale_date, row.id).first();
     if (live) return send(409, { error: `Preview #${live.id} is already approved for this day. Pull it first.`, code: "ALREADY_APPROVED_FOR_DAY" });
     let res;
     try {
@@ -9739,10 +9775,10 @@ async function handleSitePilotAction(request, env, url, currentUser, corsJson) {
     const fresh = await loadPreview(row.id);
     if (res[0].meta.changes !== 1) {
       // Lost a race with another approval: same outcome, so answer as a repeat.
-      if (fresh && fresh.status === "approved") return respond(row.id, { alreadyApproved: true, socialDrafts: await queueBinPreviewSocialDrafts(env, fresh) });
+      if (fresh && fresh.status === "approved") return respond(row.id, { alreadyApproved: true, socialDrafts: await drafts(fresh) });
       return send(409, { error: "This preview changed first. Reload and try again.", code: "STALE" });
     }
-    return respond(row.id, { socialDrafts: await queueBinPreviewSocialDrafts(env, fresh) });
+    return respond(row.id, { socialDrafts: await drafts(fresh) });
   }
 
   if (action === "bin-preview-pull") {
@@ -9793,6 +9829,11 @@ async function handleSitePilotAction(request, env, url, currentUser, corsJson) {
       ["binPrices", "bin_prices_json", siteBinPrices], ["previewDefaults", "preview_defaults_json", sitePreviewDefaults]]) {
       if (b[field] === undefined) continue;
       const r = check(b[field]); if (r.error) return send(400, { error: r.error });
+      // 🔑 A profile sent without retailLine (a page from before slice 1b) keeps the stored one.
+      if (field === "profile" && !Object.prototype.hasOwnProperty.call(b.profile, "retailLine")) {
+        const stored = await siteSettings(env, b.store);
+        r.value.retailLine = stored && typeof stored.profile.retailLine === "string" ? stored.profile.retailLine : null;
+      }
       set[column] = JSON.stringify(r.value);
     }
     if (b.public !== undefined) { if (typeof b.public !== "boolean") return send(400, { error: "public is true or false" }); set.public = b.public ? 1 : 0; }

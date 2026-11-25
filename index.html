@@ -5180,7 +5180,7 @@
         <div class="max-w-6xl mx-auto flex flex-wrap items-end justify-between gap-3">
           <div class="min-w-0">
             <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Bin Preview</h1>
-            <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Photos of the next bin drop, for the store's page on the new website. Nothing shows there until an admin approves it and the store's page is switched on.</p>
+            <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Photos of the next bin drop and of new retail finds, for the store's page on the new website. Nothing shows there until an admin approves it and the store's page is switched on.</p>
           </div>
           <label class="bp-field" for="bp-store">Store
             <select id="bp-store" class="bp-in"></select>
@@ -20497,7 +20497,7 @@
   const bp = {
     store: null, filter: 'open', previews: null, listErr: null,
     sel: null, editing: false, form: null, msg: null, busy: false, social: null,
-    photos: null, photosErr: null,
+    photos: { bins: null, retail: null }, photosErr: { bins: null, retail: null },   // the picker's photos, by kind
     settings: null, overrides: [], setForm: null, setOrig: null, setErr: null, setMsg: null, setBusy: false,
     ov: null,   // the half-typed holiday entry, kept so a re-render of the panel does not wipe it
     seq: 0, wired: false,
@@ -20525,6 +20525,13 @@
   const bpClock = hm => new Date(`2000-01-01T${hm}:00Z`).toLocaleTimeString('en-US', { timeZone: 'UTC', hour: 'numeric', minute: '2-digit' });
   const bpMoney = n => Number.isInteger(n) ? `$${n}` : `$${Number(n).toFixed(2)}`;
   function bpAddDays(d, n) { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); }
+  // Slice 1b: a preview is of bin photos or retail photos. Set when it is made; the worker keeps it.
+  const BP_KIND = {
+    bins:   { what: 'Bins',   title: 'Bin preview',      day: 'Sale day',  photos: 'bin photos' },
+    retail: { what: 'Retail', title: 'Retail highlight', day: 'Show from', photos: 'retail photos' },
+  };
+  const bpKindOf = p => (p && p.kind === 'retail') ? 'retail' : 'bins';
+  const bpToday = () => bpParts(Date.now(), bpTz()).date;
   // New bins go out on Friday: a new preview starts on the next one, in the store's own calendar.
   function bpNextFriday() {
     const today = bpParts(Date.now(), bpTz()).date;
@@ -20574,20 +20581,23 @@
   async function bpLoad() {
     const seq = ++bp.seq, store = bp.store;
     Object.assign(bp, { previews: null, listErr: null, sel: null, editing: false, form: null, msg: null, social: null,
-      photos: null, photosErr: null, settings: null, overrides: [], setForm: null, setOrig: null, setErr: null, setMsg: null, ov: bpOvBlank() });
+      photos: { bins: null, retail: null }, photosErr: { bins: null, retail: null }, settings: null, overrides: [], setForm: null, setOrig: null, setErr: null, setMsg: null, ov: bpOvBlank() });
     bpRender();
     // The store's bin photos for the picker: bin-preview-photos is store-scoped, so it serves a
     // pilot store's manager as well as an admin (marketing-photos is admins' only).
-    const [l, s, ph] = await Promise.all([
+    const [l, s, ph, rph] = await Promise.all([
       bpApi('bin-previews', { store }),
       bpApi('store-settings', { store }),
       bpApi('bin-preview-photos', { store }),
+      bpApi('bin-preview-photos', { store, type: 'retail' }),
     ]);
     if (seq !== bp.seq) return;   // a later store pick won
     if (l.err) bp.listErr = l.err; else bp.previews = bpSorted(l.j.previews);
     if (s.err) bp.setErr = s.err;
     else { bp.settings = s.j.settings || bpDefaultSettings(store); bp.overrides = s.j.overrides || []; bpResetSetForm(); }
-    if (ph.err) bp.photosErr = ph.err; else bp.photos = ph.j.photos || [];   // the worker leaves out rejected ones
+    // The worker leaves out rejected ones.
+    if (ph.err) bp.photosErr.bins = ph.err; else bp.photos.bins = ph.j.photos || [];
+    if (rph.err) bp.photosErr.retail = rph.err; else bp.photos.retail = rph.j.photos || [];
     bpRender();
   }
   async function bpReloadList() {
@@ -20639,10 +20649,10 @@
       const rows = bp.filter === 'all' ? bp.previews : bp.previews.filter(p => p.phase !== 'pulled' && p.phase !== 'expired');
       body = !rows.length
         ? `<div class="bp-empty">No previews ${bp.filter === 'all' ? 'yet' : 'open'} for ${bpEsc(name)}. Start one with New preview.</div>`
-        : `<div class="bp-tblwrap"><table class="bp-tbl"><thead><tr><th class="k">Sale day</th><th>Status</th><th class="num">Photos</th>`
+        : `<div class="bp-tblwrap"><table class="bp-tbl"><thead><tr><th class="k">Day</th><th>What</th><th>Status</th><th class="num">Photos</th>`
           + `<th>On the site</th><th>By</th></tr></thead><tbody>`
           + rows.map(p => `<tr data-id="${p.id}"${bp.sel === p.id ? ' class="on"' : ''}><td class="k"><button type="button" class="bp-open">${bpEsc(bpDay(p.saleDate))}</button></td>`
-            + `<td>${bpChip(p.phase)}</td><td class="num">${p.photoIds.length}</td>`
+            + `<td>${BP_KIND[bpKindOf(p)].what}</td><td>${bpChip(p.phase)}</td><td class="num">${p.photoIds.length}</td>`
             + `<td>${p.startsAt ? `${bpEsc(bpWhen(p.startsAt))} → ${bpEsc(bpWhen(p.endsAt))}` : '<span class="bp-dimc">—</span>'}</td>`
             + `<td class="bp-dimc">${bpEsc(bpWho(p))}</td></tr>`).join('')
           + '</tbody></table></div>';
@@ -20658,13 +20668,13 @@
     const p = bpFind(id); if (!p) return;
     bp.sel = id; bp.msg = null; bp.social = null;
     bp.editing = p.status === 'draft' || p.status === 'rejected';
-    bp.form = { saleDate: p.saleDate, photoIds: [...p.photoIds], caption: p.caption || '' };
+    bp.form = { kind: bpKindOf(p), saleDate: p.saleDate, photoIds: [...p.photoIds], caption: p.caption || '' };
     bpRenderList(); bpRenderDetail();
     el('bp-detail').scrollIntoView({ block: 'start', behavior: 'smooth' });
   }
   function bpNew() {
     bp.sel = 'new'; bp.editing = true; bp.msg = null; bp.social = null;
-    bp.form = { saleDate: bpNextFriday(), photoIds: [], caption: '' };
+    bp.form = { kind: 'bins', saleDate: bpNextFriday(), photoIds: [], caption: '' };
     bpRenderList(); bpRenderDetail();
     el('bp-detail').scrollIntoView({ block: 'start', behavior: 'smooth' });
   }
@@ -20674,7 +20684,7 @@
     const m = document.querySelector('#bp-detail .bp-msg');
     if (m) { m.textContent = text || ''; m.className = 'bp-msg' + (tone ? ' bp-msg-' + tone : ''); }
   }
-  function bpPhoneHtml(ids, caption, saleDate) {
+  function bpPhoneHtml(ids, caption, saleDate, kind) {
     const prof = (bp.settings && bp.settings.profile) || {};
     const title = prof.displayName || `Bargain Lane ${bpStoreName(bp.store)}`;
     const src = (id, thumb) => `${WORKER_BASE}?action=photo&id=${id}${thumb ? '&size=thumb' : ''}`;
@@ -20683,7 +20693,7 @@
         + (ids.length > 1 ? `<div class="bp-ph-grid">${ids.slice(1).map(id => `<img src="${src(id, true)}" alt="" loading="lazy">`).join('')}</div>` : '')
       : '<div class="bp-ph-none">No photos picked yet</div>';
     return `<div class="bp-phone">`
-      + `<div class="bp-ph-name">${bpEsc(title)}</div><div class="bp-ph-sub">Bin preview · ${saleDate ? bpEsc(bpDay(saleDate)) : 'no day picked'}</div>`
+      + `<div class="bp-ph-name">${bpEsc(title)}</div><div class="bp-ph-sub">${kind === 'retail' ? 'New on the shelves · from' : 'Bin preview ·'} ${saleDate ? bpEsc(bpDay(saleDate)) : 'no day picked'}</div>`
       + pics + (caption ? `<p class="bp-ph-cap">${bpEsc(caption)}</p>` : '') + '</div>'
       + `<p class="bp-ph-note">How it will look on ${bpEsc(bpStoreName(bp.store))}'s web page. The website isn't live yet.</p>`;
   }
@@ -20693,7 +20703,17 @@
     return n === 0 ? `from ${at} on the sale day` : `from ${at}, ${n} day${n > 1 ? 's' : ''} before the sale`;
   }
   // Prefills only: the worker computes the real default window when no times are sent.
-  function bpDefaultWall(saleDate) {
+  function bpDefaultWall(saleDate, kind) {
+    if (kind === 'retail') {
+      // The worker's retail default: opening on the show-from day to closing six days later.
+      const hoursOn = day => {
+        const h = bp.settings && bp.settings.hours && bp.settings.hours[BP_DAYS[new Date(day + 'T12:00:00Z').getUTCDay()][0]];
+        const o = bp.overrides.find(x => x.date === day);
+        return o ? (o.closed ? null : { open: o.open || (h && h.open), close: o.close || (h && h.close) }) : h;
+      };
+      const first = hoursOn(saleDate), last = bpAddDays(saleDate, 6), lastH = hoursOn(last);
+      return { start: `${saleDate}T${(first && first.open) || '00:00'}`, end: `${last}T${(lastH && lastH.close) || '23:59'}` };
+    }
     const d = (bp.settings && bp.settings.previewDefaults) || {};
     const n = Number.isInteger(d.startDaysBefore) ? d.startDaysBefore : 1;
     const wd = BP_DAYS[new Date(saleDate + 'T12:00:00Z').getUTCDay()][0];
@@ -20703,12 +20723,13 @@
     return { start: `${bpAddDays(saleDate, -n)}T${d.startTime || '12:00'}`, end: `${saleDate}T${close || '23:59'}` };
   }
   function bpPhotoGridHtml() {
-    if (bp.photosErr) return `<p class="bp-msg bp-msg-bad">Couldn't load this store's photos: ${bpEsc(bp.photosErr)}</p>`;
-    if (!bp.photos) return '<p class="bp-dim">Loading photos…</p>';
-    const sel = bp.form.photoIds, known = new Set(bp.photos.map(p => p.id));
+    const kind = bp.form.kind || 'bins', photos = bp.photos[kind];
+    if (bp.photosErr[kind]) return `<p class="bp-msg bp-msg-bad">Couldn't load this store's ${BP_KIND[kind].photos}: ${bpEsc(bp.photosErr[kind])}</p>`;
+    if (!photos) return '<p class="bp-dim">Loading photos…</p>';
+    const sel = bp.form.photoIds, known = new Set(photos.map(p => p.id));
     // A picked photo older than the newest 200 still shows, first.
-    const ids = sel.filter(id => !known.has(id)).concat(bp.photos.map(p => p.id));
-    if (!ids.length) return `<p class="bp-dim">No bin photos for ${bpEsc(bpStoreName(bp.store))} yet. Upload some here or from Submit Photos.</p>`;
+    const ids = sel.filter(id => !known.has(id)).concat(photos.map(p => p.id));
+    if (!ids.length) return `<p class="bp-dim">No ${BP_KIND[kind].photos} for ${bpEsc(bpStoreName(bp.store))} yet. Upload some here or from Submit Photos.</p>`;
     return '<div class="bp-grid">' + ids.map(id => {
       const at = sel.indexOf(id);
       return `<button type="button" class="bp-pick${at >= 0 ? ' on' : ''}" data-photo="${id}" aria-pressed="${at >= 0}" aria-label="Photo ${id}${at >= 0 ? `, number ${at + 1}` : ''}">`
@@ -20716,11 +20737,15 @@
     }).join('') + '</div>';
   }
   function bpFormHtml(p) {
-    const f = bp.form;
-    return `<label class="bp-field">Sale day<input type="date" id="bp-sale" class="bp-in" value="${bpEsc(f.saleDate)}"></label>`
+    const f = bp.form, K = BP_KIND[f.kind || 'bins'];
+    // The kind is chosen once, on a new preview; after that the worker keeps it.
+    const kinds = p ? '' : `<div class="bp-field"><span>What it shows</span><span>` + Object.entries(BP_KIND).map(([k, d]) =>
+      `<button type="button" class="bp-seg${f.kind === k ? ' on' : ''}" data-kind="${k}" aria-pressed="${f.kind === k}">${d.what}</button>`).join('')
+      + `</span><span class="bp-dim">${f.kind === 'retail' ? 'New merchandise on the floor: shows for a week from the day you pick.' : 'The next bin drop: shows from the day before the sale.'}</span></div>`;
+    return kinds + `<label class="bp-field">${K.day}<input type="date" id="bp-sale" class="bp-in" value="${bpEsc(f.saleDate)}"></label>`
       + `<div class="bp-field"><span>Photos · pick up to 10, in the order they should show</span>${bpPhotoGridHtml()}`
-      + `<label class="bp-btn bp-upload">Upload bin photos<input type="file" id="bp-files" accept="image/*" multiple></label>`
-      + `<span class="bp-dim">Uploads here are ${bpEsc(bpStoreName(bp.store))} bin photos, the same as from Submit Photos.</span></div>`
+      + `<label class="bp-btn bp-upload">Upload ${K.photos}<input type="file" id="bp-files" accept="image/*" multiple></label>`
+      + `<span class="bp-dim">Uploads here are ${bpEsc(bpStoreName(bp.store))} ${K.photos}, the same as from Submit Photos.</span></div>`
       + `<label class="bp-field">Caption (optional, shown under the photos)<textarea id="bp-caption" class="bp-in" rows="2" maxlength="500">${bpEsc(f.caption)}</textarea></label>`
       + (p && p.status === 'submitted' ? '<p class="bp-dim">Saving sends it back to draft until it is submitted again.</p>' : '')
       + `<div class="bp-actions"><button type="button" class="bp-btn bp-btn-pri" data-act="submit">Submit for review</button>`
@@ -20728,9 +20753,10 @@
       + (p && p.status === 'submitted' ? '<button type="button" class="bp-btn" data-act="cancel-edit">Cancel</button>' : '') + '</div>';
   }
   function bpReviewHtml(p) {
-    const w = bpDefaultWall(p.saleDate);
+    const kind = bpKindOf(p), w = bpDefaultWall(p.saleDate, kind);
     return `<div class="bp-review"><div class="bp-h">Review</div>`
-      + `<p class="bp-dim">Default window: ${bpEsc(bpDefaultsText())}, until closing time on the sale day.</p>`
+      + `<p class="bp-dim">Default window: ${kind === 'retail' ? 'from opening on the show-from day until closing six days later (a week)'
+        : `${bpEsc(bpDefaultsText())}, until closing time on the sale day`}.</p>`
       + `<label class="bp-check"><input type="checkbox" id="bp-custom"> Choose the times instead</label>`
       + `<div id="bp-custom-times" class="bp-times hidden">`
       + `<label class="bp-field">Starts<input type="datetime-local" id="bp-start" class="bp-in" value="${w.start}"></label>`
@@ -20746,6 +20772,7 @@
       : p.phase === 'scheduled' ? `Shows on the site from ${from} until ${until}.` : `Was on the site from ${from} until ${until}.`;
     const drafts = Array.isArray(bp.social) && bp.social.length
       ? 'Social drafts: ' + bp.social.map(d => `${bpEsc(d.channel)} (${bpEsc(d.status)})`).join(', ') + '.'
+      : bpKindOf(p) === 'retail' ? 'Social posts: none. Retail highlights only go on the store page for now.'
       : "Social posts: none. Buffer isn't connected to Bin Preview yet, so approving posts nothing.";
     let html = `<div class="bp-review"><p>${when} Times are in ${bpEsc(bpStoreName(p.store))}'s local time.</p><p class="bp-dim">${drafts}</p>`;
     if (bpIsReviewer() && p.phase !== 'expired') {
@@ -20779,7 +20806,7 @@
     }
     if (editing) left += bpFormHtml(p);
     else {
-      left += `<p class="bp-dim">Sale day <span class="bp-ink">${bpEsc(bpDay(p.saleDate))}</span> · ${p.photoIds.length} photo${p.photoIds.length === 1 ? '' : 's'}</p>`;
+      left += `<p class="bp-dim">${BP_KIND[bpKindOf(p)].day} <span class="bp-ink">${bpEsc(bpDay(p.saleDate))}</span> · ${p.photoIds.length} photo${p.photoIds.length === 1 ? '' : 's'}</p>`;
       // A manager can take a submitted preview back to fix it (the worker returns it to draft); reviewing is an admin's.
       if (p.status === 'submitted') left += bpIsReviewer() ? bpReviewHtml(p)
         : '<p class="bp-dim">Waiting for a Bargain Lane admin to review it. Editing it takes it back to draft.</p>'
@@ -20787,9 +20814,9 @@
       if (p.status === 'approved') left += bpApprovedHtml(p);
     }
     left += `<p class="bp-msg${bp.msg && bp.msg[1] ? ' bp-msg-' + bp.msg[1] : ''}" role="status">${bp.msg ? bpEsc(bp.msg[0]) : ''}</p>`;
-    box.innerHTML = `<div class="bp-bar"><span class="bp-lbl">${p ? 'Preview · ' + bpEsc(bpDay(p.saleDate)) : 'New preview'}</span>${p ? bpChip(p.phase) : ''}`
+    box.innerHTML = `<div class="bp-bar"><span class="bp-lbl">${p ? BP_KIND[bpKindOf(p)].title + ' · ' + bpEsc(bpDay(p.saleDate)) : 'New preview'}</span>${p ? bpChip(p.phase) : ''}`
       + `<span class="bp-grow"></span><button type="button" class="bp-btn" data-act="close">Close</button></div>`
-      + `<div class="bp-dbody"><div class="bp-dmain">${left}</div><div class="bp-phonewrap">${bpPhoneHtml(ids, caption, sale)}</div></div>`;
+      + `<div class="bp-dbody"><div class="bp-dmain">${left}</div><div class="bp-phonewrap">${bpPhoneHtml(ids, caption, sale, editing ? bp.form.kind : bpKindOf(p))}</div></div>`;
     if (bp.busy) box.querySelectorAll('button, input, textarea, select').forEach(x => { x.disabled = true; });
   }
   // The phone card alone, from whichever the detail is showing: the form being edited, or the saved preview.
@@ -20797,8 +20824,8 @@
     const w = document.querySelector('#bp-detail .bp-phonewrap'); if (!w) return;
     const p = bp.sel === 'new' ? null : bpFind(bp.sel);
     const editing = !p || (bp.editing && ['draft', 'submitted', 'rejected'].includes(p.status));
-    if (editing && bp.form) w.innerHTML = bpPhoneHtml(bp.form.photoIds, bp.form.caption, bp.form.saleDate);
-    else if (p) w.innerHTML = bpPhoneHtml(p.photoIds, p.caption || '', p.saleDate);
+    if (editing && bp.form) w.innerHTML = bpPhoneHtml(bp.form.photoIds, bp.form.caption, bp.form.saleDate, bp.form.kind);
+    else if (p) w.innerHTML = bpPhoneHtml(p.photoIds, p.caption || '', p.saleDate, bpKindOf(p));
   }
 
   // Every write goes through here. A 409 means someone else changed it first: say so,
@@ -20836,12 +20863,12 @@
   }
   async function bpSave(submit) {
     const f = bp.form, p = bp.sel === 'new' ? null : bpFind(bp.sel);
-    if (!f.saleDate) return bpSay('Pick the sale day.', 'bad');
+    if (!f.saleDate) return bpSay(f.kind === 'retail' ? 'Pick the day it shows from.' : 'Pick the sale day.', 'bad');
     if (!f.photoIds.length) return bpSay('Pick at least one photo.', 'bad');
     let cur = p;
     if (bpFormChanged(p) || !submit || (p && p.status !== 'draft')) {
       const body = { saleDate: f.saleDate, photoIds: f.photoIds, caption: f.caption.trim() || null };
-      if (p) { body.id = p.id; body.expectedRevision = p.revision; } else body.store = bp.store;
+      if (p) { body.id = p.id; body.expectedRevision = p.revision; } else { body.store = bp.store; body.kind = f.kind || 'bins'; }
       cur = await bpWrite('bin-preview-save', body, submit ? null : 'Saved as a draft.');
       if (!cur) return;
       bp.sel = cur.id;
@@ -20900,7 +20927,7 @@
     if (!files.length) return;
     // 🔑 Fixed now: the store picker can change while a batch is uploading, and every photo of
     // this batch still belongs to the store it was picked for.
-    const store = bp.store, seq = bp.seq;
+    const store = bp.store, seq = bp.seq, kind = (bp.form && bp.form.kind) || 'bins';
     let ok = 0, fail = 0;
     for (const file of files) {
       if (seq === bp.seq) bpSay(`Uploading ${ok + fail + 1} of ${files.length}…`);
@@ -20911,14 +20938,15 @@
         fd.append('photo', full || file, full && full !== file ? String(file.name || 'photo').replace(/\.[^.]+$/, '') + '.jpg' : (file.name || 'photo'));
         if (thumb && thumb.type === 'image/jpeg') fd.append('thumb', thumb, 'thumb.jpg');
         fd.append('store', store);
-        fd.append('photo_type', 'bins');
+        fd.append('photo_type', kind);
         const r = await fetch(`${WORKER_BASE}?action=photo-upload`, { method: 'POST', credentials: 'include', body: fd });
         const d = await r.json().catch(() => ({}));
         if (r.ok && d.ok && Number.isInteger(d.id)) {
           ok++;
           if (seq === bp.seq) {
-            (bp.photos = bp.photos || []).unshift({ id: d.id, store, photo_type: 'bins', status: 'new' });
-            if (bp.form && bp.form.photoIds.length < 10) bp.form.photoIds.push(d.id);
+            (bp.photos[kind] = bp.photos[kind] || []).unshift({ id: d.id, store, photo_type: kind, status: 'new' });
+            // Only into the form it was uploaded for: switching kind mid-upload clears the picks.
+            if (bp.form && bp.form.kind === kind && bp.form.photoIds.length < 10) bp.form.photoIds.push(d.id);
           }
         } else fail++;
       } catch (_) { fail++; }
@@ -20934,7 +20962,7 @@
     const p = s.profile || {}, a = p.address || {}, d = s.previewDefaults || {};
     return {
       tz: s.tz || 'America/New_York', public: !!s.public,
-      profile: { displayName: p.displayName || '', street: a.street || '', city: a.city || '', state: a.state || '', zip: a.zip || '', phone: p.phone || '', mapsUrl: p.mapsUrl || '' },
+      profile: { displayName: p.displayName || '', street: a.street || '', city: a.city || '', state: a.state || '', zip: a.zip || '', phone: p.phone || '', mapsUrl: p.mapsUrl || '', retailLine: p.retailLine || '' },
       hours: Object.fromEntries(BP_DAYS.map(([k]) => { const h = (s.hours || {})[k]; return [k, h ? { open: h.open, close: h.close, closed: false } : { open: '', close: '', closed: true }]; })),
       binPrices: Object.fromEntries(BP_DAYS.map(([k]) => [k, ((s.binPrices || {})[k] || []).map(t => ({ from: t.from, price: String(t.price) }))])),
       days: String(Number.isInteger(d.startDaysBefore) ? d.startDaysBefore : 1), startTime: d.startTime || '12:00',
@@ -20957,7 +20985,7 @@
     }
     return {
       tz: f.tz, public: !!f.public,
-      profile: { displayName: v(f.profile.displayName), address: Object.values(a).some(Boolean) ? a : null, phone: v(f.profile.phone), mapsUrl: v(f.profile.mapsUrl) },
+      profile: { displayName: v(f.profile.displayName), address: Object.values(a).some(Boolean) ? a : null, phone: v(f.profile.phone), mapsUrl: v(f.profile.mapsUrl), retailLine: v(f.profile.retailLine) },
       hours, binPrices, previewDefaults: { startDaysBefore: Number(f.days), startTime: f.startTime },
     };
   }
@@ -21014,7 +21042,9 @@
          ['state', 'State', 'text', 'maxlength="2"'], ['zip', 'ZIP', 'text', 'maxlength="10" inputmode="numeric"'], ['phone', 'Phone', 'tel', 'maxlength="30"'],
          ['mapsUrl', 'Directions link (https)', 'url', 'maxlength="500"']]
         .map(([k, l, t, x]) => `<label class="bp-field">${l}${bpIn('profile.' + k, t, x)}</label>`).join('')
-      + '</div></div>';
+      + '</div>'
+      + `<label class="bp-field">Retail line · shown under "New on the shelves" when no retail highlight is up${bpIn('profile.retailLine', 'text', 'maxlength="160" placeholder="e.g. Name-brand home goods, toys and more, new every week"')}</label>`
+      + '</div>';
     html += `<div class="bp-sec"><div class="bp-h">Hours</div><div class="bp-days">`
       + BP_DAYS.map(([k, l]) => {
         const h = f.hours[k], dis = h.closed ? ' disabled' : '';
@@ -21142,6 +21172,14 @@
       if (f) { bp.filter = f.dataset.filter; return bpRenderList(); }
       const pick = t.closest('.bp-pick');
       if (pick) return bpTogglePhoto(+pick.dataset.photo);
+      const kb = t.closest('[data-kind]');
+      if (kb && bp.form && bp.sel === 'new' && kb.dataset.kind !== bp.form.kind) {
+        // Photos are one kind or the other, so a switch starts the picks over.
+        const k = kb.dataset.kind;
+        bp.form = { kind: k, saleDate: k === 'retail' ? bpToday() : bpNextFriday(), photoIds: [], caption: bp.form.caption };
+        bp.msg = null;
+        return bpRenderDetail();
+      }
       const ov = t.closest('[data-ov]');
       if (ov) return bpRemoveOverride(ov.dataset.ov);
       const a = t.closest('[data-act]');
@@ -21151,7 +21189,7 @@
           case 'close': return bpClose();
           case 'save': return bpSave(false);
           case 'submit': return bpSave(true);
-          case 'edit': { const p = bpFind(bp.sel); bp.editing = true; bp.msg = null; bp.form = { saleDate: p.saleDate, photoIds: [...p.photoIds], caption: p.caption || '' }; return bpRenderDetail(); }
+          case 'edit': { const p = bpFind(bp.sel); bp.editing = true; bp.msg = null; bp.form = { kind: bpKindOf(p), saleDate: p.saleDate, photoIds: [...p.photoIds], caption: p.caption || '' }; return bpRenderDetail(); }
           case 'cancel-edit': bp.editing = false; bp.msg = null; return bpRenderDetail();
           case 'approve': return bpReview('approve');
           case 'reject': return bpReview('reject');

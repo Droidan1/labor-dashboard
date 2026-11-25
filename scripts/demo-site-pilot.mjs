@@ -48,14 +48,20 @@ let HUB, SITE;   // origins, known once listening
 const hub = await loadWorker(repo);
 const { db, env } = makeEnv(repo);
 // The tables the app touches as it boots, from the repo's own migrations. Only CREATE TABLE / INDEX
-// statements run, additively: a table-rebuild migration's DROP would wipe the harness's seed.
-for (const f of fs.readdirSync(repo).filter(f => /^migration-\d+\.sql$/.test(f)).sort()) {
-  const sql = fs.readFileSync(path.join(repo, f), 'utf8').replace(/--[^\n]*/g, '');
-  for (const stmt of sql.split(/;\s*(?:\n|$)/)) {
-    if (/^\s*CREATE\s+(TABLE|(UNIQUE\s+)?INDEX)\b/i.test(stmt)) { try { db.exec(stmt); } catch (_) {} }
+// and DROP INDEX statements run, additively: a table-rebuild migration's DROP TABLE would wipe the
+// harness's seed. Twice, in file order: an index on a column a later ALTER adds (migration-094's
+// per-kind index) only builds on the second pass, after applyMigrationAlters.
+const createPass = () => {
+  for (const f of fs.readdirSync(repo).filter(f => /^migration-\d+\.sql$/.test(f)).sort()) {
+    const sql = fs.readFileSync(path.join(repo, f), 'utf8').replace(/--[^\n]*/g, '');
+    for (const stmt of sql.split(/;\s*(?:\n|$)/)) {
+      if (/^\s*(CREATE\s+(TABLE|(UNIQUE\s+)?INDEX)|DROP\s+INDEX)\b/i.test(stmt)) { try { db.exec(stmt); } catch (_) {} }
+    }
   }
-}
+};
+createPass();
 applyMigrationAlters(db, repo);
+createPass();
 
 // ── Nothing leaves this computer ──────────────────────────────────────────────
 // The site reads the Hub through fetch: that goes straight to the Hub worker in this process.
@@ -98,7 +104,8 @@ const PERSONAS = {
                    wed: [{ from: '00:00', price: 0.5 }] };   // Thursday: bins being restocked, no price
   db.prepare(`INSERT INTO store_settings (store, tz, profile_json, hours_json, bin_prices_json, preview_defaults_json, public, revision, updated_by, updated_at)
               VALUES ('BL4', 'America/New_York', ?, ?, ?, ?, 1, 1, 'demo seed', ?)`).run(
-    JSON.stringify({ displayName: 'Bargain Lane Dupont (demo)', address: { street: '123 Demo St', city: 'Fort Wayne', state: 'IN', zip: '46825' }, phone: '(260) 555-0100', mapsUrl: null }),
+    JSON.stringify({ displayName: 'Bargain Lane Dupont (demo)', address: { street: '123 Demo St', city: 'Fort Wayne', state: 'IN', zip: '46825' }, phone: '(260) 555-0100', mapsUrl: null,
+      retailLine: 'Demo: home goods, toys and more on the retail floor, new every week.' }),
     JSON.stringify(hours), JSON.stringify(prices), JSON.stringify({ startDaysBefore: 2, startTime: '00:00' }), nowIso());
 }
 
@@ -139,10 +146,23 @@ for (let n = 1; n <= 8; n++) {
                         VALUES ('BL4', 'bins', ?, 'image/png', ?, ?, 'new', ?)`).run(key, bytes.length, PERSONAS.mgr.email, nowIso());
   photoIds.push(Number(r.lastInsertRowid));
 }
-// One preview waiting for review: tomorrow's bins, sent in by the Dupont manager.
-db.prepare(`INSERT INTO bin_previews (store, sale_date, photo_ids, caption, status, revision, created_by, created_at, updated_at, submitted_by, submitted_at)
-            VALUES ('BL4', ?, ?, ?, 'submitted', 2, ?, ?, ?, ?, ?)`).run(tomorrow, JSON.stringify(photoIds.slice(0, 3)),
+// Retail photos (slice 1b): the same drawings, filed as retail, so only a retail highlight can use them.
+const retailIds = [];
+for (let n = 21; n <= 24; n++) {
+  const bytes = binPhoto(n), key = `marketing/BL4/retail/${today.slice(0, 7)}/demo-${String(n).padStart(4, '0')}-0000-4000-8000-000000000000.png`;
+  await env.MEDIA.put(key, new Uint8Array(bytes), { httpMetadata: { contentType: 'image/png' } });
+  const r = db.prepare(`INSERT INTO marketing_photos (store, photo_type, r2_key, content_type, bytes, uploader, status, created_at)
+                        VALUES ('BL4', 'retail', ?, 'image/png', ?, ?, 'new', ?)`).run(key, bytes.length, PERSONAS.mgr.email, nowIso());
+  retailIds.push(Number(r.lastInsertRowid));
+}
+// Two previews waiting for review, sent in by the Dupont manager: tomorrow's bins (#1) and a retail
+// highlight showing from today (#2).
+db.prepare(`INSERT INTO bin_previews (store, kind, sale_date, photo_ids, caption, status, revision, created_by, created_at, updated_at, submitted_by, submitted_at)
+            VALUES ('BL4', 'bins', ?, ?, ?, 'submitted', 2, ?, ?, ?, ?, ?)`).run(tomorrow, JSON.stringify(photoIds.slice(0, 3)),
   'Demo: new bins drop tomorrow. Kitchen, toys and home.', PERSONAS.mgr.email, nowIso(), nowIso(), PERSONAS.mgr.email, nowIso());
+db.prepare(`INSERT INTO bin_previews (store, kind, sale_date, photo_ids, caption, status, revision, created_by, created_at, updated_at, submitted_by, submitted_at)
+            VALUES ('BL4', 'retail', ?, ?, ?, 'submitted', 2, ?, ?, ?, ?, ?)`).run(today, JSON.stringify(retailIds.slice(0, 3)),
+  'Demo: new kitchen and home goods on the floor.', PERSONAS.mgr.email, nowIso(), nowIso(), PERSONAS.mgr.email, nowIso());
 
 // ── The persona page: the demo's only sign-in ─────────────────────────────────
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -161,10 +181,11 @@ ${Object.entries(PERSONAS).map(([k, p]) => `<a class="p" href="/demo/login?as=${
 <h2>2. The website</h2>
 <a class="p site" href="${SITE}/stores/dupont" target="_blank" rel="noopener">Open the Dupont page →<span>${esc(SITE)}/stores/dupont</span></a>
 <h2>3. Try this</h2><ol>
-<li>As Alex, open the preview <b>waiting for review</b> and <b>Approve</b> it (the default window starts 2 days before the sale day, so it shows at once).</li>
+<li>As Alex, open the <b>Bins</b> preview waiting for review and <b>Approve</b> it (the default window starts 2 days before the sale day, so it shows at once).</li>
 <li>Reload the Dupont page: the sneak peek and its 3 photos are there.</li>
 <li>Back in the Hub, <b>Pull from site</b> with a reason. Reload the Dupont page: the photos are gone, and their links now answer 404.</li>
-<li>Change a bin price or add a holiday in <b>Store page settings</b>, save, and reload the Dupont page.</li>
+<li>Before any retail approval, the Dupont page's <b>New on the shelves</b> card shows the store's retail line. Approve the <b>Retail</b> highlight and reload: its photos replace the line (and never appear as bins).</li>
+<li>Change a bin price, the retail line, or add a holiday in <b>Store page settings</b>, save, and reload the Dupont page.</li>
 <li>As Dee, make a <b>New preview</b> and submit it (upload works: photos stay in this demo's memory). Then approve it as Alex.</li>
 </ol><p>Stop the demo with Ctrl+C. Everything is forgotten when it stops.</p></main>
 <script>try{localStorage.setItem('bioPromptDismissed','1');localStorage.setItem('coachTipsDisabled','1')}catch(e){}</script></body></html>`;
@@ -286,13 +307,17 @@ async function selfCheck() {
     let sp = await sitePage();
     check(sp.status === 200 && /Fort Wayne, Dupont/.test(sp.html), `the Dupont page reads the demo Hub (${sp.status})`);
     check(!/Sneak peek/.test(sp.html), 'before approval it has no sneak peek');
+    // Slice 1b: before the retail highlight is approved, the card carries the store's retail line.
+    check(/New on the shelves/.test(sp.html) && /home goods, toys and more/.test(sp.html) && !/Retail photo/.test(sp.html),
+      'the "New on the shelves" card shows the retail line, no retail photos yet');
 
     // Sign in as the admin; the app opens on Bin Preview.
     await page.goto(`${HUB}/demo`);
     await page.click('a[href="/demo/login?as=admin"]');
     await page.waitForSelector('#bp-list tr[data-id]', { timeout: 15000 });
-    check(/1 waiting for review/.test(await text('#bp-list .bp-status')), 'the admin sees the preview waiting for review');
-    await page.click('#bp-list tr[data-id] .bp-open');
+    check(/2 waiting for review/.test(await text('#bp-list .bp-status')), 'the admin sees the bin preview and the retail highlight waiting');
+    check(/Bins/.test(await text('#bp-list tr[data-id="1"]')) && /Retail/.test(await text('#bp-list tr[data-id="2"]')), 'the list says which is which');
+    await page.click('#bp-list tr[data-id="1"] .bp-open');
     await page.waitForSelector('#bp-detail [data-act="approve"]');
     // Two of the three load lazily: give them a moment, then count what actually decoded.
     await page.waitForFunction(() => [...document.querySelectorAll('#bp-detail .bp-phone img')].filter(i => i.complete && i.naturalWidth > 0).length === 3, null, { timeout: 8000 }).catch(() => {});
@@ -300,7 +325,7 @@ async function selfCheck() {
     check(card.length === 3 && card.every(c => c.startsWith('ok')), `the phone card shows the preview's 3 photos ${JSON.stringify(card.filter(c => !c.startsWith('ok')))}`);
     await page.click('#bp-detail [data-act="approve"]');
     // The preview's own row, not the list: the legend always says "On the site".
-    const onSite = await page.waitForFunction(() => /On the site/.test(document.querySelector('#bp-list tr[data-id] .bp-chip')?.textContent || ''), null, { timeout: 10000 }).then(() => true, () => false);
+    const onSite = await page.waitForFunction(() => /On the site/.test(document.querySelector('#bp-list tr[data-id="1"] .bp-chip')?.textContent || ''), null, { timeout: 10000 }).then(() => true, () => false);
     check(onSite, 'approving puts it on the site');
 
     // The website now shows it, photos and all.
@@ -312,8 +337,8 @@ async function selfCheck() {
 
     // Pull it: the page and the photo links both drop it.
     await page.goto(`${HUB}/#bin-preview`);
-    await page.waitForSelector('#bp-list tr[data-id]', { timeout: 15000 });
-    await page.click('#bp-list tr[data-id] .bp-open');
+    await page.waitForSelector('#bp-list tr[data-id="1"]', { timeout: 15000 });
+    await page.click('#bp-list tr[data-id="1"] .bp-open');
     await page.waitForSelector('#bp-reason');
     await page.fill('#bp-reason', 'Demo: pulled to show it come down');
     await page.click('#bp-detail [data-act="pull"]');
@@ -325,6 +350,29 @@ async function selfCheck() {
     check(!/Sneak peek/.test(sp.html), 'after the pull the Dupont page has no sneak peek');
     const img = await page.request.get(imgs[0]?.src || `${HUB}/public/v1/img/1/1.png`);
     check(img.status() === 404, `and its photo links answer 404 (${img.status()})`);
+
+    // Slice 1b: approve the retail highlight; the card swaps the line for its photos, never as bins.
+    await page.click('#bp-detail [data-act="close"]');
+    await page.click('[data-filter="all"]');
+    await page.waitForSelector('#bp-list tr[data-id="2"]', { timeout: 10000 });
+    await page.click('#bp-list tr[data-id="2"] .bp-open');
+    await page.waitForSelector('#bp-detail [data-act="approve"]');
+    check(/^Retail highlight/.test(await text('#bp-detail .bp-lbl')), 'the admin opens the retail highlight');
+    await page.click('#bp-detail [data-act="approve"]');
+    const rOn = await page.waitForFunction(() => /On the site/.test(document.querySelector('#bp-list tr[data-id="2"] .bp-chip')?.textContent || ''), null, { timeout: 10000 }).then(() => true, () => false);
+    check(rOn, 'approving puts the retail highlight on the site');
+    await page.goto(`${SITE}/stores/dupont`);
+    // Two of the three load lazily: bring the card into view and give them a moment to decode.
+    await page.evaluate(() => document.querySelector('section.retail')?.scrollIntoView());
+    await page.waitForFunction(() => [...document.querySelectorAll('section.retail .gallery img')].filter(i => i.complete && i.naturalWidth > 0).length === 3, null, { timeout: 8000 }).catch(() => {});
+    const shelf = await page.evaluate(() => {
+      const c = document.querySelector('section.retail');
+      return { cap: c?.querySelector('.cap')?.textContent || '', imgs: [...(c?.querySelectorAll('.gallery img') || [])].map(i => i.complete && i.naturalWidth > 0), peek: !!document.querySelector('section.peek') };
+    });
+    check(/new kitchen and home goods/.test(shelf.cap) && shelf.imgs.length === 3 && shelf.imgs.every(Boolean),
+      `the Dupont page shows it under "New on the shelves" with its 3 photos (${shelf.imgs.filter(Boolean).length}/3)`);
+    check(!shelf.peek, '🛑 and not as a bin sneak peek (the bins were pulled above)');
+    await page.goto(`${HUB}/#bin-preview`);
 
     // The Dupont manager (slice 1): makes and submits previews; no review or settings controls.
     await page.goto(`${HUB}/demo/login?as=mgr`);

@@ -22,9 +22,13 @@ const { db, env } = makeEnv(repo);
 for (const f of ['migration-020.sql', 'migration-021.sql', 'migration-093.sql']) {
   db.exec(fs.readFileSync(path.join(repo, f), 'utf8'));
 }
-applyMigrationAlters(db, repo);
-// 🔑 The migration must be safe to run twice (it is applied by hand).
+// 🔑 migration-093 must be safe to run twice (it is applied by hand).
 db.exec(fs.readFileSync(path.join(repo, 'migration-093.sql'), 'utf8'));
+// migration-094 (slice 1b) runs after it, as in production. Before applyMigrationAlters, which would
+// otherwise add its column first and make the real file fail.
+const M094 = fs.readFileSync(path.join(repo, 'migration-094.sql'), 'utf8');
+db.exec(M094);
+applyMigrationAlters(db, repo);
 
 // A South Bend manager, for the wrong-store checks. The harness's u-mgr2 manages BL1 + BL4.
 {
@@ -86,6 +90,8 @@ const P = { a: await photo(1), b: await photo(2), c: await photo(3), d: await ph
 const bl1Photo = await photo(7, 'BL1');
 const retailPhoto = await photo(8, 'BL4', 'retail');
 const rejectedPhoto = await photo(9, 'BL4', 'bins', 'rejected');
+const retailPhoto2 = await photo(10, 'BL4', 'retail');
+const bl1Retail = await photo(11, 'BL1', 'retail');
 
 // ── Store settings: test values, written through the API so the write path is exercised ─
 const HOURS = {
@@ -228,7 +234,8 @@ let main;
   const live = await pub('/public/v1/stores/BL4');
   const ALLOWED = new Set(['version', 'store', 'generatedAt', 'timezone', 'profile', 'displayName', 'address', 'street', 'city', 'state', 'zip',
     'phone', 'mapsUrl', 'today', 'date', 'weekday', 'closed', 'open', 'close', 'note', 'binPrice', 'price', 'until', 'next', 'week', 'binPrices',
-    'from', 'binPreviews', 'id', 'saleDate', 'caption', 'startsAt', 'endsAt', 'images']);
+    'from', 'binPreviews', 'id', 'saleDate', 'caption', 'startsAt', 'endsAt', 'images',
+    'retailLine', 'retailHighlights', 'showFrom']);
   const keys = new Set();
   const walk = (v) => { if (Array.isArray(v)) v.forEach(walk); else if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) { keys.add(k); walk(x); } };
   walk(live.body);
@@ -519,6 +526,117 @@ let main;
   eq((await call('bin-preview-photos', { user: 'u-admin', qs: '&store=XX9' })).status, 400, 'S1 an unknown store is refused');
   eq((await call('bin-preview-photos', { qs: '&store=BL4', secret: env.SNAPSHOT_SECRET })).body?.code, 'SESSION_ONLY', 'S1 🛑 the leaked secret gets nothing');
   eq((await call('bin-preview-photos', { user: 'u-mgr2', method: 'POST', body: {}, qs: '&store=BL4' })).status, 405, 'S1 it is a read: GET only');
+}
+
+// ── Slice 1b (2026-11-25): retail highlights on the store page ─────────────────────────────
+// The same reviewed thing as a bin preview with retail photos instead. Plan §7, slice 1b.
+{
+  // The schema: every old row is 'bins'; one approved per store, kind and day; the old index is gone.
+  const idx = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='bin_previews'").all().map(r => r.name).sort();
+  eq(idx, ['idx_bin_previews_store', 'uq_bin_previews_approved_kind'], 'R0 migration-094 replaces the one-per-day index with one per kind');
+  eq(db.prepare("SELECT COUNT(*) AS n FROM bin_previews WHERE kind != 'bins'").get().n, 0, 'R0 every preview made so far is a bin preview');
+  let rerun = null; try { db.exec(M094); } catch (e) { rerun = String(e.message); }
+  ok(/duplicate column/.test(rerun || ''), `R0 a second run of migration-094 stops at the ALTER (${rerun})`);
+
+  // Save: a retail highlight takes only this store's retail photos, and a bin preview only bin photos.
+  const save = (body, user = 'u-mgr2') => call('bin-preview-save', { user, body });
+  eq((await save({ store: 'BL4', kind: 'retail', saleDate: '2026-12-09', photoIds: [P.c] })).body?.code, 'BAD_PHOTOS', 'R1 🛑 a retail highlight refuses a bin photo');
+  eq((await save({ store: 'BL4', kind: 'retail', saleDate: '2026-12-09', photoIds: [bl1Retail] })).body?.code, 'BAD_PHOTOS', "R1 🛑 and another store's retail photo");
+  eq((await save({ store: 'BL4', saleDate: '2026-12-09', photoIds: [retailPhoto] })).body?.code, 'BAD_PHOTOS', 'R1 🛑 a bin preview still refuses a retail photo');
+  eq((await save({ store: 'BL4', kind: 'shoes', saleDate: '2026-12-09', photoIds: [retailPhoto] })).status, 400, 'R1 an unknown kind is refused');
+  const r1 = await save({ store: 'BL4', kind: 'retail', saleDate: '2026-12-09', photoIds: [retailPhoto, retailPhoto2], caption: 'New: kitchen + home' });
+  eq(r1.status, 200, 'R1 the Dupont manager saves a retail highlight');
+  let retail = r1.body?.preview;
+  eq(retail?.kind, 'retail', 'R1   as retail');
+  eq((await save({ id: retail.id, store: 'BL4', kind: 'bins', saleDate: '2026-12-09', photoIds: [P.c], expectedRevision: retail.revision })).status, 400,
+     'R1 🛑 an edit cannot turn it into a bin preview');
+  const kept = await save({ id: retail.id, store: 'BL4', saleDate: '2026-12-09', photoIds: [retailPhoto, retailPhoto2], caption: 'New: kitchen + home', expectedRevision: retail.revision });
+  eq([kept.status, kept.body?.preview?.kind], [200, 'retail'], 'R1 an edit that leaves kind out keeps it retail');
+  retail = kept.body?.preview;
+
+  // The photo picker lists one kind at a time.
+  const pick = async (qs) => (await call('bin-preview-photos', { user: 'u-mgr2', qs })).body?.photos?.map(x => x.id) || [];
+  const rp = await pick('&store=BL4&type=retail');
+  ok(rp.includes(retailPhoto) && rp.includes(retailPhoto2), 'R2 type=retail lists Dupont retail photos');
+  ok(!rp.includes(P.a) && !rp.includes(bl1Retail), "R2   🛑 not bin photos, not another store's");
+  ok(!(await pick('&store=BL4')).includes(retailPhoto), 'R2 with no type it is bins, as the live page expects');
+  eq((await call('bin-preview-photos', { user: 'u-mgr2', qs: '&store=BL4&type=shoes' })).status, 400, 'R2 an unknown type is refused');
+
+  // Approve: the default window is opening on the show-from day to closing six days later.
+  eq((await call('bin-preview-submit', { user: 'u-mgr2', body: { id: retail.id, expectedRevision: retail.revision } })).status, 200, 'R3 submitted');
+  const before = calls.length;
+  const ap = await call('bin-preview-review', { user: 'u-admin', body: { id: retail.id, decision: 'approve', expectedRevision: rev(retail.id) } });
+  eq(ap.status, 200, 'R3 an admin approves it');
+  retail = ap.body?.preview;
+  eq(retail?.startsAt, '2026-12-09T14:00:00.000Z', 'R3   from 9 AM Wednesday Eastern (the show-from day opening)');
+  eq(retail?.endsAt, '2026-12-16T02:00:00.000Z', 'R3   to 9 PM the next Tuesday (closing, six days later)');
+  eq([calls.length - before, ap.body?.socialDrafts], [0, []], 'R3 🛑 no social draft for retail (social is slice 2)');
+
+  // A bin preview and a retail highlight share a day; two retail highlights don't.
+  const bins = (await save({ store: 'BL4', saleDate: '2026-12-09', photoIds: [P.c] })).body?.preview;
+  await call('bin-preview-submit', { user: 'u-mgr2', body: { id: bins.id, expectedRevision: bins.revision } });
+  eq((await call('bin-preview-review', { user: 'u-admin', body: { id: bins.id, decision: 'approve', expectedRevision: rev(bins.id) } })).status, 200,
+     'R3 a bin preview is approved for the same day');
+  const second = (await save({ store: 'BL4', kind: 'retail', saleDate: '2026-12-09', photoIds: [retailPhoto2] })).body?.preview;
+  await call('bin-preview-submit', { user: 'u-mgr2', body: { id: second.id, expectedRevision: second.revision } });
+  eq((await call('bin-preview-review', { user: 'u-admin', body: { id: second.id, decision: 'approve', expectedRevision: rev(second.id) } })).body?.code,
+     'ALREADY_APPROVED_FOR_DAY', 'R3 🛑 a second retail highlight for that day is refused');
+  const listed = (await call('bin-previews', { user: 'u-mgr2', qs: '&store=BL4' })).body?.previews || [];
+  eq(listed.find(p => p.id === retail.id)?.kind, 'retail', 'R3 the list says which kind each one is');
+  eq(listed.find(p => p.id === bins.id)?.kind, 'bins', 'R3   (bins too)');
+
+  // The feed: bins stay bins, retail goes in its own list, each with its own photos only.
+  // 10 AM Wednesday Eastern: the retail highlight and that day's bin preview are both live.
+  at('2026-12-09T15:00:00Z');
+  let f = await feed();
+  ok(!previewIds(f).includes(retail.id), '🛑 R4 a retail highlight never appears as a bin preview (the live site would call it "bins")');
+  eq((f?.retailHighlights || []).map(p => p.id), [retail.id], 'R4 it is in retailHighlights');
+  const rh = f?.retailHighlights?.[0] || {};
+  eq(Object.keys(rh).sort(), ['caption', 'endsAt', 'id', 'images', 'showFrom', 'startsAt'], 'R4   field by field, nothing else');
+  eq([rh.showFrom, rh.caption], ['2026-12-09', 'New: kitchen + home'], 'R4   with its day and caption');
+  const rImg = `/public/v1/img/${retail.id}/${retailPhoto}.jpeg`;
+  eq(rh.images, [`https://api.retjghub.com${rImg}`, `https://api.retjghub.com/public/v1/img/${retail.id}/${retailPhoto2}.jpeg`], 'R4   and approval-checked image links');
+  eq((await pub(rImg)).status, 200, 'R4 its images are served');
+  // A row that somehow names a bin photo: the feed leaves it out and the route refuses it, both ways round.
+  db.prepare('UPDATE bin_previews SET photo_ids = ? WHERE id = ?').run(JSON.stringify([retailPhoto, P.d]), retail.id);
+  db.prepare('UPDATE bin_previews SET photo_ids = ? WHERE id = ?').run(JSON.stringify([P.c, retailPhoto2]), bins.id);
+  f = await feed();
+  eq(f?.retailHighlights?.[0]?.images, [`https://api.retjghub.com${rImg}`], 'R4 🛑 a bin photo on a retail row is left out of the feed');
+  eq((await pub(`/public/v1/img/${retail.id}/${P.d}.jpeg`)).status, 404, 'R4 🛑   and never served through it');
+  eq(f?.binPreviews?.find(p => p.id === bins.id)?.images?.length, 1, 'R4 🛑 a retail photo on a bin row is left out too');
+  eq((await pub(`/public/v1/img/${bins.id}/${retailPhoto2}.jpeg`)).status, 404, 'R4 🛑   and never served through it');
+  db.prepare('UPDATE bin_previews SET photo_ids = ? WHERE id = ?').run(JSON.stringify([retailPhoto, retailPhoto2]), retail.id);
+  db.prepare('UPDATE bin_previews SET photo_ids = ? WHERE id = ?').run(JSON.stringify([P.c]), bins.id);
+
+  // Start, end and the cache.
+  at('2026-12-09T13:59:59Z');
+  eq((await feed())?.retailHighlights, [], 'R5 absent 1 s before opening on the show-from day');
+  eq((await pub(rImg)).status, 404, 'R5   and so are its images');
+  at('2026-12-16T01:59:30Z');
+  eq((await pub('/public/v1/stores/BL4')).headers.get('cache-control'), 'public, max-age=30', 'R5 the cache never outlives it (30 s left → max-age=30)');
+  at('2026-12-16T02:00:00Z');
+  eq((await feed())?.retailHighlights, [], 'R5 absent at the end');
+  eq((await pub(rImg)).status, 404, 'R5   and its images stop too');
+
+  // Pull.
+  at('2026-12-11T15:00:00Z');
+  eq((await call('bin-preview-pull', { user: 'u-admin', body: { id: retail.id, reason: 'Sold out' } })).status, 200, 'R6 an admin pulls it');
+  eq((await feed())?.retailHighlights, [], 'R6 🛑 gone from the feed');
+  eq((await pub(rImg)).status, 404, 'R6 🛑 and its images are gone');
+
+  // The standing retail line, in the store profile.
+  const st = () => db.prepare("SELECT revision, profile_json FROM store_settings WHERE store = 'BL4'").get();
+  const setProfile = (profile, user = 'u-admin') => call('store-settings-save', { user, body: { store: 'BL4', profile, expectedRevision: st().revision } });
+  eq((await setProfile({ ...PROFILE, retailLine: 'x'.repeat(161) })).status, 400, 'R7 a retail line over 160 characters is refused');
+  eq((await setProfile({ ...PROFILE, retailLine: 7 })).status, 400, 'R7 a retail line must be text');
+  eq((await setProfile({ ...PROFILE, retailLine: 'Name-brand home goods and more, new every week.' }, 'u-mgr2')).status, 403, 'R7 a manager still cannot edit settings');
+  eq((await setProfile({ ...PROFILE, retailLine: '  Name-brand home goods and more, new every week.  ' })).status, 200, 'R7 an admin sets it');
+  eq((await feed())?.profile?.retailLine, 'Name-brand home goods and more, new every week.', 'R7 the feed carries it, trimmed');
+  eq((await setProfile({ ...PROFILE, phone: '260-555-0199' })).status, 200, 'R7 a profile saved without retailLine (an older page)');
+  eq([(await feed())?.profile?.retailLine, (await feed())?.profile?.phone], ['Name-brand home goods and more, new every week.', '260-555-0199'],
+     'R7 🛑   keeps the stored line and saves the rest');
+  eq((await setProfile({ ...PROFILE, phone: '260-555-0199', retailLine: '' })).status, 200, 'R7 an empty line clears it');
+  eq((await feed())?.profile?.retailLine, null, 'R7   (null in the feed)');
 }
 
 Date.now = realNow;
