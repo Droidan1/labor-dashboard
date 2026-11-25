@@ -1,6 +1,8 @@
 # Bargain Lane website + Hub publishing: reviewed plan (2026-11-23)
 
-Status: **Phase 0 done. Phase 1a built on branch `claude/bin-preview-1a` (tests green, nothing deployed or applied). Phase 1b next.**
+Status (2026-11-25): **Phase 1a live in production** (#418: migration-093 + worker). **Phase 1b part 1 live** (#419: the Hub's
+Marketing › Bin Preview page, admins and superusers only). **Part 2 built:** the Dupont page, in the private repo
+`Droidan1/bargainlane-site`, not deployed. **Part 3:** the click-through demo below.
 Nothing was changed in staging, production, Buffer or DNS.
 
 ---
@@ -167,7 +169,25 @@ Each check runs against the real `worker.fetch` in the node harness with a pinne
 | E7 | Gate completeness | `npm test`, including `test-business-gate.mjs`, stays green with the new actions declared. The leaked secret is refused on review/pull. |
 | E8 | UI | Playwright (`scripts/browser-bin-preview.mjs`, stubbed API) at 390 px and 1440 px, light and dark, contrast ≥ 4.5:1 measured. The site page gets the same checks in its repo. |
 
-**Demo (1b):** `node scripts/demo-site-pilot.mjs` serves the harness worker on localhost with seeded Dupont test data and persona sign-in in the demo script only (no auth code changes). The Hub screen and the site run against it, so the full flow can be clicked through. Binding to `0.0.0.0` lets a phone on the same Wi-Fi open it.
+**Demo (1b), built 2026-11-25:** `scripts/demo-site-pilot.mjs` runs the real Hub worker (harness: sqlite D1, in-memory
+R2) serving the built app, and the Dupont page from the site repo reading it, all in one process with made-up data.
+Every outside call is refused, and sign-in is a demo-only persona page (no auth code changes).
+
+    bash scripts/build.sh < /dev/null
+    node scripts/demo-site-pilot.mjs            # this computer only: open http://127.0.0.1:8788/demo
+    node scripts/demo-site-pilot.mjs --lan      # also a phone on the same Wi-Fi (it prints the address)
+    node scripts/demo-site-pilot.mjs --check    # the flow below, headless; exit 1 on any failure
+
+`SITE_DIR` points at the site repo (default `~/Projects/bargainlane-site`); `--check` needs playwright-core and Chrome.
+Seeded: Dupont's page switched on with a sample address and test prices, 8 generated bin photos, and one preview for
+tomorrow waiting for review. Previews there start 2 days before their sale day, so an approval shows at once.
+
+The run-through:
+1. Sign in as **Alex, Bargain Lane admin**. Bin Preview opens with "1 waiting for review".
+2. Open it and **Approve**. Open the Dupont page: the sneak peek and its 3 photos are there.
+3. Back in the Hub, **Pull from site** with a reason. Reload the Dupont page: the photos are gone and their links 404.
+4. Change a bin price or add a holiday in **Store page settings**, save, reload the Dupont page.
+5. Sign in as **Dee, Dupont manager**: no Bin Preview (admins only until the website exists).
 
 ---
 
