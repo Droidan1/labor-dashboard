@@ -1,3 +1,28 @@
+# Bargain Lane website pilot, Phase 1b part 3: click-through demo (2026-11-25) — branch `claude/site-pilot-demo`
+
+**Ask:** Brian: "build the click-through demo next" (plan §5 "Demo (1b)", item 8). One command runs the Hub app
+and the Dupont site page together on this computer with made-up data, so the whole flow can be clicked through:
+review → approve → the site shows the photos → pull → they are gone. Nothing real is touched.
+
+- [x] `scripts/demo-site-pilot.mjs`: the real Hub worker (harness: sqlite D1, in-memory R2) serving the built app
+      with its API pointed at itself, plus the site worker from `~/Projects/bargainlane-site` (`SITE_DIR`).
+- [x] Persona sign-in on a demo-only `/demo` page (made-up superuser, admin, Dupont manager); no auth code changes.
+- [x] Seeded Dupont: page switched on, sample hours and test bin prices, 8 generated bin photos, 1 preview waiting.
+- [x] Network blocked: no Clover, Buffer or any outside call. `--lan` opens it to the Wi-Fi for a phone; default
+      is this computer only.
+- [x] `--check`: drives the flow headless and fails loudly (approve → site shows 3 photos → pull → gone, image 404;
+      the manager has no Bin Preview).
+- [x] Run-through written into the plan doc.
+
+## Review
+- `node scripts/demo-site-pilot.mjs --check`: 13 / 0: the Dupont page reads the demo Hub; no sneak peek before approval;
+  the admin sees the waiting preview with its 3 photos; Approve puts it on the site; the page shows the sneak peek with
+  3 photos loaded; Pull takes it off and the photo links 404; the manager has no Bin Preview; no page errors; no
+  Buffer, Anthropic or Resend call even attempted.
+- Control: a copy that never clicks Approve fails 4 checks. It caught a vacuous one first: "On the site" matched the
+  list's legend, so the check now reads the preview's own row.
+- `npm test` untouched (the demo is a script, not a suite).
+
 # Bargain Lane website pilot, Phase 1b part 1: Hub Bin Preview page (2026-11-25) — branch `claude/bin-preview-hub`
 
 **Ask:** Brian: "Start with the Hub page" (1b split: Hub page first, then the site repo + demo). Who sees it until the
