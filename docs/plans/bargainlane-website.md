@@ -220,7 +220,39 @@ The run-through:
 **Phase 2, slice 1 (started 2026-11-25): making the Dupont pilot real.** Dupont managers get Bin Preview (they make and
 submit; admins review); the site goes to its workers.dev test address with SITE_STAGE=preview (noindex everywhere);
 Brian enters Dupont's real details and switches its page on; then one real Fri→Wed cycle. Slices 2–4: social posts,
-Flash Sales, the rest of the site.
+Flash Sales, the rest of the site. **Live 2026-11-25:** Dupont's page is on at the test address (Thanksgiving closed).
+
+**Phase 2, slice 1b (planned 2026-11-25): retail on the store page.** Brian: "make sure retail is also highlighted if
+that's a store main page". Today the page is all bins. Dupont already uploads retail photos (216 in all, 34 in the last
+30 days, latest Nov 13; 88 bin photos in the same 30 days), so retail goes through the **same review flow** as bins.
+
+- **Data, `migration-094.sql`** (Brian runs it; staging, then prod): `bin_previews.kind TEXT NOT NULL DEFAULT 'bins'`,
+  `'bins'` or `'retail'`; every existing row becomes `'bins'`. The one-approved-per-day index becomes per kind
+  (`store, kind, sale_date`), so a bin preview and a retail highlight can share a day. No data is rewritten. Not
+  re-runnable (SQLite has no `ADD COLUMN IF NOT EXISTS`); a second run stops at the ALTER having changed nothing.
+  The standing retail line lives in `store_settings.profile_json` (`retailLine`, up to 160 characters): no column.
+- **Worker (backward-compatible):** `bin-preview-save` takes `kind` (default `bins`); a retail preview takes only this
+  store's retail photos and a bin preview only bin photos, checked in the save, the feed and the image route.
+  `bin-preview-photos` takes `type=bins|retail` (default bins). For retail, `saleDate` means "show from"; the
+  default window is that day's opening to closing six days later (7 days), and reviewers can reschedule as today.
+  Approving a retail highlight queues **no** social draft (social is slice 2). A profile saved without `retailLine`
+  keeps the stored one, so an older page cannot wipe it.
+- **Feed (stays `version: 1`, additive):** `binPreviews` becomes bins only (🛑 without that filter the live site would
+  show retail photos as "Sneak peek: bins"); new `retailHighlights` (same shape, `showFrom` for `saleDate`) and
+  `profile.retailLine`.
+- **Site:** a "New on the shelves" card directly under Bins today / Today: the newest live retail highlight (caption +
+  photos), else the standing line, else no card. Title and description mention retail. Older feeds without the
+  fields render as today.
+- **Hub page:** "New preview" asks Bins or Retail; the picker shows that kind's photos; list rows get a Bins/Retail
+  chip (DESIGN.md §4.8); Store page settings gets the retail line. Same people as today: pilot managers make and
+  submit, admins approve and pull.
+- **Measured by:** a retail preview with a bin photo is refused (and the reverse); the feed's `binPreviews` never holds
+  a retail highlight; a retail image URL 404s once pulled or expired and never serves a bin photo; a bin preview and a
+  retail highlight approve on the same day, two retail ones don't; no social draft for retail; an old-shape profile
+  save keeps `retailLine`; the site card in Chrome at phone and desktop, light and dark, contrast ≥ 4.5:1; the demo
+  walks a retail highlight from submit to the page and back off. Each check fails on main.
+- **Deploy order:** migration (staging, prod) → worker → site → merge the Hub page. The worker needs the column; the
+  page needs the worker; the site reads either feed shape.
 
 **Phase 3**
 - Inventory the 17 WordPress URLs plus QR destinations, then redirects and the sitemap.

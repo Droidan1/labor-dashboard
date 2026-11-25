@@ -1,3 +1,18 @@
+# Bargain Lane website pilot, Phase 2 slice 1b: retail on the store page (2026-11-25) — branch `claude/retail-highlights`
+
+**Ask:** Brian: "make sure retail is also highlighted if that's a store main page", then "Yes, plan it". Plan:
+`docs/plans/bargainlane-website.md` §7, slice 1b. Waiting on Brian's OK to the defaults below before building.
+
+- [ ] migration-094: `bin_previews.kind` ('bins' default | 'retail'), approved-per-day index per kind. Staging, then prod (Brian).
+- [ ] worker: `kind` on save, photo type matched to kind in save / feed / image route; `bin-preview-photos&type=`;
+      7-day default retail window; no social draft for retail; `profile.retailLine` (kept when omitted).
+- [ ] feed: `binPreviews` bins only; `retailHighlights`; `profile.retailLine`. Still version 1.
+- [ ] site: "New on the shelves" card under Bins today / Today; newest highlight, else the line, else nothing.
+- [ ] Hub page: Bins/Retail choice, kind-filtered picker, list chip, retail line in settings; `sw.js` bump.
+- [ ] tests that fail on main (worker, site, both browser checks, demo `--check`); fresh-eyes review.
+- Defaults (Brian may change): placement under the top cards; newest highlight only; 7-day window; no social drafts
+  for retail yet; nav keeps the name "Bin Preview".
+
 # Bargain Lane website pilot, Phase 2 slice 1: making the Dupont pilot real (2026-11-25) — branch `claude/bin-preview-managers`
 
 **Ask:** Brian: "Start slice 1". Open Bin Preview to Dupont's managers, put the site at a test address, then run one
