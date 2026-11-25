@@ -24,6 +24,12 @@ real Fri→Wed bin cycle. Brian enters Dupont's real details and switches the pa
   for them; `browser-bin-preview.mjs` 149 / 0 pins it).
 - Deploy order: worker first (the page calls `bin-preview-photos`; on the old worker the picker would say the server
   half is missing), then merge.
+- LIVE: worker 7d131df4 (17:33Z, 3/3); #421 merged c82e44a, page live 17:37Z (3/3 byte-identical, cache v328).
+- Site: an early deploy from site main before PR #1 merged (46f81a58, no SITE_STAGE) was harmless (page off). PR #1
+  merged 4ee4b24 (tree identical to the reviewed 74bde84), redeployed 18:57Z: 9b9bf7a1, 19.91 KiB, SITE_STAGE=preview.
+  3/3 clean at 100%: `x-robots-tag: noindex, nofollow` on `/`, `/stores/dupont` (404 + strip while off), an unknown
+  slug and `/robots.txt`; our `Disallow: /` now replaces Cloudflare's account-level content-signals file.
+- Left: Brian enters Dupont's details and switches the page on (then re-check: 200, strip, noindex); one Fri→Wed cycle.
 
 # Bargain Lane website pilot, Phase 1b part 3: click-through demo (2026-11-25) — branch `claude/site-pilot-demo`
 
